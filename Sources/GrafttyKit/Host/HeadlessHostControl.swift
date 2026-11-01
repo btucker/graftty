@@ -159,9 +159,18 @@ public extension HeadlessHostRuntime {
                        let session = worktree.paneSessions[slot] {
                         created = try await splitPane(target: launcher.sessionName(for: session),
                             direction: PaneControlRequest.SplitDirection(rawValue: request.direction.rawValue) ?? .right,
-                            command: launch.command, managedAgent: request.managedAgent)
-                    } else { created = try await openWorktree(request.path, command: launch.command) }
-                    _ = created // The exact binding was persisted before terminals.start.
+                            command: launch.command, managedAgent: request.managedAgent,
+                            selectTab: request.selectTab ?? (request.managedAgent == nil))
+                    } else { created = try await openWorktree(request.path, command: launch.command, selectTab: request.selectTab ?? (request.managedAgent == nil)) }
+                    // The exact binding was persisted before terminals.start.
+                    if request.selectTab == true {
+                        let (path, slot) = try resolve(created)
+                        let index = try indices(path)
+                        state.repos[index.repo].worktrees[index.worktree].ensureWorkspaceLayout()
+                        state.repos[index.repo].worktrees[index.worktree].workspaceLayout?.select(slot)
+                        state.selectedWorktreePath = path
+                        try save()
+                    }
                 } catch { launch.discardPromptFile(); throw error }
                 return .ok
             case .closePane(let path, let index): try await closePane(target: paneSession(path, index: index))

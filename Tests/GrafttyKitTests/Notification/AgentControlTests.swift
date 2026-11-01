@@ -4,6 +4,20 @@ import Testing
 
 @MainActor
 struct AgentControlTests {
+    @Test("@spec AGENT-6.128: When adding an agent to an existing worktree, the application shall preserve the current pane selection unless the request explicitly selects the new tab.", arguments: [false, true])
+    func agentLaunchSelectionIsExplicit(select: Bool) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.controlCapabilities.insert(.paneAgent)
+        let data = try JSONSerialization.data(withJSONObject: ["action": "add", "callerWorktree": "/repo",
+            "worktree": "/repo", "name": "Review", "provider": "codex", "selectTab": select])
+        let request = try JSONDecoder().decode(AgentControlRequest.self, from: data)
+        _ = await AgentControl.handle(request, platform: platform)
+        let launch = try #require(platform.platformRequests.first)
+        guard case .addPane(let payload) = launch else { Issue.record("Expected pane launch"); return }
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as? [String: Any]
+        #expect(encoded?["select_tab"] as? Bool == select)
+    }
+
     @Test("@spec AGENT-6.122: If recovering an existing agent identity fails to persist, then the application shall continue processing its activity hook and retry identity recovery on a later hook.")
     func failedIdentityRecoveryDoesNotBlockHooks() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()

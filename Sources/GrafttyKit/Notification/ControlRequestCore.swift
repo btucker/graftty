@@ -285,7 +285,7 @@ public enum ControlRequestCore {
             // Identity enrichment must not block activity, attention, or inbox delivery.
             // Failed persistence leaves the session unbound for the next hook to retry.
             try? await AgentControl.recoverObservedSession(path: callerPath, agentID: callerAgentID,
-                paneSessionName: paneSessionName, provider: runtime, platform: platform)
+                paneSessionName: paneSessionName, provider: runtime, providerSessionID: sessionID, platform: platform)
         }
         recordHookLiveness(callerPath: callerPath, runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,
                            paneSessionName: paneSessionName, attentionReason: attentionReason, platform: platform)
@@ -394,7 +394,7 @@ public enum ControlRequestCore {
                     applicationSupportDirectory: platform.instructionsDirectory
                 )
                 instructions += "\n\n" + (try await AgentControl.sessionContext(path: callerPath, agentID: currentAgentID,
-                    paneSessionName: paneSessionName, provider: runtime,
+                    paneSessionName: paneSessionName, provider: runtime, providerSessionID: sessionID,
                     isSubagent: presenceRecords.contains { $0.isSubagent == true && TeamAgentDirectory.identity(for: $0).rawValue == currentAgentID },
                     platform: platform))
             }

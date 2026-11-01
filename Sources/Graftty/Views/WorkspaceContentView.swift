@@ -22,10 +22,6 @@ struct WorkspaceContentView: View {
     let onCloseTerminal: (PaneSlotID) -> Void
     var agentScrollbackMap: AgentScrollbackMap?
     @Environment(\.agentWorkspaceRequest) private var request
-    @State private var archive: ManagedAgent?
-    @State private var archivePreview: String?
-    @State private var lastFocused: PaneSlotID?
-    @State private var lastFocusedAgentID: String?
     @State private var failure: String?
     @State private var launching = false
     @State private var resizeStart: Double?
@@ -37,26 +33,7 @@ struct WorkspaceContentView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                if let archive {
-                    VStack(spacing: 0) {
-                        HStack {
-                            AgentProviderIcon(provider: archive.provider.rawValue)
-                            Text(archive.name)
-                            Text("Closed").foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Back to agents") {
-                                self.archive = nil
-                                if let slot = layout.lastAgent { focus(slot) }
-                            }
-                        }.padding(10)
-                        Divider()
-                        ScrollView {
-                            Text(archivePreview ?? "Loading transcript…")
-                                .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
-                        }
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if layout.root != nil {
+                if layout.root != nil {
                     TerminalContentView(terminalManager: terminalManager,
                         splitTree: Binding(get: {
                             worktree.canvasTree
@@ -64,6 +41,11 @@ struct WorkspaceContentView: View {
                         focusedPaneSlotID: worktree.focusedPaneSlotID, theme: theme, onFocusTerminal: focus,
                         previewWorktreePath: worktree.path, agentScrollbackMap: agentScrollbackMap,
                         paneHeader: { slot in AnyView(groupHeader(for: slot)) },
+                        paneContent: { slot in
+                            guard let agent = agent(slot), agent.completion != nil || agent.status == .closed else { return nil }
+                            return AnyView(CompletedAgentContent(agent: agent, launching: launching,
+                                onResume: { perform(.init(action: .resume, callerWorktree: worktree.path, agentID: agent.id)) }))
+                        },
                         paneDropTarget: { slot, content in AnyView(dropDestination(slot, content: content)) })
                 } else {
                     VStack(spacing: 12) {
@@ -72,18 +54,11 @@ struct WorkspaceContentView: View {
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if layout.drawerVisible {
-                    Rectangle().fill(theme.foreground.opacity(0.12)).frame(height: 4)
-                        .contentShape(Rectangle())
-                        .gesture(DragGesture().onChanged { value in
-                            if resizeStart == nil { resizeStart = WorkspaceLayout<PaneSlotID>.clampedDrawerHeight(layout.drawerHeight, available: geometry.size.height) }
-                            mutate { $0.drawerHeight = WorkspaceLayout<PaneSlotID>.resizedDrawerHeight(resizeStart ?? 240,
-                                by: -value.translation.height, available: geometry.size.height) }
-                        }.onEnded { _ in resizeStart = nil })
-                        .accessibilityLabel("Terminal drawer height")
-                        .accessibilityAdjustableAction { direction in
-                            mutate { $0.drawerHeight = WorkspaceLayout<PaneSlotID>.resizedDrawerHeight($0.drawerHeight,
-                                by: direction == .increment ? 40 : -40, available: geometry.size.height) }
-                        }
+                    HorizontalResizeDivider(label: "Terminal drawer height", onResize: { translation in
+                        if resizeStart == nil { resizeStart = WorkspaceLayout<PaneSlotID>.clampedDrawerHeight(layout.drawerHeight, available: geometry.size.height) }
+                        mutate { $0.drawerHeight = WorkspaceLayout<PaneSlotID>.resizedDrawerHeight(resizeStart ?? 240,
+                            by: -translation, available: geometry.size.height) }
+                    }, onResizeEnd: { resizeStart = nil })
                 }
                 drawerHeader
                 if layout.drawerVisible {
@@ -102,45 +77,16 @@ struct WorkspaceContentView: View {
             .background(theme.background)
             .foregroundStyle(theme.foreground)
         }
-        .onAppear {
-            synchronize(); lastFocused = worktree.focusedPaneSlotID
-            lastFocusedAgentID = worktree.agents.first { $0.paneSlotID == lastFocused && $0.status != .closed }?.id
-        }
-        .task(id: archive?.id) {
-            archivePreview = nil
-            guard let archive else { return }
-            do {
-                let preview = try await OffMainIO.run { try AgentArchiveStore().preview(archive) }
-                guard !Task.isCancelled else { return }
-                archivePreview = preview ?? archive.completion?.result ?? "No transcript was available when this session closed."
-            } catch {
-                guard !Task.isCancelled else { return }
-                archivePreview = "Could not read transcript: \(error.localizedDescription)"
-            }
-        }
-        .onChange(of: worktree.path) { _, _ in
-            archive = nil; lastFocused = worktree.focusedPaneSlotID
-            lastFocusedAgentID = worktree.agents.first { $0.paneSlotID == lastFocused && $0.status != .closed }?.id
-        }
-        .onChange(of: worktree.agents) { previous, _ in
-            // Teardown clears the slot before the final closed transition is persisted.
-            if let focused = previous.first(where: { $0.paneSlotID != nil && $0.paneSlotID == lastFocused }) {
-                lastFocusedAgentID = focused.id
-            }
-            if let closed = worktree.newlyClosedAgent(viewedAgentID: lastFocusedAgentID, previousAgents: previous) {
-                archive = closed
-            }
-        }
+        .onAppear { synchronize(initial: true) }
+        .onChange(of: worktree.path) { _, _ in synchronize(initial: true) }
         .onChange(of: worktree.splitTree.allLeaves) { _, _ in synchronize() }
-        .onChange(of: worktree.agents.compactMap(\.paneSlotID)) { _, _ in synchronize() }
+        .onChange(of: worktree.agents) { _, _ in synchronize() }
         .onChange(of: worktree.focusedPaneSlotID) { old, slot in
-            if let slot {
-                if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
-                mutate { $0.select(slot) }
-                if old == nil || old.map(worktree.splitTree.containsLeaf) == true {
-                    lastFocused = slot; lastFocusedAgentID = agent(slot)?.id; archive = nil
-                }
-            }
+            // Teardown's fallback focus must not replace a selected completed tab.
+            guard old == nil || old.map(worktree.splitTree.containsLeaf) == true, let slot else { return }
+            if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
+            worktree.ensureWorkspaceLayout()
+            mutate { $0.select(slot) }
         }
         .alert("Agent operation failed", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") { failure = nil }
@@ -168,7 +114,7 @@ struct WorkspaceContentView: View {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
                                     }
                                 }.padding(.horizontal, 12).padding(.vertical, 9)
-                                    .foregroundStyle(theme.foreground.opacity(group?.selected == tab ? 1 : 0.65))
+                                    .foregroundStyle(theme.foreground.opacity(agent(tab)?.completion != nil || agent(tab)?.status == .closed ? 0.4 : group?.selected == tab ? 1 : 0.65))
                                     .overlay(alignment: .bottom) {
                                         Rectangle().fill(group?.selected == tab ? theme.foreground.opacity(0.55) : .clear)
                                             .frame(height: 2)
@@ -207,7 +153,7 @@ struct WorkspaceContentView: View {
                     guard let item = items.first, let uuid = UUID(uuidString: item),
                           let group = layout.group(containing: slot) else { return false }
                     let session = PaneSlotID(id: uuid)
-                    guard worktree.splitTree.containsLeaf(session) else { return false }
+                    guard layout.sessions.contains(session) else { return false }
                     let edge: WorkspaceLayout<PaneSlotID>.Edge?
                     if location.x < geometry.size.width * 0.2 { edge = .left }
                     else if location.x > geometry.size.width * 0.8 { edge = .right }
@@ -249,6 +195,8 @@ struct WorkspaceContentView: View {
         if agent(slot) == nil {
             Button("Move to terminal drawer") { mutate { $0.moveToDrawer(slot) }; focus(slot) }
             Button("Close terminal", role: .destructive) { onCloseTerminal(slot) }
+        } else if let agent = agent(slot), agent.status == .closed {
+            Button("Close tab") { mutate { $0.remove(slot) } }
         } else if let agent = agent(slot), let completion = agent.completion, agent.requiresAcknowledgment {
             Button(completion.outcome == .interrupted || completion.outcome == .failed ? "Acknowledge and close agent" : "Close completed agent") { perform(.init(action: .close, callerWorktree: worktree.path, agentID: agent.id, completionID: completion.id)) }
         }
@@ -319,7 +267,7 @@ struct WorkspaceContentView: View {
 
     private func launch(_ provider: TeamHookRuntime) {
         perform(.init(action: .add, callerWorktree: worktree.path, name: "\(provider.displayName) \(worktree.agents.count + 1)",
-            worktree: worktree.path, provider: provider, operationID: UUID().uuidString))
+            worktree: worktree.path, provider: provider, operationID: UUID().uuidString, selectTab: true))
     }
     private func perform(_ operation: AgentControlRequest) {
         guard let request else { failure = "Agent controls are not ready."; return }
@@ -328,9 +276,11 @@ struct WorkspaceContentView: View {
             defer { launching = false }
             let response = await request(operation)
             if case .error(let message) = response { failure = message }
+            if operation.action == .resume, case .agents(let records) = response,
+               let slot = records.first?.agent.presentationSlotID { focus(slot) }
         }
     }
-    private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.paneSlotID == slot && $0.status != .closed } }
+    private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
     private func title(_ slot: PaneSlotID) -> String {
         agent(slot)?.name ?? GrafttyApp.paneTitle(for: slot, terminalManager: terminalManager) ?? "Terminal"
     }
@@ -341,13 +291,14 @@ struct WorkspaceContentView: View {
         }
     }
     private func focus(_ slot: PaneSlotID) {
-        archive = nil; lastFocused = slot; lastFocusedAgentID = agent(slot)?.id
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
-        mutate { $0.select(slot) }; onFocusTerminal(slot)
+        mutate { $0.select(slot) }
+        if worktree.splitTree.containsLeaf(slot), agent(slot)?.completion == nil { onFocusTerminal(slot) }
     }
-    private func synchronize() {
+    private func synchronize(initial: Bool = false) {
+        let hadLayout = worktree.workspaceLayout != nil
         worktree.ensureWorkspaceLayout()
-        if let focused = worktree.focusedPaneSlotID { mutate { $0.select(focused) } }
+        if initial && !hadLayout, let focused = worktree.focusedPaneSlotID { mutate { $0.select(focused) } }
     }
     private func receive(_ providers: [NSItemProvider], action: @escaping @MainActor (PaneSlotID) -> Void) -> Bool {
         guard let provider = providers.first else { return false }
@@ -355,10 +306,57 @@ struct WorkspaceContentView: View {
             guard let value = object as? String, let id = UUID(uuidString: value) else { return }
             Task { @MainActor in
                 let slot = PaneSlotID(id: id)
-                guard worktree.splitTree.containsLeaf(slot) else { return }
+                guard layout.sessions.contains(slot) else { return }
                 action(slot)
             }
         }
         return true
+    }
+}
+
+private struct CompletedAgentContent: View {
+    let agent: ManagedAgent
+    let launching: Bool
+    let onResume: () -> Void
+    @State private var transcript: String?
+    @State private var failure: String?
+
+    private var canResume: Bool {
+        agent.status == .closed ? agent.providerSessionID?.isEmpty == false
+            : agent.status == .awaitingCleanup && agent.processObservation != .exited && agent.processObservation != .disconnected
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(agent.status == .closed ? "Session closed" : agent.completion?.outcome == .interrupted ? "Assignment interrupted" : agent.completion?.outcome == .failed ? "Assignment failed" : "Assignment finished")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Resume session", action: onResume).disabled(launching || !canResume)
+            }.padding(12)
+            if !canResume {
+                Text(agent.status == .closed ? "This session has no saved conversation ID to resume." : "Acknowledge this session's interruption before resuming.")
+                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12)
+            }
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let result = agent.completion?.result { Text(result).textSelection(.enabled) }
+                    if let transcript { Text(transcript).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+                    if let failure { Text(failure).foregroundStyle(.secondary) }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .task(id: agent.assignmentID) {
+                transcript = nil; failure = nil
+                do {
+                    let preview = try await OffMainIO.run { try AgentArchiveStore().preview(agent) }
+                    guard !Task.isCancelled else { return }
+                    transcript = preview
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    failure = "Could not read transcript: \(error.localizedDescription)"
+                }
+            }
     }
 }

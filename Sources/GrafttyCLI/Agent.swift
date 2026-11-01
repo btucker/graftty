@@ -15,6 +15,7 @@ struct AgentAdd: ParsableCommand {
         --provider overrides the host's Default agent setting. The result includes stable agent,
         assignment, and operation IDs. Creation is accepted asynchronously; use --wait to wait
         for the new worktree's launch. Existing-worktree agents share files with its implementer.
+        Agents launch in the background. Use --select-tab to open the new agent on the host.
         When a child finishes, its parent receives a durable cleanup instruction.
         Native Claude and Codex subagents remain available for work within a session.
         """)
@@ -23,6 +24,7 @@ struct AgentAdd: ParsableCommand {
     @Option(name: .long, help: "claude or codex; defaults to the host's preference") var provider: String?
     @Option(name: .long, help: "Initial task") var prompt: String?
     @Flag(name: .long, help: "Read the initial task from stdin") var promptStdin = false
+    @Flag(name: .long, help: "Select the new agent tab on the host after launch") var selectTab = false
     @Option(name: .long, help: "Git revision for a new worktree") var base: String?
     @Flag(name: .long, help: "Wait until a new worktree accepts the launch") var wait = false
     @Option(name: .long, help: "Seconds to wait for launch") var timeout = 300
@@ -45,7 +47,7 @@ struct AgentAdd: ParsableCommand {
         let initialTask = try promptStdin ? WorktreeAdd.readPromptFromStdin() : prompt
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: initialTask) { throw ValidationError(error) }
         var request = try AgentCLI.request(.add, targetFallback: target)
-        request.name = name; request.worktree = target
+        request.name = name; request.worktree = target; request.selectTab = selectTab
         request.provider = provider.flatMap(TeamHookRuntime.init(rawValue:))
         request.prompt = initialTask; request.operationID = UUID().uuidString.lowercased(); request.base = base
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))

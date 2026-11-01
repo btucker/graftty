@@ -8,6 +8,25 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct WorktreeRowAlignmentTests {
+    @Test("@spec IPAD-1.15: While the iPad sidebar displays a worktree, the application shall keep its heading on one line without repeating a differing branch or a retained report beneath it.")
+    func headingOmitsSecondaryBranchAndReport() async throws {
+        let row = WorktreePanes(path: "/repo/work", displayName: "work", repoDisplayName: "Repo",
+            displayBranch: "feature/different-branch", state: .running, isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: WorktreeRowContent(worktree: row, theme: nil,
+            isActive: false, isOpening: false, attentionCount: 0)
+            .frame(width: 260).environment(\.accessibilityEnabled, true))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await Task.sleep(for: .milliseconds(100))
+        host.view.layoutIfNeeded()
+        let labels = accessibilityObjects(in: host.view).compactMap(\.accessibilityLabel)
+        #expect(labels.contains(row.displayName))
+        #expect(!labels.contains(row.displayBranch))
+    }
+
     @Test("@spec IOS-9.16: While a mobile worktree row is creating, deleting, or opening, the application shall center its progress indicator beside the primary title without moving the title baseline or enlarging the row.", arguments: [WorktreeWireState.creating, .deleting, .running], [false, true])
     func progressAlignsWithTitle(state: WorktreeWireState, secondaryLine: Bool) async throws {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)

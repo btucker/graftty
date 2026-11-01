@@ -170,3 +170,10 @@ Context shows bounded current and prior result previews on all clients. Local Ma
 Existing saved Mac splits migrate in place. Known manually started providers gain a provider identity when their next session-start hook binds the terminal, without moving that view. Native subagents are excluded. New managed agents join tabs, and new shells enter the terminal drawer.
 
 Review fixes also scope zoom and spatial navigation to the visible device-local layout, retain visited iPad tab renderers while their workspace is active, and keep tab controls available while a terminal attachment loads. Hidden tabs and closed drawers do not become visible when the app or worktree is restored.
+
+### Background agent creation
+
+`graftty agent add` starts the provider without selecting its worktree or tab.
+`--select-tab` explicitly opens the new agent on the host after launch.
+The native New agent action opts into selection because the user directly requested it.
+Observer devices retain their own selected tabs.

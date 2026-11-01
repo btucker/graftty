@@ -21,6 +21,7 @@ struct TerminalContentView: View {
     var previewWorktreePath: String? = nil
     var agentScrollbackMap: AgentScrollbackMap? = nil
     var paneHeader: ((PaneSlotID) -> AnyView)? = nil
+    var paneContent: ((PaneSlotID) -> AnyView?)? = nil
     var paneDropTarget: ((PaneSlotID, AnyView) -> AnyView)? = nil
 
     private var previewPane: PaneSlotID? {
@@ -100,7 +101,8 @@ struct TerminalContentView: View {
     private func leafView(_ terminalID: PaneSlotID) -> AnyView {
         let content = AnyView(VStack(spacing: 0) {
             if let paneHeader { paneHeader(terminalID) }
-            surfaceView(terminalID)
+            if let replacement = paneContent?(terminalID) { replacement }
+            else { surfaceView(terminalID) }
         })
         return paneDropTarget?(terminalID, content) ?? content
     }

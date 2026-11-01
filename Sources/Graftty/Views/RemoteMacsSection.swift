@@ -538,23 +538,18 @@ struct RemoteMacsSection: View {
             reportButton: reportController.map { SidebarReportButton(controller: $0, context: context, theme: theme) },
             brief: context.brief
         )
-        .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
+        .frame(minHeight: 24)
         .contentShape(Rectangle())
         let panes = Group {
             if !agentLeaves.isEmpty {
                 ForEach(agentLeaves, id: \.sessionName) { leaf in
                     Button {
-                        onSelectRemotePane(
-                            remoteMac,
-                            worktree.path,
-                            leaf.sessionName
-                        )
+                        onSelectRemoteWorktree(remoteMac, worktree.path)
                     } label: {
                         PaneTitleRow(
                             title: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name ?? leaf.title,
                             isActiveWorktree: isActive,
-                            isFocusedPane: isActive
-                                && selectedRemotePaneSessionName == leaf.sessionName,
+                            isFocusedPane: false,
                             isBusy: leaf.isBusy,
                             theme: theme,
                             attentionStyle: questionPane == leaf.sessionName ? nil : leaf.attentionText.map {
@@ -564,7 +559,7 @@ struct RemoteMacsSection: View {
                                 )
                             },
                             portBindings: (worktree.origin?.relayDepth ?? 0) == 0 ? worktree.portBindings?[leaf.sessionName] ?? [] : [],
-                            provider: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.provider,
+                            agent: worktree.agents?.first { $0.sessionName == leaf.sessionName },
                             attentionCount: counts.attentionByPane[leaf.sessionName, default: 0],
                             onOpenPort: { binding in
                                 Task {

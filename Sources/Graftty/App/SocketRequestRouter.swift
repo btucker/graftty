@@ -263,7 +263,7 @@ extension SocketRequestRouter {
             return listPanes(path: path, appState: appState, terminalManager: terminalManager)
         case .addPane(let request):
             return await addPane(path: request.path, direction: request.direction, command: request.command,
-                                 agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, managedAgent: request.managedAgent, teamInbox: teamInbox,
+                                 agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, managedAgent: request.managedAgent, selectTab: request.selectTab, teamInbox: teamInbox,
                                  appState: appState, terminalManager: terminalManager)
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
@@ -348,6 +348,7 @@ extension SocketRequestRouter {
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?,
         managedAgent: ManagedAgent?,
+        selectTab: Bool?,
         teamInbox: TeamInbox,
         appState: Binding<AppState>,
         terminalManager: TerminalManager
@@ -429,6 +430,8 @@ extension SocketRequestRouter {
                   targetID: targetID,
                   split: direction,
                   extraInitialInput: PaneAgentLaunch.initialInput(launch.command),
+                  activateNewPane: selectTab ?? (managedAgent == nil),
+                  preserveZoom: selectTab != true && managedAgent != nil,
                   reservedSlot: managedAgent?.paneSlotID,
                   reservedSession: managedAgent?.paneSessionID
               ) else {
@@ -460,6 +463,11 @@ extension SocketRequestRouter {
                     Task { _ = await OffMainIO.run { try? PaneAgentLaunch.withdrawInitialPrompt(task, inbox: teamInbox) } }
                 }
             }
+        }
+        if selectTab == true, let agentRuntime,
+           let session = appState.wrappedValue.worktree(forPath: path)?.paneSessions[newPaneID] {
+            AgentNotificationActivation.shared.enqueue(.init(runtime: agentRuntime, worktreePath: path,
+                sessionID: managedAgent?.id ?? "", paneSessionName: ZmxLauncher.sessionName(for: session), attentionTimestamp: Date()))
         }
         if managedAgent == nil, let agentRuntime, let index = appState.wrappedValue.indices(forWorktreePath: path) {
             appState.wrappedValue.repos[index.repo].worktrees[index.worktree]

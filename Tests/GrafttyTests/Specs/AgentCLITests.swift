@@ -6,6 +6,13 @@ import GrafttyKit
 import GrafttyProtocol
 
 struct AgentCLITests {
+    @Test("@spec AGENT-6.127: When invoking agent add, the CLI shall launch in the background by default and accept --select-tab to explicitly select the new agent.")
+    func explicitAgentTabSelection() throws {
+        #expect(try AgentAdd.parse(["review", "--select-tab"]).selectTab)
+        #expect(try !AgentAdd.parse(["review"]).selectTab)
+        #expect(AgentAdd.helpMessage().contains("--select-tab"))
+    }
+
     @Test("@spec AGENT-6.114: When reconstructing agent details, the CLI shall reject changed or missing snapshot identities, mismatched managed IDs, and noncontiguous chunks instead of combining revisions.")
     func detailReaderValidatesSnapshotIdentity() throws {
         let agent = ManagedAgent(name: "Archive", provider: .codex, parent: nil)

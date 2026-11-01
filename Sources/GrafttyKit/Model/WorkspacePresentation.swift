@@ -47,7 +47,8 @@ public extension WorktreeEntry {
             workspaceLayout?.remove(slot)
             workspaceLayout?.addAgent(slot)
         }
-        workspaceLayout?.reconcile(live: splitTree.allLeaves, agents: Set(agents.filter { $0.status != .closed }.compactMap(\.paneSlotID)))
+        workspaceLayout?.reconcile(live: splitTree.allLeaves, agents: Set(agents.compactMap(\.paneSlotID)),
+            retained: Set(agents.compactMap(\.presentationSlotID)), preservingSelection: true)
     }
 }
 

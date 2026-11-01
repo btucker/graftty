@@ -7,6 +7,26 @@ import GrafttyProtocol
 
 @MainActor
 struct WorkspaceContentViewTests {
+    @Test("@spec AGENT-6.130: When a selected agent has retained result content, the application shall render that content inside its pane while keeping the tab header mounted.")
+    func retainedContentKeepsTabHeader() async throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-completed-agent-test.sock")
+        let slot = PaneSlotID()
+        var headerMounted = false, resultMounted = false
+        let view = TerminalContentView(terminalManager: manager,
+            splitTree: .constant(SplitTree(root: .leaf(slot))), focusedPaneSlotID: nil,
+            theme: .fallback, onFocusTerminal: { _ in },
+            paneHeader: { _ in AnyView(Text("Agent tabs").onAppear { headerMounted = true }) },
+            paneContent: { _ in AnyView(Text("Completed result").onAppear { resultMounted = true }) })
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 600, height: 400),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = NSHostingView(rootView: view)
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        for _ in 0..<50 where !headerMounted || !resultMounted { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(headerMounted && resultMounted)
+    }
+
     @Test("@spec LAYOUT-2.177: While a terminal attachment is loading or unavailable, the application shall keep its tab header mounted so users can select another session.")
     func loadingTerminalKeepsTabControls() async throws {
         _ = NSApplication.shared

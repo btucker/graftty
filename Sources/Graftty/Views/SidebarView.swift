@@ -830,7 +830,7 @@ struct SidebarView: View {
             },
             reportButton: SidebarReportButton(controller: reportController, context: context, theme: theme)
         )
-        .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
+        .frame(minHeight: 24)
         .overlay(alignment: .trailing) {
             SleepingWorktreeIndicator(state: terminalManager.worktreeSleepState, path: worktree.path)
         }
@@ -841,8 +841,7 @@ struct SidebarView: View {
             return PaneTitleRow(
                 title: worktree.agents.first { $0.paneSlotID == terminalID }?.name ?? terminalManager.displayTitle(for: terminalID),
                 isActiveWorktree: isActive,
-                isFocusedPane: isActive
-                    && worktree.focusedPaneSlotID == terminalID,
+                isFocusedPane: false,
                 isBusy: AgentLivenessMerge.isPaneBusy(
                     sessionName: sessionName,
                     liveness: claudeSessionRegistry.livenessBySession),
@@ -852,13 +851,13 @@ struct SidebarView: View {
                 // longer feed it.
                 attentionStyle: context.question != nil && context.questionPaneID == sessionName ? nil : attention.paneCapsules[terminalID],
                 portBindings: portBindings.bindings[terminalID] ?? [],
-                provider: worktree.agents.first { $0.paneSlotID == terminalID }?.provider.rawValue,
+                agent: context.worktree.agents?.first { $0.sessionName == sessionName },
                 attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
             )
         }
         let panes = ForEach(paneLeaves, id: \.self) { terminalID in
             Button {
-                onSelectPane(worktree.path, terminalID)
+                onSelect(worktree.path)
             } label: {
                 paneRow(terminalID)
             }
@@ -893,25 +892,8 @@ struct SidebarView: View {
         ) {
             heading
         } panes: {
-            if !paneLeaves.isEmpty {
-                DisclosureGroup(isExpanded: Binding(
-                    get: { expandedAgentWorktrees.contains(worktree.id) },
-                    set: { if $0 { expandedAgentWorktrees.insert(worktree.id) } else { expandedAgentWorktrees.remove(worktree.id) } }
-                )) {
-                    panes
-                } label: {
-                    let count = paneLeaves.count
-                    Text("\(count) \(count == 1 ? "agent" : "agents")")
-                        .font(.caption).foregroundStyle(.secondary)
-                }.padding(.horizontal, 12)
-                if !expandedAgentWorktrees.contains(worktree.id), context.question != nil {
-                    SidebarWorktreeQuestionTarget(context: context) { Task { _ = await openReport(context) } }
-                }
-            } else {
-                panes
-            }
-            if (paneLeaves.isEmpty || expandedAgentWorktrees.contains(worktree.id)),
-               Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
+            panes
+            if Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
                                           displayedPaneSessions: paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) }) {
                 SidebarWorktreeQuestionTarget(context: context) {
                     Task { _ = await openReport(context) }

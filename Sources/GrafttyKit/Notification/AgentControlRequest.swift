@@ -23,17 +23,19 @@ public struct AgentControlRequest: Codable, Sendable, Equatable {
     public var base: String?
     public var branch: String?
     public var existing: Bool?
+    public var selectTab: Bool?
 
     public init(action: Action, callerWorktree: String, callerAgentID: String? = nil,
                 paneSessionName: String? = nil, agentID: String? = nil, assignmentID: UUID? = nil,
                 completionID: UUID? = nil, result: String? = nil, name: String? = nil,
                 worktree: String? = nil, provider: TeamHookRuntime? = nil, prompt: String? = nil,
                 parent: String? = nil, status: ManagedAgent.Status? = nil, operationID: String? = nil,
-                base: String? = nil, branch: String? = nil, existing: Bool? = nil) {
+                base: String? = nil, branch: String? = nil, existing: Bool? = nil, selectTab: Bool? = nil) {
         self.action = action; self.callerWorktree = callerWorktree; self.callerAgentID = callerAgentID
         self.paneSessionName = paneSessionName; self.agentID = agentID; self.assignmentID = assignmentID
         self.completionID = completionID; self.result = result; self.name = name; self.worktree = worktree
         self.provider = provider; self.prompt = prompt; self.parent = parent; self.status = status
+        self.selectTab = selectTab
         self.operationID = operationID; self.base = base; self.branch = branch; self.existing = existing
     }
 }

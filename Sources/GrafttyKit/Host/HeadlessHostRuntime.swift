@@ -136,13 +136,13 @@ public final class HeadlessHostRuntime {
         await refreshPortBindings()
     }
 
-    public func openWorktree(_ path: String, command: String? = nil) async throws -> String {
+    public func openWorktree(_ path: String, command: String? = nil, selectTab: Bool = true) async throws -> String {
         try acquire(path)
         defer { busyPaths.remove(path) }
-        return try await openUnlocked(path, command: command)
+        return try await openUnlocked(path, command: command, selectTab: selectTab)
     }
 
-    func openUnlocked(_ path: String, command: String? = nil) async throws -> String {
+    func openUnlocked(_ path: String, command: String? = nil, selectTab: Bool = true) async throws -> String {
         let initialIndex = try indices(path)
         let initialWorktree = state.repos[initialIndex.repo].worktrees[initialIndex.worktree]
         guard FileManager.default.fileExists(atPath: path) else { throw HostRuntimeError.notFound("worktree directory is missing") }
@@ -160,7 +160,7 @@ public final class HeadlessHostRuntime {
         worktree.state = .running
         let previous = state
         state.repos[index.repo].worktrees[index.worktree] = worktree
-        state.selectedWorktreePath = path
+        if selectTab { state.selectedWorktreePath = path }
         do { try save() } catch { state = previous; throw error }
         do { try await terminals.start(spawn(session: session, path: path, command: command)) }
         catch {
@@ -172,7 +172,7 @@ public final class HeadlessHostRuntime {
     }
 
     public func splitPane(target: String, direction: PaneControlRequest.SplitDirection, command: String? = nil,
-                          managedAgent: ManagedAgent? = nil) async throws -> String {
+                          managedAgent: ManagedAgent? = nil, selectTab: Bool = true) async throws -> String {
         let (path, slot) = try resolve(target)
         try acquire(path)
         defer { busyPaths.remove(path) }
@@ -185,7 +185,8 @@ public final class HeadlessHostRuntime {
         worktree.splitTree = direction == .left || direction == .up
             ? worktree.splitTree.insertingBefore(newSlot, at: slot, direction: axis)
             : worktree.splitTree.inserting(newSlot, at: slot, direction: axis)
-        worktree.focusedPaneSlotID = newSlot
+        if selectTab { worktree.focusedPaneSlotID = newSlot }
+        else { worktree.splitTree = worktree.splitTree.withZoom(state.repos[index.repo].worktrees[index.worktree].splitTree.zoomed) }
         let previous = state
         state.repos[index.repo].worktrees[index.worktree] = worktree
         do { try save() } catch { state = previous; throw error }
@@ -346,7 +347,7 @@ public final class HeadlessHostRuntime {
             try await prepareEnvironment?(path)
             try Task.checkCancellation()
             guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
-            let session = try await openUnlocked(path, command: plan.initialCommand)
+            let session = try await openUnlocked(path, command: plan.initialCommand, selectTab: plan.selectTab ?? true)
             state.transitionCreation(at: path, to: .ready, operationID: operationID)
             try? save()
             return session

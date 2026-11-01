@@ -113,6 +113,8 @@ Do not finish merely because a turn ends or you need input.
 GRAFTTY_DELEGATE_7F3A91C2
 ```
 
+Agent creation runs in the background and preserves the current worktree and tab. Add `--select-tab` only when the user wants to open the new agent on the host. Observer devices keep their own selection.
+
 For a reviewer in the current worktree, add `--worktree '<worktree-name>'`. Save the returned `agent.id`, `agent.assignmentID`, `operationID`, and `worktree`. The managed ID identifies this assignment's lifecycle. `agent.nativeAgentID`, once populated, identifies the provider session for team messages. Do not substitute the managed ID into a native team address. Confirm readiness and copy the exact native address from `graftty team list --json` before messaging. A starting agent or accepted creation is not a reachable child.
 
 Pause the delegated scope until the child is reachable, then relinquish it until reviewing the result. If launch fails without a reachable child, retain ownership and report the failed handoff. Requested delegation needs no separate confirmation and grants no additional authority.

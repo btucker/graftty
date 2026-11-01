@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+import GrafttyCommandUI
 import GrafttyKit
 import GrafttyProtocol
 @testable import Graftty
@@ -56,7 +57,7 @@ struct WorkspaceDrawerContinuityTests {
             #expect(harness.setSizeCalls.allSatisfy {
                 $0.width == UInt32(finalPixels.width) && $0.height == UInt32(finalPixels.height)
             }, "Intermediate resize sequence: \(harness.setSizeCalls)")
-            #expect(terminal.frame.height == initial.height - (visible ? 244 : 0))
+            #expect(terminal.frame.height == initial.height - (visible ? 240 + HorizontalResizeDivider.thickness : 0))
         }
     }
 

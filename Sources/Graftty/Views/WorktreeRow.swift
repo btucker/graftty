@@ -8,7 +8,7 @@ private enum WorktreeRowGeometry {
     static let identityWidth: CGFloat = 18
     static let spacing: CGFloat = 6
     static let horizontalInset: CGFloat = 8
-    static let paneIndent = SidebarPaneLayout.markerLeading - horizontalInset
+    static let paneIndent: CGFloat = 18
 }
 
 /// Child row under a running worktree showing a single pane's title
@@ -46,6 +46,7 @@ struct PaneTitleRow: View {
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
     var provider: String? = nil
+    var agent: AgentSessionInfo? = nil
     var attentionCount: Int = 0
     var onOpenPort: ((PortBinding) -> Void)? = nil
     var shouldRenderPortChips: Bool {
@@ -68,6 +69,7 @@ struct PaneTitleRow: View {
             attentionCount: attentionCount,
             theme: theme.core,
             provider: provider,
+            agent: agent,
             alignment: Self.titleAlignment
         ) { titleText in
             FlowLayout(spacing: 4, rowSpacing: 3) {
@@ -197,9 +199,8 @@ struct WorktreeRow: View {
     static func leadingSequence(isMainCheckout: Bool = false, hasEmoji: Bool, hasPR: Bool,
                                 isInFlight: Bool = false) -> [LeadingItem] {
         let identity: LeadingItem = isInFlight ? .typeIcon : isMainCheckout ? .projectIcon : hasEmoji ? .emoji : .typeIcon
-        var items: [LeadingItem] = [identity]
+        var items: [LeadingItem] = [identity, .label]
         if hasPR { items.append(.prBadge) }
-        items.append(.label)
         return items
     }
 
@@ -232,28 +233,20 @@ struct WorktreeRow: View {
                             WorktreeCreationProgressView(progress: progress)
                                 .foregroundStyle(theme.sidebarSecondaryText)
                         }
-                        if let brief = brief ?? entry.brief {
-                            Text(brief.context ?? brief.completed)
-                                .font(.caption).lineLimit(2)
-                                .foregroundColor(theme.sidebarSecondaryText)
-                        }
-                    }
-                    if let reportButton {
-                        reportButton.frame(width: 20, height: 20)
-                            .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.reportButton: $0] }
-                    }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+
                 }
             }
             if let attentionStyle {
                 AttentionCapsule(style: attentionStyle)
             }
-            Spacer()
             WorktreeRowGutter(
                 stats: entry.state.hasOnDiskWorktree ? stats : nil,
                 baseRef: baseRef,
                 theme: theme
-            )
+            ).fixedSize()
         }
+        .font(.system(size: 11))
         .padding(.vertical, 4)
         .padding(.horizontal, WorktreeRowGeometry.horizontalInset)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -298,47 +291,15 @@ struct WorktreeRow: View {
     }
 
     /// @spec LAYOUT-2.26
-    /// When the main-checkout worktree's current branch differs from
-    /// the repository's resolved default branch, the sidebar row shall
-    /// render the current branch as a dimmed secondary caption beneath
-    /// the primary label.
-    @ViewBuilder
+    /// When a worktree name differs from its branch, the sidebar shall retain both in the heading tooltip while displaying only the uppercase worktree name.
     private var branchLabel: some View {
-        HStack(spacing: 6) {
-            // Primary label: directory name (possibly disambiguated with
-            // parent) — the identity of the worktree as the user set it up.
-            if entry.state == .stale {
-                Text(displayName)
-                    .strikethrough()
-                    .foregroundColor(theme.sidebarStaleText)
-            } else if isMainCheckout {
-                // Italic distinguishes the main checkout from feature
-                // worktrees; the label itself is the worktree's display
-                // name (e.g. "main") so the user sees the actual branch
-                // identity rather than a generic placeholder.
-                Text(displayName)
-                    .italic()
-                    .foregroundColor(theme.sidebarPrimaryText(isActive: isActive))
-            } else {
-                Text(displayName)
-                    .foregroundColor(theme.sidebarPrimaryText(isActive: isActive))
-            }
-
-            // Secondary label: git branch, dimmed. Skip when it duplicates
-            // the displayName (when the directory name matches the branch,
-            // showing both would be noise). Render the sanitized
-            // `displayBranch` so a BIDI-override in the ref name can't
-            // visually deceive via RTL-reversal; the raw `branch` stays
-            // available for the dedup comparison and git operations.
-            if entry.displayBranch != displayName {
-                Text(entry.displayBranch)
-                    .font(.caption)
-                    .foregroundColor(theme.sidebarSecondaryText)
-            }
-        }
-        .lineLimit(1)
-        .truncationMode(.tail)
-        .help(entry.displayBranch == displayName ? displayName : "\(displayName)\n\(entry.displayBranch)")
+        Text(displayName.uppercased()).accessibilityLabel(displayName)
+            .font(.system(size: 11, weight: .semibold))
+            .tracking(0.3)
+            .strikethrough(entry.state == .stale)
+            .foregroundColor(theme.sidebarSecondaryText)
+            .lineLimit(1).truncationMode(.tail)
+            .help(entry.displayBranch == displayName ? displayName : "\(displayName)\n\(entry.displayBranch)")
     }
 
 }

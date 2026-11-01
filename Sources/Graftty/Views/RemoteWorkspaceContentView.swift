@@ -40,17 +40,10 @@ struct RemoteWorkspaceContentView: View {
                     Text("No active agents").frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if layout.drawerVisible {
-                    Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 4)
-                        .contentShape(Rectangle())
-                        .gesture(DragGesture().onChanged { value in
-                            if drawerResizeStart == nil { drawerResizeStart = drawerHeight(layout.drawerHeight, available: geometry.size.height) }
-                            workspace?.drawerHeight = drawerHeight((drawerResizeStart ?? 240) - value.translation.height, available: geometry.size.height)
-                        }.onEnded { _ in drawerResizeStart = nil })
-                        .accessibilityLabel("Terminal drawer height")
-                        .accessibilityAdjustableAction { direction in
-                            workspace?.drawerHeight = WorkspaceLayout<String>.resizedDrawerHeight(layout.drawerHeight,
-                                by: direction == .increment ? 40 : -40, available: geometry.size.height)
-                        }
+                    HorizontalResizeDivider(label: "Terminal drawer height", onResize: { translation in
+                        if drawerResizeStart == nil { drawerResizeStart = drawerHeight(layout.drawerHeight, available: geometry.size.height) }
+                        workspace?.drawerHeight = drawerHeight((drawerResizeStart ?? 240) - translation, available: geometry.size.height)
+                    }, onResizeEnd: { drawerResizeStart = nil })
                 }
                 HStack {
                     Button(action: toggleDrawer) { Label("Terminal", systemImage: "terminal") }

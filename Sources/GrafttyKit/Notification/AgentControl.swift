@@ -33,12 +33,12 @@ public enum AgentControl {
     /// Older live providers may not send SessionStart again after an app update.
     /// Recover their identity once, using hooks rather than guessing from titles.
     public static func recoverObservedSession(path: String, agentID: String?, paneSessionName: String?,
-                                               provider: TeamHookRuntime, platform: any ControlPlatform) async throws {
+                                               provider: TeamHookRuntime, providerSessionID: String? = nil, platform: any ControlPlatform) async throws {
         guard let agentID, let session = paneSessionName else { return }
         func needsObservation() -> Bool {
             guard let worktree = platform.state.worktree(forPath: path),
                   let slot = worktree.paneSlot(forSessionName: session) else { return false }
-            return !worktree.agents.contains { $0.paneSlotID == slot && $0.status != .closed }
+            return !worktree.agents.contains { $0.paneSlotID == slot && $0.status != .closed && ($0.providerSessionID != nil || providerSessionID == nil) }
         }
         guard needsObservation() else { return }
         let presence = platform.teamPresence
@@ -47,11 +47,11 @@ public enum AgentControl {
             $0.isSubagent == true && TeamAgentDirectory.identity(for: $0).rawValue == agentID
         }) else { return }
         _ = try await sessionContext(path: path, agentID: agentID, paneSessionName: session,
-            provider: provider, platform: platform)
+            provider: provider, providerSessionID: providerSessionID, platform: platform)
     }
 
     public static func sessionContext(path: String, agentID: String?, paneSessionName: String?,
-                                      provider: TeamHookRuntime, isSubagent: Bool = false, platform: any ControlPlatform) async throws -> String {
+                                      provider: TeamHookRuntime, providerSessionID: String? = nil, isSubagent: Bool = false, platform: any ControlPlatform) async throws -> String {
         guard !isSubagent else { return "" }
         guard let index = platform.state.indices(forWorktreePath: path) else { return "" }
         var worktree = platform.state.repos[index.repo].worktrees[index.worktree]
@@ -74,6 +74,8 @@ public enum AgentControl {
            var agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) {
             guard agent.provider == provider else { return "" }
             agent.paneSlotID = slot
+            agent.paneSessionID = worktree.paneSessions[slot]
+            if let providerSessionID, !providerSessionID.isEmpty { agent.providerSessionID = providerSessionID }
             if agent.nativeAgentID != agentID { agent.nativeBindingDate = Date() }
             agent.nativeAgentID = agentID
             agent.observeWaiting(false)
@@ -224,21 +226,46 @@ public enum AgentControl {
                     try save(agent, path: path, platform: platform)
                 }
             case .resume:
-                guard !closingAgents.contains(agent.id) else { throw ManagedAgent.LifecycleError.invalidState }
+                guard closingAgents.insert(agent.id).inserted else { throw ManagedAgent.LifecycleError.invalidState }
+                defer { closingAgents.remove(agent.id) }
                 await consumeExitEvents(agentID: agent.id, platform: platform)
                 agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
-                let expectedCompletion = agent.completion?.id
-                if let slot = agent.paneSlotID {
-                    guard try await platform.agentSessionIsAlive(worktree: path, slot: slot) else {
+                if agent.status == .closed {
+                    guard platform.controlCapabilities.contains(.paneAgent) else { throw AgentControlError.unavailable }
+                    guard agent.providerSessionID?.isEmpty == false else {
+                        return .error("The provider conversation ID was not saved. This transcript cannot resume a conversation.")
+                    }
+                    let completed = agent
+                    try agent.restartConversation()
+                    if request.callerAgentID == nil { agent.parent = nil; agent.parentManagedAgentID = nil }
+                    try save(agent, path: path, platform: platform)
+                    let response = await platform.handlePlatformRequest(.addPane(.init(path: path, direction: .right,
+                        command: nil, agentRuntime: agent.provider, agentPrompt: nil, managedAgent: agent)))
+                    if response != .ok {
+                        let reason: String
+                        if case .error(let message) = response { reason = message } else { reason = "Could not resume the provider conversation." }
+                        var restored = completed
+                        // Keep a failed live launch discoverable if host rollback could not remove it.
+                        if let current = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }),
+                           let slot = current.paneSlotID, platform.state.worktree(forPath: path)?.paneSessions[slot] != nil {
+                            restored = current
+                            restored.launchFailed(reason: reason)
+                        }
+                        restored.recordFailure(reason)
+                        try save(restored, path: path, platform: platform)
+                        return .error(reason)
+                    }
+                } else {
+                    let expectedCompletion = agent.completion?.id
+                    guard let slot = agent.paneSlotID, try await platform.agentSessionIsAlive(worktree: path, slot: slot),
+                          let latest = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }),
+                          latest.assignmentID == agent.assignmentID, latest.completion?.id == expectedCompletion else {
                         throw ManagedAgent.LifecycleError.invalidState
                     }
-                } else { throw ManagedAgent.LifecycleError.invalidState }
-                guard !closingAgents.contains(agent.id),
-                      let latest = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }),
-                      latest.completion?.id == expectedCompletion else { throw ManagedAgent.LifecycleError.invalidState }
-                agent = latest
-                try agent.resume()
-                try save(agent, path: path, platform: platform)
+                    agent = latest
+                    try agent.resume()
+                    try save(agent, path: path, platform: platform)
+                }
             case .add, .list, .capability: break
             }
             guard let current = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) else {
@@ -301,7 +328,7 @@ public enum AgentControl {
                 throw error
             }
             let response = await platform.handlePlatformRequest(.addPane(.init(path: target, direction: .right, command: nil,
-                agentRuntime: provider, agentPrompt: request.prompt, managedAgent: agent)))
+                agentRuntime: provider, agentPrompt: request.prompt, managedAgent: agent, selectTab: request.selectTab ?? false)))
             guard response == .ok else {
                 agent = platform.state.worktree(forPath: target)?.agents.first(where: { $0.id == agent.id }) ?? agent
                 let reason = { if case .error(let reason) = response { return reason }; return "Agent launch failed." }()
@@ -332,7 +359,7 @@ public enum AgentControl {
         let response = await CLIWorktreeCreationRequestHandler.begin(.init(callerWorktree: request.callerWorktree,
             worktreeName: names.worktree, branchName: names.branch, existing: request.existing ?? false, base: request.base, command: nil,
             agentRuntime: provider, agentPrompt: request.prompt, operationID: agent.launchOperationID,
-            managedAgent: agent), platform: platform.worktreeCreation)
+            managedAgent: agent, selectTab: request.selectTab ?? false), platform: platform.worktreeCreation)
         guard case .worktreeCreate(let status) = response else {
             if let path = platform.state.repos.flatMap(\.worktrees).first(where: { $0.agents.contains { $0.id == agent.id } })?.path {
                 agent.paneSlotID = nil

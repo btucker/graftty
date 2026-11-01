@@ -39,7 +39,15 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public var parent: TeamInboxEndpoint?
     public private(set) var assignmentID: UUID
     public private(set) var status: Status
-    public var paneSlotID: PaneSlotID?
+    public var paneSlotID: PaneSlotID? {
+        didSet { if let paneSlotID { retainedPaneSlotID = paneSlotID } }
+    }
+    /// Presentation survives terminal cleanup; a restart reserves this same slot.
+    public var retainedPaneSlotID: PaneSlotID?
+    /// Exact provider conversation ID, never the hashed team routing identity.
+    public var providerSessionID: String?
+    public var resumingSessionID: String?
+    public var presentationSlotID: PaneSlotID? { paneSlotID ?? retainedPaneSlotID }
     public var paneSessionID: PaneSessionID?
     public var processObservation: AgentProcessObservation?
     public var nativeAgentID: String?
@@ -103,6 +111,7 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         }
         if status == .closed { return }
         guard [.awaitingCleanup, .interrupted, .failed, .closing].contains(status) else { throw LifecycleError.invalidState }
+        retainedPaneSlotID = presentationSlotID
         status = .closing
         failure = nil
     }
@@ -175,6 +184,23 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         guard [.starting, .running, .waiting].contains(status) else { return }
         processObservation = .reachable
         status = waiting ? .waiting : .running
+    }
+
+    public mutating func restartConversation() throws {
+        guard status == .closed, let conversation = providerSessionID, !conversation.isEmpty else {
+            throw LifecycleError.invalidState
+        }
+        assignmentID = UUID()
+        completion = nil
+        deliveredCompletionID = nil
+        deliveryFailure = nil
+        failure = nil
+        initialPrompt = nil
+        resumingSessionID = conversation
+        paneSlotID = presentationSlotID ?? PaneSlotID()
+        if paneSessionID == nil { paneSessionID = PaneSessionID() }
+        processObservation = nil
+        status = .starting
     }
 
     public mutating func resume() throws {

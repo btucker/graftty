@@ -86,7 +86,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.25** The application shall display the repository's resolved default branch name as the main-checkout sidebar row's primary label, regardless of the worktree's current HEAD.
 
-**LAYOUT-2.26** When the main-checkout worktree's current branch differs from the repository's resolved default branch, the sidebar row shall render the current branch as a dimmed secondary caption beneath the primary label.
+**LAYOUT-2.26** When a worktree name differs from its branch, the sidebar shall retain both in the heading tooltip while displaying only the uppercase worktree name.
 
 **LAYOUT-2.27** The application shall render the `house` SF Symbol on the main-checkout sidebar row regardless of whether a PR is associated with that worktree, so the home affordance never disappears.
 
@@ -182,9 +182,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.80** When a project or report target is opened, the application shall select the target project and worktree only after a successful visit and preserve newer navigation intentions.
 
-**LAYOUT-2.81** While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then any PR/MR badge, then the worktree name; otherwise, the row shall use its type or progress icon in the same position.
+**LAYOUT-2.81** While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then the worktree name, then any PR/MR badge; otherwise, the row shall use its type or progress icon in the same position.
 
-**LAYOUT-2.82** While the main checkout is not in flight, its project-view row shall use the project icon ahead of any PR/MR badge and the worktree name, even if the checkout has an assigned emoji.
+**LAYOUT-2.82** While the main checkout is not in flight, its project-view row shall use the project icon ahead of the worktree name and any PR/MR badge, even if the checkout has an assigned emoji.
 
 **LAYOUT-2.83** While worktree rows show pane children, the application shall align their titles in one column regardless of PR/MR badges or attention counts and keep each row within the available width.
 
@@ -294,7 +294,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.144** While a mobile pane has a pending report question, the application shall show the full Needs your input question beneath the associated pane and suppress its duplicate status label.
 
-**LAYOUT-2.145** When the user clicks a local macOS worktree block, the application shall select that worktree, focus the requesting pane when its inline question is clicked, and preserve embedded controls and pane selection.
+**LAYOUT-2.145** When the user clicks a local macOS worktree block, the application shall select that worktree, focus the requesting pane when its inline question is clicked, and preserve embedded controls and the previously selected agent tab.
 
 **LAYOUT-2.146** When a periodic sidebar snapshot leaves application state unchanged, the application shall avoid writing back the state binding.
 
@@ -2548,9 +2548,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.14** While `IPadRootLayout` renders a worktree's pane rows, the worktree-scoped `attentionText` (from `graftty notify`) shall be displayed on the worktree's first pane row when that leaf has no pane-scoped `attentionText` of its own; the worktree title row never displays an attention pill on iPad. Pane-scoped `attentionText` (from shell-integration `COMMAND_FINISHED` events) stays on its own pane row as before.
 
-**IPAD-1.15** While `IPadRootLayout` renders a worktree row whose `displayBranch` differs from its `displayName`, the branch label shall appear on a second line directly beneath the display name (caption font, dimmed via `theme.sidebarSecondaryText`) rather than running inline on the same row — so a long worktree name + long branch name don't squish each other or push the trailing divergence gutter off the edge at narrow sidebar widths. When `displayBranch` equals `displayName` (or is empty), the secondary line is omitted and the row stays single-line.
+**IPAD-1.15** While the iPad sidebar displays a worktree, the application shall keep its heading on one line without repeating a differing branch or a retained report beneath it.
 
-**IPAD-1.16** While `IPadRootLayout` is presented, the worktree row whose `path == appState.selectedWorktreePath` shall render with a rounded-rectangle highlight at `theme.foreground.opacity(0.16)` spanning the worktree row and its pane rows (Mac-parity active-block treatment), and the pane row whose `leaf.sessionName == appState.focusedPaneId` shall use the brightest brightness bucket via `theme.paneTitle(isFocusedPane: true, isActiveWorktree: true, …)` plus a bolded arrow + semibold title. Non-focused panes in the active worktree use the active-worktree bucket; panes in other worktrees use the inactive bucket.
+**IPAD-1.16** While a worktree is selected on iPad, the application shall highlight its whole sidebar group and retain the existing agent tab selection when an agent row is tapped.
 
 **IPAD-1.17** When an authenticated panes-state snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
 
@@ -4721,6 +4721,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.122** If recovering an existing agent identity fails to persist, then the application shall continue processing its activity hook and retry identity recovery on a later hook.
 
 **AGENT-6.123** When a provider mark appears in a native Mac menu, the application shall use a 16-point template image so menu rows keep their standard size and tint.
+
+**AGENT-6.124** When a user resumes a cleaned-up agent, the application shall reserve a new assignment and terminal binding for its exact saved provider conversation while retaining its tab identity and prior results.
+
+**AGENT-6.125** When a managed terminal closes, the application shall retain its tab group, selection, and conversation slot independently of the live pane inventory.
+
+**AGENT-6.126** When a provider session starts, the application shall retain its exact conversation ID separately from its Graftty routing identity for later resume.
+
+**AGENT-6.127** When invoking agent add, the CLI shall launch in the background by default and accept --select-tab to explicitly select the new agent.
+
+**AGENT-6.128** When adding an agent to an existing worktree, the application shall preserve the current pane selection unless the request explicitly selects the new tab.
+
+**AGENT-6.129** When a headless host launches a background agent, the application shall start its provider without changing the selected worktree, focused pane, or selected tab; an explicit tab selection shall focus the new agent.
+
+**AGENT-6.130** When a selected agent has retained result content, the application shall render that content inside its pane while keeping the tab header mounted.
 
 ## CLI — CLI
 

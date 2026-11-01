@@ -86,6 +86,41 @@ private actor HostDevContainerFake: CLIExecutor {
 
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
+    @Test("@spec AGENT-6.129: When a headless host launches a background agent, the application shall start its provider without changing the selected worktree, focused pane, or selected tab; an explicit tab selection shall focus the new agent.", arguments: [false, true], [false, true])
+    func managedLaunchPreservesFocusUnlessSelected(select: Bool, fromAgent: Bool) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state)
+        _ = try await runtime.openWorktree(root.path)
+        let previous = try #require(runtime.state.worktree(forPath: root.path)?.focusedPaneSlotID)
+        runtime.state.selectedWorktreePath = "/other-worktree"
+        if fromAgent {
+            var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil)
+            parent.paneSlotID = previous
+            runtime.state.repos[0].worktrees[0].agents.append(parent)
+        }
+        runtime.state.repos[0].worktrees[0].ensureWorkspaceLayout()
+        runtime.state.repos[0].worktrees[0].workspaceLayout?.select(previous)
+        let before = try #require(runtime.state.repos[0].worktrees[0].workspaceLayout)
+        let response = await runtime.handle(.agent(.init(action: .add, callerWorktree: root.path,
+            name: "Reviewer", worktree: root.path, provider: .codex, selectTab: select)))
+        guard case .agents(let records) = response else { Issue.record("Expected launch: \(response)"); return }
+        let slot = try #require(records.first?.agent.paneSlotID)
+        runtime.state.repos[0].worktrees[0].ensureWorkspaceLayout()
+        let worktree = try #require(runtime.state.worktree(forPath: root.path))
+        #expect(terminals.starts.count == 2)
+        #expect(worktree.focusedPaneSlotID == (select ? slot : previous))
+        #expect(runtime.state.selectedWorktreePath == (select ? root.path : "/other-worktree"))
+        let after = try #require(worktree.workspaceLayout)
+        if select { #expect(after.group(containing: slot)?.selected == slot) }
+        else {
+            for group in before.groups { #expect(after.group(containing: group.selected)?.selected == group.selected) }
+            #expect(after.selectedTerminal == before.selectedTerminal)
+            #expect(after.drawerVisible == before.drawerVisible)
+        }
+    }
+
     @Test("@spec AGENT-6.112: When an ordinary headless pane close targets a managed agent, the application shall preserve its transcript and interrupted outcome and reject teardown while its children require acknowledgment.")
     func ordinaryManagedCloseUsesSharedTransition() async throws {
         let (root, config, state) = try fixture()

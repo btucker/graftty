@@ -163,9 +163,9 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         for session in sourceGroup.sessions { move(session, to: target) }
     }
 
-    public mutating func reconcile(live: [Session], agents: Set<Session>, preservingSelection: Bool = false) {
+    public mutating func reconcile(live: [Session], agents: Set<Session>, retained: Set<Session> = [], preservingSelection: Bool = false) {
         let previous = self
-        let liveSet = Set(live)
+        let liveSet = Set(live).union(retained)
         for session in sessions where !liveSet.contains(session) { remove(session) }
         for session in live where !sessions.contains(session) {
             if agents.contains(session) { addAgent(session) }

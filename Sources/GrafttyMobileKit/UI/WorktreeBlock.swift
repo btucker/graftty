@@ -5,7 +5,6 @@ import SwiftUI
 
 struct WorktreeBlock: View {
     @Environment(\.editMode) private var editMode
-    @State private var inventoryExpanded = false
     let worktree: WorktreePanes
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
@@ -35,16 +34,7 @@ struct WorktreeBlock: View {
         // sidebar-style's full per-row padding.
         VStack(alignment: .leading, spacing: 3) {
             worktreeRow
-            if !worktree.sidebarAgentLeaves.isEmpty {
-                DisclosureGroup(isExpanded: $inventoryExpanded) { paneRows } label: {
-                    let count = worktree.sidebarAgentLeaves.count
-                    Text("\(count) \(count == 1 ? "agent" : "agents")")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if !inventoryExpanded, context.question != nil {
-                    MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { SidebarWorktreeQuestion(context: context) }
-                }
-            } else { paneRows }
+            paneRows
             ForEach((worktree.agents ?? []).filter { $0.status == "failed" && $0.sessionName == nil }) { agent in
                 Label("\(agent.name) · Failed", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
@@ -101,11 +91,9 @@ struct WorktreeBlock: View {
         } else {
             HStack(spacing: 0) {
                 MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { rowIdentity }
-                MobileWorktreeReportButton(worktreeName: worktree.displayName, onReport: onReport)
-                    .disabled(editMode?.wrappedValue.isEditing == true)
                 MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
                     DivergenceGutter(stats: worktree.stats, theme: theme)
-                        .frame(minHeight: 44)
+                        .frame(minHeight: 24)
                 }
             }
             .disabled(isOpening)
@@ -116,7 +104,7 @@ struct WorktreeBlock: View {
         WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
             theme: theme, isActive: isActive, isOpening: isOpening,
             attentionCount: MobileWorktreeRowPresentation(context: context).worktreeAttentionCount)
-            .frame(minHeight: 44)
+            .frame(minHeight: 24)
             .contentShape(Rectangle())
     }
 
@@ -129,14 +117,14 @@ struct WorktreeBlock: View {
             let style = isQuestionPane ? nil : effective.map {
                 AttentionCapsuleStyle.from(text: $0, source: leaf.attentionSource)
             }
-            MobileWorktreeReportTarget(onOpen: { onSelectPane(leaf) }, onReport: onReport) {
+            MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
                 VStack(alignment: .leading, spacing: 4) {
                     SidebarPaneTitleRow(title: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name ?? leaf.title,
-                        isFocusedPane: leaf.sessionName == focusedPaneId, isActiveWorktree: isActive,
+                        isFocusedPane: false, isActiveWorktree: isActive,
                         isBusy: leaf.isBusy, attentionStyle: style,
                         attentionCount: context.pending.filter { $0.paneID == leaf.sessionName }.count,
-                        theme: theme, provider: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.provider)
-                        .padding(.leading, SidebarPaneLayout.markerLeading)
+                        theme: theme, agent: worktree.agents?.first { $0.sessionName == leaf.sessionName })
+                        .padding(.leading, 18)
                     if isQuestionPane {
                         SidebarWorktreeQuestion(context: context)
                             .padding(.leading, SidebarPaneLayout.markerLeading + SidebarPaneLayout.markerSpacing)
@@ -161,9 +149,7 @@ private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
     themed.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary)
 }
 
-/// Type icon + optional PR badge + display name (italic for main
-/// checkout, strikethrough when stale), optional secondary branch
-/// label stacked beneath the display name when present (IPAD-1.15).
+/// Compact worktree heading with its name and forge reference on one line.
 struct WorktreeRowContent: View {
     let worktree: WorktreePanes
     var project: SidebarProject? = nil
@@ -181,40 +167,16 @@ struct WorktreeRowContent: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             SidebarActivityBadge(attentionCount)
             typeIcon
-            if let badge = worktree.prBadge {
-                SidebarPRBadge(badge: badge)
-                    .fixedSize()
-            }
-            // IPAD-1.15: the branch label gets its own line beneath
-            // the worktree's display name rather than running inline.
-            // Two-line stack keeps long names + long branches from
-            // squishing each other or pushing the divergence gutter
-            // off the trailing edge at narrow sidebar widths.
             VStack(alignment: .leading, spacing: 1) {
-                primaryText
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if let secondary = secondaryBranch {
-                    Text(secondary)
-                        .font(.caption)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
-                }
+                primaryText.accessibilityLabel(worktree.displayName)
+                    .font(.system(size: 11, weight: .semibold)).tracking(0.3)
+                    .lineLimit(1).truncationMode(.tail)
                 if let progress = worktree.creationProgress {
                     WorktreeCreationProgressView(progress: progress)
                         .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
                 }
-                if let brief = worktree.sidebar?.brief {
-                    Text(brief.context ?? brief.completed)
-                        .font(.caption).lineLimit(2)
-                        .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
-                }
-            }
-            // IPAD-1.14: worktree-scoped attentionText is rendered on
-            // the first pane row (see WorktreeBlock.paneRows), not
-            // here — "needs input" pills always sit on pane rows.
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if let badge = worktree.prBadge { SidebarPRBadge(badge: badge).fixedSize() }
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
@@ -227,7 +189,7 @@ struct WorktreeRowContent: View {
             // Supply the title's text baseline; ProgressView's UIKit baseline
             // does not identify the center of the worktree's icon slot.
             Text(" ")
-                .font(.callout)
+                .font(.system(size: 11, weight: .semibold))
                 .hidden()
                 .frame(width: 14)
                 .overlay { ProgressView().controlSize(.mini) }
@@ -270,26 +232,20 @@ struct WorktreeRowContent: View {
     private var primaryText: some View {
         let primary = theme?.sidebarPrimaryText(isActive: isActive)
         if worktree.state == .stale {
-            Text(worktree.displayName)
+            Text(worktree.displayName.uppercased())
                 .strikethrough()
                 .foregroundStyle(themedOrSecondary(theme?.sidebarStaleText))
         } else if worktree.isMainCheckout {
-            Text(worktree.displayName)
+            Text(worktree.displayName.uppercased())
                 .italic()
                 .foregroundColor(primary)
         } else {
-            Text(worktree.displayName)
+            Text(worktree.displayName.uppercased())
                 .foregroundColor(primary)
         }
     }
 
-    /// Skip the dim branch label when it duplicates the primary
-    /// display name — showing both is noise.
-    private var secondaryBranch: String? {
-        let branch = worktree.displayBranch
-        guard !branch.isEmpty, branch != worktree.displayName else { return nil }
-        return branch
-    }
+
 }
 
 /// Trailing `↑X[+] ↓Y`, shared with the Mac worktree row. Without a theme

@@ -172,6 +172,16 @@ public enum WorktreeAgentLaunchCommand {
         // A managed foreground wrapper observes the actual invocation environment.
         // Do not exec away the wrapper: command-not-found and later provider exit
         // must remain observable even when the outer interactive shell survives.
+        let providerInvocation: String
+        if let conversation = managedAgent?.resumingSessionID {
+            guard !conversation.isEmpty, !conversation.utf8.contains(0), !conversation.hasPrefix("-") else {
+                try? fileManager.removeItem(at: promptFile)
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            providerInvocation = agent == .claude
+                ? "claude --resume \(shellLiteral(conversation)) -- \"$_graftty_agent_prompt\""
+                : "codex resume \(shellLiteral(conversation)) -- \"$_graftty_agent_prompt\""
+        } else { providerInvocation = "\(agent.rawValue) -- \"$_graftty_agent_prompt\"" }
         let invocation: String
         let observer: String
         if let managedAgent, let session = managedAgent.paneSessionID {
@@ -184,8 +194,8 @@ public enum WorktreeAgentLaunchCommand {
                 throw error
             }
             observer = "trap \(shellLiteral("_graftty_exit=$?; \(report); exit \"$_graftty_exit\"")) EXIT; "
-            invocation = "\(agent.rawValue) -- \"$_graftty_agent_prompt\""
-        } else { observer = ""; invocation = "exec \(agent.rawValue) -- \"$_graftty_agent_prompt\"" }
+            invocation = providerInvocation
+        } else { observer = ""; invocation = "exec " + providerInvocation }
         let loader = "_graftty_agent_prompt_file=\(fileLiteral); _graftty_agent_prompt=\"$(/bin/cat \"$_graftty_agent_prompt_file\"; _graftty_status=$?; /usr/bin/printf x; exit \"$_graftty_status\")\" && /bin/rm -f \"$_graftty_agent_prompt_file\" && _graftty_agent_prompt=\"${_graftty_agent_prompt%x}\" && \(invocation)"
         let identity = managedAgent.map {
             "export GRAFTTY_MANAGED_AGENT_ID=\(shellLiteral($0.id)) GRAFTTY_ASSIGNMENT_ID=\(shellLiteral($0.assignmentID.uuidString)); "
