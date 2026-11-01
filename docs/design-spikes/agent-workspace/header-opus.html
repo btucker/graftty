@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Header Hierarchy Study</title>
+<style>
+:root{
+  --bg:#25282e; --panel:#2c3036; --raised:#373c44; --selected:#4b515a;
+  --text:#e7e9ed; --muted:#b3b7bf; --quiet:#989fa9; --faint:#6f7680;
+  --amber:#ddb475; --green:#8fc79a;
+  --page:#1b1d21; --hair:rgba(255,255,255,.08); --term:#0f1014; --tray:#1f2226;
+  --doc:#f4f4f2; --docText:#26282c; --docMuted:#5d6168;
+  --press:rgba(255,255,255,.11); --hover:rgba(255,255,255,.06);
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+  --mono:"SF Mono",Menlo,monospace;
+}
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--text);font:13px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+main{max-width:1180px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:22px;font-weight:600;margin:0 0 8px;letter-spacing:-.01em}
+h2{font-size:17px;font-weight:600;margin:0 0 6px}
+h3{font-size:11px;font-weight:600;margin:0 0 6px;color:var(--quiet);text-transform:uppercase;letter-spacing:.04em}
+p{margin:0;color:var(--muted);max-width:72ch}
+.intro p + p{margin-top:8px}
+section{margin-top:48px}
+section > header{margin-bottom:16px}
+.scroll{overflow-x:auto;padding:6px 6px 14px;margin:0 -6px}
+.stage{display:flex;flex-direction:column;gap:28px;align-items:flex-start;width:max-content}
+.cap{font-size:12px;color:var(--quiet);margin-top:8px;max-width:60ch}
+.rec{margin-top:24px;background:var(--panel);border-radius:10px;padding:16px 18px;max-width:820px}
+.rec p{color:var(--muted)}
+.rec b{color:var(--text);font-weight:600}
+.legend{margin:14px 0 0;padding-left:20px;color:var(--muted);max-width:80ch}
+.legend li{margin:3px 0}
+.legend li b{color:var(--text);font-weight:600}
+.tradeoffs{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px 32px;margin-top:14px;max-width:900px}
+.tradeoffs ul{margin:0;padding-left:18px}
+.tradeoffs li{color:var(--muted);margin:3px 0}
+
+/* ---------- icons (SF Symbol stand-ins) ---------- */
+svg.i{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.i.s{width:9px;height:9px;stroke-width:2}
+svg.i.m{width:12px;height:12px}
+
+/* ---------- window ---------- */
+.win{display:flex;border-radius:10px;overflow:hidden;background:var(--term);height:440px;
+  box-shadow:0 0 0 .5px rgba(255,255,255,.14),0 20px 50px rgba(0,0,0,.42)}
+.win.normal{width:1100px}
+.win.narrow{width:640px}
+.lights{display:flex;gap:8px;flex:none}
+.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.lights i:nth-child(1){background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+
+/* sidebar: accepted decisions, shown only for context */
+.sb{width:240px;background:var(--bg);flex:none;display:flex;flex-direction:column;border-right:.5px solid var(--hair)}
+.sb .tb{height:38px;display:flex;align-items:center;gap:12px;padding:0 12px;color:var(--quiet)}
+.sb .repo{padding:6px 14px 4px;font-weight:600;font-size:13px}
+.wt{padding:4px 6px}
+.wt .name{display:flex;align-items:center;gap:6px;height:20px;padding:0 8px;font-size:11px;font-weight:600;color:var(--quiet);letter-spacing:.02em;border-radius:6px}
+.wt .name span{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.wt .name em{font-style:normal;font-weight:500;color:var(--faint);font-variant-numeric:tabular-nums;letter-spacing:0}
+.wt.sel{background:var(--raised);border-radius:7px;margin:0 6px;padding:4px 0}
+.wt.sel .name{color:var(--text)}
+.wt .task{height:22px;display:flex;align-items:center;padding:0 8px 0 26px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* detail column */
+.detail{flex:1;min-width:0;display:flex;flex-direction:column}
+.bar{height:38px;display:flex;align-items:center;gap:8px;padding:0 10px 0 12px;background:var(--term);flex:none;font-size:12px}
+.bar.inset{padding-left:14px}
+.bar .lights{margin-right:4px}
+.sbtoggle{color:var(--quiet);margin-right:10px;display:flex}
+.nav{display:flex;gap:2px;flex:none}
+.btn{height:24px;min-width:24px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border-radius:6px;color:var(--muted);padding:0 5px;flex:none;white-space:nowrap}
+.btn.off{color:var(--faint);opacity:.6}
+.btn.on{background:var(--press);color:var(--text)}
+.btn.lbl{padding:0 8px}
+.crumb{display:flex;align-items:center;gap:5px;min-width:0;color:var(--muted);white-space:nowrap}
+.crumb .repo{color:var(--quiet)}
+.crumb .sep{color:var(--faint)}
+.crumb .wtn{color:var(--text);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.crumb .emo{font-size:12px}
+.crumb .dd{color:var(--faint)}
+.spacer{flex:1;min-width:8px}
+.vsep{width:1px;height:16px;background:var(--hair);flex:none;margin:0 2px}
+
+/* PR forms */
+.prchip{display:flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:4px;background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);min-width:0;flex:0 1 auto}
+.prchip b{font-weight:500;color:var(--text);font-size:11px}
+.prchip span{color:var(--quiet);font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:260px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none}
+.ring{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--amber);flex:none}
+.prtok{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-variant-numeric:tabular-nums;padding:0 4px;height:22px;border-radius:5px;flex:none}
+.prtok .t{color:var(--quiet);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:170px}
+
+/* tab row */
+.tabs{height:30px;display:flex;align-items:stretch;background:var(--term);border-bottom:.5px solid var(--hair);flex:none;font-size:12px}
+.tab{display:flex;align-items:center;gap:7px;padding:0 12px;color:var(--quiet);min-width:0;max-width:230px}
+.tab .tt{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tab.sel{background:var(--panel);color:var(--text)}
+.tab .x{color:var(--faint);display:flex}
+.hollow{width:10px;height:10px;border-radius:50%;border:1.3px solid var(--quiet);flex:none}
+.newagent{margin-left:auto;display:flex;align-items:center;gap:5px;padding:0 12px;color:var(--muted);white-space:nowrap}
+
+/* body */
+.body{flex:1;display:flex;min-height:0}
+.pane{flex:1;min-width:0;position:relative;background:var(--term);font:11.5px/1.55 var(--mono);color:#c9ccd2;padding:12px 14px;overflow:hidden}
+.pane .p{color:var(--quiet)}
+.pane .k{color:#9fc4e8}
+.pane .g{color:var(--green)}
+.pane .d{color:var(--faint)}
+
+/* inline preview tray, as FilePreviewTray overlays the visible pane */
+.tray{position:absolute;top:10px;right:10px;bottom:10px;width:56%;background:var(--tray);border-radius:8px;display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 0 0 .5px rgba(255,255,255,.14),0 12px 30px rgba(0,0,0,.45);font-family:var(--sans)}
+.tray.full{position:static;width:auto;height:100%;border-radius:0;box-shadow:none}
+.tray .th{height:30px;display:flex;align-items:center;gap:6px;padding:0 6px 0 10px;color:var(--muted);font-size:12px;border-bottom:.5px solid var(--hair);flex:none}
+.tray .th .fn{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.docv{flex:1;background:var(--doc);color:var(--docText);padding:18px 22px;overflow:hidden;font:12px/1.5 var(--sans)}
+.docv h4{font-size:16px;margin:0 0 8px;font-weight:650;letter-spacing:-.01em}
+.docv h5{font-size:12.5px;margin:14px 0 6px;font-weight:650}
+.docv p{color:var(--docMuted);font-size:11.5px;max-width:none}
+.docv ul{margin:0;padding-left:16px;color:var(--docMuted);font-size:11.5px}
+.docv li{margin:2px 0}
+.docv code{font:10.5px var(--mono);background:#e6e6e3;padding:0 3px;border-radius:3px}
+.full .docv{padding:22px 36px}
+.full .docv h4{font-size:19px}
+
+/* inspector */
+.insp{width:300px;flex:none;background:var(--panel);border-left:.5px solid var(--hair);display:flex;flex-direction:column;font-family:var(--sans);overflow:hidden}
+.insp .ih{padding:12px 14px 10px;border-bottom:.5px solid var(--hair)}
+.insp .ih b{display:block;font-size:13px;font-weight:600}
+.insp .ih .sub{font-size:11px;color:var(--quiet);margin-top:2px}
+.insp .sec{padding:10px 14px;border-bottom:.5px solid var(--hair);font-size:12px;color:var(--muted)}
+.insp .sec h3{margin-bottom:4px}
+.insp .tl{padding:10px 14px;font-size:11.5px;color:var(--quiet);display:flex;flex-direction:column;gap:7px}
+.insp .tl div b{color:var(--muted);font-weight:500}
+.insp .pr{display:flex;align-items:flex-start;gap:8px;padding:10px 14px;border-bottom:.5px solid var(--hair);font-size:12px}
+.insp .pr .ring{margin-top:4px}
+.insp .pr b{font-weight:500;color:var(--text)}
+.insp .pr div div{color:var(--quiet);font-size:11px;margin-top:2px}
+.seg{display:flex;margin:10px 14px 4px;background:rgba(255,255,255,.06);border-radius:6px;padding:2px;font-size:11.5px}
+.seg span{flex:1;text-align:center;padding:3px 0;border-radius:5px;color:var(--muted)}
+.seg span.on{background:var(--selected);color:var(--text)}
+.plist{padding:4px 8px}
+.plist div{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:6px;font-size:12px;color:var(--muted)}
+.plist div.on{background:var(--raised);color:var(--text)}
+.plist div span{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.plist div em{font-style:normal;color:var(--faint);font-size:11px}
+
+/* annotation callouts on the baseline */
+.call{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;background:#e7e9ed;color:#1b1d21;font:600 9.5px/1 var(--sans);flex:none}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="cl" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></symbol>
+  <symbol id="cr" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></symbol>
+  <symbol id="cd" viewBox="0 0 16 16"><path d="m3 6 5 5 5-5"/></symbol>
+  <symbol id="insp" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M10 2.5v11"/></symbol>
+  <symbol id="sbl" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11"/></symbol>
+  <symbol id="doc" viewBox="0 0 16 16"><path d="M4 1.5h5l3.5 3.5v9.5h-8.5z"/><path d="M9 1.5V5h3.5M6 8.5h4.5M6 11h4.5"/></symbol>
+  <symbol id="x" viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8"/></symbol>
+  <symbol id="plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="pop" viewBox="0 0 16 16"><path d="M9 2.5h4.5V7M13.5 2.5 8 8M11.5 9.5v4h-9v-9h4"/></symbol>
+  <symbol id="codex" viewBox="0 0 16 16"><path d="M8 1.8 13.4 5v6L8 14.2 2.6 11V5z"/><path d="m6 6.5 1.8 1.5L6 9.5M8.8 10h1.6"/></symbol>
+</svg>
+
+<main>
+<div class="intro">
+  <h1>Header hierarchy study</h1>
+  <p>The trailing half of the header holds three unrelated things that look like one cluster. <b>Context</b> toggles the worktree inspector. The bordered chip is the <b>pull request</b>, not a preview, which is why it read as one. The document icon with a chevron is the <b>file preview</b> menu. They share no grouping, no common control style, and no label tells them apart.</p>
+  <p>Each option below keeps Back, Forward and the worktree breadcrumb. It keeps New agent as the trailing tab action and leaves the accepted sidebar decisions alone. Every window shows a preview open, so you can see which control owns it.</p>
+</div>
+
+<div class="rec">
+  <p><b>Recommendation: option A, Identity and tools.</b> It fixes the mess by sorting controls by what they belong to, without changing how previews or the inspector work. The PR becomes part of the worktree's name. The right edge keeps only window tools, styled alike, with the inspector toggle last as macOS apps place it. Option C is the clearest model but changes what a tab means. Option B is the calmest header but hides PR status behind a click.</p>
+</div>
+
+<!-- ================= BASELINE ================= -->
+<section>
+  <header>
+    <h2>Today</h2>
+    <p>Normal width, with the inspector closed and a preview open in the focused pane.</p>
+  </header>
+  <div class="scroll"><div class="stage">
+    <div>
+      <div class="win normal">
+        <aside class="sb">
+          <div class="tb"><div class="lights"><i></i><i></i><i></i></div><svg class="i"><use href="#sbl"/></svg></div>
+          <div class="repo">graftty</div>
+          <div class="wt"><div class="name"><span>MAIN</span></div></div>
+          <div class="wt sel"><div class="name"><span>RECONSIDER-PANS-TABS-SIDEBAR</span><em>#806</em><em>+4 ~2</em></div>
+            <div class="task">Header information architecture</div>
+            <div class="task">Retain finished agent tabs</div></div>
+          <div class="wt"><div class="name"><span>CRASH-REPORT</span><em>~1</em></div></div>
+        </aside>
+        <div class="detail">
+          <div class="bar">
+            <div class="nav"><span class="btn"><svg class="i"><use href="#cl"/></svg></span><span class="btn off"><svg class="i"><use href="#cr"/></svg></span></div>
+            <div class="crumb"><span class="repo">graftty</span><span class="sep">/</span><span class="emo">🧭</span><span class="wtn">reconsider-pans-tabs-sidebar</span><svg class="i s dd"><use href="#cd"/></svg></div>
+            <div class="spacer"></div>
+            <span class="call">1</span><span class="btn lbl"><svg class="i"><use href="#insp"/></svg>Context</span>
+            <span class="call">2</span><span class="prchip"><i class="dot"></i><b>#806</b><span>Introduce agent workspaces and explicit parent clea…</span></span>
+            <span class="call">3</span><span class="btn"><svg class="i"><use href="#doc"/></svg><svg class="i s"><use href="#cd"/></svg></span>
+          </div>
+          <div class="tabs">
+            <div class="tab sel"><svg class="i m"><use href="#codex"/></svg><span class="tt">Codex</span><i class="hollow"></i></div>
+            <div class="newagent"><svg class="i m"><use href="#plus"/></svg>New agent</div>
+          </div>
+          <div class="body">
+            <div class="pane">
+              <div class="pane-text">
+<div><span class="p">›</span> Explore header IA with an Opus collaborator</div>
+<div class="d">• Read BreadcrumbBar.swift, PRButton.swift, FilePreviewToolbarButton.swift</div>
+<div class="d">• Sent scoped request to claude-f29f2b380f20</div>
+<div>&nbsp;</div>
+<div>Waiting for the header exploration result.</div>
+              </div>
+              <div class="tray">
+                <div class="th"><svg class="i m"><use href="#doc"/></svg><span class="fn">implementation-plan.html</span><svg class="i s"><use href="#cd"/></svg><span class="btn"><svg class="i m"><use href="#pop"/></svg></span><span class="btn"><svg class="i m"><use href="#x"/></svg></span></div>
+                <div class="docv" data-doc></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <ol class="legend">
+        <li><b>Context</b> is a text button that toggles the right inspector. It is the only labeled item, so it reads as the most important one.</li>
+        <li><b>The PR chip</b> is the widest and most colorful element. Its title competes with the breadcrumb and duplicates the PR number already on the sidebar name line.</li>
+        <li><b>The preview menu</b> has no label. It doesn't say which preview is open, and it sits outside its own tray's header, which repeats the picker.</li>
+      </ol>
+    </div>
+  </div></div>
+</section>
+
+<!-- ================= OPTION A ================= -->
+<section>
+  <header>
+    <h2>A. Identity and tools (recommended)</h2>
+    <p>Left side: where you are. The PR is a quiet trailing crumb of the worktree name, with its checks shown as a ring. Right side: what you can open. A preview button carries the open file's name, a hairline separates it, and the inspector toggle sits at the trailing edge. The PR title moves to the tooltip and the inspector header.</p>
+  </header>
+  <div class="scroll"><div class="stage">
+    <div>
+      <div class="win normal">
+        <aside class="sb">
+          <div class="tb"><div class="lights"><i></i><i></i><i></i></div><svg class="i"><use href="#sbl"/></svg></div>
+          <div class="repo">graftty</div>
+          <div class="wt"><div class="name"><span>MAIN</span></div></div>
+          <div class="wt sel"><div class="name"><span>RECONSIDER-PANS-TABS-SIDEBAR</span><em>#806</em><em>+4 ~2</em></div>
+            <div class="task">Header information architecture</div>
+            <div class="task">Retain finished agent tabs</div></div>
+          <div class="wt"><div class="name"><span>CRASH-REPORT</span><em>~1</em></div></div>
+        </aside>
+        <div class="detail">
+          <div class="bar">
+            <div class="nav"><span class="btn"><svg class="i"><use href="#cl"/></svg></span><span class="btn off"><svg class="i"><use href="#cr"/></svg></span></div>
+            <div class="crumb"><span class="repo">graftty</span><span class="sep">/</span><span class="emo">🧭</span><span class="wtn">reconsider-pans-tabs-sidebar</span><svg class="i s dd"><use href="#cd"/></svg></div>
+            <span class="prtok" title="Introduce agent workspaces and explicit parent cleanup"><i class="ring"></i>#806</span>
+            <div class="spacer"></div>
+            <span class="btn lbl on"><svg class="i"><use href="#doc"/></svg>implementation-plan.html<svg class="i s"><use href="#cd"/></svg></span>
+            <i class="vsep"></i>
+            <span class="btn on" title="Hide Context"><svg class="i"><use href="#insp"/></svg></span>
+          </div>
+          <div class="tabs">
+            <div class="tab sel"><svg class="i m"><use href="#codex"/></svg><span class="tt">Codex</span><i class="hollow"></i></div>
+            <div class="newagent"><svg class="i m"><use href="#plus"/></svg>New agent</div>
+          </div>
+          <div class="body">
+            <div class="pane">
+<div><span class="p">›</span> Explore header IA with an Opus collaborator</div>
+<div class="d">• Read BreadcrumbBar.swift, PRButton.swift</div>
+<div class="d">• Sent scoped request to claude-f29f2b380f20</div>
+<div>&nbsp;</div>
+<div>Waiting for the header exploration result.</div>
+              <div class="tray" style="width:62%">
+                <div class="th"><span class="fn" style="color:var(--quiet)">Opened 2:14 PM</span><span class="btn"><svg class="i m"><use href="#pop"/></svg></span><span class="btn"><svg class="i m"><use href="#x"/></svg></span></div>
+                <div class="docv" data-doc></div>
+              </div>
+            </div>
+            <aside class="insp">
+              <div class="ih"><b>Reconsider panes, tabs, and sidebar</b><div class="sub">graftty / reconsider-pans-tabs-sidebar</div></div>
+              <div class="pr"><i class="ring"></i><div><b>#806 Introduce agent workspaces and explicit parent cleanup</b><div>Checks running · open on GitHub</div></div></div>
+              <div class="sec"><h3>Context</h3>Agents should be supervisable without a growing pile of terminal panes.</div>
+              <div class="sec"><h3>Next</h3>Pick a header direction and fold it into the plan.</div>
+              <div class="tl">
+                <div><b>2:14 PM</b> Opened implementation-plan.html</div>
+                <div><b>2:02 PM</b> Accepted uppercase worktree names</div>
+                <div><b>1:47 PM</b> Finished agents keep gray tabs</div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <p class="cap">Normal width, with the preview and inspector both open. Both tools show a pressed state, so it's clear what is open and which button closes it. The tray header loses its picker because the toolbar now names the file.</p>
+    </div>
+    <div>
+      <div class="win narrow">
+        <div class="detail">
+          <div class="bar inset">
+            <div class="lights"><i></i><i></i><i></i></div><span class="sbtoggle"><svg class="i"><use href="#sbl"/></svg></span>
+            <div class="nav"><span class="btn"><svg class="i"><use href="#cl"/></svg></span><span class="btn off"><svg class="i"><use href="#cr"/></svg></span></div>
+            <div class="crumb"><span class="emo">🧭</span><span class="wtn">reconsider-pans-tabs-sidebar</span><svg class="i s dd"><use href="#cd"/></svg></div>
+            <span class="prtok"><i class="ring"></i>#806</span>
+            <div class="spacer"></div>
+            <span class="btn on"><svg class="i"><use href="#doc"/></svg><svg class="i s"><use href="#cd"/></svg></span>
+            <i class="vsep"></i>
+            <span class="btn"><svg class="i"><use href="#insp"/></svg></span>
+          </div>
+          <div class="tabs">
+            <div class="tab sel"><svg class="i m"><use href="#codex"/></svg><span class="tt">Codex</span><i class="hollow"></i></div>
+            <div class="newagent"><svg class="i m"><use href="#plus"/></svg>New agent</div>
+          </div>
+          <div class="body">
+            <div class="pane">
+<div><span class="p">›</span> Explore header IA</div>
+<div class="d">• Sent scoped request</div>
+              <div class="tray" style="width:auto;left:10px">
+                <div class="th"><svg class="i m"><use href="#doc"/></svg><span class="fn">implementation-plan.html</span><span class="btn"><svg class="i m"><use href="#pop"/></svg></span><span class="btn"><svg class="i m"><use href="#x"/></svg></span></div>
+                <div class="docv" data-doc></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="cap">Narrow width, sidebar hidden. The repo name drops first. The worktree name truncates in the middle only after that. The preview button shrinks to its icon, so the tray header takes the file name back.</p>
+    </div>
+  </div></div>
+  <div class="tradeoffs">
+    <div><h3>Gains</h3><ul>
+      <li>The two sides each answer one question, where you are and what is open.</li>
+      <li>The PR keeps its at-a-glance state when the sidebar is hidden, at a fraction of the width.</li>
+      <li>No model change: the preview stays a pane overlay, and Context stays the inspector.</li>
+    </ul></div>
+    <div><h3>Costs</h3><ul>
+      <li>The word Context becomes an icon with a tooltip. It's native, but less obvious to a newcomer.</li>
+      <li>The PR title is one hover or one inspector away.</li>
+      <li>The ring color carries the check state, so the tooltip and accessibility label must also say it.</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- ================= OPTION B ================= -->
+<section>
+  <header>
+    <h2>B. One inspector</h2>
+    <p>The header holds navigation, identity and a single inspector toggle. The inspector gains a segmented control: Summary, Pull Request, Previews. Choosing a preview from the list opens it in the pane. Status lives on the sidebar name line, which already shows the PR number.</p>
+  </header>
+  <div class="scroll"><div class="stage">
+    <div>
+      <div class="win normal">
+        <aside class="sb">
+          <div class="tb"><div class="lights"><i></i><i></i><i></i></div><svg class="i"><use href="#sbl"/></svg></div>
+          <div class="repo">graftty</div>
+          <div class="wt"><div class="name"><span>MAIN</span></div></div>
+          <div class="wt sel"><div class="name"><span>RECONSIDER-PANS-TABS-SIDEBAR</span><em>#806</em><em>+4 ~2</em></div>
+            <div class="task">Header information architecture</div>
+            <div class="task">Retain finished agent tabs</div></div>
+          <div class="wt"><div class="name"><span>CRASH-REPORT</span><em>~1</em></div></div>
+        </aside>
+        <div class="detail">
+          <div class="bar">
+            <div class="nav"><span class="btn"><svg class="i"><use href="#cl"/></svg></span><span class="btn off"><svg class="i"><use href="#cr"/></svg></span></div>
+            <div class="crumb"><span class="repo">graftty</span><span class="sep">/</span><span class="emo">🧭</span><span class="wtn">reconsider-pans-tabs-sidebar</span><svg class="i s dd"><use href="#cd"/></svg></div>
+            <div class="spacer"></div>
+            <span class="btn on"><svg class="i"><use href="#insp"/></svg></span>
+          </div>
+          <div class="tabs">
+            <div class="tab sel"><svg class="i m"><use href="#codex"/></svg><span class="tt">Codex</span><i class="hollow"></i></div>
+            <div class="newagent"><svg class="i m"><use href="#plus"/></svg>New agent</div>
+          </div>
+          <div class="body">
+            <div class="pane">
+<div><span class="p">›</span> Explore header IA with an Opus collaborator</div>
+<div class="d">• Sent scoped request to claude-f29f2b380f20</div>
+              <div class="tray" style="width:66%">
+                <div class="th"><svg class="i m"><use href="#doc"/></svg><span class="fn">implementation-plan.html</span><span class="btn"><svg class="i m"><use href="#pop"/></svg></span><span class="btn"><svg class="i m"><use href="#x"/></svg></span></div>
+                <div class="docv" data-doc></div>
+              </div>
+            </div>
+            <aside class="insp">
+              <div class="ih"><b>Reconsider panes, tabs, and sidebar</b><div class="sub">graftty / reconsider-pans-tabs-sidebar</div></div>
+              <div class="seg"><span>Summary</span><span>Pull Request</span><span class="on">Previews</span></div>
+              <div class="plist">
+                <div class="on"><svg class="i m"><use href="#doc"/></svg><span>implementation-plan.html</span><em>2:14 PM</em></div>
+                <div><svg class="i m"><use href="#doc"/></svg><span>sidebar-c-refined.html</span><em>1:51 PM</em></div>
+                <div><svg class="i m"><use href="#doc"/></svg><span>finished-agent-tabs.html</span><em>1:30 PM</em></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <p class="cap">Normal width, on the Previews segment. The selected row and the tray show the same file, so the inspector clearly owns the preview.</p>
+    </div>
+    <div>
+      <div class="win narrow">
+        <div class="detail">
+          <div class="bar inset">
+            <div class="lights"><i></i><i></i><i></i></div><span class="sbtoggle"><svg class="i"><use href="#sbl"/></svg></span>
+            <div class="nav"><span class="btn"><svg class="i"><use href="#cl"/></svg></span><span class="btn off"><svg class="i"><use href="#cr"/></svg></span></div>
+            <div class="crumb"><span class="repo">graftty</span><span class="sep">/</span><span class="emo">🧭</span><span class="wtn">reconsider-pans-tabs-sidebar</span><svg class="i s dd"><use href="#cd"/></svg></div>
+            <div class="spacer"></div>
+            <span class="btn"><svg class="i"><use href="#insp"/></svg></span>
+          </div>
+          <div class="tabs">
+            <div class="tab sel"><svg class="i m"><use href="#codex"/></svg><span class="tt">Codex</span><i class="hollow"></i></div>
+            <div class="newagent"><svg class="i m"><use href="#plus"/></svg>New agent</div>
+          </div>
+          <div class="body">
+            <div class="pane">
+              <div class="tray" style="width:auto;left:10px">
+                <div class="th"><svg class="i m"><use href="#doc"/></svg><span class="fn">implementation-plan.html</span><span class="btn"><svg class="i m"><use href="#pop"/></svg></span><span class="btn"><svg class="i m"><use href="#x"/></svg></span></div>
+                <div class="docv" data-doc></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="cap">Narrow width. The full breadcrumb fits because nothing else competes for the bar. With the sidebar and inspector closed, nothing on screen shows PR status.</p>
+    </div>
+  </div></div>
+  <div class="tradeoffs">
+    <div><h3>Gains</h3><ul>
+      <li>The calmest header: one trailing control, and the whole bar is a drag region.</li>
+      <li>All worktree side material has one home, so there is less to learn.</li>
+    </ul></div>
+    <div><h3>Costs</h3><ul>
+      <li>Reopening the last preview takes two clicks instead of one.</li>
+      <li>PR checks disappear from view whenever the sidebar is hidden.</li>
+      <li>The inspector grows a second navigation layer, which is heavier to build and to test on mobile.</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- ================= OPTION C ================= -->
+<section>
+  <header>
+    <h2>C. Previews are tabs</h2>
+    <p>The header belongs to the worktree: navigation, identity, a compact PR chip, and Context. The tab row belongs to content. An open preview becomes a document tab beside the agents, with its own close button, and New agent stays trailing. The preview no longer floats over an agent.</p>
+  </header>
+  <div class="scroll"><div class="stage">
+    <div>
+      <div class="win normal">
+        <aside class="sb">
+          <div class="tb"><div class="lights"><i></i><i></i><i></i></div><svg class="i"><use href="#sbl"/></svg></div>
+          <div class="repo">graftty</div>
+          <div class="wt"><div class="name"><span>MAIN</span></div></div>
+          <div class="wt sel"><div class="name"><span>RECONSIDER-PANS-TABS-SIDEBAR</span><em>#806</em><em>+4 ~2</em></div>
+            <div class="task">Header information architecture</div>
+            <div class="task">Retain finished agent tabs</div></div>
+          <div class="wt"><div class="name"><span>CRASH-REPORT</span><em>~1</em></div></div>
+        </aside>
+        <div class="detail">
+          <div class="bar">
+            <div class="nav"><span class="btn"><svg class="i"><use href="#cl"/></svg></span><span class="btn off"><svg class="i"><use href="#cr"/></svg></span></div>
+            <div class="crumb"><span class="repo">graftty</span><span class="sep">/</span><span class="emo">🧭</span><span class="wtn">reconsider-pans-tabs-sidebar</span><svg class="i s dd"><use href="#cd"/></svg></div>
+            <div class="spacer"></div>
+            <span class="prtok"><i class="ring"></i>#806<span class="t">Introduce agent workspaces</span></span>
+            <i class="vsep"></i>
+            <span class="btn lbl"><svg class="i"><use href="#insp"/></svg>Context</span>
+          </div>
+          <div class="tabs">
+            <div class="tab"><svg class="i m"><use href="#codex"/></svg><span class="tt">Codex</span><i class="hollow"></i></div>
+            <div class="tab sel"><svg class="i m"><use href="#doc"/></svg><span class="tt">implementation-plan.html</span><span class="x"><svg class="i s"><use href="#x"/></svg></span></div>
+            <div class="newagent"><svg class="i m"><use href="#plus"/></svg>New agent</div>
+          </div>
+          <div class="body">
+            <div class="pane" style="padding:0">
+              <div class="tray full"><div class="docv" data-doc></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="cap">Normal width, with the document tab selected. The preview takes the whole content area, and the toolbar has no preview control at all.</p>
+    </div>
+    <div>
+      <div class="win narrow">
+        <div class="detail">
+          <div class="bar inset">
+            <div class="lights"><i></i><i></i><i></i></div><span class="sbtoggle"><svg class="i"><use href="#sbl"/></svg></span>
+            <div class="nav"><span class="btn"><svg class="i"><use href="#cl"/></svg></span><span class="btn off"><svg class="i"><use href="#cr"/></svg></span></div>
+            <div class="crumb"><span class="emo">🧭</span><span class="wtn">reconsider-pans-tabs-sidebar</span><svg class="i s dd"><use href="#cd"/></svg></div>
+            <div class="spacer"></div>
+            <span class="prtok"><i class="ring"></i>#806</span>
+            <span class="btn"><svg class="i"><use href="#insp"/></svg></span>
+          </div>
+          <div class="tabs">
+            <div class="tab"><svg class="i m"><use href="#codex"/></svg><span class="tt">Codex</span><i class="hollow"></i></div>
+            <div class="tab sel"><svg class="i m"><use href="#doc"/></svg><span class="tt">implementation-plan.html</span><span class="x"><svg class="i s"><use href="#x"/></svg></span></div>
+            <div class="newagent"><svg class="i m"><use href="#plus"/></svg>New agent</div>
+          </div>
+          <div class="body">
+            <div class="pane" style="padding:0">
+              <div class="tray full"><div class="docv" data-doc></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="cap">Narrow width. The PR drops its title, Context becomes an icon, and document tabs truncate before agent tabs do.</p>
+    </div>
+  </div></div>
+  <div class="tradeoffs">
+    <div><h3>Gains</h3><ul>
+      <li>Ownership is obvious: a header row for the worktree and a tab row for content.</li>
+      <li>Previews get Back, close and reorder for free from the tab model.</li>
+    </ul></div>
+    <div><h3>Costs</h3><ul>
+      <li>It changes what a tab is. Today tabs are agents, with status, gray finished state and Resume session.</li>
+      <li>You lose the side-by-side view of an agent and its preview unless you split the tab group.</li>
+      <li>Adds a new layout node to the host protocol, which Mac, mobile and the web client all consume.</li>
+    </ul></div>
+  </div>
+</section>
+</main>
+
+<template id="doc-content">
+  <h4>Agent workspace implementation plan</h4>
+  <p>Graftty should let users create and supervise agents without managing a growing collection of terminal panes. Separate agent identity and assignment lifetime from terminal sessions and their layout.</p>
+  <h5>Product decisions</h5>
+  <ul>
+    <li>Use <b>agent</b> throughout. Harness-native subagents remain useful.</li>
+    <li>New agents open as tabs within a worktree, and users can split groups.</li>
+    <li>Ordinary terminals belong in a bottom drawer with a labeled bar.</li>
+    <li>Introduce <code>graftty agent add</code> for existing and new worktrees.</li>
+    <li>A child explicitly reports completion; the parent closes it.</li>
+  </ul>
+  <h5>Existing code and constraints</h5>
+  <p><code>TeamAgentIdentity</code> and <code>TeamAgentDirectory</code> identify top-level provider sessions and exclude native subagents.</p>
+</template>
+<script>
+const t = document.getElementById('doc-content');
+document.querySelectorAll('[data-doc]').forEach(el => el.appendChild(t.content.cloneNode(true)));
+</script>
+</body>
+</html>
