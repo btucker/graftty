@@ -1403,6 +1403,10 @@ struct IPadDetailColumn: View {
             }))
             .modifier(IPadTerminalDetailChrome())
             .toolbar {
+                if let host, let worktree = selectedWorktree {
+                    ToolbarItem(placement: .topBarTrailing) { WorktreePreviewMenu(host: host, worktree: worktree.path) }
+                }
+
                 // IPAD-1.11: the conditional wraps the whole
                 // `ToolbarItem` (not just its body) so iOS doesn't
                 // reserve a dead leading slot when no attention is set.
@@ -1488,7 +1492,7 @@ struct IPadDetailColumn: View {
                 onSelectPane: onSelectPane,
                 onBackToWorktrees: onBackToWorktrees,
                 workspaceStore: appState.workspaceStore,
-                onNewTerminal: onNewTerminal
+                onNewTerminal: onNewTerminal, attentionContext: appState.sidebarNavigation.worktreeContext(worktree)
             )
             .id("\(host.id)-\(worktree.path)")
         } else {

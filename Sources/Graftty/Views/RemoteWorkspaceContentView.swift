@@ -12,6 +12,7 @@ struct RemoteWorkspaceContentView: View {
     let focused: PaneSlotID?
     let onFocus: (PaneSlotID) -> Void
     var agentScrollbackMap: AgentScrollbackMap?
+    var attentionContext: SidebarWorktreeContext?
     var requestedAgent: String? = nil
     var consumeAgentRequest: () -> Void = {}
     var conversationRequest: @MainActor (String, AgentConversationAction) async throws -> WorktreeManagementResponse = { _, _ in
@@ -29,8 +30,7 @@ struct RemoteWorkspaceContentView: View {
                 .flatMap(UUID.init(uuidString:)).map { PaneSlotID(id: $0) }
     }
     private func title(_ session: String) -> String {
-        worktree.agents?.first { $0.presentationSessionName == session }?.name
-            ?? worktree.layout?.leaves.first { $0.sessionName == session }?.displayTitle ?? "Terminal"
+        worktree.workspaceSessionTitle(session)
     }
     private func select(_ session: String) {
         zoomed = nil
@@ -43,6 +43,7 @@ struct RemoteWorkspaceContentView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
+                WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: select)
                 if let visible = layout.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                     surface(visible, headers: true)
                 } else {
@@ -248,7 +249,7 @@ struct RemoteWorkspaceContentView: View {
                                     .fontWeight(group.selected == session ? .medium : .regular)
                                 if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
                                     AgentStatusBadge(status: agent.status,
-                                        needsInput: worktree.layout?.leaves.first { $0.sessionName == session }?.attentionSource == .agentStop,
+                                        needsInput: (attentionContext ?? SidebarWorktreeContext(worktree: worktree)).needsInput(session: session),
                                         failure: agent.failure,
                                         disconnected: slot(session).map { terminalManager.attachmentFailures[$0] != nil } ?? false,
                                         processObservation: agent.processObservation)

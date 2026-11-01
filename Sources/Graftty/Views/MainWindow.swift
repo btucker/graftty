@@ -108,7 +108,7 @@ struct MainWindow: View {
                 onFocus: { terminalID in
                     attentionOpenGeneration &+= 1
                     remoteViewer.focusTerminal(terminalID)
-                }, agentScrollbackMap: agentScrollbackMap, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, conversationRequest: { id, action in
+                }, agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, conversationRequest: { id, action in
                     try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .agentConversation(worktreeID: snapshot.path, agentID: id, action: action))
                 })
@@ -207,13 +207,23 @@ struct MainWindow: View {
                     onSelectHistory: selectHistoryTarget,
                     onRefreshPR: refreshPR,
                     project: selectedIdentityProject, projectIconData: selectedProjectIconData,
-                    previewWorktreePath: selectedRemoteIdentity == nil ? selectedWorktree?.path : nil,
-                    previewInlinePane: selectedWorktree.flatMap { worktree in
+                    previewWorktreePath: selectedRemoteIdentity.map { "remote-preview:\($0):\(selectedRemoteWorktreeSnapshot?.path ?? "")" } ?? selectedWorktree?.path,
+                    previewInlinePane: selectedRemoteIdentity != nil ? nil : selectedWorktree.flatMap { worktree in
                         worktree.presentationPane.flatMap { slot in
                             worktree.visiblePaneSlots.contains(slot) && !worktree.hasCompletedContent(in: slot) ? slot : nil
                         }
                     },
                     previewWorktreeForPane: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) },
+                    previewCatalogRequest: selectedRemoteIdentity.flatMap { identity in
+                        selectedRemoteWorktreeSnapshot.map { snapshot in
+                            { request in
+                                let response = try await remoteMacsModel.sendWorktreeManagement(identity: identity,
+                                    request: .openResource(worktreeID: snapshot.path, request: request))
+                                guard case .openResource(let result) = response else { throw RemoteOpenStore.Failure.invalidFile }
+                                return result
+                            }
+                        }
+                    },
                     onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil,
                     showsContext: showsWorktreeContext
                 )
@@ -290,7 +300,7 @@ struct MainWindow: View {
                         onActivateTerminal: { terminalID in
                             makePaneFirstResponder(terminalID, when: { terminalManager.focusedTerminalID == terminalID })
                         },
-                        agentScrollbackMap: agentScrollbackMap
+                        agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext
                     )
                     // A hair of breathing room so terminal text doesn't
                     // slam into the sidebar divider.

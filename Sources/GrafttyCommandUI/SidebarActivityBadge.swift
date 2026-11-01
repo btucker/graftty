@@ -12,17 +12,22 @@ public struct SidebarActivityBadge: View {
 
     private var color: Color { kind == .working ? .green : .orange }
     private var label: String {
-        kind == .working ? "\(count) \(count == 1 ? "agent" : "agents") working" : "\(count) needing attention"
+        kind == .working ? "\(count) \(count == 1 ? "agent" : "agents") working" : "Input requested"
     }
 
     @ViewBuilder
     public var body: some View {
         if count > 0 {
-            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .semibold)).fixedSize()
-                .padding(.horizontal, 4).padding(.vertical, 2)
-                .background(color.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
-                .foregroundStyle(color)
-                .help(label).accessibilityLabel(label)
+            Group {
+                if kind == .working {
+                    Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .semibold)).fixedSize()
+                        .padding(.horizontal, 4).padding(.vertical, 2)
+                        .background(color.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
+                } else {
+                    Image(systemName: "hand.raised").font(.system(size: 12))
+                }
+            }
+            .foregroundStyle(color).help(label).accessibilityLabel(label)
         }
     }
 }

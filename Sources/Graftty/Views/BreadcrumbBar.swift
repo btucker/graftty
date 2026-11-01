@@ -28,6 +28,7 @@ struct BreadcrumbBar: View {
     var previewWorktreePath: String? = nil
     var previewInlinePane: PaneSlotID? = nil
     var previewWorktreeForPane: ((PaneSlotID) -> String?)? = nil
+    var previewCatalogRequest: ((RemoteOpenRequest) async throws -> RemoteOpenResponse)? = nil
     var onToggleContext: (() -> Void)? = nil
     var showsContext = false
     @State private var showsHistory = false
@@ -80,7 +81,7 @@ struct BreadcrumbBar: View {
                 HStack(spacing: 2) {
                     if let previewWorktreePath {
                         FilePreviewToolbarButton(worktreePath: previewWorktreePath, inlinePane: previewInlinePane,
-                                                 resolveInlineWorktree: previewWorktreeForPane)
+                                                 resolveInlineWorktree: previewWorktreeForPane, catalogRequest: previewCatalogRequest)
                     }
                     if let onToggleContext {
                         Button(action: onToggleContext) {
@@ -99,6 +100,7 @@ struct BreadcrumbBar: View {
                         .accessibilityIdentifier("worktree.context.open")
                     }
                 }
+                .fixedSize(horizontal: true, vertical: true)
                 .foregroundColor(theme.foreground)
                 .padding(2)
                 .modifier(WorkspaceControlGlass())

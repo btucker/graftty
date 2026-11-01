@@ -24,6 +24,7 @@ struct WorkspaceContentView: View {
     /// terminal. Clicks inside a terminal already make it first responder.
     var onActivateTerminal: (PaneSlotID) -> Void = { _ in }
     var agentScrollbackMap: AgentScrollbackMap?
+    var attentionContext: SidebarWorktreeContext?
     @Environment(\.agentWorkspaceRequest) private var request
     @State private var failure: String?
     @State private var launching = false
@@ -36,6 +37,9 @@ struct WorkspaceContentView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
+                WorkspaceInputRequest(context: attentionContext, selectedSession: worktree.presentationPane.flatMap { worktree.paneSessions[$0] }.map(ZmxLauncher.sessionName(for:))) { session in
+                    if let slot = worktree.paneSessions.first(where: { ZmxLauncher.sessionName(for: $0.value) == session })?.key { selectTab(slot) }
+                }
                 if layout.root != nil {
                     TerminalContentView(terminalManager: terminalManager,
                         splitTree: Binding(get: {
@@ -106,11 +110,11 @@ struct WorkspaceContentView: View {
                             Button { selectTab(tab) } label: {
                                 HStack(spacing: 6) {
                                     AgentProviderIcon(provider: agent(tab)?.provider.rawValue)
-                                    Text(title(tab)).lineLimit(1)
+                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, fallback: agent(tab)?.name ?? "Terminal").lineLimit(1)
                                         .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if let agent = agent(tab) {
                                         AgentStatusBadge(status: agent.status.rawValue,
-                                            needsInput: worktree.paneAttention[tab]?.source == .agentStop,
+                                            needsInput: needsInput(tab),
                                             failure: agent.failure, disconnected: terminalManager.attachmentFailures[tab] != nil,
                                             processObservation: agent.processObservation)
                                     } else if worktree.paneAttention[tab] != nil {
@@ -228,7 +232,7 @@ struct WorkspaceContentView: View {
                     HStack(spacing: 2) {
                 ForEach(layout.terminals, id: \.self) { slot in
                     Button { focus(slot) } label: {
-                        Text(title(slot)).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
+                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, fallback: agent(slot)?.name ?? "Terminal").lineLimit(1).padding(.horizontal, 8).frame(height: 30)
                             .workspaceTabUnderline(selected: layout.selectedTerminal == slot, color: theme.foreground)
                     }.buttonStyle(.plain)
                         .fontWeight(layout.selectedTerminal == slot ? .semibold : .regular)
@@ -303,9 +307,13 @@ struct WorkspaceContentView: View {
                let slot = records.first?.agent.presentationSlotID { focus(slot) }
         }
     }
+    private func needsInput(_ slot: PaneSlotID) -> Bool {
+        if let attentionContext, let session = worktree.paneSessions[slot] { return attentionContext.needsInput(session: ZmxLauncher.sessionName(for: session)) }
+        return worktree.paneAttention[slot]?.source == .agentStop
+    }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
     private func title(_ slot: PaneSlotID) -> String {
-        agent(slot)?.name ?? GrafttyApp.paneTitle(for: slot, terminalManager: terminalManager) ?? "Terminal"
+        SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: agent(slot)?.name ?? "Terminal")
     }
     private func mutate(_ action: (inout WorkspaceLayout<PaneSlotID>) -> Void) {
         var next = layout; action(&next); worktree.workspaceLayout = next
@@ -393,5 +401,18 @@ struct CompletedAgentContent: View {
                     failure = "Could not read transcript: \(error.localizedDescription)"
                 }
             }
+    }
+}
+
+/// Observe title changes inside the label, without invalidating terminal content.
+private struct WorkspaceTerminalTitle: View {
+    let terminalManager: TerminalManager
+    @ObservedObject var invalidations: PaneTitleInvalidationSource
+    let slot: PaneSlotID
+    let fallback: String
+
+    var body: some View {
+        let _ = invalidations.generation
+        Text(SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: fallback))
     }
 }

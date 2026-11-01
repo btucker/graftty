@@ -9,14 +9,15 @@ final class ImagePreviewStore: ObservableObject {
     static let maximumPreviews = 8
 
     struct Preview: Identifiable {
-        let id = UUID()
+        let id: UUID
         let createdAt = Date()
         let createdInstant = ContinuousClock.now
         let files: [FilePreviewFile]
         var filename: String { files.first?.url.lastPathComponent ?? "Preview" }
         var sourceURL: URL? { files.first?.sourceURL }
 
-        init(files: [FilePreviewFile]) {
+        init(files: [FilePreviewFile], id: UUID = UUID()) {
+            self.id = id
             precondition(!files.isEmpty)
             self.files = files
         }

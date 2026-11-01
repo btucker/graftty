@@ -855,7 +855,7 @@ struct SidebarView: View {
                 // longer feed it.
                 attentionStyle: context.question != nil && context.questionPaneID == sessionName ? nil : attention.paneCapsules[terminalID],
                 portBindings: portBindings.bindings[terminalID] ?? [],
-                needsInput: worktree.paneAttention[terminalID]?.source == .agentStop,
+                needsInput: worktree.paneAttention[terminalID]?.source == .agentStop || (context.question != nil && context.questionPaneID == sessionName),
                 agent: context.worktree.agents?.first { $0.id == worktree.agents.first(where: { $0.presentationSlotID == terminalID })?.id },
                 attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
             )

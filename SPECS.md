@@ -146,7 +146,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
 
-**LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.
+**LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and identify pending user requests with an orange waiting glyph instead of numeric attention badges, excluding routine recaps and command-finished markers.
 
 **LAYOUT-2.59** When a remote worktree selection changes to another Mac with the same worktree path, the application shall update the selected project and remembered worktree for that Mac.
 
@@ -264,7 +264,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.124** While a repository's home checkout identity is displayed or serialized, the application shall use its current project icon and project fallback instead of any stored worktree emoji, including after restoration, while retaining linked worktree identities.
 
-**LAYOUT-2.125** When a worktree has a pending agent question, the application shall keep the full question inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.
+**LAYOUT-2.125** When a worktree has a pending agent question, the application shall keep a two-line question preview inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.
 
 **LAYOUT-2.126** When a remote client receives a retained agent recap, the application shall expose its context without counting it as a pending request and decode snapshots from older hosts without a retained recap.
 
@@ -306,7 +306,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.149** When a worktree is added while recent activity order is selected, the application shall place its creating row first among temporary worktrees, retain its creation time across completion and relaunch, and allow later activity to move other worktrees above it.
 
-**LAYOUT-2.150** While a stopped agent request remains pending, the application shall display its inline question and attention count even in the selected worktree when pane liveness still reports busy, until the request is dismissed or its provider reports progress.
+**LAYOUT-2.150** While a stopped agent request remains pending, the application shall display its inline question and waiting glyph even in the selected worktree when pane liveness still reports busy, until the request is dismissed or its provider reports progress.
 
 **LAYOUT-2.151** When the user clicks the macOS sidebar search field, the application shall focus an editable search control below the native toolbar and filter worktrees as the user types, including after resizing.
 
@@ -380,13 +380,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.187** While an agent is running without a failure or input request, its shared tab and sidebar status badge shall display an indeterminate progress indicator; waiting, completed, failed, and disconnected agents shall display their corresponding static status symbols.
 
-**LAYOUT-2.188** While a live agent is listed in the sidebar, the application shall use its current terminal title and fall back to its assignment name only when the terminal title is blank.
+**LAYOUT-2.188** While a live agent is listed in the sidebar or agent tabs, the application shall use its current terminal title and fall back to its assignment name only when the terminal title is blank.
 
 **LAYOUT-2.189** When a removable linked worktree has a merged PR or MR, the sidebar shall replace its Git divergence counts with a remove button that invokes the existing worktree deletion flow.
 
 **LAYOUT-2.190** When the user selects a live agent tab, the application shall give that agent's terminal keyboard focus.
 
+**LAYOUT-2.191** When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.
+
 **LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it on the right behind the window header and the top row of agent tabs, leaving terminal content and emoji-less worktrees unchanged.
+
+**LAYOUT-2.193** While an agent has a live input request, the application shall use the same waiting state in its sidebar and tab, retain the question when its worktree opens, and clear that state when the request is dismissed or its provider resumes.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -4254,13 +4258,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.9** When preview file loading finishes after a newer request or dismissal, the application shall discard the older result instead of replacing or resurrecting the pane preview.
 
-**IMAGE-1.10** When graftty image identifies its originating pane, the application shall use registered session membership after directory changes, route iOS leadership to native mobile offers, and reject unsupported or other Mac leaders without opening on the host Mac.
+**IMAGE-1.10** When graftty image identifies its originating pane, the application shall use registered session membership after directory changes, route iOS leadership to native mobile offers, and decline automatic delivery for unsupported or other Mac leaders without opening on the host Mac.
 
 **IMAGE-1.11** While the native image tray is visible, the application shall keep terminal content below it clickable and at its original size.
 
 **IMAGE-1.12** When a mobile leader receives an image request, the application shall offer the validated file snapshot for its originating pane, replacing that pane's previous image offer without rereading a changed file.
 
-**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit file preview intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.
+**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit file preview intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, retain previews without an available leader for manual worktree browsing, and reject unmappable recipients and invalid origins before publication.
 
 **IMAGE-1.14** While the native preview tray toolbar is visible, the application shall keep collection navigation, file selection, Open… and Close controls legible and reachable in both wide and narrow panes.
 
@@ -4295,6 +4299,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IMAGE-2.10** While a mobile image preview is mounted, the application shall retain its local file and presentation across temporary scene pauses and system sharing, until actual pane, ownership or offer changes or dismissal.
 
 **IMAGE-2.11** When the mobile pane lacks horizontal room for Preview and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.
+
+**IMAGE-2.12** When files are previewed in a worktree, the host shall retain their immutable collections for all authorized clients of that worktree, independently of the originating pane, display owner, and temporary delivery expiry.
+
+**IMAGE-2.13** When a preview's automatic delivery expires or is withdrawn, the host shall retain it in the worktree library without automatically reopening it on a device.
+
+**IMAGE-2.14** When a client browses worktree previews, the application shall show the newest collection first, preserve file order within each collection, and include previews from other panes and devices without including ordinary browser offers.
 
 ## PREVIEW — Native File Preview
 

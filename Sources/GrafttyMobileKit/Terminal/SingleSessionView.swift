@@ -525,7 +525,7 @@ struct SingleSessionView: View {
             if let workspace = compactWorkspace {
                 Text(workspace.displayName).font(.subheadline).lineLimit(1).foregroundStyle(terminalTheme.foreground)
                     .frame(maxWidth: .infinity).padding(.leading, 68).padding(.trailing, 120).frame(height: 64)
-                CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession, hostID: step.host.id, theme: terminalTheme)
+                CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession, attentionContext: worktreeContext, hostID: step.host.id, host: step.host, theme: terminalTheme)
             }
             if isCompactShellRoute {
                 ContentUnavailableView("Select an agent", systemImage: "terminal",

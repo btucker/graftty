@@ -4,19 +4,21 @@ import SwiftUI
 /// as one concatenated `Text` so both tokens share a text run (native
 /// baseline/kerning, no HStack gap) while carrying their own colors. The
 /// ahead side shows `↑0+` when there are uncommitted changes so the dirty
-/// indicator never disappears; the behind side is red. Callers decide when
+/// indicator never disappears; the behind side uses a less-muted foreground. Callers decide when
 /// stats are empty enough to omit the gutter.
 public struct SidebarDivergenceGutter: View {
     let ahead: Int
     let behind: Int
     let hasUncommittedChanges: Bool
     let aheadColor: Color
+    let behindColor: Color
 
-    public init(ahead: Int, behind: Int, hasUncommittedChanges: Bool, aheadColor: Color) {
+    public init(ahead: Int, behind: Int, hasUncommittedChanges: Bool, aheadColor: Color, behindColor: Color = .primary.opacity(0.75)) {
         self.ahead = ahead
         self.behind = behind
         self.hasUncommittedChanges = hasUncommittedChanges
         self.aheadColor = aheadColor
+        self.behindColor = behindColor
     }
 
     public var body: some View {
@@ -30,7 +32,7 @@ public struct SidebarDivergenceGutter: View {
         let aheadText = Text("↑\(ahead)\(hasUncommittedChanges ? "+" : "")")
             .foregroundColor(aheadColor)
         let behindText = Text("↓\(behind)")
-            .foregroundColor(.red)
+            .foregroundColor(behindColor)
         switch (aheadShown, behindShown) {
         case (true, true): return aheadText + Text(" ") + behindText
         case (true, false): return aheadText

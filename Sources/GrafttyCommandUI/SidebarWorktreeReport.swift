@@ -7,15 +7,11 @@ public struct SidebarWorktreeQuestion: View {
 
     public var body: some View {
         if let question = context.question {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Needs your input").font(.caption2).fontWeight(.semibold).foregroundStyle(.orange)
-                Text(question).font(.caption).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.leading, 9)
-            .overlay(alignment: .leading) { Rectangle().fill(.orange.opacity(0.7)).frame(width: 2) }
-            .padding(.vertical, 5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+            Text(question).font(.caption).foregroundStyle(.orange)
+                .lineLimit(2).help(question)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 3)
+                .accessibilityLabel("Needs your input: " + question)
         }
     }
 }
@@ -179,5 +175,32 @@ public struct SidebarWorktreePorts: View {
                 .accessibilityLabel("Open port \(String(port.port)), \(port.processName)")
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A request remains visible without changing the selected agent or terminal.
+public struct WorkspaceInputRequest: View {
+    public let context: SidebarWorktreeContext?
+    public let selectedSession: String?
+    public let onSelect: (String) -> Void
+
+    public init(context: SidebarWorktreeContext?, selectedSession: String?, onSelect: @escaping (String) -> Void) {
+        self.context = context; self.selectedSession = selectedSession; self.onSelect = onSelect
+    }
+
+    public var body: some View {
+        if let context, let question = context.question {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "hand.raised").foregroundStyle(.orange)
+                Text(question).font(.callout).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let session = context.questionPaneID, session != selectedSession {
+                    Button("Go to question") { onSelect(session) }.font(.caption)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(Color.orange.opacity(0.06))
+            .accessibilityElement(children: .contain)
+        }
     }
 }

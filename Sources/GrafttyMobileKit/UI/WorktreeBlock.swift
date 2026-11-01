@@ -134,7 +134,7 @@ struct WorktreeBlock: View {
                         isFocusedPane: false, isActiveWorktree: isActive,
                         isBusy: leaf.isBusy, attentionStyle: style,
                         attentionCount: context.pending.filter { $0.paneID == leaf.sessionName }.count,
-                        theme: theme, needsInput: leaf.attentionSource == .agentStop, agent: worktree.agents?.first { $0.sessionName == leaf.sessionName })
+                        theme: theme, needsInput: leaf.attentionSource == .agentStop || isQuestionPane, agent: worktree.agents?.first { $0.sessionName == leaf.sessionName })
                         .padding(.leading, 18)
                     if isQuestionPane {
                         SidebarWorktreeQuestion(context: context)
@@ -280,7 +280,7 @@ struct DivergenceGutter: View {
         if let stats, !stats.isEmpty {
             SidebarDivergenceGutter(ahead: stats.ahead, behind: stats.behind,
                 hasUncommittedChanges: stats.hasUncommittedChanges,
-                aheadColor: Self.aheadColor(theme))
+                aheadColor: Self.aheadColor(theme), behindColor: (theme?.foreground ?? .primary).opacity(0.75))
         }
     }
 }

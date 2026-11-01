@@ -64,6 +64,7 @@ public struct WorktreeDetailView: View {
                 )
             }
         }
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { WorktreePreviewMenu(host: host, worktree: worktree.path) } }
         .navigationTitle(currentWorktree.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: CreationKey(identity: creationIdentity,

@@ -18,6 +18,8 @@ struct MultiPaneDetailView: View {
     let onBackToWorktrees: () -> Void
     let workspaceStore: MobileWorkspaceStore
     var onNewTerminal: () -> Void = {}
+    var attentionContext: SidebarWorktreeContext? = nil
+    private var context: SidebarWorktreeContext { attentionContext ?? SidebarWorktreeContext(worktree: worktree) }
 
     @Environment(\.retainedMobilePanes) private var retainedPanes
     @State private var drawerResizeStart: Double?
@@ -32,6 +34,7 @@ struct MultiPaneDetailView: View {
                 MobileCreationDetailView(host: host, worktree: worktree, theme: theme)
             } else if worktree.layout != nil || currentWorkspace.root != nil {
                 VStack(spacing: 0) {
+                    WorkspaceInputRequest(context: context, selectedSession: focusedPaneId, onSelect: selectSession)
                     if let visible = currentWorkspace.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                         render(visible, at: .root)
                     } else {
@@ -167,7 +170,7 @@ struct MultiPaneDetailView: View {
         onSelectPane(session)
     }
     private func sessionTitle(_ session: String) -> String {
-        worktree.agents?.first { $0.presentationSessionName == session }?.name ?? worktree.layout?.title(for: session) ?? "Terminal"
+        worktree.workspaceSessionTitle(session)
     }
     private func tabHeader(_ group: WorkspaceLayout<String>.Group) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -180,7 +183,7 @@ struct MultiPaneDetailView: View {
                                 .fontWeight(group.selected == session ? .medium : .regular)
                             if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
                                 MobileAgentStatusBadge(agent: agent, hostID: host.id,
-                                    needsInput: worktree.layout?.leaves.first { $0.sessionName == session }?.attentionSource == .agentStop)
+                                    needsInput: context.needsInput(session: session))
                             }
                         }.padding(.horizontal, 10).frame(minHeight: 44)
                             .foregroundStyle(theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
