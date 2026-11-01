@@ -4832,7 +4832,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-8.x
 
-**CONTEXT-8** While a local or remote Mac worktree has a retained brief, the application shall display its context or completed result beneath its sidebar name even after the request is acknowledged.
+**CONTEXT-8** While a local or remote Mac worktree has an acknowledged brief, the application shall retain its context and completed result without adding a description beneath its compact sidebar heading.
 
 ### CONTEXT-9.x
 
