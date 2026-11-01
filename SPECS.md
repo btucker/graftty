@@ -758,6 +758,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.50** When a Mac terminal receives a live source-grid acknowledgment, the application shall update its parser grid without refitting the owner viewport or entering checkpoint-restore presentation.
 
+**TERM-12.51** If restoring a terminal checkpoint fails, then the application shall leave the restoring state, offer recovery from the live screen, and accept the same checkpoint when it arrives again.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
