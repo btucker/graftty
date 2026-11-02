@@ -3,7 +3,7 @@ import GrafttyProtocol
 import Testing
 
 struct AgentStatusBadgeTests {
-    @Test("@spec AGENT-2.7: While a running agent's pane reports its turn as stopped, the application shall show the agent as idle instead of a working spinner, and shall keep the spinner while the turn is busy or its activity is unknown.")
+    @Test("@spec AGENT-2.7: While a running agent's pane has a liveness registry, the application shall spin only for observed busy turns and treat missing entries as idle; without a registry it shall preserve the working spinner for unknown activity.")
     func stoppedTurnStopsSpinning() {
         #expect(!AgentStatusBadge.spins(status: .running, failure: nil, isBusy: false))
         #expect(AgentStatusBadge.spins(status: .running, failure: nil, isBusy: true))

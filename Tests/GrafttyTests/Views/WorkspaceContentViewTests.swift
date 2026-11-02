@@ -7,6 +7,17 @@ import GrafttyProtocol
 
 @MainActor
 struct WorkspaceContentViewTests {
+    @Test func absentLivenessEntryMatchesRemoteIdleProjection() {
+        let slot = PaneSlotID(), session = PaneSessionID()
+        var entry = WorktreeEntry(path: "/repo", branch: "main", state: .running)
+        entry.paneSessions = [slot: session]
+        let registry = ClaudeSessionRegistry()
+        let view = WorkspaceContentView(terminalManager: TerminalManager(socketPath: "/tmp/graftty-tab-busy-test.sock"),
+            worktree: .constant(entry), onFocusTerminal: { _ in }, onNewTerminal: {}, onCloseTerminal: { _ in },
+            agentLiveness: registry)
+        #expect(view.isBusy(slot) == false)
+    }
+
     @Test("@spec AGENT-6.134: When cleanup captures a transcript for the selected finished tab, the application shall refresh its result pane without requiring the user to switch tabs.")
     func cleanupReloadsMountedTranscript() async throws {
         _ = NSApplication.shared

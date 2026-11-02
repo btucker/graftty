@@ -23,7 +23,6 @@ struct RemoteWorkspaceContentView: View {
     @State private var drawerResizeStart: Double?
 
     private var layout: WorkspaceLayout<String> { workspace ?? .initial(for: worktree) }
-    private var key: String { "remote.workspace.\(identity).\(worktree.path)" }
     private func slot(_ session: String) -> PaneSlotID? {
         viewer.existingTerminalID(identity: identity, worktreePath: worktree.path, sessionName: session)
             ?? worktree.agents?.first(where: { $0.presentationSessionName == session })?.retainedSlotID
@@ -88,8 +87,7 @@ struct RemoteWorkspaceContentView: View {
             }
         }
         .onAppear {
-            workspace = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0) }
-                ?? .initial(for: worktree)
+            workspace = viewer.workspaceLayout(identity: identity, worktree: worktree)
             reconcile()
             showRequestedAgent()
             revealFocused()
@@ -108,7 +106,7 @@ struct RemoteWorkspaceContentView: View {
         .onChange(of: workspace) { _, value in
             reconcileZoom()
             publishVisibility()
-            if let value, let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
+            if let value { viewer.saveWorkspaceLayout(value, identity: identity, worktreePath: worktree.path) }
         }
         .onChange(of: zoomed) { _, _ in publishVisibility() }
     }
@@ -262,7 +260,7 @@ struct RemoteWorkspaceContentView: View {
                                     Rectangle().fill(group.selected == session ? terminalManager.theme.foreground.opacity(0.55) : .clear)
                                         .frame(height: 2)
                                 }
-                        }.buttonStyle(.plain).draggable(WorkspaceTabDrag(session))
+                        }.buttonStyle(.plain).workspaceTabDragSource(session, onSelect: { select(session) })
                             .modifier(WorkspaceTabDropTarget { source, after in
                                 let sameGroup = layout.group(containing: source)?.id == group.id
                                 if workspace?.moveTab(source, relativeTo: session, after: after) == true && !sameGroup { select(source) }

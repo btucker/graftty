@@ -362,7 +362,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.177** While a terminal attachment is loading or unavailable, the application shall keep its tab header mounted so users can select another session.
 
-**LAYOUT-2.178** While a worktree is shown in the sidebar, the application shall list only its live agent sessions with provider identity and retain ordinary terminals in the complete workspace inventory.
+**LAYOUT-2.178** While a worktree displays agent tabs, the application shall list only those tabs in its sidebar in canvas group and tab order, exclude terminal drawer sessions, and retain completed tabs until dismissed.
 
 **LAYOUT-2.179** When the user opens an empty terminal drawer, the application shall request its first terminal automatically; reopening a populated drawer shall reuse its selected terminal.
 
@@ -397,6 +397,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.195** While a workspace shows agent tabs, the application shall draw each tab row flush with its pane's leading edge and inset only leading-edge pane content from the sidebar divider.
 
 **LAYOUT-2.196** While an agent has a live input request, the application shall show the request directly under the tabs of the asking agent's pane, or of the focused pane when the request belongs to no pane, rather than above every pane's tabs.
+
+**LAYOUT-2.197** When the user drags an agent tab on Mac, the application shall start a native in-app tab drag after the drag threshold, preserve contextual menus, and select a tab on click without selecting it on drag.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -4408,7 +4410,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.6** The application shall bound each `claude agents --json` and `ps` liveness-poll subprocess with a 5-second timeout, and if that timeout expires, then the application shall produce an empty Claude polling result so the next tick can poll again.
 
-**AGENT-2.7** While a running agent's pane reports its turn as stopped, the application shall show the agent as idle instead of a working spinner, and shall keep the spinner while the turn is busy or its activity is unknown.
+**AGENT-2.7** While a running agent's pane has a liveness registry, the application shall spin only for observed busy turns and treat missing entries as idle; without a registry it shall preserve the working spinner for unknown activity.
 
 **AGENT-2.8** While an agent's turn is busy, the application shall show no spinner on its sidebar row, because the agent's terminal title carries its own activity indicator, while agent tabs keep the spinner.
 

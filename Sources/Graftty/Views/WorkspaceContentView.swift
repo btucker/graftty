@@ -132,7 +132,7 @@ struct WorkspaceContentView: View {
                                     }
                             }.buttonStyle(.plain)
                                 .accessibilityAddTraits(group?.selected == tab ? .isSelected : [])
-                                .draggable(WorkspaceTabDrag(tab.id.uuidString))
+                                .workspaceTabDragSource(tab.id.uuidString, onSelect: { selectTab(tab) })
                                 .modifier(WorkspaceTabDropTarget { value, after in
                                     guard let id = UUID(uuidString: value) else { return }
                                     let source = PaneSlotID(id: id)
@@ -332,9 +332,10 @@ struct WorkspaceContentView: View {
         if let attentionContext, let session = worktree.paneSessions[slot] { return attentionContext.needsInput(session: ZmxLauncher.sessionName(for: session)) }
         return worktree.paneAttention[slot]?.source == .agentStop
     }
-    private func isBusy(_ slot: PaneSlotID) -> Bool? {
+    func isBusy(_ slot: PaneSlotID) -> Bool? {
         guard let agentLiveness, let session = worktree.paneSessions[slot] else { return nil }
-        return agentLiveness.livenessBySession[ZmxLauncher.sessionName(for: session)].map { $0 == .busy }
+        return AgentLivenessMerge.isPaneBusy(sessionName: ZmxLauncher.sessionName(for: session),
+            liveness: agentLiveness.livenessBySession)
     }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
     private func title(_ slot: PaneSlotID) -> String {

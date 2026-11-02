@@ -132,6 +132,9 @@ struct MainWindow: View {
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
                 remoteMacsModel: remoteMacsModel,
+                remoteWorkspaceLayout: { identity, worktree in
+                    remoteViewer.workspaceLayout(identity: identity, worktree: worktree)
+                },
                 appStateChanges: appStateChanges,
                 selectedRemoteIdentity: selectedRemoteIdentity,
                 selectedRemoteWorktreePath: selectedRemoteWorktreePath,

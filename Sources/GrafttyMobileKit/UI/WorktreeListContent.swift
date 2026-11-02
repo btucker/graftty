@@ -66,6 +66,7 @@ public struct WorktreeListContent: View {
     private var remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
     private var remoteUpdatesProvider: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)?
     private var navigationWindowWidth: Double
+    private let workspaceLayout: (UUID, WorktreePanes) -> WorkspaceLayout<String>
 
     private struct PendingDelete: Identifiable, Equatable {
         let id = UUID()
@@ -133,7 +134,8 @@ public struct WorktreeListContent: View {
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
         project: SidebarProject? = nil,
-        onSelectWorktreeDetail: ((WorktreePanes) -> Void)? = nil
+        onSelectWorktreeDetail: ((WorktreePanes) -> Void)? = nil,
+        workspaceLayout: @escaping (UUID, WorktreePanes) -> WorkspaceLayout<String> = { _, row in .initial(for: row) }
     ) {
         self.host = host
         self.isSidebar = isSidebar
@@ -148,6 +150,7 @@ public struct WorktreeListContent: View {
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail
+        self.workspaceLayout = workspaceLayout
         self.navigation = navigation ?? SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
         self.navigationWindowWidth = navigationWindowWidth
         self.remoteSidebarProvider = remote.sidebar
@@ -847,6 +850,7 @@ public struct WorktreeListContent: View {
                                             focusedPaneId: focusedPaneId,
                                             projectColumn: true,
                                             context: navigation.worktreeContext(wt),
+                                            workspace: workspaceLayout(host.id, wt),
                                             onSelect: {
                                                 beginSelectingWorktree(wt)
                                             },

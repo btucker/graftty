@@ -45,6 +45,10 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public var drawerVisible: Bool
     public var drawerHeight: Double
     public var sessions: [Session] { groups.flatMap(\.sessions) + terminals }
+    /// Visible canvas groups in spatial order, with each group's tab order.
+    public var canvasSessions: [Session] {
+        (root?.groupIDs ?? []).flatMap { id in groups.first { $0.id == id }?.sessions ?? [] }
+    }
 
     public init(root: Node? = nil, groups: [Group] = []) {
         version = 1
