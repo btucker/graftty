@@ -4918,6 +4918,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.155** When a mobile client creates a pane and a provider starts there, the host shall treat the observed additional session as ongoing without bounded finish instructions or parent cleanup eligibility.
 
+**AGENT-6.156** While an iPhone agent launch awaits the host's response, the application shall keep existing-agent selection and Terminal available in the agent dropdown and disable additional launches.
+
 ## CLI — CLI
 
 ### CLI-1.x

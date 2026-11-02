@@ -22,14 +22,17 @@ public struct NewAgentMenu: View {
                 menuContent
                 Divider()
             }
-            Button("New default agent") { start(nil) }
-            Divider()
-            Button { start("codex") } label: {
-                Label { Text("New Codex agent") } icon: { AgentProviderIcon(provider: "codex") }
+            Group {
+                Button("New default agent") { start(nil) }
+                Divider()
+                Button { start("codex") } label: {
+                    Label { Text("New Codex agent") } icon: { AgentProviderIcon(provider: "codex") }
+                }
+                Button { start("claude") } label: {
+                    Label { Text("New Claude agent") } icon: { AgentProviderIcon(provider: "claude") }
+                }
             }
-            Button { start("claude") } label: {
-                Label { Text("New Claude agent") } icon: { AgentProviderIcon(provider: "claude") }
-            }
+            .disabled(launching)
         } label: {
             if let label {
                 label.opacity(launching ? 0.3 : 1)
@@ -42,7 +45,7 @@ public struct NewAgentMenu: View {
                 #endif
             }
         }
-        .disabled(launching)
+        .disabled(launching && menuContent == nil)
         .accessibilityIdentifier("workspace.agent.add")
         .alert("Could not start agent", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") { failure = nil }

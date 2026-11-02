@@ -120,6 +120,29 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
 
 @MainActor
 final class RecentPaneInteractionTests: XCTestCase {
+    /// @spec AGENT-6.156: While an iPhone agent launch awaits the host's response, the application shall keep existing-agent selection and Terminal available in the agent dropdown and disable additional launches.
+    func testAgentMenuRemainsUsableWhileLaunchIsPending() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--agent-menu-delay-fixture"]
+        app.launch()
+        defer { app.terminate() }
+        let menu = app.buttons["Agent menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        app.buttons["New default agent"].tap()
+        XCTAssertTrue(app.staticTexts["Starting fixture agent"].waitForExistence(timeout: 5))
+        XCTAssertTrue(menu.isEnabled, "Pending creation must not disable existing-agent and Terminal access")
+        guard menu.isEnabled else { return }
+        menu.tap()
+        XCTAssertFalse(app.buttons["New default agent"].isEnabled, "A second creation must remain disabled")
+        app.buttons["Existing agent"].tap()
+        XCTAssertTrue(app.staticTexts["Selected existing agent"].waitForExistence(timeout: 5))
+        menu.tap()
+        app.buttons["Terminal"].tap()
+        XCTAssertTrue(app.staticTexts["Opened Terminal"].waitForExistence(timeout: 5))
+        app.buttons["Finish launch"].tap()
+    }
+
     func testBackLongPressJumpsToTheRenderedPaneAndRejectsStaleTargets() {
         let app = XCUIApplication()
         app.launchArguments = ["--recent-panes-fixture"]

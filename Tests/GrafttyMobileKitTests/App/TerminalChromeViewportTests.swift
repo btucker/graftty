@@ -16,6 +16,41 @@ import UIKit
 @Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
 @MainActor
 struct RenderedTerminalViewportTests {
+    @Test("Pending questions stay clear of a lone prompt and completed-agent actions.", arguments: [false, true])
+    func pendingQuestionDoesNotCoverContent(completed: Bool) async throws {
+        let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let question = "Should I keep the current implementation or try a different approach before opening the pull request?"
+        let fixture = makeFixture(client: client, agentWorkspace: true, question: question, completed: completed)
+        defer { fixture.window.isHidden = true }
+        try await waitForLayout("pending question") {
+            fixture.host.view.layoutIfNeeded()
+            return accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == question }
+        }
+        let request = try #require(accessibilityObjects(in: fixture.host.view).first { $0.accessibilityLabel == question })
+        if completed {
+            try await waitForLayout("completed agent resume action") {
+                fixture.host.view.layoutIfNeeded()
+                return accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Resume session" }
+            }
+            let resume = try #require(accessibilityObjects(in: fixture.host.view).first { $0.accessibilityLabel == "Resume session" })
+            #expect(resume.accessibilityFrame.minY >= request.accessibilityFrame.maxY + 8)
+        } else {
+            let container = try await renderedContainer(in: fixture.host.view)
+            client.session.receive(Data("prompt".utf8))
+            try await waitForLayout("first prompt") { client.session.readViewportText()?.contains("prompt") == true }
+            let text = container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
+            #expect(text.minY >= request.accessibilityFrame.maxY + 8)
+            #expect(abs(container.convert(container.bounds, to: fixture.window).minY) < 1)
+            client.session.receive(Data("\r\nsecond line".utf8))
+            try await waitForLayout("populated terminal still reaches top") {
+                abs(container.terminalView.convert(container.terminalView.bounds, to: fixture.window).minY) < 1
+            }
+        }
+    }
+
     @Test("Floating agent controls share one safe-area row at narrow widths and large text sizes.", arguments: [CGFloat(320), CGFloat(390), CGFloat(844)], [false, true])
     func compactHeaderFitsWithoutCoveringAdjacentControls(width: CGFloat, largeText: Bool) async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
@@ -311,12 +346,20 @@ struct RenderedTerminalViewportTests {
 
     private func makeFixture(client: SessionClient, keyboardInset: CGFloat = 0, embedded: Bool = false, agentWorkspace: Bool = false,
                              size: CGSize? = nil, largeText: Bool = false,
+                             question: String? = nil, completed: Bool = false,
                              sharedKeyboard: KeyboardFrameObservation? = nil) -> (window: UIWindow, host: UIHostingController<AnyView>) {
+        let leaf = PaneLayoutNode.leaf(sessionName: "viewport", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil)
+        let layout = question.map { question in
+            PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: leaf,
+                right: .leaf(sessionName: "other", title: "Other agent", attentionText: question, isBusy: false, attentionSource: .agentStop))
+        } ?? leaf
         let workspace = WorktreePanes(path: "/repo", displayName: "Phone header", repoDisplayName: "Repo", displayBranch: "phone-header",
             state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
-            layout: .leaf(sessionName: "viewport", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil),
+            layout: layout,
             sidebar: .init(id: "repo", projectID: "project", emoji: "🔥"),
-            agents: [.init(id: "agent", name: "Agent", provider: "codex", status: "running", sessionName: "viewport")])
+            agents: [.init(id: "agent", name: "Agent", provider: "codex", status: completed ? "closed" : "running",
+                sessionName: completed ? nil : "viewport", completionID: completed ? "done" : nil,
+                result: completed ? "Finished" : nil, retainedSessionName: completed ? "viewport" : nil)])
         let terminal = SingleSessionView(
             step: SessionStep(host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!),
                               worktreePath: agentWorkspace ? workspace.path : nil, sessionName: "viewport", title: "Shell"),

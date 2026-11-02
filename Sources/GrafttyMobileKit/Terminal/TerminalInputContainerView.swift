@@ -51,6 +51,9 @@ public final class TerminalInputContainerView: UIView,
             setNeedsLayout()
         }
     }
+    var topChromeClearance: CGFloat = 68 {
+        didSet { if topChromeClearance != oldValue { setNeedsLayout() } }
+    }
     private var needsFirstLineClearance = true
     private(set) var firstLineClearanceReadCountForTesting = 0
     /// Retained panes keep receiving output offscreen. Their clearance is
@@ -126,8 +129,9 @@ public final class TerminalInputContainerView: UIView,
             CGFloat($0.cellHeightPixels) / max(1, terminalView.contentScaleFactor)
                 * (canvas?.scale ?? 1) * (canvas == nil ? 1 : snapshotScrollView.followerZoomScale)
         } ?? 0
-        // Fullscreen Back occupies 44pt, with 12pt above and below it.
-        let clearance = onBackRequested == nil ? rowHeight : max(rowHeight, 68)
+        // Fullscreen Back reserves 68pt by default. A measured header can
+        // also clear a pending question without insetting populated output.
+        let clearance = onBackRequested == nil ? rowHeight : max(rowHeight, topChromeClearance)
         return min(safeAreaInsets.top + clearance, max(0, bounds.height - 1))
     }
 

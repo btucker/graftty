@@ -64,6 +64,9 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// Keeps the first row below top chrome while the scroll viewport fills
     /// the pane. Preview tiles do not reserve interactive chrome space.
     public let reservesTopChromeSpace: Bool
+    /// Height of fullscreen floating controls and any input request, excluding
+    /// the safe area. Applied only while protecting a lone first line.
+    public let topChromeClearance: CGFloat
     public let showsAdditionalHistory: Bool
     public let pendingFocusRequests: Int
     /// Fired once per successful keyboard focus so the owners of the
@@ -118,6 +121,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         controller: TerminalController,
         authoritativeGrid: SessionClient.GridSize? = nil,
         reservesTopChromeSpace: Bool = false,
+        topChromeClearance: CGFloat = 68,
         showsAdditionalHistory: Bool = false,
         pendingFocusRequests: Int = 0,
         onFocusRequestsConsumed: (() -> Void)? = nil,
@@ -142,6 +146,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.controller = controller
         self.authoritativeGrid = authoritativeGrid
         self.reservesTopChromeSpace = reservesTopChromeSpace
+        self.topChromeClearance = topChromeClearance
         self.showsAdditionalHistory = showsAdditionalHistory
         self.pendingFocusRequests = pendingFocusRequests
         self.onFocusRequestsConsumed = onFocusRequestsConsumed
@@ -190,6 +195,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.controlAttachmentID = context.coordinator.controlAttachmentID
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.reservesTopChromeSpace = reservesTopChromeSpace
+        view.topChromeClearance = topChromeClearance
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.controller = controller
@@ -222,6 +228,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         guard view.controlAttachmentID == context.coordinator.controlAttachmentID else { return }
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.reservesTopChromeSpace = reservesTopChromeSpace
+        view.topChromeClearance = topChromeClearance
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))

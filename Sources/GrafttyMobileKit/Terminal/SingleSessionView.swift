@@ -103,6 +103,7 @@ struct SingleSessionView: View {
     @State private var windowBottom: CGFloat = 0
     @State private var containedContentBottom: CGFloat = 0
     @State private var topSafeAreaInset: CGFloat = 0
+    @State private var compactHeaderHeight: CGFloat = 0
     private var containerBottomInset: CGFloat { max(0, windowBottom - containedContentBottom) }
     private var isCompactShellRoute: Bool { compactWorkspace != nil && sessionAgent == nil }
     /// Embedded panes let their shared multi-pane parent manage the keyboard
@@ -565,7 +566,7 @@ struct SingleSessionView: View {
             if isEmbeddedPane, let embeddedPaneBanner { embeddedPaneBanner }
             if isCompactShellRoute {
                 ContentUnavailableView("Select an agent", systemImage: "terminal",
-                    description: Text("Choose an agent above, or open Terminal from the top-right controls."))
+                    description: Text("Choose an agent or open Terminal from the agent menu above."))
                     .foregroundStyle(terminalTheme.foreground)
                     .padding(.top, compactContentTopInset)
             } else if let agent = completedAgent, let path = step.worktreePath {
@@ -822,7 +823,8 @@ struct SingleSessionView: View {
             }
     }
 
-    private var compactContentTopInset: CGFloat { compactWorkspace == nil ? 0 : topSafeAreaInset + 68 }
+    private var floatingChromeClearance: CGFloat { compactWorkspace == nil ? 68 : max(68, compactHeaderHeight + 12) }
+    private var compactContentTopInset: CGFloat { compactWorkspace == nil ? 0 : topSafeAreaInset + floatingChromeClearance }
 
     private func compactFloatingHeader(_ workspace: WorktreePanes) -> some View {
         let generation = agentLaunchSelection.generation
@@ -844,6 +846,7 @@ struct SingleSessionView: View {
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         }
         .padding(.horizontal, 12).padding(.top, 12)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { compactHeaderHeight = $0 }
         .foregroundStyle(terminalTheme.foreground)
         .environment(\.colorScheme, terminalTheme.isDark ? .dark : .light)
     }
@@ -1350,6 +1353,7 @@ struct SingleSessionView: View {
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
             reservesTopChromeSpace: !isEmbeddedPane && !isTerminalSheet,
+            topChromeClearance: floatingChromeClearance,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)

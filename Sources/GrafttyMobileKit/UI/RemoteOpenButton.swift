@@ -273,7 +273,7 @@ struct RemoteOpenButton: View {
     @ViewBuilder
     private func resourceButtons(actionID: UUID) -> some View {
         if showsPreviewLibrary {
-            WorktreePreviewMenu(host: host, worktree: worktree,
+            WorktreePreviewMenu(host: host, worktree: worktree, usesFloatingStyle: true,
                 openLatest: imageReady ? imageOffer.map { offer in { open(offer, actionID: actionID) } } : nil,
                 latestFilename: imageOffer?.filename, isLatestBusy: isDownloading)
         } else if imageReady, let offer = imageOffer {

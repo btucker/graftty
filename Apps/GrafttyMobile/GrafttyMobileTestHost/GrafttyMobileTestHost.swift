@@ -27,6 +27,8 @@ struct GrafttyMobileTestHost: App {
                 IPadWorkspaceFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--recent-panes-fixture") {
                 RecentPaneFixture()
+            } else if ProcessInfo.processInfo.arguments.contains("--agent-menu-delay-fixture") {
+                DelayedAgentMenuFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--worktree-overview-fixture") {
                 WorktreeOverviewFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--context-fixture") {
@@ -50,7 +52,7 @@ struct GrafttyMobileTestHost: App {
         guard let index = arguments.firstIndex(of: "--agent-integration-url"),
               arguments.indices.contains(index + 1) else {
             if arguments.contains(where: ["--ipad-workspace-fixture", "--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture",
-                "--image-controls-fixture", "--browser-control-fixture"].contains) { return nil }
+                "--image-controls-fixture", "--browser-control-fixture", "--agent-menu-delay-fixture"].contains) { return nil }
             // A notification launches the executable through Springboard,
             // which does not retain XCUIApplication's launch arguments.
             return NotificationActivationFixture.restoredEndpoint
@@ -61,6 +63,32 @@ struct GrafttyMobileTestHost: App {
 }
 
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+/// Holds a real NewAgentMenu launch open while its other actions are exercised.
+@MainActor
+private struct DelayedAgentMenuFixture: View {
+    @State private var started = false
+    @State private var finishLaunch = false
+    @State private var selectedAgent = false
+    @State private var openedTerminal = false
+
+    var body: some View {
+        VStack(spacing: 20) {
+            NewAgentMenu(menuContent: AnyView(Group {
+                Button("Existing agent") { selectedAgent = true }
+                Button("Terminal") { openedTerminal = true }
+            }), label: AnyView(Text("Agent menu").frame(minWidth: 44, minHeight: 44))) { _, _ in
+                started = true
+                while !finishLaunch { try await Task.sleep(for: .milliseconds(100)) }
+            }
+            if started { Text("Starting fixture agent") }
+            if selectedAgent { Text("Selected existing agent") }
+            if openedTerminal { Text("Opened Terminal") }
+            Button("Finish launch") { finishLaunch = true }
+        }
+        .onDisappear { finishLaunch = true }
+    }
+}
+
 /// Actual iPad workspace chrome and tab routing, without live remote dialing.
 @MainActor
 private struct IPadWorkspaceFixture: View {
