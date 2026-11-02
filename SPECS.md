@@ -4304,6 +4304,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-4.7** While multiple Local browsers share a Mac callback endpoint, the application shall skip a suspended browser's retained connector and forward through an active browser before writing socket data.
 
+**CHROME-4.8** When Local browser preparation finishes before its presenting view has appeared, the application shall defer Safari presentation until that view has appeared.
+
 ### CHROME-5.x
 
 **CHROME-5.1** When the iOS project is regenerated, the application shall place Chrome rendering tests only in the foreground browser test host and retain ordinary session tests in the unhosted unit bundle.

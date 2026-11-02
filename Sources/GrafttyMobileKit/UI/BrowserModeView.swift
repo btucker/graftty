@@ -224,10 +224,19 @@ struct SafariModalPresenter: UIViewControllerRepresentable {
         var onExternalBrowser: (() -> Void)?
         var onFailure: (() -> Void)?
         private var safari: SFSafariViewController?
-        override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); presentIfReady() }
+        private var hasAppeared = false
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            hasAppeared = true
+            presentIfReady()
+        }
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            hasAppeared = false
+        }
         func presentIfReady() {
             guard let url else { close(); return }
-            guard safari == nil, view.window != nil, presentedViewController == nil else { return }
+            guard hasAppeared, safari == nil, view.window != nil, presentedViewController == nil else { return }
             let safari = SFSafariViewController(url: url)
             safari.delegate = self
             safari.dismissButtonStyle = .done
