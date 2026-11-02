@@ -142,19 +142,22 @@ struct HostBrowserProxyTests {
         try await expectPage("scoped-auth-complete", url: authorization.url!, configuration: configuration)
     }
 
-    @Test("@spec CHROME-4.3: When a Local Safari sign-in redirects to the unchanged localhost callback, the application shall keep its foreground callback leases alive and forward the original request to the authorized host.", .timeLimit(.minutes(1)))
+    @Test("@spec CHROME-4.3: When a Local Safari sign-in redirects to the unchanged localhost callback, the application shall keep its foreground callback leases alive and forward the original request to the authorized host.", .timeLimit(.minutes(2)))
     func safariRedirectUsesOriginalLoopbackCallback() async throws {
         let provider = try NWListener(using: .tcp, on: 32181)
         let queue = DispatchQueue(label: "graftty.safari.fixture")
         let callback = URL(string: "http://localhost:32182/callback?code=fixture&state=unchanged")!
+        let probe = SafariCallbackProbe()
         provider.newConnectionHandler = { socket in
             socket.start(queue: queue)
             Task {
+                defer { socket.cancel() }
+                // Safari can open and abandon a speculative connection.
+                guard let request = try? await Self.readRequest(from: socket), !request.isEmpty else { return }
+                await probe.providerRequested()
                 do {
-                    _ = try await Self.readRequest(from: socket)
                     try await BrowserProxy.send(Self.redirectResponse(to: callback), to: socket)
-                } catch { }
-                socket.cancel()
+                } catch { await probe.providerFailed() }
             }
         }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -172,7 +175,6 @@ struct HostBrowserProxyTests {
         authorization.queryItems = [URLQueryItem(name: "redirect_uri", value: "http://localhost:32182/callback")]
         let local = LocalBrowserController()
         defer { local.stop() }
-        let probe = SafariCallbackProbe()
         // Local provider is a simulator fixture. Production authentication
         // approves only an external provider and its original host callback.
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -204,18 +206,23 @@ struct HostBrowserProxyTests {
         local.open(url: authorization.url!, hostID: hostID, makeTunnel: {
             LocalBrowserTunnel(isConnected: { true }, connect: { socket, host, port, reply in
                 #expect(host == "127.0.0.1" && port == 32182 && reply.isEmpty)
+                await probe.callbackConnected()
                 let request = try await Self.readRequest(from: socket)
                 await probe.record(request)
                 try await Self.serveCallbackResponse(socket)
                 socket.cancel()
             })
         }, authenticate: { url in .init(url: url, callbackHost: "127.0.0.1") }, isPaneOwner: { true })
-        let deadline = ContinuousClock.now + .seconds(20)
+        // Safari starts its own browser processes. Match expectPage's bounded
+        // wait for cold CI simulators, where startup alone can exceed 30s.
+        let deadline = ContinuousClock.now + .seconds(60)
         while await probe.request == nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        let request = await probe.request
-        #expect(request?.hasPrefix("GET /callback?code=fixture&state=unchanged HTTP/1.1") == true)
+        let stage = await probe.stage
+        let request = try #require(await probe.request,
+            "Safari callback timed out: \(stage); local error: \(local.session.error ?? "none")")
+        #expect(request.hasPrefix("GET /callback?code=fixture&state=unchanged HTTP/1.1"))
         try await Task.sleep(for: .milliseconds(350))
         #expect(scene.activationState == .foregroundActive)
         #expect(!parentDisappeared)
@@ -498,6 +505,10 @@ struct HostBrowserProxyTests {
 
     private actor SafariCallbackProbe {
         var request: String?
+        private(set) var stage = "waiting for provider request"
+        func providerRequested() { stage = "provider requested; waiting for callback connection" }
+        func providerFailed() { stage = "provider redirect send failed" }
+        func callbackConnected() { stage = "callback connected; waiting for HTTP request" }
         func record(_ bytes: Data) { request = String(decoding: bytes, as: UTF8.self) }
     }
 
