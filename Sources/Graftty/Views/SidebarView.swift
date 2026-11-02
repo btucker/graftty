@@ -50,6 +50,7 @@ struct SidebarView: View {
     let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
     @ObservedObject var remoteMacsModel: RemoteMacsModel
+    var remoteWorkspaceLayout: (RemoteMacIdentity, WorktreePanes) -> WorkspaceLayout<String> = { _, row in .initial(for: row) }
     let appStateChanges: AppStateChanges
     let selectedRemoteIdentity: RemoteMacIdentity?
     let selectedRemoteWorktreePath: String?
@@ -289,6 +290,7 @@ struct SidebarView: View {
     private func remoteSection(contexts: [String: SidebarWorktreeContext], projectFilter: String?, query: String = "",
                                section: SidebarWorktreeSection = .all) -> some View {
         RemoteMacsSection(model: remoteMacsModel, expansion: $remoteSectionExpansion, worktreePanesByRemote: displayedRemoteRows,
+                          workspaceLayout: remoteWorkspaceLayout,
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
@@ -794,14 +796,8 @@ struct SidebarView: View {
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: displayName)
         let isDropTarget = dropTargetWorktreeID == worktree.id
-        let agentSessions = Set(context.worktree.sidebarAgentLeaves.map(\.sessionName))
-        let liveAgentLeaves = worktree.state == .running ? worktree.splitTree.allLeaves.filter {
-            worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)).map(agentSessions.contains) == true
-        } : []
-        let retained = worktree.agents.compactMap(\.presentationSlotID).filter {
-            !liveAgentLeaves.contains($0) && worktree.workspaceLayout?.sessions.contains($0) == true
-        }
-        let paneLeaves = liveAgentLeaves + retained
+        let paneLeaves = worktree.sidebarAgentSlots
+        let agentSessions = Set(paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) })
         let groupsPanes = showsProjectRail && !paneLeaves.isEmpty
         let projectID = localProjectID(repo)
         let project = projects.first { $0.id == projectID }

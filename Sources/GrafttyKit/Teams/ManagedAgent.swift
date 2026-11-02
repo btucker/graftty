@@ -37,6 +37,8 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public let provider: TeamHookRuntime
     public var name: String
     public var parent: TeamInboxEndpoint?
+    /// Nil identifies a saved record from before primary-session lifetime was explicit.
+    public var isPrimary: Bool?
     public private(set) var assignmentID: UUID
     public private(set) var status: Status
     public var paneSlotID: PaneSlotID? {
@@ -85,8 +87,19 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         """
         \(WorktreeAgentLaunchCommand.initialPrompt(task))
 
-        Graftty assignment: \(assignmentID.uuidString). Managed agent: \(id).
-        When this assignment is complete, report the result using:
+        \(sessionInstructions)
+        """
+    }
+
+    public var sessionInstructions: String {
+        let identity = "Managed agent \(id), assignment \(assignmentID.uuidString)."
+        if isPrimary == true {
+            return """
+            \(identity) You are the primary agent for this worktree. Keep this session open for ongoing work, including when another agent created this worktree. Completing a task or opening a PR does not finish this session. Do not finish this agent automatically; finish only if the user explicitly asks to end it. Report progress through Graftty Attention and send a result to your creating agent when needed.
+            """
+        }
+        return """
+        \(identity) You are an additional agent in this worktree. When this assignment is complete, report the result using:
         graftty agent finish \(id) --assignment \(assignmentID.uuidString) --result-stdin
         Supply the result on stdin. This explicitly finishes the assignment and asks your parent to clean up this terminal. Do not run it merely because a turn ends or you need input. Continue to use the graftty Attention skill for ordinary turn recaps. Harness-native subagents remain available for work inside this session.
         """

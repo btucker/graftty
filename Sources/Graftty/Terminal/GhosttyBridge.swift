@@ -238,7 +238,9 @@ struct GhosttyTheme: Equatable {
 /// post `Notification.Name.ghosttyWakeup`. GhosttyWakeupBridge always defers `tick()` to
 /// avoid reentering libghostty while the posting stack holds its renderer mutex.
 /// The action callback may also fire from any thread; the supplied `actionHandler`
-/// must be thread-safe (or dispatch to the main queue before touching UI state).
+/// must be thread-safe. Action pointers borrow renderer memory for the callback
+/// duration; copy consumed payloads and capture a stable target before deferring.
+/// TerminalManager uses GhosttyActionBridge for that handoff.
 final class GhosttyApp {
     /// Underlying `ghostty_app_t` handle (opaque pointer).
     let app: ghostty_app_t

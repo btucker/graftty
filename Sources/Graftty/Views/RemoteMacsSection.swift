@@ -271,6 +271,7 @@ struct RemoteMacsSection: View {
     @ObservedObject var model: RemoteMacsModel
     @Binding var expansion: RemoteSidebarExpansion
     var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
+    var workspaceLayout: (RemoteMacIdentity, WorktreePanes) -> WorkspaceLayout<String> = { _, row in .initial(for: row) }
     let selectedRemoteIdentity: RemoteMacIdentity?
     var selectedRemoteWorktreePath: String?
     var selectedRemotePaneSessionName: String?
@@ -499,7 +500,7 @@ struct RemoteMacsSection: View {
         let identity = RemoteMacIdentity(remoteMac)
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
-        let agentLeaves = worktree.sidebarAgentLeaves
+        let agentLeaves = worktree.sidebarAgentLeaves(in: workspaceLayout(identity, worktree))
         let groupsPanes = !showsMacHierarchy && !agentLeaves.isEmpty
         let context = contextForWorktree(worktree)
         let reportPane = SidebarProjection.attentionPaneRoute(for: context.item, in: worktree)
@@ -548,7 +549,7 @@ struct RemoteMacsSection: View {
                         onSelectRemoteWorktree(remoteMac, worktree.path)
                     } label: {
                         PaneTitleRow(
-                            title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name),
+                            title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.presentationSessionName == leaf.sessionName }?.name),
                             isActiveWorktree: isActive,
                             isFocusedPane: false,
                             isBusy: leaf.isBusy,
@@ -561,7 +562,7 @@ struct RemoteMacsSection: View {
                             },
                             portBindings: (worktree.origin?.relayDepth ?? 0) == 0 ? worktree.portBindings?[leaf.sessionName] ?? [] : [],
                             needsInput: leaf.attentionSource == .agentStop || questionPane == leaf.sessionName,
-                            agent: worktree.agents?.first { $0.sessionName == leaf.sessionName },
+                            agent: worktree.agents?.first { $0.presentationSessionName == leaf.sessionName },
                             attentionCount: counts.attentionByPane[leaf.sessionName, default: 0],
                             onOpenPort: { binding in
                                 Task {

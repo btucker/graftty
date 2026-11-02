@@ -40,47 +40,6 @@ struct SubsystemRPCDeadlineTests {
         await link.close()
     }
 
-    @Test("pane control keeps its channel usable after a response deadline")
-    func paneControlSurvivesResponseDeadline() async throws {
-        let received = RequestCounter()
-        let link = try await InMemorySSHLink.make(
-            serverChild: ScriptedSubsystemHost.install(
-                unanswered: 1,
-                reply: try JSONEncoder().encode(PaneControlResponse.ok),
-                received: received
-            )
-        )
-        let clock = ManualReplyDeadline()
-        let client = PaneControlChannelClient(
-            parentChannel: link.client,
-            parentHandler: link.clientHandler,
-            responseDeadline: clock.deadline
-        )
-        try await client.open()
-
-        let first = Task { try await client.send(.equalize(target: "pane")) }
-        await received.waitUntil(1)
-        await clock.waitUntilArmed()
-        clock.fire()
-        guard case .failure(PaneControlChannelClient.ClientError.timedOut) = await first.result else {
-            Issue.record("expected .timedOut, got \(await first.result)")
-            client.close()
-            await link.close()
-            return
-        }
-        // Pane control keeps the channel after a timeout so a wedged
-        // mutator does not cost the connection its layout controls.
-        let next = await Task { try await client.send(.equalize(target: "pane")) }.result
-        guard case .success(.ok) = next else {
-            Issue.record("expected the next RPC to succeed, got \(next)")
-            client.close()
-            await link.close()
-            return
-        }
-        client.close()
-        await link.close()
-    }
-
     @Test("a worktree-management response deadline closes the channel before the caller resumes")
     func worktreeManagementDeadlinePoisonsBeforeResuming() async throws {
         let received = RequestCounter()

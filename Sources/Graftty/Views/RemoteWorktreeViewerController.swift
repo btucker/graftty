@@ -78,6 +78,53 @@ final class RemoteWorktreeViewerController: ObservableObject {
         var identity: RemoteMacIdentity
         var worktreePath: String
     }
+    private let workspaceDefaults: UserDefaults
+    private var workspaceLayouts: [WorktreeKey: WorkspaceLayout<String>] = [:]
+
+    private func workspaceKey(identity: RemoteMacIdentity, path: String) -> String {
+        "remote.workspace.\(identity.id.value).\(identity.fingerprint.rawBytes.base64EncodedString()).\(path)"
+    }
+
+    func workspaceLayout(identity: RemoteMacIdentity, worktree: WorktreePanes) -> WorkspaceLayout<String> {
+        let key = WorktreeKey(identity: identity, worktreePath: worktree.path)
+        var layout: WorkspaceLayout<String>
+        if let cached = workspaceLayouts[key] {
+            layout = cached
+        } else {
+            let storageKey = workspaceKey(identity: identity, path: worktree.path)
+            let legacyKey = "remote.workspace.\(identity).\(worktree.path)"
+            let stored = workspaceDefaults.data(forKey: storageKey)
+            let legacy = stored == nil ? workspaceDefaults.data(forKey: legacyKey) : nil
+            layout = (stored ?? legacy)
+                .flatMap { try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0) } ?? .initial(for: worktree)
+            if let legacy {
+                workspaceDefaults.set(legacy, forKey: storageKey)
+                workspaceDefaults.removeObject(forKey: legacyKey)
+            }
+        }
+        layout.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
+            agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []),
+            retained: Set(worktree.agents?.compactMap(\.presentationSessionName) ?? []),
+            completed: Set(worktree.agents?.filter(\.isCompleted).compactMap(\.presentationSessionName) ?? []),
+            preservingSelection: true)
+        workspaceLayouts[key] = layout
+        return layout
+    }
+
+    func saveWorkspaceLayout(_ layout: WorkspaceLayout<String>, identity: RemoteMacIdentity, worktreePath: String) {
+        let key = WorktreeKey(identity: identity, worktreePath: worktreePath)
+        if workspaceLayouts[key] != layout {
+            objectWillChange.send()
+            workspaceLayouts[key] = layout
+        }
+        if let data = try? JSONEncoder().encode(layout) {
+            let storageKey = workspaceKey(identity: identity, path: worktreePath)
+            if workspaceDefaults.data(forKey: storageKey) != data {
+                workspaceDefaults.set(data, forKey: storageKey)
+            }
+        }
+    }
+
     private var workspaceVisibility: (key: WorktreeKey, sessions: Set<String>)?
 
     func setWorkspaceVisibleSessions(_ sessions: Set<String>, identity: RemoteMacIdentity, worktreePath: String) {
@@ -148,12 +195,14 @@ final class RemoteWorktreeViewerController: ObservableObject {
     init(
         model: RemoteWorktreeViewerModel,
         surfaces: RemoteWorktreeViewerSurfaces,
+        workspaceDefaults: UserDefaults = .standard,
         presentError: @escaping @MainActor (String) -> Void = RemoteWorktreeViewerController.presentAlert,
         viewportBounds: @escaping @MainActor () -> CGRect? = { NSApp.keyWindow?.contentView?.bounds },
         sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     ) {
         self.model = model
         self.surfaces = surfaces
+        self.workspaceDefaults = workspaceDefaults
         self.presentError = presentError
         self.viewportBounds = viewportBounds
         self.sleep = sleep

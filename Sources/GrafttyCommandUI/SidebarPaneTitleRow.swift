@@ -132,7 +132,8 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
         HStack(alignment: alignment, spacing: SidebarPaneLayout.markerSpacing) {
             if let agent {
                 AgentStatusBadge(status: agent.status, needsInput: needsInput,
-                    failure: agent.failure, processObservation: agent.processObservation)
+                    failure: agent.failure, processObservation: agent.processObservation, isBusy: title.isBusy,
+                    placement: .sidebarRow)
                     .font(.system(size: 12)).frame(width: 18)
             } else if attentionCount > 0 {
                 SidebarPaneMarker(attentionCount: attentionCount, isFocused: false,

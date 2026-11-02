@@ -23,7 +23,6 @@ struct RemoteWorkspaceContentView: View {
     @State private var drawerResizeStart: Double?
 
     private var layout: WorkspaceLayout<String> { workspace ?? .initial(for: worktree) }
-    private var key: String { "remote.workspace.\(identity).\(worktree.path)" }
     private func slot(_ session: String) -> PaneSlotID? {
         viewer.existingTerminalID(identity: identity, worktreePath: worktree.path, sessionName: session)
             ?? worktree.agents?.first(where: { $0.presentationSessionName == session })?.retainedSlotID
@@ -88,8 +87,7 @@ struct RemoteWorkspaceContentView: View {
             }
         }
         .onAppear {
-            workspace = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0) }
-                ?? .initial(for: worktree)
+            workspace = viewer.workspaceLayout(identity: identity, worktree: worktree)
             reconcile()
             showRequestedAgent()
             revealFocused()
@@ -108,7 +106,7 @@ struct RemoteWorkspaceContentView: View {
         .onChange(of: workspace) { _, value in
             reconcileZoom()
             publishVisibility()
-            if let value, let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
+            if let value { viewer.saveWorkspaceLayout(value, identity: identity, worktreePath: worktree.path) }
         }
         .onChange(of: zoomed) { _, _ in publishVisibility() }
     }
@@ -245,23 +243,25 @@ struct RemoteWorkspaceContentView: View {
                     ForEach(group.sessions, id: \.self) { session in
                         Button { select(session) } label: {
                             HStack(spacing: 6) {
-                                AgentProviderIcon(provider: worktree.agents?.first { $0.presentationSessionName == session }?.provider)
-                                Text(title(session)).lineLimit(1)
-                                    .fontWeight(group.selected == session ? .medium : .regular)
                                 if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
                                     AgentStatusBadge(status: agent.status,
                                         needsInput: (attentionContext ?? SidebarWorktreeContext(worktree: worktree)).needsInput(session: session),
                                         failure: agent.failure,
                                         disconnected: slot(session).map { terminalManager.attachmentFailures[$0] != nil } ?? false,
-                                        processObservation: agent.processObservation)
+                                        processObservation: agent.processObservation,
+                                        isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
+                                } else {
+                                    Image(systemName: "terminal")
                                 }
+                                Text(title(session)).lineLimit(1)
+                                    .fontWeight(group.selected == session ? .medium : .regular)
                             }.padding(.horizontal, 12).padding(.vertical, 9)
                                 .foregroundStyle(terminalManager.theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                                 .overlay(alignment: .bottom) {
                                     Rectangle().fill(group.selected == session ? terminalManager.theme.foreground.opacity(0.55) : .clear)
                                         .frame(height: 2)
                                 }
-                        }.buttonStyle(.plain).draggable(WorkspaceTabDrag(session))
+                        }.buttonStyle(.plain).workspaceTabDragSource(session, onSelect: { select(session) })
                             .modifier(WorkspaceTabDropTarget { source, after in
                                 let sameGroup = layout.group(containing: source)?.id == group.id
                                 if workspace?.moveTab(source, relativeTo: session, after: after) == true && !sameGroup { select(source) }

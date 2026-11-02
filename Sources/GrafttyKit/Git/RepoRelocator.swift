@@ -38,7 +38,8 @@ public enum RepoRelocator {
         public let newSelectedWorktreePath: String?
     }
 
-    /// Applies a final relocation decision, preserving saved order and each existing entry's state.
+    /// Merges a final decision into the current repo, which may have changed since discovery began.
+    /// Only relocation fields change on surviving identities; concurrent additions are retained.
     public static func relocatedWorktrees(
         repo: RepoEntry, decision: Decision, discovered: [DiscoveredWorktree], now: Date = Date()
     ) -> [WorktreeEntry] {
@@ -51,13 +52,14 @@ public enum RepoRelocator {
                 existing.branch = carried.branch
             } else if staleIDs.contains(existing.id) {
                 existing.markStale(at: now)
-            } else {
-                continue
             }
             worktrees.append(existing)
         }
-        let carriedPaths = Set(decision.carriedForward.map(\.newPath))
-        for entry in discovered where !carriedPaths.contains(entry.path) {
+        // Reserve even removed identities' destinations so discovery cannot resurrect them.
+        // Current additions also reserve their paths, preserving their identity and state.
+        var representedPaths = Set(decision.carriedForward.map(\.newPath))
+        representedPaths.formUnion(worktrees.map(\.path))
+        for entry in discovered where representedPaths.insert(entry.path).inserted {
             worktrees.append(WorktreeEntry(path: entry.path, branch: entry.branch))
         }
         return WorktreeOrdering.staleLast(worktrees)

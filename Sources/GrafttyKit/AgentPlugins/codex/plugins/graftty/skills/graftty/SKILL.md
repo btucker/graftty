@@ -14,6 +14,11 @@ replace the previous brief, so retaining unchanged context and decisions is usef
 History entries tell the story of what changed and why. Most reports need no
 history entry; do not invent a milestone just because a turn ended.
 
+Send your first report as soon as you understand the task and why it matters,
+before starting long work such as builds, test runs, or broad edits. A rough
+early brief is more useful than a polished late one: the user can see what you
+are working on while you work. Refine it in later reports.
+
 During each top-level turn in a tracked worktree, run this before your final response:
 
 ```sh
