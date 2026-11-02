@@ -1,5 +1,6 @@
 import Foundation
 import GrafttyProtocol
+import NIOConcurrencyHelpers
 import NIOCore
 import NIOSSH
 
@@ -9,9 +10,10 @@ import NIOSSH
 /// written; a host refusal surfaces as the channel closing, which fails
 /// the next RPC with `.channelClosed`.
 ///
-/// One channel per `RemoteHostConnection`. Single in-flight RPC per
-/// channel — clients serialise their own RPCs (parent design §8.1).
-/// Production wraps this in `PaneControlClient`, which queues them.
+/// Single in-flight RPC per channel. Production wraps this in
+/// `PaneControlClient`, which queues mutations. A failed exchange retires
+/// its channel; the next mutation opens a fresh child on the same SSH parent.
+/// The failed mutation is never replayed because the host may have applied it.
 public final class PaneControlChannelClient: @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case openFailed(any Error)
@@ -20,9 +22,8 @@ public final class PaneControlChannelClient: @unchecked Sendable {
         /// in flight. Returned as a soft error rather than a precondition
         /// failure so a concurrent caller cannot crash the client.
         case busy
-        /// The RPC didn't receive a response within its deadline. The host
-        /// is presumed wedged (mutator deadlock, etc.); the channel is
-        /// left open so subsequent RPCs can attempt to make progress.
+        /// The RPC missed its deadline. Its channel is invalidated before
+        /// the caller resumes so a late reply cannot answer another RPC.
         case timedOut
     }
 
@@ -30,7 +31,15 @@ public final class PaneControlChannelClient: @unchecked Sendable {
     /// the caller forever and every later RPC would trip `.busy`.
     public static let rpcDeadline: Duration = .seconds(30)
 
-    private let rpc: SubsystemRPCChannel<PaneControlRequest, PaneControlResponse>
+    private typealias RPC = SubsystemRPCChannel<PaneControlRequest, PaneControlResponse>
+    private let makeRPC: () -> RPC
+    private let lock = NIOLock()
+    // Protected by lock, including the busy guard across a recovery open.
+    private var rpc: RPC
+    private var needsOpen = false
+    private var hasOpened = false
+    private var isSending = false
+    private var isClosed = false
 
     public convenience init(
         parentChannel: Channel,
@@ -45,46 +54,92 @@ public final class PaneControlChannelClient: @unchecked Sendable {
     }
 
     init(parentChannel: Channel, parentHandler: NIOSSHHandler, responseDeadline: ReplyDeadline) {
-        rpc = SubsystemRPCChannel(
-            parentChannel: parentChannel,
-            parentHandler: parentHandler,
-            subsystem: SSHChannelTypeNames.paneControl,
-            reply: .written(wantReply: true),
-            policy: .init(
-                deadline: responseDeadline,
-                closesOnDesync: false,
-                strictFrames: false,
-                closesOnCancellation: false
-            ),
-            errors: SubsystemErrors(
-                closed: ClientError.channelClosed,
-                rejected: ClientError.channelClosed,
-                timedOut: ClientError.timedOut
-            ),
-            busy: ClientError.busy,
-            decode: { bytes in
-                do {
-                    return try JSONDecoder.shared.decode(PaneControlResponse.self, from: bytes)
-                } catch {
-                    return .error(code: "malformed-response", message: String(describing: error))
+        let makeRPC = {
+            RPC(
+                parentChannel: parentChannel,
+                parentHandler: parentHandler,
+                subsystem: SSHChannelTypeNames.paneControl,
+                reply: .written(wantReply: true),
+                policy: .init(
+                    deadline: responseDeadline,
+                    closesOnDesync: true,
+                    strictFrames: false,
+                    closesOnCancellation: false
+                ),
+                errors: SubsystemErrors(
+                    closed: ClientError.channelClosed,
+                    rejected: ClientError.channelClosed,
+                    timedOut: ClientError.timedOut
+                ),
+                busy: ClientError.busy,
+                decode: { bytes in
+                    do {
+                        return try JSONDecoder.shared.decode(PaneControlResponse.self, from: bytes)
+                    } catch {
+                        return .error(code: "malformed-response", message: String(describing: error))
+                    }
                 }
-            }
-        )
+            )
+        }
+        self.makeRPC = makeRPC
+        rpc = makeRPC()
     }
 
     public func open() async throws {
+        let current = try lock.withLock {
+            guard !hasOpened, !isClosed else {
+                throw ClientError.openFailed(ClientError.channelClosed)
+            }
+            return rpc
+        }
+        try await open(current)
+        try lock.withLock {
+            guard !isClosed else { throw ClientError.channelClosed }
+            hasOpened = true
+        }
+    }
+
+    private func open(_ current: RPC) async throws {
         do {
-            try await rpc.open()
+            try await current.open()
         } catch {
             throw ClientError.openFailed(error)
         }
     }
 
     public func send(_ request: PaneControlRequest) async throws -> PaneControlResponse {
-        try await rpc.send(request)
+        let (current, reopen) = try lock.withLock {
+            guard hasOpened, !isClosed else { throw ClientError.channelClosed }
+            guard !isSending else { throw ClientError.busy }
+            isSending = true
+            return (rpc, needsOpen)
+        }
+        defer { lock.withLock { isSending = false } }
+        do {
+            if reopen {
+                try await open(current)
+                lock.withLock { needsOpen = false }
+            }
+            return try await current.send(request)
+        } catch {
+            // Timeout and write failure already invalidate the channel inside
+            // SSHReplyWaiter before resuming us. Retire all failed exchanges
+            // here as well, and prepare recovery before returning to the queue.
+            current.close()
+            lock.withLock {
+                guard !isClosed else { return }
+                rpc = makeRPC()
+                needsOpen = true
+            }
+            throw error
+        }
     }
 
     public func close() {
-        rpc.close()
+        let current = lock.withLock {
+            isClosed = true
+            return rpc
+        }
+        current.close()
     }
 }
