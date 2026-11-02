@@ -8,7 +8,7 @@ import Testing
 
 @Suite("REMOTE — pending specs")
 struct RemoteTodo {
-    // MARK: - REMOTE-32.x — Native outbound host access
+    // MARK: - REMOTE-32.x — Windows host access and WSL2 deployment
 
     @Test("""
 @spec REMOTE-32.4: When a Windows headless host establishes cloud-routed access, the application shall use graftty-server for outbound authenticated signaling while retaining terminal authorization on the devices.
@@ -59,11 +59,6 @@ struct RemoteTodo {
 @spec REMOTE-32.13: While the Windows user is signed in and the WSL2 host is enabled, the application shall support background host operation when terminal windows are closed or the screen is locked.
 """, .disabled("Windows sign-in startup and WSL2 background lifetime are not yet implemented"))
     func remote_32_13() async throws { }
-
-    @Test("""
-@spec REMOTE-32.14: When preparing a WSL2 host, the application shall report effective CPU and memory limits and propose resource settings with explicit Windows memory headroom while preserving unrelated existing WSL configuration.
-""", .disabled("WSL2 resource setup is not yet implemented"))
-    func remote_32_14() async throws { }
 
     @Test("""
 @spec REMOTE-32.15: When preparing a WSL2 project without an explicit storage override, the application shall place repositories, worktrees, and build caches in the Linux filesystem.

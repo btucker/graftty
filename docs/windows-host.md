@@ -18,6 +18,65 @@ systemd alone does not establish that the host and sessions remain available.
 The host, agent CLIs, shells, and repositories run in Linux for v1. Native
 PowerShell and Windows toolchain parity require separate integration work.
 
+## Local WSL2 installer
+
+The development entry point is `scripts/windows/Install-GrafttyWSL.ps1`.
+Run it locally from a checkout on Windows. It uses `wsl.exe`, not SSH.
+This implements local installation and resource inspection. Cloud enrollment
+and the outbound Mac connection are still unimplemented.
+
+Prepare Ubuntu 24.04 under WSL2 with a non-root default user, Python 3.12,
+Git, Bash, GNU tar, coreutils, flock, and a working systemd user manager.
+If WSL is missing, install it with `wsl --install -d Ubuntu-24.04` and finish
+the distribution's user setup. Enabling WSL can require a Windows restart.
+From that distribution, verify `systemctl --user show-environment` succeeds.
+
+Inspect resources from Windows PowerShell:
+
+```powershell
+.\scripts\windows\Install-GrafttyWSL.ps1 -Distribution Ubuntu-24.04
+```
+
+Install an architecture-matched Linux archive with a SHA-256 digest obtained
+from a trusted release source. Replace the placeholder digest below:
+
+```powershell
+.\scripts\windows\Install-GrafttyWSL.ps1 -Distribution Ubuntu-24.04 `
+    -ArchivePath C:\Downloads\graftty-linux-VERSION-x86_64.tar.gz `
+    -SHA256 EXPECTED_64_HEX_DIGEST -EnableStartup
+```
+
+The installer checks the digest on Windows and inside WSL. It validates archive
+paths, rejects special files and escaping links, checks the bundled host, CLI,
+and zmx, then runs the existing transactional Linux installer. Listeners bind
+to loopback. A successful result reports `localReady: true` and
+`remoteReady: false` until the connection work is implemented. It does not
+install or authenticate agent-provider CLIs.
+
+`-EnableStartup` enables Linux user-manager lingering without interactive
+elevation and registers a limited Windows task for the current user's sign-in.
+The task retains a foreground WSL process so a visible terminal is not needed.
+If Linux policy denies lingering, enable it locally as an administrator before
+retrying. Task registration and screen-lock survival still need a real Windows
+11 test. Windows sleep, logout, WSL termination, and reboot are outside v1
+session-survival guarantees.
+
+The JSON result includes guest CPU availability, memory capacity and available
+RAM, cgroup v2 memory and CPU limits, Windows physical RAM, and a suggested
+memory ceiling. Swap is reported separately. An existing CPU override remains
+unchanged; compare the guest CPU count with `windowsLogicalCPUs` when tuning.
+
+To set a 56 GB ceiling on a 64 GB machine, add `-MemoryLimitGB 56` to either
+command. This preserves other WSL settings and creates a backup of an existing
+`.wslconfig`. It requires at least 2 GB of Windows headroom. The tool never
+stops running distributions. Restart WSL after saving your work, then inspect
+again to verify the effective limits. The recommended default headroom is
+8 GB, which needs adjustment for other Windows workloads.
+
+Portable Python and PowerShell checks cover archive verification, extraction,
+resource configuration, and startup task construction. The CI workflow includes
+these checks on Windows. They do not replace a Windows 11 installation test.
+
 ## WSL2 resource policy
 
 Use the machine's available capacity rather than accepting a small VM budget.
@@ -148,17 +207,26 @@ They cover server-independent pairing, authenticated signaling transcripts,
 end-to-end protection, fresh authentication on reconnect, revocation, direction
 of authority, and Windows private-key protection.
 
-Coordination with the main graftty-server agent has been requested for the
-server-side assessment and shared API contract. The request covers Windows enrollment, discovery,
-room membership and lifetime, delivery to outbound-connected devices, limits,
-revocation checks, TURN issuance and refresh, and sensitive-data logging.
-Protocol changes need agreement between the two projects before implementation.
-The enrollment wire value and outbound parent room-discovery mechanism
-are pending confirmation. For WSL2, distinguish the Windows deployment from
-the Linux runtime rather than assuming a native Windows enrollment value.
-The inspected server currently enrolls only `mac`
-and `phone`, and its room target must be a Mac. Signaling roles can describe
-connection establishment without deciding which device owns terminal resources.
+The graftty-server rendezvous owner confirmed the additive contract in
+[server PR 9](https://github.com/btucker/graftty-server/pull/9), at commit
+`f250b12d40cfff4fb7aa7dac70e63c35efadb367`. This contract is not deployed by
+this work. WSL registers as `kind: host`, `platform: linux`, with a display name
+such as `Windows host (WSL2)`. Server registration IDs remain separate from
+Graftty endpoint identities and keys.
+
+Either enrolled peer can create a room addressed to the other's server ID.
+The parent discovers requests through outbound `GET /v1/rtc/rooms/incoming`.
+Rooms expire after 60 seconds, and reads do not imply acceptance. Signaling
+transports opaque bytes, can lose buffers, and has no guaranteed delivery or
+acknowledgment. Treat it as untrusted discovery. It is not a terminal byte relay.
+
+Cloud invitation encoding and its enrollment-authorization exchange remain
+undecided. Existing registration needs an account enrollment JWT from OAuth.
+Do not treat an invitation, a server bearer, and a pinned endpoint key as the
+same credential. Signed signaling, Linux WebRTC support, STUN and TURN setup,
+and Mac adoption of the outbound link remain endpoint work. The existing
+WebRTC implementation is conditional on the Apple SDK and cannot simply be
+enabled by running the Linux host in WSL2.
 
 | Boundary | Owner | Acceptance evidence required |
 | --- | --- | --- |
@@ -212,10 +280,11 @@ than starting a second connection back to Windows.
 1. Validate the existing Linux archive and patched zmx on Ubuntu 24.04 under
    WSL2. Exercise session ownership, detach and reattach, history, replay,
    resize, agent hooks, and both Mac and Mobile viewers.
-2. Add local installation and enrollment without SSH. Reuse Linux packaging
-   while handling Windows sign-in startup and WSL background lifetime.
-3. Agree the enrollment and room-discovery contract with graftty-server, then
-   implement the authenticated outbound link and Mac transport adoption.
+2. Validate the implemented local installer and sign-in task on Windows 11.
+   Complete local enrollment without SSH and prove WSL background lifetime.
+3. Agree the invitation and signed signaling encodings with graftty-server,
+   then implement Linux WebRTC, the authenticated outbound link, and Mac
+   transport adoption using the confirmed room-discovery contract.
 4. Validate pairing, tampered signaling, revocation, network loss, and Mac
    restarts against real WSL2 sessions. Keep the existing security boundaries.
 5. Inspect and tune the machine's WSL resource configuration. Verify effective
