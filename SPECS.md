@@ -400,6 +400,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.197** When the user drags an agent tab on Mac, the application shall start a native in-app tab drag after the drag threshold, preserve contextual menus, and select a tab on click without selecting it on drag.
 
+**LAYOUT-2.198** When the user expands the terminal drawer, the application shall give its selected terminal keyboard focus, including a first terminal created by that action.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

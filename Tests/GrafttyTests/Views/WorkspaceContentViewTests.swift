@@ -7,6 +7,44 @@ import GrafttyProtocol
 
 @MainActor
 struct WorkspaceContentViewTests {
+    @Test("@spec LAYOUT-2.198: When the user expands the terminal drawer, the application shall give its selected terminal keyboard focus, including a first terminal created by that action.", arguments: [false, true])
+    func expandingDrawerActivatesItsTerminal(startsEmpty: Bool) {
+        let agent = PaneSlotID(), terminal = PaneSlotID()
+        var entry = WorktreeEntry(path: "/repo/drawer-focus", branch: "drawer-focus", state: .running,
+            splitTree: SplitTree(root: .leaf(agent)))
+        var layout = WorkspaceLayout<PaneSlotID>()
+        layout.addAgent(agent)
+        if !startsEmpty {
+            entry.splitTree = entry.splitTree.inserting(terminal, at: agent, direction: .vertical)
+            layout.addTerminal(terminal)
+        }
+        layout.hideDrawer()
+        entry.workspaceLayout = layout
+        entry.focusedPaneSlotID = agent
+        var activated: [PaneSlotID] = []
+        var creations = 0
+        let view = WorkspaceContentView(terminalManager: TerminalManager(socketPath: "/tmp/graftty-drawer-focus-test.sock"),
+            worktree: Binding(get: { entry }, set: { entry = $0 }),
+            onFocusTerminal: { entry.focusedPaneSlotID = $0 },
+            onNewTerminal: {
+                creations += 1
+                entry.splitTree = entry.splitTree.inserting(terminal, at: agent, direction: .vertical)
+                entry.workspaceLayout?.addTerminal(terminal)
+            }, onCloseTerminal: { _ in },
+            onActivateTerminal: { activated.append($0) })
+
+        view.toggleDrawer()
+        #expect(entry.workspaceLayout?.drawerVisible == true)
+        #expect(entry.workspaceLayout?.selectedTerminal == terminal)
+        #expect(entry.focusedPaneSlotID == terminal)
+        #expect(activated == [terminal])
+        #expect(creations == (startsEmpty ? 1 : 0))
+        view.toggleDrawer()
+        view.toggleDrawer()
+        #expect(activated == [terminal, terminal])
+        #expect(creations == (startsEmpty ? 1 : 0))
+    }
+
     @Test func absentLivenessEntryMatchesRemoteIdleProjection() {
         let slot = PaneSlotID(), session = PaneSessionID()
         var entry = WorktreeEntry(path: "/repo", branch: "main", state: .running)

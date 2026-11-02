@@ -282,7 +282,7 @@ struct WorkspaceContentView: View {
             .terminalDrawerHitArea(onToggle: toggleDrawer)
     }
 
-    private func toggleDrawer() {
+    func toggleDrawer() {
         var next = layout
         if next.drawerVisible {
             let previous = next.hideDrawer()
@@ -292,7 +292,7 @@ struct WorkspaceContentView: View {
             let needsTerminal = next.openDrawer()
             worktree.workspaceLayout = next
             if needsTerminal { onNewTerminal() }
-            else if let slot = next.selectedTerminal { focus(slot) }
+            if let slot = layout.selectedTerminal { selectTerminalTab(slot) }
         }
     }
 
