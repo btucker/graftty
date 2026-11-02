@@ -321,9 +321,11 @@ public struct TailscaleLocalAPI: Sendable {
         let requestState = LocalAPIRequestState()
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let response = loop.makePromise(of: Data.self)
-        let handler = LocalAPIResponseHandler(
-            response: response, receiveTimeout: .seconds(Int64(recvTimeoutSeconds))
-        )
+        let handler = try await loop.submit {
+            NIOLoopBound(LocalAPIResponseHandler(
+                response: response, receiveTimeout: .seconds(Int64(recvTimeoutSeconds))
+            ), eventLoop: loop)
+        }.get()
         let authHeader: String
         switch transport {
         case .unixSocket:
@@ -338,7 +340,7 @@ public struct TailscaleLocalAPI: Sendable {
                 let bootstrap = ClientBootstrap(group: loop)
                     .connectTimeout(.seconds(2))
                     .channelInitializer { channel in
-                        return channel.pipeline.addHandler(handler).map {
+                        return channel.pipeline.addHandler(handler.value).map {
                             requestState.install(channel)
                             channelOpened?(channel)
                         }
@@ -365,7 +367,7 @@ public struct TailscaleLocalAPI: Sendable {
             // Bootstrap may reject an address or fail to allocate a socket
             // before installing a handler. Settle its promise on every exit,
             // using the handler's event-loop-confined single-completion guard.
-            try? await loop.submit { handler.fail(error) }.get()
+            try? await loop.submit { handler.value.fail(error) }.get()
             await requestState.close()
             try Task.checkCancellation()
             if error is Error { throw error }
