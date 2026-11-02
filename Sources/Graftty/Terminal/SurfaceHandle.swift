@@ -160,6 +160,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
 final class SurfaceHandle {
     let terminalID: PaneSlotID
     let surface: ghostty_surface_t
+    let actionIdentity: GhosttyActionBridge.SurfaceIdentity
+    private let actionBridge: GhosttyActionBridge?
     private let app: ghostty_app_t
     let view: NSView
     let worktreePath: String
@@ -223,6 +225,8 @@ final class SurfaceHandle {
         initialGridSize: ghostty_surface_size_s? = nil
     ) {
         self.terminalID = terminalID
+        self.actionIdentity = GhosttyActionBridge.SurfaceIdentity(terminalID: terminalID)
+        self.actionBridge = terminalManager?.ghosttyActions
         self.app = app
         self.worktreePath = worktreePath
         self.zmxSessionName = zmxSpawnConfiguration?.sessionName
@@ -395,7 +399,15 @@ final class SurfaceHandle {
         config.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
         backend?.configure(&config)
 
-        guard let newSurface = surfaceFactory.create(app, &config) else {
+        let createdSurface: ghostty_surface_t?
+        if let actionBridge {
+            createdSurface = actionBridge.withSurfaceCreation(actionIdentity) {
+                surfaceFactory.create(app, &config)
+            }
+        } else {
+            createdSurface = surfaceFactory.create(app, &config)
+        }
+        guard let newSurface = createdSurface else {
             // Free everything we allocated, then fail gracefully. `self`
             // is not yet fully initialized, so `deinit` won't run —
             // release owned allocations explicitly before returning nil.
@@ -626,6 +638,7 @@ final class SurfaceHandle {
             surfaceView.setCursorHidden(false)
             surfaceView.surface = nil
         }
+        actionBridge?.unregister(surface, identity: actionIdentity)
         zmxBackend?.close()
         surfaceFactory.free(surface)
         zmxBackend?.surfaceWasFreed()
