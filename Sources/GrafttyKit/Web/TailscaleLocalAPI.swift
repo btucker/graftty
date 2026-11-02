@@ -339,8 +339,10 @@ public struct TailscaleLocalAPI: Sendable {
                     .connectTimeout(.seconds(2))
                     .channelInitializer { channel in
                         return channel.pipeline.addHandler(handler).map {
-                            requestState.install(channel)
+                            // The observer also lets tests cancel in the
+                            // initializer/install gap without blocking a loop.
                             channelOpened?(channel)
+                            requestState.install(channel)
                         }
                     }
                 let channel: Channel
