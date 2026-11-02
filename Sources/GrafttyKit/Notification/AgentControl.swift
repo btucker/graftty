@@ -88,6 +88,7 @@ public enum AgentControl {
            !worktree.agents.contains(where: { $0.paneSlotID == slot && $0.status != .closed }) {
             worktree.ensureWorkspaceLayout()
             var observed = ManagedAgent(name: provider.displayName, provider: provider, parent: nil)
+            observed.isPrimary = !worktree.hasCurrentAgent
             observed.nativeAgentID = agentID
             observed.paneSlotID = slot
             worktree.agents.append(observed)
@@ -100,6 +101,7 @@ public enum AgentControl {
         if let session = paneSessionName, let slot = worktree.paneSlot(forSessionName: session),
            var agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) {
             guard agent.provider == provider else { return "" }
+            agent.isPrimary = worktree.isPrimaryAgent(agent)
             agent.paneSlotID = slot
             agent.paneSessionID = worktree.paneSessions[slot]
             if let providerSessionID, !providerSessionID.isEmpty { agent.providerSessionID = providerSessionID }
@@ -111,7 +113,7 @@ public enum AgentControl {
             if let prompt = agent.initialPrompt, !prompt.isEmpty {
                 sections.append("Saved initial assignment, for recovery only. If this is already in your launch context or completed, do not repeat it:\n" + prompt)
             }
-            sections.append("Managed agent \(agent.id), assignment \(agent.assignmentID.uuidString). Finish the assignment with graftty agent finish \(agent.id) --assignment \(agent.assignmentID.uuidString) --result-stdin. A turn ending is not assignment completion.")
+            sections.append(agent.sessionInstructions)
         }
         await reconcileOutbox(platform: platform)
         if let agentID {
@@ -124,6 +126,17 @@ public enum AgentControl {
             }
         }
         return sections.joined(separator: "\n\n")
+    }
+
+    /// Refresh lifetime guidance for existing sessions without replaying tasks or inbox work.
+    static func currentSessionInstructions(path: String, agentID: String?, paneSessionName: String?,
+                                           provider: TeamHookRuntime, platform: any ControlPlatform) -> String {
+        guard let worktree = platform.state.worktree(forPath: path), let paneSessionName,
+              let slot = worktree.paneSlot(forSessionName: paneSessionName),
+              var agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }),
+              agent.provider == provider, agentID == nil || agent.nativeAgentID == agentID else { return "" }
+        agent.isPrimary = worktree.isPrimaryAgent(agent)
+        return agent.sessionInstructions
     }
 
     public static func handle(_ request: AgentControlRequest, platform: any ControlPlatform) async -> ResponseMessage {
@@ -263,6 +276,7 @@ public enum AgentControl {
                 }
                 guard let currentRepo = platform.state.repos.first(where: { $0.path == repoPath }) else { throw AgentControlError.unknownAgent }
                 guard !hasOpenChildren(of: agent, in: currentRepo) else { throw AgentControlError.activeChildren }
+                agent.isPrimary = platform.state.worktree(forPath: path)?.isPrimaryAgent(agent)
                 // A fresh provider invocation receives the new assignment in both its
                 // environment and launch instructions. The old process cannot finish it.
                 if agent.status != .closed {
@@ -354,6 +368,7 @@ public enum AgentControl {
                 return .error("The selected worktree is unavailable or does not belong to this project.")
             }
             guard platform.controlCapabilities.contains(.paneAgent) else { throw AgentControlError.unavailable }
+            agent.isPrimary = !platform.state.repos[index.repo].worktrees[index.worktree].hasCurrentAgent
             platform.state.repos[index.repo].worktrees[index.worktree].ensureWorkspaceLayout()
             platform.state.repos[index.repo].worktrees[index.worktree].agents.append(agent)
             do { try platform.worktreeCreation.saveStateNow() }
@@ -378,6 +393,7 @@ public enum AgentControl {
             return .agents([.init(worktree: target, agent: current.summary(), operationID: agent.launchOperationID)])
         }
         let names = WorktreeRequestNames.resolve(name: name, branch: request.branch, existing: request.existing ?? false)
+        agent.isPrimary = true
         if let error = WorktreeCreationInput.validationError(worktreeName: names.worktree, branchName: names.branch,
             existing: request.existing ?? false, base: request.base) { return .error(error) }
         agent.launchTargetWorktree = AppState.linkedWorktreePath(repoPath: repo.path, worktreeName: names.worktree)
@@ -463,10 +479,15 @@ public enum AgentControl {
     }
 
     private static func hasOpenChildren(of parent: ManagedAgent, in repo: RepoEntry) -> Bool {
-        repo.worktrees.flatMap(\.agents).contains { child in
-            guard child.parent != nil, child.status != .closed else { return false }
-            if let stableParent = child.parentManagedAgentID { return stableParent == parent.id }
-            return parent.nativeAgentID != nil && child.parent?.agentID == parent.nativeAgentID
+        repo.worktrees.contains { worktree in
+            worktree.agents.contains { child in
+                guard child.parent != nil, child.status != .closed else { return false }
+                // An ongoing worktree is independent after reservation moves there.
+                // Explicit completion or interruption still requires acknowledgment.
+                if worktree.isPrimaryAgent(child), !child.requiresAcknowledgment { return false }
+                if let stableParent = child.parentManagedAgentID { return stableParent == parent.id }
+                return parent.nativeAgentID != nil && child.parent?.agentID == parent.nativeAgentID
+            }
         }
     }
 

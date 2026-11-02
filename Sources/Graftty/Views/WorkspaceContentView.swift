@@ -113,15 +113,17 @@ struct WorkspaceContentView: View {
                         ForEach(group?.sessions ?? [], id: \.self) { tab in
                             Button { selectTab(tab) } label: {
                                 HStack(spacing: 6) {
-                                    AgentProviderIcon(provider: agent(tab)?.provider.rawValue)
-                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, fallback: agent(tab)?.name ?? "Terminal").lineLimit(1)
-                                        .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if let agent = agent(tab) {
                                         AgentStatusBadge(status: agent.status.rawValue,
                                             needsInput: needsInput(tab),
                                             failure: agent.failure, disconnected: terminalManager.attachmentFailures[tab] != nil,
                                             processObservation: agent.processObservation, isBusy: isBusy(tab))
-                                    } else if worktree.paneAttention[tab] != nil {
+                                    } else {
+                                        Image(systemName: "terminal")
+                                    }
+                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, fallback: agent(tab)?.name ?? "Terminal").lineLimit(1)
+                                        .fontWeight(group?.selected == tab ? .medium : .regular)
+                                    if agent(tab) == nil, worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
                                     }
                                 }.padding(.horizontal, 12).padding(.vertical, 9)

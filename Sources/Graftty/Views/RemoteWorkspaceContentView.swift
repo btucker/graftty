@@ -243,9 +243,6 @@ struct RemoteWorkspaceContentView: View {
                     ForEach(group.sessions, id: \.self) { session in
                         Button { select(session) } label: {
                             HStack(spacing: 6) {
-                                AgentProviderIcon(provider: worktree.agents?.first { $0.presentationSessionName == session }?.provider)
-                                Text(title(session)).lineLimit(1)
-                                    .fontWeight(group.selected == session ? .medium : .regular)
                                 if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
                                     AgentStatusBadge(status: agent.status,
                                         needsInput: (attentionContext ?? SidebarWorktreeContext(worktree: worktree)).needsInput(session: session),
@@ -253,7 +250,11 @@ struct RemoteWorkspaceContentView: View {
                                         disconnected: slot(session).map { terminalManager.attachmentFailures[$0] != nil } ?? false,
                                         processObservation: agent.processObservation,
                                         isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
+                                } else {
+                                    Image(systemName: "terminal")
                                 }
+                                Text(title(session)).lineLimit(1)
+                                    .fontWeight(group.selected == session ? .medium : .regular)
                             }.padding(.horizontal, 12).padding(.vertical, 9)
                                 .foregroundStyle(terminalManager.theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                                 .overlay(alignment: .bottom) {

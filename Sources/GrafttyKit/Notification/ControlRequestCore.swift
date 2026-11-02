@@ -351,11 +351,13 @@ public enum ControlRequestCore {
             do { try platform.stateDidChange() } catch { return .error(String(describing: error)) }
         }
 
-        // These hooks skip inbox scans. The turn-start reminder is constant
-        // context accepted by both providers before the ordinary turn.
+        // These hooks skip inbox scans. Turn start adds current lifetime guidance
+        // so an already-running primary does not retain old completion instructions.
         if isAttentionOnlyTeamHook(runtime: runtime, event: event) {
             return .teamHookOutput(event == .userPromptSubmit && platform.state.worktree(forPath: callerPath) != nil
-                ? (try? TeamHookRenderer.userPromptSubmit()) ?? "{}" : "{}")
+                ? (try? TeamHookRenderer.userPromptSubmit(assignmentContext: AgentControl.currentSessionInstructions(
+                    path: callerPath, agentID: callerAgentID, paneSessionName: paneSessionName,
+                    provider: runtime, platform: platform))) ?? "{}" : "{}")
         }
 
         do {

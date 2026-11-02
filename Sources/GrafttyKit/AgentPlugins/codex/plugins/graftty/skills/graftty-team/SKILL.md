@@ -108,12 +108,14 @@ graftty agent add <name> --provider codex --prompt-stdin --json <<'GRAFTTY_DELEG
 Objective: <bounded outcome>
 Owned scope: <files or subsystem>
 Verify: <checks>
-Return: report the result, changed paths, validation, and commit hash with graftty agent finish --result-stdin.
+Return: report the result, changed paths, validation, and commit hash. An additional agent finishes with graftty agent finish --result-stdin. A primary agent reports to its creating agent with graftty team send and stays open.
 Do not finish merely because a turn ends or you need input.
 GRAFTTY_DELEGATE_7F3A91C2
 ```
 
 Agent creation runs in the background and preserves the current worktree and tab. Add `--select-tab` only when the user wants to open the new agent on the host. Observer devices keep their own selection.
+
+The first agent in a worktree is its primary agent and stays open for ongoing work, including when another agent created that worktree. Finishing a task or opening a PR does not finish the primary session. Only finish it when the user explicitly asks. Additional agents in an existing worktree finish their bounded assignments through the lifecycle below. Session context identifies which behavior applies.
 
 For a reviewer in the current worktree, add `--worktree '<worktree-name>'`. Save the returned `agent.id`, `agent.assignmentID`, `operationID`, and `worktree`. The managed ID identifies this assignment's lifecycle. `agent.nativeAgentID`, once populated, identifies the provider session for team messages. Do not substitute the managed ID into a native team address. Confirm readiness and copy the exact native address from `graftty team list --json` before messaging. A starting agent or accepted creation is not a reachable child.
 
@@ -121,7 +123,7 @@ Pause the delegated scope until the child is reachable, then relinquish it until
 
 ## Finish and clean up assignments
 
-A child explicitly completes its assignment with a result on stdin:
+An additional agent explicitly completes its assignment with a result on stdin:
 
 ```sh
 graftty agent finish --result-stdin <<'GRAFTTY_RESULT_4B9D2F10'
@@ -129,7 +131,7 @@ graftty agent finish --result-stdin <<'GRAFTTY_RESULT_4B9D2F10'
 GRAFTTY_RESULT_4B9D2F10
 ```
 
-The launch environment supplies the managed agent and assignment IDs. If those are unavailable, use the exact IDs from the launch context: `graftty agent finish <managed-id> --assignment <assignment-id> --result-stdin`. Keep ordinary Attention recaps separate. Waiting for input, becoming idle, an end-of-turn hook, and process exit do not mean the assignment is complete.
+The launch environment supplies the managed agent and assignment IDs. If those are unavailable, use the exact IDs from the launch context: `graftty agent finish <managed-id> --assignment <assignment-id> --result-stdin`. Keep ordinary Attention recaps separate. Waiting for input, becoming idle, an end-of-turn hook, and process exit do not mean the assignment is complete. A primary agent keeps its session open and reports a finished task through Attention and a message to its creating agent.
 
 The parent receives a durable completion event naming the child, result, and completion ID. Handle the result, then close that completed assignment:
 

@@ -26,19 +26,23 @@ struct CompactAgentBar: View {
                             Label {
                                 Text("\(worktree.workspaceSessionTitle(target)) · \(AgentAssignmentStatus(agent: agent, needsInput: context.needsInput(session: target)).label)")
                                     .foregroundStyle(agent.isCompleted ? .secondary : .primary)
-                            } icon: { AgentProviderIcon(provider: agent.provider) }
+                            } icon: {
+                                Image(systemName: AgentAssignmentStatus(agent: agent,
+                                    needsInput: context.needsInput(session: target)).systemImage)
+                            }
                         }
                     }
                 }
             } label: {
                 HStack(spacing: 6) {
-                    AgentProviderIcon(provider: selectedAgent?.provider)
-                    Text(selectedAgent == nil ? "Agents" : worktree.workspaceSessionTitle(session)).lineLimit(1)
                     if let selectedAgent {
                         MobileAgentStatusBadge(agent: selectedAgent, hostID: hostID,
                             needsInput: context.needsInput(session: session),
                             isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
+                    } else {
+                        Image(systemName: "terminal")
                     }
+                    Text(selectedAgent == nil ? "Agents" : worktree.workspaceSessionTitle(session)).lineLimit(1)
                     Image(systemName: "chevron.down").font(.caption2)
                 }
             }.disabled(agents.isEmpty)
