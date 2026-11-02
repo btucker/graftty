@@ -8,10 +8,18 @@ private struct TerminalControlsGroupedKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct TerminalControlsCompactKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 private extension EnvironmentValues {
     var terminalControlsGrouped: Bool {
         get { self[TerminalControlsGroupedKey.self] }
         set { self[TerminalControlsGroupedKey.self] = newValue }
+    }
+    var terminalControlsCompact: Bool {
+        get { self[TerminalControlsCompactKey.self] }
+        set { self[TerminalControlsCompactKey.self] = newValue }
     }
 }
 
@@ -30,11 +38,13 @@ struct TerminalFloatingGlass: ViewModifier {
 /// One continuous background; the buttons retain their own touch targets.
 struct TerminalFloatingControlGroup<Content: View>: View {
     var isVisible = true
+    var compactGlyphs = false
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         content()
             .environment(\.terminalControlsGrouped, true)
+            .environment(\.terminalControlsCompact, compactGlyphs)
             .background {
                 Capsule().fill(.clear)
                     .modifier(TerminalFloatingGlass())
@@ -64,19 +74,31 @@ struct TerminalFloatingGlyphButton: View {
 
     var body: some View {
         Button(action: action) {
-            Group {
-                if isBusy { ProgressView().tint(Color.primary) }
-                else { Image(systemName: systemName) }
-            }
-                .font(.title2)
-                .foregroundStyle(.primary)
-                .padding(10)
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-                .modifier(TerminalFloatingButtonBackground())
+            TerminalFloatingGlyph(systemName: systemName, isBusy: isBusy)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+/// Shared label for buttons and native menus in the same glass capsule.
+struct TerminalFloatingGlyph: View {
+    let systemName: String
+    var isBusy = false
+    @Environment(\.terminalControlsCompact) private var compact
+
+    var body: some View {
+        Group {
+            if isBusy { ProgressView().tint(Color.primary) }
+            else { Image(systemName: systemName) }
+        }
+        .font(compact ? .system(size: 22) : .title2)
+        .foregroundStyle(.primary)
+        .padding(compact ? 0 : 10)
+        .frame(minWidth: 44, minHeight: 44)
+        .frame(width: compact ? 44 : nil, height: compact ? 44 : nil)
+        .contentShape(Rectangle())
+        .modifier(TerminalFloatingButtonBackground())
     }
 }
 

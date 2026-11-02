@@ -5,6 +5,7 @@ import Testing
 
 #if canImport(UIKit) && !targetEnvironment(macCatalyst)
 import GhosttyTerminal
+import GrafttyCommandUI
 import GrafttyProtocol
 import GrafttyRemoteClient
 import SwiftUI
@@ -15,6 +16,134 @@ import UIKit
 @Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
 @MainActor
 struct RenderedTerminalViewportTests {
+    @Test("Pending questions stay clear of a lone prompt and completed-agent actions.", arguments: [false, true])
+    func pendingQuestionDoesNotCoverContent(completed: Bool) async throws {
+        let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let question = "Should I keep the current implementation or try a different approach before opening the pull request?"
+        let fixture = makeFixture(client: client, agentWorkspace: true, question: question, completed: completed)
+        defer { fixture.window.isHidden = true }
+        try await waitForLayout("pending question") {
+            fixture.host.view.layoutIfNeeded()
+            return accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == question }
+        }
+        let request = try #require(accessibilityObjects(in: fixture.host.view).first { $0.accessibilityLabel == question })
+        if completed {
+            try await waitForLayout("completed agent resume action") {
+                fixture.host.view.layoutIfNeeded()
+                return accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Resume session" }
+            }
+            let resume = try #require(accessibilityObjects(in: fixture.host.view).first { $0.accessibilityLabel == "Resume session" })
+            #expect(resume.accessibilityFrame.minY >= request.accessibilityFrame.maxY + 8)
+        } else {
+            let container = try await renderedContainer(in: fixture.host.view)
+            client.session.receive(Data("prompt".utf8))
+            try await waitForLayout("first prompt") { client.session.readViewportText()?.contains("prompt") == true }
+            let text = container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
+            #expect(text.minY >= request.accessibilityFrame.maxY + 8)
+            #expect(abs(container.convert(container.bounds, to: fixture.window).minY) < 1)
+            client.session.receive(Data("\r\nsecond line".utf8))
+            try await waitForLayout("populated terminal still reaches top") {
+                abs(container.terminalView.convert(container.terminalView.bounds, to: fixture.window).minY) < 1
+            }
+        }
+    }
+
+    @Test("Floating agent controls share one safe-area row at narrow widths and large text sizes.", arguments: [CGFloat(320), CGFloat(390), CGFloat(844)], [false, true])
+    func compactHeaderFitsWithoutCoveringAdjacentControls(width: CGFloat, largeText: Bool) async throws {
+        let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let fixture = makeFixture(client: client, agentWorkspace: true,
+            size: CGSize(width: width, height: width > 600 ? 390 : 844), largeText: largeText)
+        defer { fixture.window.isHidden = true }
+        let container = try await renderedContainer(in: fixture.host.view)
+        client.session.receive(Data((String(repeating: "Checking the floating iPhone header\r\n", count: 60) + "Ready > ").utf8))
+        try await waitForLayout("multiline agent output") {
+            container.layoutIfNeeded()
+            return client.session.readViewportText()?.contains("Ready >") == true && container.snapshotScrollView.topContentInset == 0
+        }
+        try await waitForLayout("agent header accessibility") {
+            fixture.host.view.layoutIfNeeded()
+            let labels = accessibilityObjects(in: fixture.host.view).compactMap(\.accessibilityLabel)
+            return labels.contains("Preview") && labels.contains(where: { $0.hasPrefix("Agents,") })
+        }
+        let objects = accessibilityObjects(in: fixture.host.view)
+        let back = try #require(objects.first { $0.accessibilityLabel?.hasPrefix("Back to worktrees") == true })
+        let switcher = try #require(objects.first { $0.accessibilityLabel?.hasPrefix("Agents,") == true })
+        let preview = try #require(objects.first { $0.accessibilityLabel == "Preview" })
+        for control in [back, switcher, preview] {
+            #expect(control.accessibilityFrame.width >= 44 - 0.001)
+            #expect(control.accessibilityFrame.height >= 44 - 0.001)
+            #expect(control.accessibilityFrame.minY >= fixture.host.view.safeAreaInsets.top)
+            #expect(abs(control.accessibilityFrame.midY - back.accessibilityFrame.midY) < 1)
+            #expect(control.accessibilityFrame.minX >= 0 && control.accessibilityFrame.maxX <= width + 1)
+        }
+        #expect(back.accessibilityFrame.maxX <= switcher.accessibilityFrame.minX + 1)
+        #expect(switcher.accessibilityFrame.maxX <= preview.accessibilityFrame.minX + 1)
+        #expect(abs(container.convert(container.bounds, to: fixture.window).minY) < 1)
+        #expect(container.acceptsTerminalInput(at: CGPoint(x: 100, y: 1)))
+
+    }
+
+    @Test("@spec IOS-4.57: While an iPhone agent terminal extends behind the status bar and Dynamic Island, the application shall blend its top edge into the shared worktree identity smear, fade that overlay into the terminal below, and preserve the terminal's touch handling.", arguments: [true, false])
+    func terminalTopFadesIntoWorktreeSmear(dark: Bool) throws {
+        let theme = dark ? GhosttyThemeColors.fallback : GhosttyThemeColors(
+            backgroundRGB: .init(r: 0.98, g: 0.97, b: 0.94), foregroundRGB: .init(r: 0.1, g: 0.1, b: 0.1))
+        let row = WorktreePanes(path: "/repo", displayName: "Phone header", repoDisplayName: "Repo", displayBranch: "phone-header",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "repo", projectID: "project", emoji: "🔥"))
+        let renderer = ImageRenderer(content: Color(red: 0, green: 1, blue: 1)
+            .overlay(alignment: .top) { MobileTerminalHeaderWash(worktree: row, theme: theme).frame(height: 160) }
+            .frame(width: 390, height: 300))
+        renderer.scale = 1
+        let image = try #require(renderer.cgImage)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("terminal-wash-\(dark).png")
+        try #require(UIImage(cgImage: image).pngData()).write(to: url)
+        print("Wash render: \(url.path)")
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        try bytes.withUnsafeMutableBytes { buffer in
+            let context = try #require(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+        let top = (20 * image.width + 300) * 4
+        #expect(Int(bytes[top]) > Int(bytes[top + 2]) + 10, "The top must carry the warm emoji smear, rather than a plain fade")
+        let bottom = (220 * image.width + 50) * 4
+        #expect(bytes[bottom] < 10 && bytes[bottom + 1] > 245 && bytes[bottom + 2] > 245,
+                "The wash must leave terminal content below the header unchanged")
+    }
+
+    @Test("@spec IOS-4.56: While an iPhone agent terminal is visible, the application shall extend the terminal viewport to the screen's top and bottom edges behind a single floating row containing Back and the agent switcher on the left and the resource controls on the right, reserving only the keyboard and its control bar.", arguments: [CGFloat(0), CGFloat(300)])
+    func compactAgentTerminalReachesScreenEdges(keyboardInset: CGFloat) async throws {
+        let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let fixture = makeFixture(client: client, keyboardInset: keyboardInset, agentWorkspace: true)
+        defer { fixture.window.isHidden = true }
+        let container = try await renderedContainer(in: fixture.host.view)
+        let frame = container.convert(container.bounds, to: fixture.window)
+        let expectedBottom = fixture.window.bounds.maxY - keyboardInset - (keyboardInset > 0 ? 58 : 0)
+        #expect(abs(frame.minY - fixture.window.bounds.minY) < 1, "Agent terminal leaves a top gap: \(frame)")
+        #expect(abs(frame.maxY - expectedBottom) < 1, "Agent terminal ends at \(frame.maxY), expected \(expectedBottom)")
+
+        client.session.receive(Data("prompt".utf8))
+        try await waitForLayout("agent prompt clears floating controls") {
+            let text = container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
+            return text.minY >= fixture.host.view.safeAreaInsets.top + 68
+        }
+        client.session.receive(Data("\r\nsecond line".utf8))
+        try await waitForLayout("agent output reaches the physical top") {
+            let text = container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
+            return abs(text.minY - fixture.window.bounds.minY) < 1
+        }
+    }
+
     @Test("@spec IOS-6.25: If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.", arguments: [true, false], ["x", "界", "👩‍💻"])
     func chromeClearanceTracksFirstLineContent(embedded: Bool, wrappedCharacter: String) async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
@@ -215,13 +344,27 @@ struct RenderedTerminalViewportTests {
         #expect(frame.minY >= fixture.host.view.safeAreaInsets.top + 44)
     }
 
-    private func makeFixture(client: SessionClient, keyboardInset: CGFloat = 0, embedded: Bool = false,
+    private func makeFixture(client: SessionClient, keyboardInset: CGFloat = 0, embedded: Bool = false, agentWorkspace: Bool = false,
+                             size: CGSize? = nil, largeText: Bool = false,
+                             question: String? = nil, completed: Bool = false,
                              sharedKeyboard: KeyboardFrameObservation? = nil) -> (window: UIWindow, host: UIHostingController<AnyView>) {
+        let leaf = PaneLayoutNode.leaf(sessionName: "viewport", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil)
+        let layout = question.map { question in
+            PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: leaf,
+                right: .leaf(sessionName: "other", title: "Other agent", attentionText: question, isBusy: false, attentionSource: .agentStop))
+        } ?? leaf
+        let workspace = WorktreePanes(path: "/repo", displayName: "Phone header", repoDisplayName: "Repo", displayBranch: "phone-header",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: layout,
+            sidebar: .init(id: "repo", projectID: "project", emoji: "🔥"),
+            agents: [.init(id: "agent", name: "Agent", provider: "codex", status: completed ? "closed" : "running",
+                sessionName: completed ? nil : "viewport", completionID: completed ? "done" : nil,
+                result: completed ? "Finished" : nil, retainedSessionName: completed ? "viewport" : nil)])
         let terminal = SingleSessionView(
             step: SessionStep(host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!),
-                              sessionName: "viewport", title: "Shell"),
+                              worktreePath: agentWorkspace ? workspace.path : nil, sessionName: "viewport", title: "Shell"),
             navigationPath: .constant(NavigationPath()), isFullScreen: !embedded,
-            isEmbeddedPane: embedded, initialClient: client,
+            isEmbeddedPane: embedded, attentionWorktrees: agentWorkspace ? [workspace] : [], initialClient: client,
             initialController: MobileTerminalControllerFactory.make(configText: "font-size = 14"),
             initialKeyboardBottomInset: keyboardInset)
         let content: AnyView
@@ -232,17 +375,20 @@ struct RenderedTerminalViewportTests {
             }.modifier(IPadTerminalDetailChrome())
                 .environment(\.multiPaneKeyboardFrame, sharedKeyboard))
         } else {
-            content = AnyView(terminal)
+            content = AnyView(terminal
+                .environment(\.remoteConnectionCoordinator, agentWorkspace ? RemoteConnectionCoordinator() : nil)
+                .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large))
         }
-        return makeHostingFixture(content: content, embedded: embedded)
+        return makeHostingFixture(content: content, embedded: embedded, size: size)
     }
 
     private func makeHostingFixture(content: AnyView,
-                                    embedded: Bool = false) -> (window: UIWindow, host: UIHostingController<AnyView>) {
+                                    embedded: Bool = false, size: CGSize? = nil) -> (window: UIWindow, host: UIHostingController<AnyView>) {
         let host = UIHostingController(rootView: AnyView(content
             .environment(\.scenePhase, .inactive)
+            .environment(\.accessibilityEnabled, true)
             .environment(\.horizontalSizeClass, embedded ? .regular : .compact)))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: embedded ? 834 : 390, height: 844))
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size ?? CGSize(width: embedded ? 834 : 390, height: 844)))
         window.rootViewController = host
         window.makeKeyAndVisible()
         host.view.layoutIfNeeded()
@@ -272,6 +418,21 @@ struct RenderedTerminalViewportTests {
 
     private func descendants(of root: UIView) -> [UIView] {
         [root] + root.subviews.flatMap { descendants(of: $0) }
+    }
+
+    private func accessibilityObjects(in root: NSObject) -> [NSObject] {
+        var result: [NSObject] = [], pending = [root], seen: Set<ObjectIdentifier> = []
+        while let object = pending.popLast(), result.count < 4096 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            result.append(object)
+            if let view = object as? UIView { pending.append(contentsOf: view.subviews) }
+            pending.append(contentsOf: (object.accessibilityElements ?? []).compactMap { $0 as? NSObject })
+            pending.append(contentsOf: (object.automationElements ?? []).compactMap { $0 as? NSObject })
+            for index in 0..<max(0, min(object.accessibilityElementCount(), 128)) {
+                if let child = object.accessibilityElement(at: index) as? NSObject { pending.append(child) }
+            }
+        }
+        return result
     }
 
     private func waitForLayout(_ stage: String, sourceLocation: SourceLocation = #_sourceLocation,

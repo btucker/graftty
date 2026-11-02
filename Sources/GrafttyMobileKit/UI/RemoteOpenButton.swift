@@ -18,10 +18,11 @@ struct RemoteOpenButton: View {
     let browserConnectionReady: Bool
     let isPaneFocused: Bool
     let hasOwnershipSnapshot: Bool
-    /// IPAD-2.27: the compact agent workspace opens its shells from here.
-    var onOpenTerminal: (() -> Void)? = nil
     /// IPAD-1.31: iPad panes leave Worktree context to the toolbar's group.
     var showsWorktreeContext = true
+    /// Compact agent routes keep the worktree library and the latest pane
+    /// preview in one control, rather than two matching document glyphs.
+    var showsPreviewLibrary = false
     /// IPAD-1.31: when set, the pane draws no capsule and hands its browser
     /// action to the iPad toolbar's single group instead.
     var exportControls: ((PaneResourceControls?) -> Void)? = nil
@@ -241,29 +242,41 @@ struct RemoteOpenButton: View {
 
     @ViewBuilder
     private func capsuleControls(actionID: UUID) -> some View {
-        let visible = (isPaneFocused && ((showsWorktreeContext && openWorktreeContext != nil) || onOpenTerminal != nil))
-            || (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
-        // Keep the presentation anchor mounted while scene activity hides the controls.
-        ViewThatFits {
-            TerminalFloatingControlGroup(isVisible: visible) {
-                HStack(spacing: 8) { resourceButtons(actionID: actionID) }.fixedSize()
+        let visible = (isPaneFocused && showsWorktreeContext && openWorktreeContext != nil)
+            || (isPaneFocused && showsPreviewLibrary) || (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
+        if showsPreviewLibrary {
+            // The compact header budgets three 44pt targets. Keep the stateful
+            // preview library in one mounted group rather than layout alternatives.
+            TerminalFloatingControlGroup(isVisible: visible, compactGlyphs: true) {
+                HStack(spacing: 0) { resourceButtons(actionID: actionID) }.fixedSize()
             }
-            TerminalFloatingControlGroup(isVisible: visible) {
-                VStack(spacing: 8) { resourceButtons(actionID: actionID) }.fixedSize()
-            }
-            ScrollView(.vertical) {
+        } else {
+            // Keep the presentation anchor mounted while scene activity hides the controls.
+            ViewThatFits {
+                TerminalFloatingControlGroup(isVisible: visible) {
+                    HStack(spacing: 8) { resourceButtons(actionID: actionID) }.fixedSize()
+                }
                 TerminalFloatingControlGroup(isVisible: visible) {
                     VStack(spacing: 8) { resourceButtons(actionID: actionID) }.fixedSize()
                 }
-                .frame(maxWidth: .infinity)
+                ScrollView(.vertical) {
+                    TerminalFloatingControlGroup(isVisible: visible) {
+                        VStack(spacing: 8) { resourceButtons(actionID: actionID) }.fixedSize()
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(minWidth: 44)
             }
-            .frame(minWidth: 44)
         }
     }
 
     @ViewBuilder
     private func resourceButtons(actionID: UUID) -> some View {
-        if imageReady, let offer = imageOffer {
+        if showsPreviewLibrary {
+            WorktreePreviewMenu(host: host, worktree: worktree, usesFloatingStyle: true,
+                openLatest: imageReady ? imageOffer.map { offer in { open(offer, actionID: actionID) } } : nil,
+                latestFilename: imageOffer?.filename, isLatestBusy: isDownloading)
+        } else if imageReady, let offer = imageOffer {
             TerminalFloatingGlyphButton(systemName: "doc.richtext", accessibilityLabel: "Preview",
                                         isBusy: imageDownload != nil) {
                 open(offer, actionID: actionID)
@@ -276,15 +289,7 @@ struct RemoteOpenButton: View {
             }
             .disabled(isDownloading)
         }
-        if isPaneFocused, showsWorktreeContext, let openWorktreeContext {
-            TerminalFloatingGlyphButton(systemName: "text.alignleft", accessibilityLabel: "Worktree context",
-                action: openWorktreeContext)
-                .accessibilityIdentifier("worktree.context.open")
-        }
-        if isPaneFocused, let onOpenTerminal {
-            TerminalFloatingGlyphButton(systemName: "apple.terminal", accessibilityLabel: "Terminal", action: onOpenTerminal)
-                .accessibilityHint("Show this worktree's shells")
-        }
+        if !showsPreviewLibrary { worktreeContextControl }
         ZStack {
             Color.clear.frame(width: 44, height: 44)
                 .allowsHitTesting(false).accessibilityHidden(true)
@@ -302,6 +307,16 @@ struct RemoteOpenButton: View {
                 }
                 .disabled(isDownloading)
             }
+        }
+        if showsPreviewLibrary { worktreeContextControl }
+    }
+
+    @ViewBuilder
+    private var worktreeContextControl: some View {
+        if isPaneFocused, showsWorktreeContext, let openWorktreeContext {
+            TerminalFloatingGlyphButton(systemName: showsPreviewLibrary ? "sidebar.right" : "text.alignleft",
+                accessibilityLabel: "Worktree context", action: openWorktreeContext)
+                .accessibilityIdentifier("worktree.context.open")
         }
     }
 

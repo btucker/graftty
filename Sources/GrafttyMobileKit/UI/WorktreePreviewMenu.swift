@@ -6,6 +6,10 @@ import GrafttyProtocol
 struct WorktreePreviewMenu: View {
     let host: Host
     let worktree: String
+    var usesFloatingStyle = false
+    var openLatest: (() -> Void)? = nil
+    var latestFilename: String? = nil
+    var isLatestBusy = false
     @Environment(\.remoteConnectionCoordinator) private var coordinator
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
@@ -21,19 +25,22 @@ struct WorktreePreviewMenu: View {
     private var scope: String { "\(host.id):\(worktree):\(ready)" }
 
     var body: some View {
-        Menu {
-            if collections.isEmpty { Text("No previews in this worktree") }
-            ForEach(collections) { collection in
-                Button(collection.menuTitle) {
-                    open(collection.offers)
-                }
-            }
-        } label: {
-            Label("Worktree previews", systemImage: "doc.richtext").labelStyle(.iconOnly)
-                .frame(minWidth: 44, minHeight: 44)
+        Group {
+            if let openLatest {
+                TerminalFloatingGlyphButton(systemName: "doc.richtext", accessibilityLabel: "Preview",
+                    isBusy: isLatestBusy || loading, action: openLatest)
+                    .accessibilityValue(latestFilename ?? "")
+                    .accessibilityHint("Preview the latest files; hold to browse worktree previews")
+                    .contextMenu { library }
+                    .overlay(alignment: .topTrailing) {
+                        Circle().fill(.tint).frame(width: 8, height: 8)
+                            .accessibilityHidden(true).allowsHitTesting(false)
+                    }
+            } else if usesFloatingStyle { libraryMenu.buttonStyle(.plain) }
+            else { libraryMenu }
         }
-        .disabled(loading || !ready)
-        .overlay { if loading { ProgressView().controlSize(.mini) } }
+        .disabled(loading || isLatestBusy || !ready)
+        .overlay { if loading && !usesFloatingStyle { ProgressView().controlSize(.mini) } }
         .task(id: scope) {
             offers = []
             guard ready, let coordinator else { return }
@@ -55,6 +62,28 @@ struct WorktreePreviewMenu: View {
         .alert("Could not open preview", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK") { error = nil }
         } message: { Text(error ?? "") }
+    }
+
+    private var libraryMenu: some View {
+        Menu { library } label: {
+            if usesFloatingStyle {
+                TerminalFloatingGlyph(systemName: "doc.richtext", isBusy: loading)
+            } else {
+                Label("Worktree previews", systemImage: "doc.richtext").labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+        }
+        .accessibilityLabel(usesFloatingStyle ? "Preview" : "Worktree previews")
+        .accessibilityHint("Browse worktree previews")
+    }
+
+    private var library: some View {
+        Group {
+            if collections.isEmpty { Text("No previews in this worktree") }
+            ForEach(collections) { collection in
+                Button(collection.menuTitle) { open(collection.offers) }
+            }
+        }
     }
 
     private func open(_ collection: [RemoteOpenOffer]) {

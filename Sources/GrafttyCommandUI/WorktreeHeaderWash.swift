@@ -76,7 +76,11 @@ public struct WorktreeHeaderWashView: View {
                 watermarkLayer
                     .rotationEffect(.degrees(-12))
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .trailing)
+                    #if os(macOS)
+                    .offset(x: 14)
+                    #else
                     .offset(x: 34)
+                    #endif
                 LinearGradient(colors: [wash.background.opacity(0.18), wash.background.opacity(fadesToBackground ? 1 : 0.34)],
                                startPoint: .top, endPoint: .bottom)
             }

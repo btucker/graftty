@@ -102,6 +102,8 @@ struct SingleSessionView: View {
     /// content bottom. A safe-area inset alone would include the keyboard.
     @State private var windowBottom: CGFloat = 0
     @State private var containedContentBottom: CGFloat = 0
+    @State private var topSafeAreaInset: CGFloat = 0
+    @State private var compactHeaderHeight: CGFloat = 0
     private var containerBottomInset: CGFloat { max(0, windowBottom - containedContentBottom) }
     private var isCompactShellRoute: Bool { compactWorkspace != nil && sessionAgent == nil }
     /// Embedded panes let their shared multi-pane parent manage the keyboard
@@ -384,6 +386,7 @@ struct SingleSessionView: View {
         // this, SwiftUI also avoids the keyboard and the UIKit terminal
         // expands back into the keyboard safe area.
         .ignoresSafeArea(.keyboard, edges: isTerminalSheet || compactWorkspace != nil ? .bottom : [])
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { topSafeAreaInset = $0 }
         .onAppear { agentLaunchSelection.activate() }
         .onDisappear { agentLaunchSelection.invalidate() }
         .onChange(of: compactWorkspace) { _, workspace in
@@ -561,27 +564,20 @@ struct SingleSessionView: View {
                 .accessibilityIdentifier("workspace.pane.header")
             }
             if isEmbeddedPane, let embeddedPaneBanner { embeddedPaneBanner }
-            if let workspace = compactWorkspace {
-                Text(workspace.displayName).font(.subheadline).lineLimit(1).foregroundStyle(terminalTheme.foreground)
-                    .frame(maxWidth: .infinity).padding(.leading, 68).padding(.trailing, 120).frame(height: 64)
-                let generation = agentLaunchSelection.generation
-                CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession,
-                    onNewAgent: { selectCreatedAgent($0, generation: generation) },
-                    attentionContext: worktreeContext, hostID: step.host.id, host: step.host, theme: terminalTheme)
-            }
             if isCompactShellRoute {
                 ContentUnavailableView("Select an agent", systemImage: "terminal",
-                    description: Text("Choose an agent above, or open Terminal from the top-right controls."))
+                    description: Text("Choose an agent or open Terminal from the agent menu above."))
                     .foregroundStyle(terminalTheme.foreground)
+                    .padding(.top, compactContentTopInset)
             } else if let agent = completedAgent, let path = step.worktreePath {
                 VStack(spacing: 0) {
                     MobileAgentConversationView(host: step.host, worktreePath: path, agent: agent)
-
                 }
+                .padding(.top, compactContentTopInset)
             } else {
             switch connection.presentation {
             case .loading:
-                loadingPlaceholder
+                loadingPlaceholder.padding(.top, compactContentTopInset)
             case .terminal:
                 GeometryReader { _ in
                     VStack(spacing: 0) {
@@ -607,7 +603,7 @@ struct SingleSessionView: View {
                     }
                 }
             case .ended:
-                endedBanner
+                endedBanner.padding(.top, compactContentTopInset)
             }
             }
         }
@@ -615,13 +611,22 @@ struct SingleSessionView: View {
         // the keyboard. SwiftUI's automatic `.keyboard` safe-area
         // avoidance is unreliable when UITerminalView is the focused
         // responder, so we drive it ourselves.
-        .padding(.bottom, isEmbeddedPane ? 0 : max(0, keyboardBottomInset - ((isTerminalSheet || compactWorkspace != nil) ? containerBottomInset : 0)))
+        .padding(.bottom, isEmbeddedPane ? 0 : max(0, keyboardBottomInset - (isTerminalSheet ? containerBottomInset : 0)))
         // Fullscreen terminals reach the screen edges. Embedded terminals
         // respect the workspace's header and safe-area boundaries.
-        .modifier(FullScreenChrome(enabled: isFullScreen, contained: isEmbeddedPane || isTerminalSheet || compactWorkspace != nil))
+        .modifier(FullScreenChrome(enabled: isFullScreen, contained: isEmbeddedPane || isTerminalSheet))
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { containedContentBottom = $0 }
+            .overlay(alignment: .top) {
+                if let workspace = compactWorkspace {
+                    MobileTerminalHeaderWash(worktree: workspace, theme: terminalTheme)
+                        .frame(height: topSafeAreaInset + 100)
+                        .offset(y: -topSafeAreaInset)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
             .overlay(alignment: .topLeading) {
-                if isFullScreen {
+                if isFullScreen, compactWorkspace == nil {
                     backButton
                         .modifier(TerminalFloatingControlPlacement())
                 }
@@ -638,8 +643,7 @@ struct SingleSessionView: View {
                 if let client, let paging = client.paging, isPaneFocused,
                    client.connectionState == .live, client.imagePasteProgress == nil {
                     PagedHistoryBanner(paging: paging)
-                        // Clear the compact workspace's title and agent bar.
-                        .padding(.top, compactWorkspace == nil ? 64 : 116)
+                        .padding(.top, 64)
                         .padding(.horizontal, 16)
                 }
             }
@@ -670,10 +674,15 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if !isEmbeddedPane {
+                if !isEmbeddedPane, compactWorkspace == nil {
                     remoteOpenControls
                         .modifier(TerminalFloatingControlPlacement())
                         .padding(.trailing, 12)
+                }
+            }
+            .overlay(alignment: .top) {
+                if let workspace = compactWorkspace {
+                    compactFloatingHeader(workspace)
                 }
             }
             .overlay(alignment: .topTrailing) {
@@ -812,6 +821,34 @@ struct SingleSessionView: View {
                     transportIsAvailable: client?.isOwner == true && client?.connectionState == .live
                 )
             }
+    }
+
+    private var floatingChromeClearance: CGFloat { compactWorkspace == nil ? 68 : max(68, compactHeaderHeight + 12) }
+    private var compactContentTopInset: CGFloat { compactWorkspace == nil ? 0 : topSafeAreaInset + floatingChromeClearance }
+
+    private func compactFloatingHeader(_ workspace: WorktreePanes) -> some View {
+        let generation = agentLaunchSelection.generation
+        return VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                TerminalFloatingControlGroup(compactGlyphs: true) {
+                    HStack(spacing: 0) {
+                        backButton
+                        CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession,
+                            onNewAgent: { selectCreatedAgent($0, generation: generation) },
+                            onOpenTerminal: { openCompactTerminal(in: workspace) },
+                            attentionContext: worktreeContext, hostID: step.host.id, host: step.host, theme: terminalTheme)
+                    }
+                }
+                Spacer(minLength: 0)
+                remoteOpenControls.fixedSize()
+            }
+            WorkspaceInputRequest(context: worktreeContext, selectedSession: step.sessionName, onSelect: selectWorkspaceSession)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        }
+        .padding(.horizontal, 12).padding(.top, 12)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { compactHeaderHeight = $0 }
+        .foregroundStyle(terminalTheme.foreground)
+        .environment(\.colorScheme, terminalTheme.isDark ? .dark : .light)
     }
 
     private struct NotificationRecoveryKey: Equatable {
@@ -1281,8 +1318,8 @@ struct SingleSessionView: View {
                 browserConnectionReady: connection == .live,
                 isPaneFocused: isPaneFocused,
                 hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
-                onOpenTerminal: compactWorkspace.map { workspace in { openCompactTerminal(in: workspace) } },
                 showsWorktreeContext: !isEmbeddedPane,
+                showsPreviewLibrary: compactWorkspace != nil,
                 exportControls: isEmbeddedPane ? paneControlsSink.map { sink in { sink(step.sessionName, $0) } } : nil,
                 isPaneOwner: { client?.isOwner == true },
                 canPresentAuthentication: { true },
@@ -1315,7 +1352,8 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
-            reservesTopChromeSpace: !isEmbeddedPane && !isTerminalSheet && compactWorkspace == nil,
+            reservesTopChromeSpace: !isEmbeddedPane && !isTerminalSheet,
+            topChromeClearance: floatingChromeClearance,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)
@@ -1575,7 +1613,8 @@ private struct FullScreenChrome: ViewModifier {
         if contained { content.ignoresSafeArea(.keyboard).toolbar(enabled ? .hidden : .automatic, for: .navigationBar) }
         else if enabled {
             content
-                .ignoresSafeArea()
+                .ignoresSafeArea(.container, edges: [.top, .bottom])
+                .ignoresSafeArea(.keyboard)
                 .toolbar(.hidden, for: .navigationBar)
         } else {
             content

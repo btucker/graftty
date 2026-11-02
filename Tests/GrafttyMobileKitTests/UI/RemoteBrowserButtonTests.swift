@@ -15,6 +15,86 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
+    @Test("The phone header smear overlays the terminal without taking its touch events.")
+    func hostedCompactHeaderRender() async throws {
+        let client = SessionClient(sessionName: "phone-header", webSocketFactory: { PreviewLifecycleSocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitUntil("live fixture terminal") { client.isOwner }
+        let row = WorktreePanes(path: "/phone-header", displayName: "Phone header", repoDisplayName: "Graftty", displayBranch: "phone-header",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: client.sessionName, title: "Review header", attentionText: nil, isBusy: false, attentionSource: nil),
+            sidebar: .init(id: "header", projectID: "graftty", emoji: "🔥"),
+            agents: [.init(id: "agent", name: "Review header", provider: "codex", status: "running", sessionName: client.sessionName)])
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        let coordinator = RemoteConnectionCoordinator(connectionsAllowedInitially: false)
+        let pairedHost = Host(label: "Mac", baseURL: URL(string: "https://fixture.invalid")!)
+        let host = UIHostingController(rootView: SingleSessionView(
+            step: .init(host: pairedHost, worktreePath: row.path, sessionName: client.sessionName, title: "Review header"),
+            navigationPath: .constant(NavigationPath()), attentionWorktrees: [row], initialClient: client,
+            initialController: MobileTerminalControllerFactory.make(configText: "font-size = 14"))
+            .environment(\.remoteConnectionCoordinator, coordinator)
+            .environment(\.scenePhase, .inactive)
+            .environment(\.accessibilityEnabled, true))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        let container = try await terminalContainer(in: host.view)
+        client.session.receive(Data((String(repeating: "Restoring the terminal's full screen height\r\n", count: 70) + "Ready > ").utf8))
+        try await waitUntil("output reaches the screen top") {
+            container.layoutIfNeeded()
+            return client.session.readViewportText()?.contains("Ready >") == true && container.snapshotScrollView.topContentInset == 0
+        }
+        #expect(abs(container.convert(container.bounds, to: window).minY) < 1)
+        #expect(!accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Terminal" },
+                "Terminal belongs in the agent dropdown, rather than the resource capsule")
+        let hit = host.view.hitTest(CGPoint(x: 100, y: 10), with: nil)
+        #expect(hit?.isDescendant(of: container) == true, "The decorative smear must pass terminal gestures through")
+        try await Task.sleep(for: .milliseconds(200))
+        let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("phone-header-hosted.png")
+        try #require(image.pngData()).write(to: url)
+        print("Hosted header render: \(url.path)")
+    }
+
+    @Test("@spec IOS-4.58: While an iPhone agent terminal shows resource controls, the application shall order Preview, Browser, and Context from left to right in one top-right capsule, use the right-sidebar glyph for Context, retain at least 44-point targets, and keep the group stable when no latest pane preview exists.", arguments: [true, false])
+    func previewLibrarySharesResourceCapsule(hasLatest: Bool) async throws {
+        let fixture = try makeButtonFixture(owner: true, image: hasLatest, previewLibrary: true)
+        defer { close(fixture) }
+        try await waitUntil("compact resource group") {
+            fixture.host.view.layoutIfNeeded()
+            let labels = accessibilityObjects(in: fixture.host.view).compactMap(\.accessibilityLabel)
+            return ["Preview", "Browser", "Worktree context"].allSatisfy(labels.contains)
+        }
+        let controls = try ["Preview", "Browser", "Worktree context"].map { label in
+            try #require(accessibilityObjects(in: fixture.host.view).first { $0.accessibilityLabel == label })
+        }
+        #expect(accessibilityObjects(in: fixture.host.view).filter { $0.accessibilityLabel == "Preview" }.count == 1)
+        #expect(!accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Terminal" })
+        for control in controls {
+            #expect(control.accessibilityFrame.width >= 44 - 0.001)
+            #expect(control.accessibilityFrame.height >= 44 - 0.001)
+            #expect(abs(control.accessibilityFrame.midY - controls[0].accessibilityFrame.midY) < 1)
+        }
+        for index in 1..<controls.count {
+            // Browser's notification badge extends its accessibility bounds
+            // beyond the target. Each button still starts one 44pt cell apart.
+            let step = controls[index].accessibilityFrame.minX - controls[index - 1].accessibilityFrame.minX
+            #expect(abs(step - 44) < 1, "Resource targets should form one compact row; frames=\(controls.map(\.accessibilityFrame))")
+        }
+        #expect(!controls[0].accessibilityTraits.contains(.notEnabled))
+        if hasLatest {
+            try activateImages(in: fixture.host.view)
+            try await waitUntil("preview opened from unified group") { quickLook(in: fixture.host.presentedViewController) != nil }
+        }
+    }
+
     @Test("@spec AGENT-6.151: While a selected worktree has no tabs, the application shall offer an enabled New agent control with a minimum 44-point touch target on iPhone and iPad.", arguments: [false, true], [WorktreeWireState.closed, .running])
     func emptyWorktreeOffersNewAgent(compact: Bool, state: WorktreeWireState) async throws {
         let host = Host(label: "Mac", baseURL: URL(string: "https://fixture.invalid")!)
@@ -171,7 +251,7 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { fixture.state.offerPolls == previous + 1 && clock.hasPendingSleep(for: 3) }
     }
 
-    @Test("@spec CONTEXT-10: While mobile terminal controls are visible, the application shall display an icon-only Context action immediately left of Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.", .timeLimit(.minutes(1)))
+    @Test("@spec CONTEXT-10: While mobile terminal controls are visible, the application shall display an icon-only Context action alongside Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.", .timeLimit(.minutes(1)))
     func drawerPreservesMountedTerminal() async throws {
         let theme = GhosttyThemeColors(backgroundRGB: .init(r: 0.98, g: 0.97, b: 0.94),
             foregroundRGB: .init(r: 0.23, g: 0.25, b: 0.27))
@@ -832,7 +912,8 @@ struct RemoteBrowserButtonTests {
     }
 
     private func makeButtonFixture(owner: Bool, pending: Bool = false, authentication: Bool = true,
-                                   image: Bool = false, imageInitiallyAvailable: Bool = true, paneWidth: CGFloat? = nil, autoPreview: Bool = false) throws -> ButtonFixture {
+                                   image: Bool = false, imageInitiallyAvailable: Bool = true, paneWidth: CGFloat? = nil, autoPreview: Bool = false,
+                                   previewLibrary: Bool = false) throws -> ButtonFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let coordinator = RemoteConnectionCoordinator(directory: directory, connectionsAllowedInitially: false)
@@ -857,7 +938,7 @@ struct RemoteBrowserButtonTests {
             for offer in state.offers { coordinator.completePreviewAutoOpen(offer.id) }
         }
         let button = ButtonFixtureView(state: state, coordinator: coordinator, host: host, imageBytes: imageBytes,
-                                      device: device, initialPresentation: presentation, paneWidth: paneWidth)
+                                      device: device, initialPresentation: presentation, paneWidth: paneWidth, previewLibrary: previewLibrary)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let previous = scene.windows.first { $0.isKeyWindow }
@@ -885,6 +966,7 @@ struct RemoteBrowserButtonTests {
         let device: RemoteDeviceID
         let initialPresentation: ChromeOfferPresentation
         let paneWidth: CGFloat?
+        var previewLibrary = false
         var body: some View {
             if state.visible {
                 let button = RemoteOpenButton(host: host, worktree: state.worktree, coordinator: coordinator, sessionName: "pane",
@@ -903,10 +985,13 @@ struct RemoteBrowserButtonTests {
                         state.offerPolls += 1
                         return .openResource(.offers(state.offers))
                     }, pollingClock: state.pollingClock, browserConnectionReady: state.ready, isPaneFocused: state.focused, hasOwnershipSnapshot: state.hasSnapshot,
+                    showsPreviewLibrary: previewLibrary,
                     isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
                     .environment(\.scenePhase, state.active ? .active : .background)
                     .environment(\.accessibilityEnabled, true)
                     .environment(\.biometricGate, state.gate)
+                    .environment(\.remoteConnectionCoordinator, coordinator)
+                    .environment(\.openWorktreeContext, previewLibrary ? {} : nil)
                 if let paneWidth {
                     Color.black.frame(width: paneWidth, height: 200)
                         .overlay(alignment: .topTrailing) {
