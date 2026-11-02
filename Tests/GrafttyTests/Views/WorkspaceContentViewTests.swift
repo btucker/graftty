@@ -84,7 +84,7 @@ struct WorkspaceContentViewTests {
         var entry = WorktreeEntry(path: "/repo/tabs", branch: "tabs", state: .running,
             splitTree: SplitTree(root: .split(.init(direction: .horizontal, ratio: 0.5, left: .leaf(first), right: .leaf(second)))))
         entry.agents = [("Codex A", first), ("Codex B", second)].map { name, slot in
-            var agent = ManagedAgent(name: name, provider: .codex, parent: nil)
+            var agent = ManagedAgent(name: name, provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
             agent.paneSlotID = slot
             return agent
         }
@@ -117,7 +117,7 @@ struct WorkspaceContentViewTests {
     private final class CompletedModel: ObservableObject {
         @Published var agent: ManagedAgent
         init() {
-            var agent = ManagedAgent(name: "Finished", provider: .codex, parent: nil)
+            var agent = ManagedAgent(name: "Finished", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
             _ = try! agent.finish(assignment: agent.assignmentID, result: "Done")
             self.agent = agent
         }
@@ -171,9 +171,9 @@ struct WorkspaceContentViewTests {
     private func captureWorkspaceIfRequested(manager: TerminalManager) throws {
         guard let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] else { return }
         let a = PaneSlotID(), b = PaneSlotID(), shell = PaneSlotID()
-        var first = ManagedAgent(name: "Implement workspace", provider: .codex, parent: nil)
+        var first = ManagedAgent(name: "Implement workspace", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         first.paneSlotID = a
-        var second = ManagedAgent(name: "Review lifecycle", provider: .claude, parent: nil)
+        var second = ManagedAgent(name: "Review lifecycle", provider: .claude, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         second.paneSlotID = b
         second.providerSessionID = "saved-conversation"
         let completion = try second.finish(assignment: second.assignmentID, result: "Reviewed the workspace changes. Completed tabs retain their position and the parent has cleaned up this session.")

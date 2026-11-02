@@ -9,7 +9,7 @@ struct AgentConversationResumeTests {
     func failedResumeRetainsTeardownProgress() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         platform.controlCapabilities.insert(.paneAgent)
-        var agent = ManagedAgent(name: "Resume", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Resume", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
         agent.providerSessionID = "conversation"
         _ = try agent.finish(assignment: agent.assignmentID, result: "Done")
@@ -32,7 +32,7 @@ struct AgentConversationResumeTests {
     @Test("@spec AGENT-6.139: When a paired viewer requests a saved conversation, the host shall return bounded content for the exact worktree and reject an agent addressed through a different worktree.")
     func remoteConversationUsesExactWorktree() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.providerSessionID = "conversation"
         _ = try agent.finish(assignment: agent.assignmentID, result: "Done")
         agent.transcript = "Captured transcript"
@@ -49,7 +49,7 @@ struct AgentConversationResumeTests {
 
     @Test("@spec AGENT-6.135: When a conversation restarts, the application shall retain the previous assignment's transcript archive in history without displaying it as the new assignment's transcript.")
     func restartSeparatesTranscriptGenerations() throws {
-        var agent = ManagedAgent(name: "Resume", provider: .claude, parent: nil)
+        var agent = ManagedAgent(name: "Resume", provider: .claude, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.providerSessionID = "conversation"
         let completion = try agent.finish(assignment: agent.assignmentID, result: "First result")
         let archive = AgentTranscriptArchive(id: String(repeating: "a", count: 64), byteCount: 20)
@@ -65,7 +65,7 @@ struct AgentConversationResumeTests {
     @Test("@spec AGENT-6.132: If the host stops after reserving a conversation restart but before binding its terminal, then the application shall recover its completed record and allow another resume attempt.")
     func abandonedRestartReservationIsRetryable() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var agent = ManagedAgent(name: "Resume", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Resume", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.providerSessionID = "conversation"
         let completion = try agent.finish(assignment: agent.assignmentID, result: "Retained result")
         try agent.beginClose(completion: completion.id)
@@ -83,7 +83,7 @@ struct AgentConversationResumeTests {
     @Test("@spec AGENT-6.133: When a completed tab is selected and dismissed, the application shall preserve every live terminal and the durable completion record while targeting the visible tab for commands.")
     func completedPresentationOwnsCommands() throws {
         let a = PaneSlotID(), b = PaneSlotID()
-        var agent = ManagedAgent(name: "Complete", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Complete", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSlotID = a
         let completion = try agent.finish(assignment: agent.assignmentID, result: "Done")
         try agent.beginClose(completion: completion.id)
@@ -110,7 +110,7 @@ struct AgentConversationResumeTests {
     @Test("@spec AGENT-6.131: When a cleaned-up conversation restarts, the application shall accept exits only from the new provider launch and retain the previous assignment result.")
     func restartedProviderExitUsesNewGeneration() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var agent = ManagedAgent(name: "Resume", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Resume", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSessionID = PaneSessionID()
         agent.providerSessionID = "conversation"
         let prior = try agent.finish(assignment: agent.assignmentID, result: "First result")
@@ -138,7 +138,7 @@ struct AgentConversationResumeTests {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         platform.controlCapabilities.insert(.paneAgent)
         let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
-        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSlotID = slot
         agent.paneSessionID = platform.state.repos[0].worktrees[0].paneSessions[slot]
         agent.providerSessionID = "provider-conversation-123"
@@ -168,7 +168,7 @@ struct AgentConversationResumeTests {
     @Test("@spec AGENT-6.125: When a managed terminal closes, the application shall retain its tab group, selection, and conversation slot independently of the live pane inventory.")
     func closingPreservesTabAndSelection() throws {
         let slot = PaneSlotID(), sibling = PaneSlotID()
-        var agent = ManagedAgent(name: "Review", provider: .claude, parent: nil)
+        var agent = ManagedAgent(name: "Review", provider: .claude, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSlotID = slot
         var tree = WorktreeEntry(path: "/repo", branch: "main", state: .running)
         tree.splitTree = SplitTree(root: .leaf(slot)).inserting(sibling, at: slot, direction: .horizontal)

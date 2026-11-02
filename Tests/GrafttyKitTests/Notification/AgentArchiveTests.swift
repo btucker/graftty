@@ -8,7 +8,7 @@ struct AgentArchiveTests {
     func migrationUsesOneStateSave() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         platform.state.repos[0].worktrees[0].agents = (0..<3).map { index in
-            var agent = ManagedAgent(name: "Archive \(index)", provider: .codex, parent: nil)
+            var agent = ManagedAgent(name: "Archive \(index)", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
             agent.transcript = "Full history \(index)"
             return agent
         }
@@ -22,7 +22,7 @@ struct AgentArchiveTests {
     @Test("@spec AGENT-6.109: When a managed transcript is archived, the application shall durably retain its complete UTF-8 contents outside AppState and retrieve it through bounded exact-ID detail chunks.")
     func externalTranscriptRoundTrip() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var agent = ManagedAgent(name: "Archive", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Archive", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         let transcript = String(repeating: "🦊 retained history\n", count: 2_600_000)
         #expect(transcript.utf8.count > 50_000_000)
         agent.transcript = transcript
@@ -75,7 +75,7 @@ struct AgentArchiveTests {
     @Test("@spec AGENT-6.110: If transcript archival fails, the application shall preserve the inline transcript for retry without publishing a missing archive reference.")
     func failedMigrationRetainsInlineHistory() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var agent = ManagedAgent(name: "Archive", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Archive", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.transcript = "retain me"
         platform.state.repos[0].worktrees[0].agents = [agent]
         try FileManager.default.createDirectory(at: platform.agentPromptDirectory, withIntermediateDirectories: true)

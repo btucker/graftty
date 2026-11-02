@@ -181,7 +181,7 @@ struct ManagedPaneCloseRoutingTests {
     func failedTeardownKeepsManagedPane() async throws {
         let (initial, slot) = runningWorktreeState()
         let box = StateBox(initial)
-        var agent = ManagedAgent(name: "Child", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Child", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSlotID = slot
         box.state.repos[0].worktrees[0].agents = [agent]
         let host = try HeadlessRouter()

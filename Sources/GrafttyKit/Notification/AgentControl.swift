@@ -87,7 +87,7 @@ public enum AgentControl {
         if let agentID, let session = paneSessionName, let slot = worktree.paneSlot(forSessionName: session),
            !worktree.agents.contains(where: { $0.paneSlotID == slot && $0.status != .closed }) {
             worktree.ensureWorkspaceLayout()
-            var observed = ManagedAgent(name: provider.displayName, provider: provider, parent: nil)
+            var observed = ManagedAgent(name: provider.displayName, provider: provider, parent: nil, launchOrigin: .observedSession)
             observed.isPrimary = !worktree.hasCurrentAgent
             observed.nativeAgentID = agentID
             observed.paneSlotID = slot
@@ -244,6 +244,9 @@ public enum AgentControl {
                     try? await reconcileCompletions(repoIndex: index, agentID: agent.id, platform: platform)
                 }
             case .close:
+                if request.callerAgentID != nil, !agent.isBoundedAssignment {
+                    throw ManagedAgent.LifecycleError.ongoingSession
+                }
                 guard closingAgents.insert(agent.id).inserted else {
                     return .error("Cleanup is already in progress. Retry with the same completion ID.")
                 }
@@ -356,7 +359,8 @@ public enum AgentControl {
             TeamInboxEndpoint(member: repo.worktrees.first(where: { $0.path == request.callerWorktree })?.branch ?? "",
                 worktree: request.callerWorktree, runtime: TeamAgentIdentity(rawValue: $0)?.runtime.rawValue, agentID: $0)
         }
-        var agent = ManagedAgent(name: name, provider: provider, parent: parent, status: .starting)
+        var agent = ManagedAgent(name: name, provider: provider, parent: parent, status: .starting,
+            launchOrigin: request.launchOrigin)
         agent.paneSlotID = PaneSlotID()
         agent.paneSessionID = PaneSessionID()
         agent.initialPrompt = request.prompt
@@ -426,13 +430,13 @@ public enum AgentControl {
     }
 
     /// Called only for confirmed session destruction, not renderer eviction or disconnect.
-    public static func sessionEnded(path: String, slot: PaneSlotID, reason: String,
+    public static func sessionEnded(path: String, slot: PaneSlotID, reason: String, preserveView: Bool = false,
                                     platform: any ControlPlatform) throws {
         guard var agent = platform.state.worktree(forPath: path)?.agents.first(where: {
             $0.paneSlotID == slot && $0.status != .closed
         }) else { return }
         agent.sessionEnded(reason: reason)
-        agent.paneSlotID = nil
+        if !preserveView { agent.paneSlotID = nil }
         try save(agent, path: path, platform: platform)
     }
 
@@ -484,7 +488,8 @@ public enum AgentControl {
                 guard child.parent != nil, child.status != .closed else { return false }
                 // An ongoing worktree is independent after reservation moves there.
                 // Explicit completion or interruption still requires acknowledgment.
-                if worktree.isPrimaryAgent(child), !child.requiresAcknowledgment { return false }
+                if !child.isBoundedAssignment,
+                   child.launchTargetWorktree == nil || child.launchTargetWorktree == worktree.path { return false }
                 if let stableParent = child.parentManagedAgentID { return stableParent == parent.id }
                 return parent.nativeAgentID != nil && child.parent?.agentID == parent.nativeAgentID
             }
@@ -549,11 +554,18 @@ public enum AgentControl {
                     do {
                         guard try await !platform.agentSessionIsAlive(worktree: worktree.path, slot: slot),
                               !closingAgents.contains(agent.id),
-                              platform.state.worktree(forPath: worktree.path)?.agents.contains(where: {
+                              let currentAgent = platform.state.worktree(forPath: worktree.path)?.agents.first(where: {
                                   $0.id == agent.id && $0.paneSlotID == slot && $0.status != .closed
-                              }) == true else { continue }
-                        try await platform.closeAgentSession(worktree: worktree.path, slot: slot)
-                        try sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited", platform: platform)
+                                      && $0.assignmentID == agent.assignmentID
+                              }) else { continue }
+                        agent = currentAgent
+                        if agent.isBoundedAssignment {
+                            try await platform.closeAgentSession(worktree: worktree.path, slot: slot)
+                            try sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited", platform: platform)
+                        } else if agent.processObservation != .exited {
+                            try sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited",
+                                preserveView: true, platform: platform)
+                        }
                     } catch { /* Inventory/teardown failure is retried on the next maintenance pass. */ }
                 } else if agent.processObservation != .exited, let native = agent.nativeAgentID {
                     let observation: AgentProcessObservation = reachable.contains(native) ? .reachable : .disconnected
@@ -653,7 +665,7 @@ public enum AgentControl {
         for worktree in repo.worktrees {
             for var agent in worktree.agents {
                 guard agentID == nil || agentID == agent.id else { continue }
-                guard let completion = agent.completion, let parent = agent.parent,
+                guard agent.requiresAcknowledgment, let completion = agent.completion, let parent = agent.parent,
                       agent.deliveredCompletionID != completion.id else { continue }
                 let key = completion.id.uuidString
                 let completedAgent = agent

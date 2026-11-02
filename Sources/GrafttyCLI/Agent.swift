@@ -48,6 +48,7 @@ struct AgentAdd: ParsableCommand {
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: initialTask) { throw ValidationError(error) }
         var request = try AgentCLI.request(.add, targetFallback: target)
         request.name = name; request.worktree = target; request.selectTab = selectTab
+        request.launchOrigin = .cliAgentAdd
         request.provider = provider.flatMap(TeamHookRuntime.init(rawValue:))
         request.prompt = initialTask; request.operationID = UUID().uuidString.lowercased(); request.base = base
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))

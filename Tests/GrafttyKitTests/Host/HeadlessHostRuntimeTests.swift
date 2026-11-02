@@ -86,6 +86,35 @@ private actor HostDevContainerFake: CLIExecutor {
 
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
+    @Test("@spec AGENT-6.149: When a mobile client creates a pane and a provider starts there, the host shall treat the observed additional session as ongoing without bounded finish instructions or parent cleanup eligibility.")
+    func mobileCreatedPaneDoesNotBecomeABoundedAssignment() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let first = try await runtime.openWorktree(root.path)
+        _ = try await AgentControl.sessionContext(path: root.path, agentID: "codex-123456789abc",
+            paneSessionName: first, provider: .codex, platform: runtime.controlPlatform)
+        let response = await runtime.control(.split(target: first, direction: .right))
+        guard case .splitCreated(let second) = response else { Issue.record("Expected mobile pane creation"); return }
+        let context = try await AgentControl.sessionContext(path: root.path, agentID: "codex-abcdef123456",
+            paneSessionName: second, provider: .codex, platform: runtime.controlPlatform)
+        let agent = try #require(runtime.state.worktree(forPath: root.path)?.agents.last)
+        #expect(agent.isPrimary == false)
+        #expect(agent.launchOrigin == .observedSession)
+        #expect(!agent.isBoundedAssignment)
+        #expect(!context.contains("graftty agent finish"))
+        #expect(context.contains("Keep this session open"))
+        terminal.live.remove(second)
+        let starts = terminal.starts.count
+        try await runtime.restore()
+        let restored = try #require(runtime.state.worktree(forPath: root.path)?.agents.last)
+        #expect(restored.paneSlotID == agent.paneSlotID)
+        #expect(restored.completion?.outcome == .interrupted)
+        #expect(!restored.requiresAcknowledgment)
+        #expect(terminal.starts.count == starts)
+    }
+
     @Test("@spec AGENT-6.129: When a headless host launches a background agent, the application shall start its provider without changing the selected worktree, focused pane, or selected tab; an explicit tab selection shall focus the new agent.", arguments: [false, true], [false, true])
     func managedLaunchPreservesFocusUnlessSelected(select: Bool, fromAgent: Bool) async throws {
         let (root, config, state) = try fixture()
@@ -96,7 +125,7 @@ struct HeadlessHostRuntimeTests {
         let previous = try #require(runtime.state.worktree(forPath: root.path)?.focusedPaneSlotID)
         runtime.state.selectedWorktreePath = "/other-worktree"
         if fromAgent {
-            var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil)
+            var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
             parent.paneSlotID = previous
             runtime.state.repos[0].worktrees[0].agents.append(parent)
         }
@@ -129,10 +158,10 @@ struct HeadlessHostRuntimeTests {
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
         let name = try await runtime.openWorktree(root.path)
         let slot = try #require(runtime.state.worktree(forPath: root.path)?.splitTree.allLeaves.first)
-        var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil)
+        var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         parent.paneSlotID = slot
         var child = ManagedAgent(name: "Child", provider: .codex,
-            parent: TeamInboxEndpoint(member: "Parent", worktree: root.path, runtime: "codex", agentID: "codex-123456789abc"))
+            parent: TeamInboxEndpoint(member: "Parent", worktree: root.path, runtime: "codex", agentID: "codex-123456789abc"), launchOrigin: .cliAgentAdd, isPrimary: false)
         child.parentManagedAgentID = parent.id
         runtime.state.repos[0].worktrees[0].agents = [parent, child]
         await #expect(throws: (any Error).self) { try await runtime.closePane(target: name) }
@@ -171,7 +200,7 @@ struct HeadlessHostRuntimeTests {
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
         let name = try await runtime.openWorktree(root.path)
         let slot = try #require(runtime.state.worktree(forPath: root.path)?.splitTree.allLeaves.first)
-        var agent = ManagedAgent(name: "Child", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Child", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSlotID = slot
         runtime.state.repos[0].worktrees[0].agents = [agent]
         terminal.live.remove(name)

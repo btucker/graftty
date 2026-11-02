@@ -91,9 +91,13 @@ extension SocketRequestRouter: ControlPlatform {
                     if userInitiated {
                         try await AgentControl.interruptSession(path: worktree.path, slot: slot, platform: self)
                     } else if try await !self.agentSessionIsAlive(worktree: worktree.path, slot: slot) {
-                        try AgentControl.sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited", platform: self)
-                        PaneCommands.removeEndedPane(appState: self.appState, terminalManager: self.terminalManager,
-                            targetID: slot, activateReplacement: false)
+                        let bounded = self.state.worktree(forPath: worktree.path)?.agents.first { $0.paneSlotID == slot }?.isBoundedAssignment == true
+                        try AgentControl.sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited",
+                            preserveView: !bounded, platform: self)
+                        if bounded {
+                            PaneCommands.removeEndedPane(appState: self.appState, terminalManager: self.terminalManager,
+                                targetID: slot, activateReplacement: false)
+                        }
                         await AgentControl.reconcileOutbox(platform: self)
                     }
                     // A dead attachment with a live daemon is not a provider exit.

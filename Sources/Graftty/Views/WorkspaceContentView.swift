@@ -317,7 +317,8 @@ struct WorkspaceContentView: View {
 
     private func launch(_ provider: TeamHookRuntime) {
         perform(.init(action: .add, callerWorktree: worktree.path, name: "\(provider.displayName) \(worktree.agents.count + 1)",
-            worktree: worktree.path, provider: provider, operationID: UUID().uuidString, selectTab: true))
+            worktree: worktree.path, provider: provider, operationID: UUID().uuidString, selectTab: true,
+            launchOrigin: .userInterface))
     }
     private func perform(_ operation: AgentControlRequest) {
         guard let request else { failure = "Agent controls are not ready."; return }

@@ -3,13 +3,14 @@ import Testing
 @testable import GrafttyKit
 
 @MainActor
-@Suite("@spec AGENT-6.147: While an agent is the primary agent of a worktree, the application shall keep it available for ongoing work and reserve task-completion instructions and parent cleanup obligations for additional agents.")
+@Suite("@spec AGENT-6.147: While an agent is the primary agent of a worktree, the application shall keep it available for ongoing work and reserve task-completion instructions and parent cleanup obligations for CLI-added additional agents in existing worktrees.")
 struct PrimaryAgentLifecycleTests {
     @Test(arguments: [false, true])
     func launchInstructionsFollowThePersistedRole(primary: Bool) throws {
         var agent = ManagedAgent(name: "Implementation", provider: .codex,
             parent: .init(member: "main", worktree: "/repo", runtime: "codex", agentID: "codex-123456789abc"))
         agent.isPrimary = primary
+        agent.launchOrigin = .cliAgentAdd
         let restored = try JSONDecoder().decode(ManagedAgent.self, from: JSONEncoder().encode(agent))
         #expect(restored.isPrimary == primary)
         let prompt = restored.launchPrompt("Implement the feature")
@@ -73,7 +74,8 @@ struct PrimaryAgentLifecycleTests {
             paneSessionName: additionalSession, provider: .codex, platform: platform)
         #expect(primaryText.contains("primary agent"))
         #expect(!primaryText.contains("graftty agent finish"))
-        #expect(additionalText.contains("graftty agent finish"))
+        #expect(!additionalText.contains("graftty agent finish"))
+        #expect(additionalText.contains("Keep this session open"))
         #expect(platform.state.repos[0].worktrees[0].agents.map(\.isPrimary) == [true, false])
         #expect(platform.state.repos[0].worktrees[0].agents.map(\.nativeAgentID)
             == ["codex-123456789abc", "codex-abcdef123456"])
@@ -99,6 +101,8 @@ struct PrimaryAgentLifecycleTests {
     func primaryWorktreeOutlivesItsCreatorButPendingCreationStillBlocksCleanup(creationPending: Bool, interrupted: Bool) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         var parent = ManagedAgent(name: "Creator", provider: .codex, parent: nil)
+        parent.launchOrigin = .cliAgentAdd
+        parent.isPrimary = false
         parent.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
         parent.nativeAgentID = "codex-123456789abc"
         let completion = try parent.finish(assignment: parent.assignmentID, result: "Created the worktree")
@@ -119,13 +123,13 @@ struct PrimaryAgentLifecycleTests {
         }
         let response = await AgentControl.handle(.init(action: .close, callerWorktree: "/repo",
             agentID: parent.id, completionID: completion.id), platform: platform)
-        if creationPending || interrupted {
+        if creationPending {
             #expect(response == .error(AgentControlError.activeChildren.localizedDescription))
             #expect(platform.closedAgentSlots.isEmpty)
         } else {
             guard case .agents = response else { Issue.record("Expected cleanup, got \(response)"); return }
-            #expect(platform.state.worktree(forPath: "/repo/child")?.agents.first?.status == .running)
-            #expect(platform.state.worktree(forPath: "/repo/child")?.agents.first?.completion == nil)
+            #expect(platform.state.worktree(forPath: "/repo/child")?.agents.first?.status == (interrupted ? .interrupted : .running))
+            #expect(platform.state.worktree(forPath: "/repo/child")?.agents.first?.requiresAcknowledgment == false)
         }
     }
 
@@ -134,15 +138,20 @@ struct PrimaryAgentLifecycleTests {
         var original = ManagedAgent(name: "Original primary", provider: .codex, parent: nil)
         original.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
         var creator = ManagedAgent(name: "Creator", provider: .codex, parent: nil)
+        creator.launchOrigin = .cliAgentAdd
+        creator.isPrimary = false
         creator.nativeAgentID = "codex-123456789abc"
         let creatorCompletion = try creator.finish(assignment: creator.assignmentID, result: "Done")
         var additional = ManagedAgent(name: "Additional", provider: .codex,
             parent: .init(member: "creator", worktree: "/repo/creator", runtime: "codex", agentID: creator.nativeAgentID))
         additional.parentManagedAgentID = creator.id
+        additional.launchOrigin = .cliAgentAdd
+        additional.isPrimary = false
         additional.paneSlotID = PaneSlotID()
         platform.state.repos[0].worktrees[0].agents = [original, additional]
         #expect(!platform.state.repos[0].worktrees[0].isPrimaryAgent(additional))
-        let originalCompletion = try original.finish(assignment: original.assignmentID, result: "User ended primary")
+        original.requestSessionClose(reason: "User ended primary")
+        let originalCompletion = try #require(original.completion)
         try original.beginClose(completion: originalCompletion.id)
         original.didClose()
         platform.state.repos[0].worktrees[0].agents[0] = original
@@ -171,15 +180,18 @@ struct PrimaryAgentLifecycleTests {
     }
 
     @Test(arguments: [false, true])
-    func restartingTheProviderPreservesItsRole(primary: Bool) throws {
+    func restartingTheProviderPreservesItsRoleAndBecomesOngoing(primary: Bool) throws {
         var agent = ManagedAgent(name: "Resume", provider: .codex, parent: nil)
         agent.isPrimary = primary
+        agent.launchOrigin = .cliAgentAdd
         agent.providerSessionID = "saved-conversation"
-        let completion = try agent.finish(assignment: agent.assignmentID, result: "User finished")
+        agent.requestSessionClose(reason: "User finished")
+        let completion = try #require(agent.completion)
         try agent.beginClose(completion: completion.id)
         agent.didClose()
         try agent.restartConversation()
         #expect(agent.isPrimary == primary)
-        #expect(agent.launchPrompt(nil).contains("graftty agent finish") == !primary)
+        #expect(!agent.launchPrompt(nil).contains("graftty agent finish"))
+        #expect(agent.launchOrigin == .resumedSession)
     }
 }
