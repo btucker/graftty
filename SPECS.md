@@ -4550,6 +4550,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.29** When worktree rows or repositories move while terminal startup is pending, the application shall finalize only the requested worktree, preserve sibling states and pane mappings, and normalize focus on successful creation.
 
+**AGENT-5.30** When a worktree removal status poll has a transient transport failure, the CLI shall retry only status reads with the accepted operation ID and report success when removal completes.
+
+**AGENT-5.31** While removal status polling encounters retriable failures, the CLI shall retain the original absolute deadline and, on timeout, name the accepted operation ID and state that removal may still finish.
+
+**AGENT-5.32** If a removal status poll has a permanent transport failure, a rejected operation, or an unexpected response type, then the CLI shall fail without retrying or reporting success.
+
 ### AGENT-6.x
 
 **AGENT-6.1** When Graftty sends a prototype message to a Claude peer socket, the application shall write one newline-delimited protocol-v1 user envelope with a UUID message ID, next-turn priority, a native cross-session message frame, and any supplied local reply socket as the sender address.

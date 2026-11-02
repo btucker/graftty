@@ -1,7 +1,9 @@
+import ArgumentParser
 import Foundation
 import Testing
 @testable import Graftty
 @testable import GrafttyCLI
+@testable import enum GrafttyCLI.CLIError
 import GrafttyKit
 
 @Suite("CLI worktree removal")
@@ -21,6 +23,118 @@ struct CLIWorktreeRemovalTests {
                 "graftty worktree remove"
             )
         )
+    }
+
+    @Test("@spec AGENT-5.30: When a worktree removal status poll has a transient transport failure, the CLI shall retry only status reads with the accepted operation ID and report success when removal completes.", arguments: [
+        CLIError.socketTimeout, .socketClosedWithoutResponse,
+        .socketError("connection reset"), .socketBusy,
+        .socketError("Unparseable response from app"),
+    ])
+    func transientStatusFailureThenRemovedSucceeds(error: CLIError) throws {
+        let command = try WorktreeRemove.parse(["feature"])
+        var requests: [NotificationMessage] = []
+        var lines: [String] = []
+        try command.waitForRemoval(
+            response: removalStatus(.pending), deadline: .distantFuture,
+            send: { message in
+                requests.append(message)
+                if requests.count == 1 { throw error }
+                return removalStatus(.removed)
+            },
+            sleep: { _ in }, writeLine: { lines.append($0) }
+        )
+        #expect(requests == Array(repeating: .worktreeRemoveStatus(operationID: "remove-577"), count: 2))
+        #expect(lines == ["removed worktree='/repo/.worktrees/feature'  branch-preserved=true"])
+    }
+
+    @Test("@spec AGENT-5.31: While removal status polling encounters retriable failures, the CLI shall retain the original absolute deadline and, on timeout, name the accepted operation ID and state that removal may still finish.", arguments: [
+        CLIError.socketTimeout, .socketClosedWithoutResponse,
+        .socketError("connection reset"), .socketBusy,
+        .socketError("Unparseable response from app"),
+    ])
+    func repeatedStatusFailuresKeepOriginalDeadline(error: CLIError) throws {
+        let command = try WorktreeRemove.parse(["feature"])
+        var time = Date(timeIntervalSince1970: 100)
+        let deadline = time.addingTimeInterval(1)
+        var attempts = 0
+        var errors: [String] = []
+        #expect(throws: ExitCode(1)) {
+            try command.waitForRemoval(
+                response: removalStatus(.pending), deadline: deadline,
+                send: { message in
+                    #expect(message == .worktreeRemoveStatus(operationID: "remove-577"))
+                    attempts += 1
+                    if attempts > 5 {
+                        Issue.record("Polling exceeded the original deadline")
+                        return removalStatus(.removed)
+                    }
+                    // Include a successful pending poll before failures, so the
+                    // retry budget cannot restart with each new status read.
+                    if attempts == 1 { return removalStatus(.pending) }
+                    time = time.addingTimeInterval(0.25)
+                    throw error
+                },
+                now: { time }, sleep: { time = time.addingTimeInterval($0) },
+                writeLine: { _ in Issue.record("Unexpected success") },
+                writeError: { errors.append($0) }
+            )
+        }
+        #expect(attempts == 4)
+        #expect(time.timeIntervalSince1970 >= 101)
+        #expect(time.timeIntervalSince1970 < 101.3)
+        #expect(errors == ["timed out waiting for worktree removal; operation remove-577 may still finish"])
+    }
+
+    @Test("@spec AGENT-5.32: If a removal status poll has a permanent transport failure, a rejected operation, or an unexpected response type, then the CLI shall fail without retrying or reporting success.")
+    func permanentStatusFailuresAndRejectedResponsesFailImmediately() throws {
+        let command = try WorktreeRemove.parse(["feature"])
+        let failures: [CLIError] = [
+            CLIError.socketPermissionDenied(path: "/tmp/s", errno: EPERM),
+            CLIError.notInsideWorktree, CLIError.appNotRunning,
+            CLIError.staleControlSocket(path: "/tmp/s"), CLIError.socketPathTooLong(bytes: 200, maxBytes: 100),
+            CLIError.responseTooLarge(maxBytes: 100),
+        ]
+        for failure in failures {
+            var attempts = 0
+            var errors: [String] = []
+            #expect(throws: ExitCode(1)) {
+                try command.waitForRemoval(
+                    response: removalStatus(.pending), deadline: .distantFuture,
+                    send: { _ in
+                        attempts += 1
+                        if attempts == 1 { throw failure }
+                        return removalStatus(.removed)
+                    },
+                    sleep: { _ in },
+                    writeLine: { _ in Issue.record("Unexpected success") },
+                    writeError: { errors.append($0) }
+                )
+            }
+            #expect(attempts == 1)
+            #expect(!errors.isEmpty)
+            if case .socketPermissionDenied = failure {
+                #expect(errors.last == "worktree removal operation remove-577 may still finish")
+            }
+        }
+
+        for response in [ResponseMessage.error("unknown removal operation"), .ok,
+                         removalStatus(.failed)] {
+            var attempts = 0
+            #expect(throws: ExitCode(1)) {
+                try command.waitForRemoval(
+                    response: removalStatus(.pending), deadline: .distantFuture,
+                    send: { _ in attempts += 1; return response },
+                    sleep: { _ in },
+                    writeLine: { _ in Issue.record("Unexpected success") }, writeError: { _ in }
+                )
+            }
+            #expect(attempts == 1)
+        }
+    }
+
+    private func removalStatus(_ state: WorktreeRemoveState) -> ResponseMessage {
+        .worktreeRemove(.init(operationID: "remove-577", state: state,
+                             worktreePath: "/repo/.worktrees/feature"))
     }
 
     @Test func parsedForceFlagReachesProtocolRequest() throws {
