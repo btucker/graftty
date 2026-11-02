@@ -177,8 +177,8 @@ final class RecentPaneInteractionTests: XCTestCase {
         screenshot("Ordinary Back returns to worktrees")
     }
 
-    /// @spec IPAD-2.27: While a compact agent workspace is shown, the application shall open its shells from a Terminal button in the top-right controls instead of a bottom bar.
-    func testAgentWorkspaceTerminalLivesInTopControls() throws {
+    /// @spec IPAD-2.27: While a compact agent workspace is shown, the application shall open its shells from Terminal in the agent-selection dropdown instead of reserving a button in the top-right controls or a bottom bar.
+    func testAgentWorkspaceTerminalLivesInAgentMenu() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--recent-panes-fixture", "--agent-workspace"]
         app.launch()
@@ -186,12 +186,14 @@ final class RecentPaneInteractionTests: XCTestCase {
         let alpha = app.buttons["Open alpha"]
         XCTAssertTrue(alpha.waitForExistence(timeout: 10))
         alpha.tap()
+        let switcher = app.buttons["workspace.agent.switcher"]
+        XCTAssertTrue(switcher.waitForExistence(timeout: 10), "the agent dropdown is missing")
+        XCTAssertFalse(app.buttons["Terminal"].exists, "Terminal must not reserve a header or bottom-bar button")
+        switcher.tap()
         let terminal = app.buttons["Terminal"]
-        XCTAssertTrue(terminal.waitForExistence(timeout: 10), "the Terminal control is missing")
-        XCTAssertEqual(app.buttons.matching(identifier: "Terminal").count, 1, "a bottom Terminal bar is still present")
-        XCTAssertLessThan(terminal.frame.midY, app.frame.height * 0.25, "Terminal is not in the top controls: \(terminal.frame)")
+        XCTAssertTrue(terminal.waitForExistence(timeout: 10), "Terminal is missing from the agent dropdown")
         let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = "Agent workspace top controls"
+        attachment.name = "Terminal in agent dropdown"
         attachment.lifetime = .keepAlways
         add(attachment)
         terminal.tap()

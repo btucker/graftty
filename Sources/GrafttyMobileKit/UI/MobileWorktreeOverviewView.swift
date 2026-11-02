@@ -55,6 +55,26 @@ struct MobileWorktreeHeaderWash: View {
     }
 }
 
+/// Terminal output dissolves into the same identity wash as the Mac and iPad
+/// headers. Only the overlay fades; the terminal viewport stays edge-to-edge.
+struct MobileTerminalHeaderWash: View {
+    let worktree: WorktreePanes
+    let theme: GhosttyThemeColors
+
+    var body: some View {
+        ZStack {
+            theme.background
+            if let wash = WorktreeHeaderWash(identity: worktree.iconIdentity, project: SidebarProjection.projects([worktree]).first,
+                                             iconData: nil, background: theme.background, isDark: theme.isDark) {
+                WorktreeHeaderWashView(wash: wash)
+            }
+        }
+        .mask(LinearGradient(stops: [.init(color: .black, location: 0),
+                                     .init(color: .black, location: 0.35),
+                                     .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+    }
+}
+
 /// IOS-4.55: agents as cards ordered by who needs the user, then shells.
 struct MobileWorktreeOverviewView: View {
     let host: Host

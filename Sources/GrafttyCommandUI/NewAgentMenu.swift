@@ -4,13 +4,24 @@ import SwiftUI
 /// Agent creation remains available independently of a workspace's tab strip.
 public struct NewAgentMenu: View {
     private let launch: @MainActor (String?, UUID) async throws -> Void
+    private let menuContent: AnyView?
+    private let label: AnyView?
     @State private var launching = false
     @State private var failure: String?
 
-    public init(launch: @escaping @MainActor (String?, UUID) async throws -> Void) { self.launch = launch }
+    public init(menuContent: AnyView? = nil, label: AnyView? = nil,
+                launch: @escaping @MainActor (String?, UUID) async throws -> Void) {
+        self.menuContent = menuContent
+        self.label = label
+        self.launch = launch
+    }
 
     public var body: some View {
         Menu {
+            if let menuContent {
+                menuContent
+                Divider()
+            }
             Button("New default agent") { start(nil) }
             Divider()
             Button { start("codex") } label: {
@@ -20,11 +31,16 @@ public struct NewAgentMenu: View {
                 Label { Text("New Claude agent") } icon: { AgentProviderIcon(provider: "claude") }
             }
         } label: {
-            Label(launching ? "Starting agent…" : "New agent", systemImage: "plus")
+            if let label {
+                label.opacity(launching ? 0.3 : 1)
+                    .overlay { if launching { ProgressView() } }
+            } else {
+                Label(launching ? "Starting agent…" : "New agent", systemImage: "plus")
                 #if os(iOS)
                 // Native menu styling can inset the accessible bounds by a device pixel.
                 .frame(minWidth: 48, minHeight: 48)
                 #endif
+            }
         }
         .disabled(launching)
         .accessibilityIdentifier("workspace.agent.add")
