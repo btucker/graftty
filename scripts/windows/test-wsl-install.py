@@ -5,6 +5,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tarfile
@@ -113,18 +114,31 @@ class WSLInstallTests(unittest.TestCase):
         child = self.root / 'child.py'
         child.write_text('import os,sys,time\nfrom pathlib import Path\n'
                          'Path(sys.argv[2]).write_text(str(os.getpid()))\n'
-                         'time.sleep(1.5)\nPath(sys.argv[1]).write_text("leaked")\n')
+                         'time.sleep(30)\nPath(sys.argv[1]).write_text("leaked")\n')
         installer = self.root / 'install.sh'
         installer.write_text('trap \'printf restored > "$1"\' EXIT\n'
                              'trap \'exit 130\' TERM\n'
                              '"$3" "$4" "$2" "$5"\n')
-        with self.assertRaises(subprocess.TimeoutExpired):
-            setup.run(['/bin/bash', str(installer), str(rollback), str(child_finished),
-                       sys.executable, str(child), str(child_pid)], timeout=0.5, cleanup_timeout=1)
-        self.assertEqual(rollback.read_text(), 'restored')
-        self.assertFalse(child_finished.exists())
-        with self.assertRaises(ProcessLookupError):
-            os.kill(int(child_pid.read_text()), 0)
+        for disposition in ('default', 'blocked', 'ignored'):
+            with self.subTest(disposition=disposition):
+                rollback.unlink(missing_ok=True)
+                child_pid.unlink(missing_ok=True)
+                old_handler = signal.getsignal(signal.SIGTERM)
+                old_mask = signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+                try:
+                    signal.signal(signal.SIGTERM, signal.SIG_IGN if disposition == 'ignored' else signal.SIG_DFL)
+                    if disposition == 'blocked':
+                        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        setup.run(['/bin/bash', str(installer), str(rollback), str(child_finished),
+                                   sys.executable, str(child), str(child_pid)], timeout=0.5, cleanup_timeout=1)
+                finally:
+                    signal.signal(signal.SIGTERM, old_handler)
+                    signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
+                self.assertEqual(rollback.read_text(), 'restored')
+                self.assertFalse(child_finished.exists())
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int(child_pid.read_text()), 0)
 
     def test_reports_guest_resources_and_tighter_ancestor_cgroup_limits(self):
         proc = self.root / 'proc'

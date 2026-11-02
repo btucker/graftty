@@ -23,11 +23,18 @@ def run(arguments, timeout=120, cleanup_timeout=None):
     else:
         # The transactional installer needs its EXIT trap, including while
         # waiting on a child. Cancel the whole group and allow bounded rollback.
-        with subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        # Reset inherited TERM state in a separate interpreter before exec,
+        # without changing this process's mask or using a post-fork callback.
+        launcher = ('import os,signal,sys; '
+                    'signal.signal(signal.SIGTERM, signal.SIG_DFL); '
+                    'signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM}); '
+                    'os.execvp(sys.argv[1], sys.argv[1:])')
+        with subprocess.Popen([sys.executable, '-c', launcher, *arguments],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as error:
                 try:
                     os.killpg(process.pid, signal.SIGTERM)
                 except ProcessLookupError:
@@ -40,6 +47,7 @@ def run(arguments, timeout=120, cleanup_timeout=None):
                     except ProcessLookupError:
                         pass
                     process.communicate()
+                error.cmd = arguments
                 raise
             result = subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
     if result.returncode:

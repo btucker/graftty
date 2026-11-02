@@ -49,7 +49,7 @@ struct WindowsTerminalSessionTests {
     func failedLaunch() throws {
         func handleCount() throws -> DWORD {
             var count: DWORD = 0
-            guard GetProcessHandleCount(GetCurrentProcess(), &count) != 0 else {
+            guard GetProcessHandleCount(GetCurrentProcess(), &count) else {
                 throw NSError(domain: "Win32", code: Int(GetLastError()))
             }
             return count
