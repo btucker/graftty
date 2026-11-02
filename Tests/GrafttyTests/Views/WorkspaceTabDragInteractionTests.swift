@@ -85,4 +85,3 @@ private final class RecordingTabDragView: SidebarRowDragSourceView {
         return NSDraggingSession()
     }
 }
-
