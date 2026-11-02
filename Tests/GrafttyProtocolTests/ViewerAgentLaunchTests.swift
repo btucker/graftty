@@ -3,6 +3,22 @@ import Testing
 @testable import GrafttyProtocol
 
 struct ViewerAgentLaunchTests {
+    @Test("@spec GIT-5.37: When a worktree creation request specifies an agent or task, the application shall use a distinct request type so older hosts reject the request rather than silently discard its configuration.")
+    func configuredCreationUsesDistinctRequestType() throws {
+        for agent in [WorktreeAgentConfiguration(provider: "claude"), .init(taskDescription: "Fix this.\nThen test.")] {
+            let request = WorktreeManagementRequest.create(repositoryID: "repo", worktreeName: "feature",
+                branchName: "feature", existingSource: nil, agent: agent)
+            let data = try JSONEncoder().encode(request)
+            let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(object["type"] as? String == "create_with_agent")
+            #expect(try JSONDecoder().decode(WorktreeManagementRequest.self, from: data) == request)
+        }
+        let legacy = WorktreeManagementRequest.create(repositoryID: "repo", worktreeName: "feature",
+            branchName: "feature", existingSource: nil)
+        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        #expect(object["type"] as? String == "create")
+    }
+
     @Test("@spec GIT-5.35: When a client creates a worktree with an agent choice and optional task description, the application shall preserve the provider and exact multiline description across transport and use the destination's default agent when the provider is omitted.")
     func creationPreservesAgentAndTask() throws {
         let prompt = "Fix the tests.\nKeep $(literal syntax).\n"

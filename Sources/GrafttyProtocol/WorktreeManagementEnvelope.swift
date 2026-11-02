@@ -250,7 +250,10 @@ extension WorktreeManagementRequest: Codable {
             try c.encode(deviceID, forKey: .deviceID)
             try c.encode(fingerprint, forKey: .fingerprint)
         case let .create(repositoryID, worktreeName, branchName, existingSource, launchDefaultAgent, agent):
-            try c.encode("create", forKey: .type)
+            // Older peers ignore unknown fields on `create`. Require them to
+            // reject configured launches before they can discard the task.
+            let configured = launchDefaultAgent && agent != .init()
+            try c.encode(configured ? "create_with_agent" : "create", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
             try c.encode(worktreeName, forKey: .worktreeName)
             try c.encode(branchName, forKey: .branchName)
@@ -315,7 +318,7 @@ extension WorktreeManagementRequest: Codable {
                     forKey: .fingerprint
                 )
             )
-        case "create":
+        case "create", "create_with_agent":
             self = .create(
                 repositoryID: try c.decode(String.self, forKey: .repositoryID),
                 worktreeName: try c.decode(String.self, forKey: .worktreeName),

@@ -128,10 +128,10 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
                 do { try await Task.sleep(for: .milliseconds(50)) }
                 catch { return .failure(.discoveryFailed("Creation continues on the host.")) }
             case .failed:
-                let message = current.error ?? "Could not create worktree."
-                if state.worktree(forPath: current.worktreePath)?.state == .closed {
-                    return .failure(.discoveryFailed(message))
+                if let error = worktreeCreations.failure(operationID: accepted.operationID) {
+                    return .failure(error)
                 }
+                let message = current.error ?? "Could not create worktree."
                 return .failure(.gitFailed(message))
             case .ready:
                 guard let worktree = state.worktree(forPath: current.worktreePath),
@@ -266,6 +266,7 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
 
     /// Phase two of a CLI creation: the backend starts with no view mounted.
     func finishWorktreeCreation(_ plan: CLIWorktreeCreationPlan) async -> String? {
+        let operationID = state.worktree(forPath: plan.worktreePath)?.creationProgress?.operationID
         let result = await AddWorktreeFlow.finishCreate(
             repoPath: plan.repoPath,
             worktreePath: plan.worktreePath,
@@ -288,7 +289,9 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
                     sessionID: "", paneSessionName: ZmxLauncher.sessionName(for: session), attentionTimestamp: Date()))
             }
             return nil
-        case .failure(let error): return error.operationFailureMessage
+        case .failure(let error):
+            if let operationID { worktreeCreations.recordFailure(operationID: operationID, error: error) }
+            return error.operationFailureMessage
         }
     }
 

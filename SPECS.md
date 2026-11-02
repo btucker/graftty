@@ -986,6 +986,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.36** When a user creates a worktree with an agent from the Add worktree form, the application shall retain user-origin creation history rather than recording the repository as its creating agent.
 
+**GIT-5.37** When a worktree creation request specifies an agent or task, the application shall use a distinct request type so older hosts reject the request rather than silently discard its configuration.
+
+**GIT-5.38** When Git worktree creation fails after leaving its directory on disk, the application shall preserve the Git failure for native alerts and web responses.
+
+**GIT-5.39** When a remote CLI requests worktree creation with the destination's default agent, the application shall use a distinct request type so older hosts reject the request rather than create a shell-only worktree.
+
 ### GIT-6.x — Auto-tracking Pinned Agents
 
 **GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.

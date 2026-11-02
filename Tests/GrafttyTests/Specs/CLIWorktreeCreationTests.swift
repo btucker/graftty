@@ -877,15 +877,18 @@ struct CLIWorktreeCreationTests {
             now: Date(timeIntervalSince1970: 1_000)
         )?.state == .pending)
 
+        store.recordFailure(operationID: started.operationID, error: .gitFailed("git failed"))
         store.markFailed(
             operationID: started.operationID,
             error: "git failed",
             now: Date(timeIntervalSince1970: 1_001)
         )
+        #expect(store.failure(operationID: started.operationID, now: Date(timeIntervalSince1970: 1_002)) == .gitFailed("git failed"))
         #expect(store.status(
             operationID: started.operationID,
             now: Date(timeIntervalSince1970: 1_007)
         ) == nil)
+        #expect(store.failure(operationID: started.operationID, now: Date(timeIntervalSince1970: 1_007)) == nil)
     }
 
     @Test("The Graftty Team skill avoids persona language and documents shell-safe prompting")

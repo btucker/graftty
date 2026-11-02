@@ -61,6 +61,35 @@ struct WorktreeManagementQueryTests {
         }
     }
 
+    @Test("@spec GIT-5.38: When Git worktree creation fails after leaving its directory on disk, the application shall preserve the Git failure for native alerts and web responses.")
+    func failedCheckoutHookRetainsGitFailure() async throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let hooks = root.appendingPathComponent("hooks")
+        try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+        let hook = hooks.appendingPathComponent("post-checkout")
+        try Data("#!/bin/sh\necho checkout-hook-failed >&2\nexit 1\n".utf8).write(to: hook)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        _ = try await GitRunner.run(args: ["config", "core.hooksPath", hooks.path], at: root.path)
+        let box = StateBox(AppState(repos: [RepoEntry(path: root.path, displayName: "repo", worktrees: [
+            WorktreeEntry(path: root.path, branch: "main")
+        ])]))
+        let management = service(box, root: root)
+        await GrafttyApp.$appStatePersisterOverride.withValue(AppStatePersister(directory: root.appendingPathComponent("state"))) {
+            let result = await management.create(repoPath: root.path, worktreeName: "feature",
+                branch: .createNew(name: "feature"), entryPoint: .nativeSidebar, agent: .init(provider: "codex"))
+            guard case .failure(.gitFailed(let message)) = result else {
+                Issue.record("Expected Git failure, got \(result)")
+                return
+            }
+            #expect(message.contains("checkout-hook-failed"))
+            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(".worktrees/feature/.git").path))
+        }
+    }
+
     @Test("Web repository rows carry no branch list; paired-device and relayed rows do")
     func repositoryRowsPerTransport() throws {
         let root = try scratch()
