@@ -1974,6 +1974,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-2.11** While a Mac follower canvas is narrower than its pane with room for framing, the application shall present the terminal and its scrollback inside one centered, rounded, theme-matched frame with a fine border and soft shadow while preserving the leader's native grid.
 
+**OWN-2.12** When a Mac follower replays history that fills the native app mailbox, the application shall keep main-thread mailbox processing available, render the latest history in order, and finish surface replacement and teardown safely.
+
 ## UPDATE — Self-Update
 
 ### UPDATE-1.x — Install flow
