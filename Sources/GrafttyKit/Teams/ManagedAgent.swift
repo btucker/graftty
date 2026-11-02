@@ -3,8 +3,12 @@ import GrafttyProtocol
 
 /// A durable assignment. Presence and terminal layout have independent lifetimes.
 /// @spec AGENT-6.86
-/// When an unfinished provider exits, the application shall retain an interrupted outcome for exact parent acknowledgment without claiming successful completion.
+/// When an unfinished provider exits, the application shall retain an interrupted outcome without claiming successful completion and require parent acknowledgment only for CLI-added additional agents in existing worktrees.
 public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
+    public enum LaunchOrigin: String, Codable, Sendable {
+        case cliAgentAdd, userInterface, observedSession, resumedSession
+    }
+
     public enum Status: String, Codable, Sendable {
         case starting, running, waiting
         case awaitingCleanup = "awaiting-cleanup"
@@ -22,13 +26,14 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     }
 
     public enum LifecycleError: String, Error, LocalizedError {
-        case staleAssignment, staleCompletion, invalidState, emptyResult
+        case staleAssignment, staleCompletion, invalidState, emptyResult, ongoingSession
         public var errorDescription: String? {
             switch self {
             case .staleAssignment: "This assignment has been replaced. Refresh the agent status."
             case .staleCompletion: "Cleanup requires the current completion ID. Refresh the agent status."
             case .invalidState: "This agent cannot perform that transition in its current state."
             case .emptyResult: "Provide a result before finishing the assignment."
+            case .ongoingSession: "This is an ongoing session. Only CLI-added additional agents can finish a bounded assignment. Close this session explicitly when needed."
             }
         }
     }
@@ -39,6 +44,8 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public var parent: TeamInboxEndpoint?
     /// Nil identifies a saved record from before primary-session lifetime was explicit.
     public var isPrimary: Bool?
+    /// Unknown provenance never grants bounded-assignment cleanup eligibility.
+    public var launchOrigin: LaunchOrigin?
     public private(set) var assignmentID: UUID
     public private(set) var status: Status
     public var paneSlotID: PaneSlotID? {
@@ -72,11 +79,14 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public var retainedResultCount: Int?
     public var detailsOmitted: Bool?
 
-    public init(name: String, provider: TeamHookRuntime, parent: TeamInboxEndpoint?, status: Status = .running) {
+    public init(name: String, provider: TeamHookRuntime, parent: TeamInboxEndpoint?, status: Status = .running,
+                launchOrigin: LaunchOrigin? = nil, isPrimary: Bool? = nil) {
         self.id = TeamAgentIdentity(runtime: provider, nativeSessionID: UUID().uuidString).rawValue
         self.provider = provider
         self.name = name
         self.parent = parent
+        self.launchOrigin = launchOrigin
+        self.isPrimary = isPrimary
         self.assignmentID = UUID()
         self.launchAssignmentID = self.assignmentID
         self.status = status
@@ -98,6 +108,11 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
             \(identity) You are the primary agent for this worktree. Keep this session open for ongoing work, including when another agent created this worktree. Completing a task or opening a PR does not finish this session. Do not finish this agent automatically; finish only if the user explicitly asks to end it. Report progress through Graftty Attention and send a result to your creating agent when needed.
             """
         }
+        if !isBoundedAssignment {
+            return """
+            \(identity) You are an ongoing agent in this worktree. Keep this session open for ongoing work. Completing a task, ending a turn, or posting an Attention recap does not finish this session. Close it only when the user explicitly asks. Report progress through Graftty Attention and send a result to your creating agent when needed.
+            """
+        }
         return """
         \(identity) You are an additional agent in this worktree. When this assignment is complete, report the result using:
         graftty agent finish \(id) --assignment \(assignmentID.uuidString) --result-stdin
@@ -108,6 +123,7 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     @discardableResult
     public mutating func finish(assignment: UUID, result: String) throws -> Completion {
         guard assignment == assignmentID else { throw LifecycleError.staleAssignment }
+        guard isBoundedAssignment else { throw LifecycleError.ongoingSession }
         if let completion { return completion }
         guard [.starting, .running, .waiting, .failed].contains(status) else { throw LifecycleError.invalidState }
         guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw LifecycleError.emptyResult }
@@ -174,7 +190,9 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         }
     }
 
-    public var requiresAcknowledgment: Bool { completion != nil && status != .closed }
+    public var isBoundedAssignment: Bool { launchOrigin == .cliAgentAdd && isPrimary == false }
+
+    public var requiresAcknowledgment: Bool { isBoundedAssignment && completion != nil && status != .closed }
 
     /// A transport projection. The stored record is never modified.
     public func summary(maximumResultBytes: Int = 1024) -> Self {
@@ -205,6 +223,26 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         guard status == .closed, let conversation = providerSessionID, !conversation.isEmpty else {
             throw LifecycleError.invalidState
         }
+        resetConversationAssignment()
+        resumingSessionID = conversation
+        launchOrigin = .resumedSession
+        paneSlotID = presentationSlotID ?? PaneSlotID()
+        if paneSessionID == nil { paneSessionID = PaneSessionID() }
+        processObservation = nil
+        status = .starting
+    }
+
+    /// A new provider started in a surviving ongoing shell owns a fresh assignment.
+    mutating func recoverOngoingConversation() {
+        guard !isBoundedAssignment, completion != nil,
+              [.interrupted, .failed, .awaitingCleanup].contains(status) else { return }
+        resetConversationAssignment()
+        launchOrigin = .observedSession
+        resumingSessionID = nil
+        status = .running
+    }
+
+    private mutating func resetConversationAssignment() {
         if let transcriptArchive { transcriptHistory = (transcriptHistory ?? [:]).merging([assignmentID: transcriptArchive]) { _, new in new } }
         transcriptArchive = nil
         transcript = nil
@@ -216,11 +254,6 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         deliveryFailure = nil
         failure = nil
         initialPrompt = nil
-        resumingSessionID = conversation
-        paneSlotID = presentationSlotID ?? PaneSlotID()
-        if paneSessionID == nil { paneSessionID = PaneSessionID() }
-        processObservation = nil
-        status = .starting
     }
 
     /// A restart that never acquired a live binding is safe to retry after host recovery.

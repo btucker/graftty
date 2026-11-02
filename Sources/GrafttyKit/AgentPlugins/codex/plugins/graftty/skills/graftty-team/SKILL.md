@@ -108,14 +108,14 @@ graftty agent add <name> --provider codex --prompt-stdin --json <<'GRAFTTY_DELEG
 Objective: <bounded outcome>
 Owned scope: <files or subsystem>
 Verify: <checks>
-Return: report the result, changed paths, validation, and commit hash. An additional agent finishes with graftty agent finish --result-stdin. A primary agent reports to its creating agent with graftty team send and stays open.
+Return: report the result, changed paths, validation, and commit hash. An additional agent added by this CLI command to an existing worktree finishes with graftty agent finish --result-stdin. A primary agent reports to its creating agent with graftty team send and stays open.
 Do not finish merely because a turn ends or you need input.
 GRAFTTY_DELEGATE_7F3A91C2
 ```
 
 Agent creation runs in the background and preserves the current worktree and tab. Add `--select-tab` only when the user wants to open the new agent on the host. Observer devices keep their own selection.
 
-The first agent in a worktree is its primary agent and stays open for ongoing work, including when another agent created that worktree. Finishing a task or opening a PR does not finish the primary session. Only finish it when the user explicitly asks. Additional agents in an existing worktree finish their bounded assignments through the lifecycle below. Session context identifies which behavior applies.
+The first agent in a worktree is its primary agent and stays open for ongoing work, including when another agent created that worktree. Finishing a task or opening a PR does not finish the primary session. Only finish it when the user explicitly asks. Only additional agents added by CLI agent-launch commands to an existing worktree finish bounded assignments through the lifecycle below. UI-launched, observed, resumed, and unknown-origin sessions remain open for ongoing work. Session context identifies which behavior applies.
 
 For a reviewer in the current worktree, add `--worktree '<worktree-name>'`. Save the returned `agent.id`, `agent.assignmentID`, `operationID`, and `worktree`. The managed ID identifies this assignment's lifecycle. `agent.nativeAgentID`, once populated, identifies the provider session for team messages. Do not substitute the managed ID into a native team address. Confirm readiness and copy the exact native address from `graftty team list --json` before messaging. A starting agent or accepted creation is not a reachable child.
 
@@ -123,7 +123,7 @@ Pause the delegated scope until the child is reachable, then relinquish it until
 
 ## Finish and clean up assignments
 
-An additional agent explicitly completes its assignment with a result on stdin:
+An eligible CLI-added additional agent explicitly completes its assignment with a result on stdin:
 
 ```sh
 graftty agent finish --result-stdin <<'GRAFTTY_RESULT_4B9D2F10'
@@ -131,7 +131,7 @@ graftty agent finish --result-stdin <<'GRAFTTY_RESULT_4B9D2F10'
 GRAFTTY_RESULT_4B9D2F10
 ```
 
-The launch environment supplies the managed agent and assignment IDs. If those are unavailable, use the exact IDs from the launch context: `graftty agent finish <managed-id> --assignment <assignment-id> --result-stdin`. Keep ordinary Attention recaps separate. Waiting for input, becoming idle, an end-of-turn hook, and process exit do not mean the assignment is complete. A primary agent keeps its session open and reports a finished task through Attention and a message to its creating agent.
+The launch environment supplies the managed agent and assignment IDs. If those are unavailable, use the exact IDs from the launch context: `graftty agent finish <managed-id> --assignment <assignment-id> --result-stdin`. Keep ordinary Attention recaps separate. Waiting for input, becoming idle, an end-of-turn hook, and process exit do not mean the assignment is complete. An ongoing agent keeps its session open and reports a finished task through Attention and a message to its creating agent.
 
 The parent receives a durable completion event naming the child, result, and completion ID. Handle the result, then close that completed assignment:
 
@@ -141,7 +141,7 @@ graftty agent close <managed-child-id> --completion <completion-id>
 
 This ends the child's terminal, removes its live view, and retains the result and worktree. Do not use a pane number or delete the worktree as a substitute. Resolve any still-useful child-owned processes before cleanup. A failed close remains pending and can be retried with the same completion ID. Reading or replying to the completion event does not acknowledge cleanup.
 
-After a parent restart, recover obligations with `graftty agent list --parent <native-parent-id> --json`. Successful, interrupted, and failed assignments can all require acknowledgment; inspect the status and completion outcome. A provider exit does not claim that its task succeeded. Handle its diagnostic, then acknowledge it with the exact `agent close --completion` command. A parent with unacknowledged children cannot close. Session-start context also lists pending cleanup. Repeated finish and close requests are idempotent for the same assignment. For a continuation, `graftty agent resume <managed-child-id> --json` restarts the exact saved Claude or Codex conversation with a new assignment. It closes the completed provider first if needed, and retains the same tab and prior results. A saved provider conversation ID is required; a transcript alone cannot resume a session. Wait for readiness, then send further instructions through its current exact native address. An old completion cannot close the resumed assignment.
+After a parent restart, recover obligations with `graftty agent list --parent <native-parent-id> --json`. Successful, interrupted, and failed assignments can all require acknowledgment; inspect the status and completion outcome. A provider exit does not claim that its task succeeded. Only eligible CLI-added additional agents require parent acknowledgment. For those agents, handle the diagnostic, then acknowledge it with the exact `agent close --completion` command. A parent with unacknowledged children cannot close. Session-start context also lists pending cleanup. Repeated finish and close requests are idempotent for the same assignment. For a continuation, `graftty agent resume <managed-child-id> --json` restarts the exact saved Claude or Codex conversation with a new assignment. It closes the completed provider first if needed, and retains the same tab and prior results. The restarted conversation is ongoing and receives no synthetic user prompt or bounded cleanup eligibility. A saved provider conversation ID is required; a transcript alone cannot resume a session. Wait for readiness, then send further instructions through its current exact native address. An old completion cannot close the resumed assignment.
 
 `agent list` returns bounded summaries, including result previews and the number of retained results. It omits transcripts, full history, and the launch prompt. Use `graftty agent show <managed-id> --json` to fetch a stable snapshot of the full retained record, including all results and its transcript. The CLI reconstructs the complete record from chunks of at most 64 KiB. Interrupted transfers expire after 60 seconds without a request. The CLI rejects inconsistent snapshot identities or chunk offsets; rerun `agent show` after an expired or inconsistent snapshot. Transcripts remain in host-owned archive files; list output may include a `transcriptArchive` reference, which is not a client-side file path. Stored history is never truncated. Mac transcript views load a bounded preview; use the CLI for the complete text. List pages default to 100 agents; follow the final record's `nextOffset` with `agent list --offset <offset> --json`, preserving your filters. `--limit` accepts 1 through 200. Remote Context displays result previews; use the connected host's CLI for full archives.
 

@@ -61,7 +61,7 @@ struct AgentControlTests {
         let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
         let sibling = PaneSlotID()
         platform.state.repos[0].worktrees[0].splitTree = platform.state.repos[0].worktrees[0].splitTree.inserting(sibling, at: slot, direction: .horizontal)
-        var child = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var child = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         child.paneSlotID = slot
         let completion = try child.finish(assignment: child.assignmentID, result: "Reviewed")
         platform.state.repos[0].worktrees[0].agents = [child]
@@ -77,7 +77,7 @@ struct AgentControlTests {
     @Test("@spec AGENT-6.75: If agent teardown fails, then the application shall retain the live session and cleanup obligation for a later retry.")
     func failedCloseRemainsPending() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var child = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var child = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         child.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
         let completion = try child.finish(assignment: child.assignmentID, result: "Reviewed")
         platform.state.repos[0].worktrees[0].agents = [child]
@@ -111,7 +111,7 @@ struct AgentControlTests {
     func finishAndRecover() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         let parent = TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: "codex", agentID: "codex-123456789abc")
-        var child = ManagedAgent(name: "Review", provider: .claude, parent: parent)
+        var child = ManagedAgent(name: "Review", provider: .claude, parent: parent, launchOrigin: .cliAgentAdd, isPrimary: false)
         child.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
         platform.state.repos[0].worktrees[0].agents = [child]
         let request = AgentControlRequest(action: .finish, callerWorktree: "/repo", paneSessionName: platform.paneSession,
@@ -135,7 +135,7 @@ struct AgentControlTests {
     @Test("@spec AGENT-6.70: When an agent requests completion for a different terminal session, the application shall reject it without changing the target assignment.")
     func finishRequiresOwningSession() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var child = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var child = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         child.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
         platform.state.repos[0].worktrees[0].agents = [child]
         let response = await ControlRequestCore.handleRequest(.agent(.init(action: .finish,
@@ -147,7 +147,7 @@ struct AgentControlTests {
     @Test("@spec AGENT-6.76: When a native subagent starts inside a managed terminal, the application shall preserve the top-level agent identity and assignment.")
     func nativeSubagentCannotBindAssignment() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var child = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var child = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         child.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
         child.nativeAgentID = "codex-123456789abc"
         platform.state.repos[0].worktrees[0].agents = [child]
@@ -161,10 +161,10 @@ struct AgentControlTests {
     func parentRestartRestoresCleanup() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
-        var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil)
+        var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         parent.nativeAgentID = "codex-123456789abc"; parent.paneSlotID = slot
         var child = ManagedAgent(name: "Child", provider: .claude,
-            parent: .init(member: "main", worktree: "/repo", runtime: "codex", agentID: parent.nativeAgentID))
+            parent: .init(member: "main", worktree: "/repo", runtime: "codex", agentID: parent.nativeAgentID), launchOrigin: .cliAgentAdd, isPrimary: false)
         child.parentManagedAgentID = parent.id
         let completion = try child.finish(assignment: child.assignmentID, result: "Done")
         child.deliveredCompletionID = completion.id
@@ -180,7 +180,7 @@ struct AgentControlTests {
     @Test("@spec AGENT-6.79: While an agent cleanup is in flight, the application shall reject overlapping cleanup effects and preserve the first operation's final state.")
     func overlappingCleanupDoesNotRunTwice() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var child = ManagedAgent(name: "Child", provider: .codex, parent: nil)
+        var child = ManagedAgent(name: "Child", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         child.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
         let completion = try child.finish(assignment: child.assignmentID, result: "Done")
         platform.state.repos[0].worktrees[0].agents = [child]

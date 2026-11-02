@@ -396,7 +396,7 @@ public enum ControlRequestCore {
                     applicationSupportDirectory: platform.instructionsDirectory
                 )
                 instructions += "\n\n" + (try await AgentControl.sessionContext(path: callerPath, agentID: currentAgentID,
-                    paneSessionName: paneSessionName, provider: runtime, providerSessionID: sessionID,
+                    paneSessionName: paneSessionName, provider: runtime, providerSessionID: sessionID, isSessionStart: true,
                     isSubagent: presenceRecords.contains { $0.isSubagent == true && TeamAgentDirectory.identity(for: $0).rawValue == currentAgentID },
                     platform: platform))
             }

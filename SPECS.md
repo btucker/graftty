@@ -4792,7 +4792,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.85** When a parent recovers with an already-persisted native identity, the application shall repair children that still reference its previous native identity.
 
-**AGENT-6.86** When an unfinished provider exits, the application shall retain an interrupted outcome for exact parent acknowledgment without claiming successful completion.
+**AGENT-6.86** When an unfinished provider exits, the application shall retain an interrupted outcome without claiming successful completion and require parent acknowledgment only for CLI-added additional agents in existing worktrees.
 
 **AGENT-6.87** When a provider exits after explicitly finishing, the application shall preserve the completed result and reject resume of the exited process.
 
@@ -4800,7 +4800,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.89** While publishing worktree snapshots, the application shall bound current and previous agent result previews while preserving full stored history.
 
-**AGENT-6.90** When a managed session ends through ordinary pane controls, the application shall preserve an interrupted result until its parent explicitly acknowledges it.
+**AGENT-6.90** When a CLI-added additional agent in an existing worktree ends through ordinary pane controls, the application shall preserve an interrupted result until its parent explicitly acknowledges it.
 
 **AGENT-6.91** When a parent has begun cleanup, the application shall reject new children before reserving or launching them.
 
@@ -4892,7 +4892,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.135** When a conversation restarts, the application shall retain the previous assignment's transcript archive in history without displaying it as the new assignment's transcript.
 
-**AGENT-6.136** When a saved Claude or Codex conversation restarts, the launcher shall pass its exact conversation ID as one argument, publish the new assignment environment, and report exits for that new launch.
+**AGENT-6.136** When a saved Claude or Codex conversation restarts, the launcher shall pass its exact conversation ID as one argument, publish the new assignment environment, omit synthetic user prompts and bounded finish instructions, and report exits for that new launch.
 
 **AGENT-6.137** When a remote agent terminal is cleaned up, the application shall retain its selected tab and render its completed content without adding a dead session to the host inventory.
 
@@ -4914,7 +4914,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.146** When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to report again before each final response.
 
-**AGENT-6.147** While an agent is the primary agent of a worktree, the application shall keep it available for ongoing work and reserve task-completion instructions and parent cleanup obligations for additional agents.
+**AGENT-6.147** While an agent is the primary agent of a worktree, the application shall keep it available for ongoing work and reserve task-completion instructions and parent cleanup obligations for CLI-added additional agents in existing worktrees.
 
 **AGENT-6.148** When a paired viewer adds an agent, the application shall round-trip the worktree identity, optional provider, and stable launch operation ID independently of any existing pane.
 
@@ -4927,6 +4927,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.152** If a managed agent's terminal backend fails to start, then the application shall reject the launch and remove its unusable pane instead of reporting an attachable session.
 
 **AGENT-6.153** When an iPhone agent launch reply arrives before its inventory snapshot, the application shall retain the new session selection until the snapshot arrives and discard it if the user leaves the originating route.
+
+**AGENT-6.154** When an agent is launched, the application shall enable bounded finish instructions and parent cleanup only for CLI-added additional agents in an existing worktree, preserving ongoing, UI, observed, and unknown-origin sessions.
+
+**AGENT-6.155** When a mobile client creates a pane and a provider starts there, the host shall treat the observed additional session as ongoing without bounded finish instructions or parent cleanup eligibility.
 
 ## CLI — CLI
 

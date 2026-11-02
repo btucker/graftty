@@ -5,7 +5,7 @@ import GrafttyProtocol
 struct WorkspacePresentationTests {
     @Test func completedSidebarTabSurvivesFinalSessionCleanup() throws {
         let slot = PaneSlotID()
-        var agent = ManagedAgent(name: "Finished", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Finished", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSlotID = slot
         let completion = try agent.finish(assignment: agent.assignmentID, result: "Done")
         try agent.beginClose(completion: completion.id)
@@ -28,7 +28,7 @@ struct WorkspacePresentationTests {
         }
         var entry = WorktreeEntry(path: "/repo", branch: "main", state: .running, splitTree: tree)
         entry.agents = [a, b, drawer].map { slot in
-            var agent = ManagedAgent(name: "Agent", provider: .codex, parent: nil)
+            var agent = ManagedAgent(name: "Agent", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
             agent.paneSlotID = slot
             return agent
         }
@@ -62,8 +62,8 @@ struct WorkspacePresentationTests {
     @Test("@spec LAYOUT-2.176: When cleanup removes the viewed agent's live pane binding, the application shall retain that agent's completed view using its stable agent identity and shall not replace it when another agent closes.")
     func archiveUsesStableAgentIdentity() throws {
         let a = PaneSlotID(), b = PaneSlotID()
-        var first = ManagedAgent(name: "First", provider: .codex, parent: nil)
-        var other = ManagedAgent(name: "Other", provider: .claude, parent: nil)
+        var first = ManagedAgent(name: "First", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
+        var other = ManagedAgent(name: "Other", provider: .claude, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         first.paneSlotID = a; other.paneSlotID = b
         let previous = [first, other]
         let completion = try first.finish(assignment: first.assignmentID, result: "Done")
