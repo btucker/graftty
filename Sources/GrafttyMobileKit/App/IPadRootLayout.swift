@@ -98,6 +98,8 @@ public struct IPadRootLayout: View {
     public var body: some View {
         // Built once per render: `isPaired` reads the pin file.
         let remote = selectedHost.map { (host: $0, providers: remoteProviders(for: $0)) }
+        let selectionGeneration = explicitSelectionGeneration
+        let displayedWorktreePath = appState.selectedWorktreePath
         // `.balanced` locks in column-style (sidebar permanently to the
         // left of the detail) rather than letting iPad heuristics pick
         // `.prominentDetail` (overlay). `columnVisibility` is bound to
@@ -179,6 +181,9 @@ public struct IPadRootLayout: View {
                     paneEnvironment: paneEnvironment,
                     ghosttyCommandContext: ghosttyCommandContext,
                     onSelectPane: { sessionName in
+                        guard selectionGeneration == explicitSelectionGeneration,
+                              appState.selectedHostId == remote?.host.id,
+                              appState.selectedWorktreePath == displayedWorktreePath else { return }
                         selectPane(sessionName: sessionName)
                     },
                     onBackToWorktrees: {
@@ -448,10 +453,21 @@ public struct IPadRootLayout: View {
     }
 
     private func selectPane(sessionName: String) {
-        guard let leaf = selectedWorkspaceNavigationLayout?.leaves.first(where: {
-            $0.sessionName == sessionName
-        }) else {
+        let worktree = Self.resolveSelectedWorktree(from: appState.latestWorktrees, selectedPath: appState.selectedWorktreePath)
+        guard let leaf = selectedWorkspaceNavigationLayout?.leaves.first(where: { $0.sessionName == sessionName })
+            ?? worktree?.layout?.leaves.first(where: { $0.sessionName == sessionName }) else {
+            // Agent launch can return before its first host snapshot arrives.
+            // Reuse the split-created focus path, scoped to this navigation intent.
+            explicitSelectionGeneration &+= 1
+            pendingMobileCreatedFocus = PendingMobileCreatedFocus(sessionName: sessionName,
+                hostID: appState.selectedHostId, worktreePath: appState.selectedWorktreePath,
+                selectionGeneration: explicitSelectionGeneration,
+                projectedSessionOrder: [], removedSessionName: nil)
+            applyPendingMobileCreatedFocus(in: appState.latestWorktrees)
             return
+        }
+        if let hostID = appState.selectedHostId, let worktree {
+            appState.workspaceStore.synchronize(hostID: hostID, worktree: worktree, focused: sessionName)
         }
         selectPane(leaf)
     }
@@ -925,6 +941,9 @@ public struct IPadRootLayout: View {
             resolvedSessionName = sessionNames.first
         } else {
             return
+        }
+        if let hostID = pending.hostID, let resolvedSessionName {
+            appState.workspaceStore.synchronize(hostID: hostID, worktree: worktree, focused: resolvedSessionName)
         }
         appState.focusedPaneId = resolvedSessionName
         pendingMobileCreatedFocus = nil
@@ -1457,6 +1476,9 @@ struct IPadDetailColumn: View {
                 // pane's browser and preview join it instead of a second capsule.
                 if let host, let worktree = selectedWorktree {
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        if !worktree.showsCreationProgress {
+                            MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onSelectPane)
+                        }
                         // Exactly one Context action: here while a terminal is
                         // focused, otherwise the drawer's standalone control (CONTEXT-11).
                         if hasFocusedTerminal { WorktreeContextToolbarButton() }

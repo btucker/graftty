@@ -35,8 +35,12 @@ final class MacFollowerTerminalView: NSView {
     private let makeHistorySurface: ((NSView, CGFloat) -> ghostty_surface_t?)?
     private let historyScaledView = NSView()
     private var historyView: NSView?
-    private var historySurface: ghostty_surface_t?
-    var historySurfaceForTesting: ghostty_surface_t? { historySurface }
+    private var historyWriter: FollowerHistoryWriter?
+    private var retiringHistory = false
+    private var historySurface: ghostty_surface_t? { historyWriter?.surface }
+    var historySurfaceForTesting: ghostty_surface_t? {
+        historyWriter?.isWriting == false ? historySurface : nil
+    }
     var historyFrameForTesting: CGRect? { historyView == nil ? nil : historyScaledView.frame }
     private var lastHistory: Data?
     private var historyCellSize: CGSize?
@@ -101,7 +105,7 @@ final class MacFollowerTerminalView: NSView {
     deinit {
         historyTimer?.invalidate()
         historyView?.removeFromSuperview()
-        if let historySurface { ghostty_surface_free(historySurface) }
+        historyWriter?.close()
         if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
     }
 
@@ -372,10 +376,16 @@ final class MacFollowerTerminalView: NSView {
     }
 
     private func removeHistory() {
+        guard !retiringHistory else { return }
+        retiringHistory = true
+        defer { retiringHistory = false }
+        let writer = historyWriter
+        historyWriter = nil
+        // Keep the NSView alive through the writer's native lifetime barrier.
+        // Clear ownership first because mailbox processing can reenter layout.
+        writer?.close()
         historyView?.removeFromSuperview()
         historyView = nil
-        if let historySurface { ghostty_surface_free(historySurface) }
-        historySurface = nil
         lastHistory = nil
         historyCellSize = nil
         lastHistoryGrid = nil
@@ -383,6 +393,9 @@ final class MacFollowerTerminalView: NSView {
 
     private func refreshHistory() {
         #if GRAFTTY_PAGED_HISTORY
+        // Native size and grid calls can wait on the parser's mutex. Do not
+        // call them on main while that parser may be waiting for main to tick.
+        guard !retiringHistory, historyWriter?.isWriting != true else { return }
         guard let grid = followerGrid, rowHeight > 0,
               window?.isVisible == true, let source = terminalView.surface,
               let makeHistorySurface else { return }
@@ -418,7 +431,7 @@ final class MacFollowerTerminalView: NSView {
             historyScaledView.addSubview(view)
             guard let surface = makeHistorySurface(view, pixelScale) else { view.removeFromSuperview(); return }
             historyView = view
-            historySurface = surface
+            historyWriter = FollowerHistoryWriter(surface: surface)
         }
         guard let historySurface else { return }
         historyView?.frame = CGRect(origin: .zero, size: nativeSize)
@@ -428,13 +441,11 @@ final class MacFollowerTerminalView: NSView {
         guard data != lastHistory || lastHistoryGrid != historyGrid else { return }
         var repaint = Data("\u{18}\u{1b}[0m\u{1b}[2J\u{1b}[H\u{1b}[?25l".utf8)
         repaint.append(data)
-        repaint.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            ghostty_surface_write_buffer(historySurface, base.assumingMemoryBound(to: UInt8.self), UInt(raw.count))
-        }
-        ghostty_surface_refresh(historySurface)
         lastHistory = data
         lastHistoryGrid = historyGrid
+        historyWriter?.repaint(repaint) { [weak self] in
+            self?.refreshHistory()
+        }
         #endif
     }
 }

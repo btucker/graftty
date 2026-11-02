@@ -17,9 +17,11 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
     public var selectTab: Bool?
     public var agentPrompt: String?
     public var operationID: String?
+    public var existingBranchSource: BranchSelection.ExistingSource?
 
     public init(callerWorktree: String, worktreeName: String, branchName: String, existing: Bool, base: String?,
-                command: String?, agentRuntime: TeamHookRuntime?, agentPrompt: String?, operationID: String?, managedAgent: ManagedAgent? = nil, selectTab: Bool? = nil) {
+                command: String?, agentRuntime: TeamHookRuntime?, agentPrompt: String?, operationID: String?, managedAgent: ManagedAgent? = nil, selectTab: Bool? = nil,
+                existingBranchSource: BranchSelection.ExistingSource? = nil) {
         self.callerWorktree = callerWorktree
         self.worktreeName = worktreeName
         self.branchName = branchName
@@ -31,6 +33,7 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
         self.managedAgent = managedAgent
         self.selectTab = selectTab
         self.operationID = operationID
+        self.existingBranchSource = existingBranchSource
     }
 
     enum CodingKeys: String, CodingKey {
@@ -43,6 +46,7 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
         case managedAgent = "managed_agent"
         case selectTab = "select_tab"
         case operationID = "operation_id"
+        case existingBranchSource = "existing_branch_source"
     }
 }
 

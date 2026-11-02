@@ -15,6 +15,46 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
+    @Test("@spec AGENT-6.151: While a selected worktree has no tabs, the application shall offer an enabled New agent control with a minimum 44-point touch target on iPhone and iPad.", arguments: [false, true], [WorktreeWireState.closed, .running])
+    func emptyWorktreeOffersNewAgent(compact: Bool, state: WorktreeWireState) async throws {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://fixture.invalid")!)
+        let row = WorktreePanes(path: "/empty", displayName: "Empty", repoDisplayName: "repo", displayBranch: "empty",
+            state: state, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        let suite = "empty-agent-menu-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let content: AnyView
+        if compact {
+            content = AnyView(WorktreeDetailView(host: host, worktree: row, onSelectPane: { _ in }))
+        } else {
+            content = AnyView(MultiPaneDetailView(host: host, worktree: row, theme: .fallback, focusedPaneId: nil,
+                pendingFocusRequests: 0, onFocusRequestsConsumed: {},
+                ghosttyCommandContext: .init(keybindingSet: .loading, perform: { _ in }, isEnabled: { _ in false }),
+                onSelectPane: { _ in }, onBackToWorktrees: {}, workspaceStore: MobileWorkspaceStore(defaults: defaults)))
+        }
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        let controller = UIHostingController(rootView: NavigationStack { content }
+            .environment(\.scenePhase, .inactive)
+            .accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+
+        try await waitUntil("empty worktree agent menu") {
+            controller.view.layoutIfNeeded()
+            return accessibilityObjects(in: controller.view).contains { $0.accessibilityLabel == "New agent" }
+        }
+        let control = try #require(accessibilityObjects(in: controller.view).first { $0.accessibilityLabel == "New agent" })
+        #expect(!control.accessibilityTraits.contains(.notEnabled))
+        #expect(control.accessibilityFrame.width >= 44, "frame=\(control.accessibilityFrame)")
+        // Screen-coordinate conversion can produce 43.99999999999994 for a 44-point control.
+        #expect(control.accessibilityFrame.height >= 44 - 0.001, "frame=\(control.accessibilityFrame)")
+    }
+
     /// The host picker reads `\.remoteConnectionCoordinator`. Without one it
     /// trusts the saved device ID and calls an unpinned host paired; with
     /// RootView's coordinator the missing pin asks the user to pair again.

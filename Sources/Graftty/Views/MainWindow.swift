@@ -108,7 +108,15 @@ struct MainWindow: View {
                 onFocus: { terminalID in
                     attentionOpenGeneration &+= 1
                     remoteViewer.focusTerminal(terminalID)
-                }, agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, conversationRequest: { id, action in
+                }, agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
+                    let response = try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
+                        request: .addAgent(worktreeID: snapshot.path, provider: provider, operationID: operationID))
+                    switch response {
+                    case .created(_, let session): return session
+                    case .error(_, let message, _, _): throw AgentLaunchError(message)
+                    default: throw AgentLaunchError("The host returned an unexpected response.")
+                    }
+                }, conversationRequest: { id, action in
                     try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .agentConversation(worktreeID: snapshot.path, agentID: id, action: action))
                 })

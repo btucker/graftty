@@ -143,6 +143,9 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     }
 
     var deliveryAccepted = true
+    var startupSucceeded = true
+
+    func waitForStartup() async -> Bool { startupSucceeded }
 
     init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {
         self.startError = startError

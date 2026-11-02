@@ -10,6 +10,24 @@ import Testing
 @Suite("RemoteMacsModel")
 @MainActor
 struct RemoteMacsModelTests {
+    @Test("Relayed agent creation forwards the provider and operation and returns promoted worktree and pane identities.")
+    func relayedAgentLaunchUsesOwningHost() async throws {
+        let remote = try remoteMac()
+        let recorder = RemoteMacsModelManagementRecorder(response: .created(worktreeID: "/repo", paneID: "new-agent"))
+        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
+        let promoted = model.relayRouter.registerCreatedWorktree(identity: RemoteMacIdentity(remote), path: "/repo", paneSessionName: "existing")
+        let id = UUID()
+
+        let response = await model.sendRelayedWorktreeManagement(.addAgent(worktreeID: promoted.worktreeID, provider: "claude", operationID: id))
+
+        #expect(await recorder.requests() == [.addAgent(worktreeID: "/repo", provider: "claude", operationID: id)])
+        guard case .created(let path, let pane) = response else { Issue.record("Expected promoted launch response"); return }
+        #expect(path == promoted.worktreeID)
+        #expect(model.relayRouter.resolvePane(pane)?.sessionName == "new-agent")
+        #expect(model.relayRouter.resolvePane(pane)?.identity == RemoteMacIdentity(remote))
+    }
+
     @Test("@spec LAYOUT-2.154: While an editable remote project is connected, the application shall expose Add worktree before repository details are cached, resolve the promoted repository alias to its owning identity, and fetch the captured repository on action or report its error.")
     func remoteProjectAddResolvesColdCacheAndOwner() async throws {
         let remote = try remoteMac()

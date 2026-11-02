@@ -61,7 +61,14 @@ public struct WorktreeDetailView: View {
 
     public var body: some View {
         content
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { WorktreePreviewMenu(host: host, worktree: worktree.path) } }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !currentWorktree.showsCreationProgress {
+                    MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onSelectPane)
+                }
+                WorktreePreviewMenu(host: host, worktree: worktree.path)
+            }
+        }
         .navigationTitle(currentWorktree.showsCreationProgress ? currentWorktree.displayName : "")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: CreationKey(identity: creationIdentity,
@@ -159,11 +166,11 @@ public struct WorktreeDetailView: View {
                     onSelectPane(sessionName)
                 }
             } else {
-                ContentUnavailableView(
-                    "No panes running",
-                    systemImage: "terminal",
-                    description: Text("Start a pane in Graftty on the Mac to see it here.")
-                )
+                ContentUnavailableView {
+                    Label("No active agents", systemImage: "terminal")
+                } actions: {
+                    MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onSelectPane)
+                }
             }
         }
 

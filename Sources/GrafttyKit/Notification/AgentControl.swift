@@ -409,7 +409,8 @@ public enum AgentControl {
         let response = await CLIWorktreeCreationRequestHandler.begin(.init(callerWorktree: request.callerWorktree,
             worktreeName: names.worktree, branchName: names.branch, existing: request.existing ?? false, base: request.base, command: nil,
             agentRuntime: provider, agentPrompt: request.prompt, operationID: agent.launchOperationID,
-            managedAgent: agent, selectTab: request.selectTab ?? false), platform: platform.worktreeCreation)
+            managedAgent: agent, selectTab: request.selectTab ?? false,
+            existingBranchSource: request.existingBranchSource), platform: platform.worktreeCreation)
         guard case .worktreeCreate(let status) = response else {
             if let path = platform.state.repos.flatMap(\.worktrees).first(where: { $0.agents.contains { $0.id == agent.id } })?.path {
                 agent.paneSlotID = nil

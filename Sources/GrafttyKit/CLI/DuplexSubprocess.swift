@@ -33,6 +33,7 @@ public final class DuplexSubprocess: @unchecked Sendable {
             }
         }
         processID = try SpawnedProcessGroup.spawn(executable: executable, args: arguments, env: environment,
+            resetsSignals: true,
             standardInput: stdin.fileHandleForReading.fileDescriptor,
             standardOutput: stdout.fileHandleForWriting.fileDescriptor,
             standardError: stderr.fileHandleForWriting.fileDescriptor,

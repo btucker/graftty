@@ -129,7 +129,7 @@ public enum CLIWorktreeCreationRequestHandler {
         }
 
         let branch: BranchSelection = request.existing
-            ? .useExisting(name: request.branchName, source: .local)
+            ? .useExisting(name: request.branchName, source: request.existingBranchSource ?? .local)
             : .createNew(name: request.branchName)
         if let error = platform.creationDestinationError(
             worktreePath: AppState.linkedWorktreePath(repoPath: repo.path, worktreeName: request.worktreeName),

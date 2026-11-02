@@ -182,7 +182,8 @@ jobs:
 
   ios-test-shards:
     name: ios-test (${{ matrix.shard }})
-    runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    # Standard hosted arm64 runner, so iOS does not queue behind Mac on mini-m1.
+    runs-on: xcode-27
     timeout-minutes: 50
     strategy:
       fail-fast: false
