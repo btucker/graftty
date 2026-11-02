@@ -1,6 +1,9 @@
 import CoreTransferable
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 public struct WorkspaceTabDrag: Codable, Transferable {
     public static let contentType = UTType(exportedAs: "com.graftty.workspace-tab", conformingTo: .data)
@@ -58,7 +61,43 @@ private struct TabDropDelegate: DropDelegate {
     }
 }
 
+#if os(macOS)
+/// Buttons can consume the mouse press before SwiftUI starts a drag on Mac.
+/// Reuse the sidebar's native press/drag handling while keeping the Button's
+/// keyboard and accessibility action and passing through contextual clicks.
+private struct WorkspaceTabDragSourceOverlay: NSViewRepresentable {
+    let session: String
+    let onSelect: () -> Void
+
+    func makeNSView(context: Context) -> SidebarRowDragSourceView {
+        let view = SidebarRowDragSourceView()
+        updateNSView(view, context: context)
+        return view
+    }
+
+    func updateNSView(_ view: SidebarRowDragSourceView, context: Context) {
+        let item = NSPasteboardItem()
+        if let data = try? JSONEncoder().encode(WorkspaceTabDrag(session)),
+           item.setData(data, forType: .init(WorkspaceTabDrag.contentType.identifier)) {
+            view.pasteboardWriter = item
+        } else {
+            view.pasteboardWriter = nil
+        }
+        view.onClick = onSelect
+    }
+}
+#endif
+
 public extension View {
+    @ViewBuilder
+    func workspaceTabDragSource(_ session: String, onSelect: @escaping () -> Void) -> some View {
+        #if os(macOS)
+        overlay(WorkspaceTabDragSourceOverlay(session: session, onSelect: onSelect))
+        #else
+        draggable(WorkspaceTabDrag(session))
+        #endif
+    }
+
     func workspaceTabUnderline(selected: Bool, color: Color) -> some View {
         accessibilityAddTraits(selected ? .isSelected : [])
         .overlay(alignment: .bottom) {

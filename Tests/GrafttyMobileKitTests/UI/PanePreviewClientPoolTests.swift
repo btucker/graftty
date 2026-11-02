@@ -220,6 +220,31 @@ struct RetainedPaneClientPoolTests {
 @Suite("Mobile workspace persistence and navigation")
 @MainActor
 struct MobileWorkspaceStoreTests {
+    @Test func sidebarProjectionPreservesPriorSessionsForDetailCleanup() {
+        let host = UUID(), worktree = row(), store = MobileWorkspaceStore(defaults: defaults())
+        store.synchronize(hostID: host, worktree: worktree, focused: "a")
+        let updated = worktree.with(layout: leaf("a"), agents: [
+            .init(id: "a", name: "A", provider: "codex", status: "running", sessionName: "a")
+        ])
+        // The detail snapshots the previous layout to stop hidden retained clients.
+        #expect(Set(store.layout(hostID: host, worktree: updated).sessions) == ["a", "b", "shell"])
+        #expect(store.sidebarLayout(hostID: host, worktree: updated).sessions == ["a"])
+        #expect(Set(store.layout(hostID: host, worktree: updated).sessions) == ["a", "b", "shell"])
+        store.synchronize(hostID: host, worktree: updated, focused: "a")
+        #expect(store.layout(hostID: host, worktree: updated).sessions == ["a"])
+    }
+
+    @Test func sidebarReadsSavedTabOrderBeforeOpeningTheWorktree() throws {
+        let defaults = defaults(), host = UUID(), worktree = row()
+        let store = MobileWorkspaceStore(defaults: defaults)
+        store.synchronize(hostID: host, worktree: worktree, focused: "a")
+        store.update(hostID: host, worktree: worktree) { _ = $0.moveTab("b", relativeTo: "a", after: false) }
+        let restored = MobileWorkspaceStore(defaults: defaults)
+        let workspace = restored.layout(hostID: host, worktree: worktree)
+        #expect(worktree.sidebarAgentLeaves(in: workspace).map(\.sessionName) == ["b", "a"])
+        #expect(restored.layout(hostID: UUID(), worktree: worktree).groups.first?.sessions == ["a", "b"])
+    }
+
     private func leaf(_ name: String) -> PaneLayoutNode {
         .leaf(sessionName: name, title: name, attentionText: nil, isBusy: false, attentionSource: nil)
     }

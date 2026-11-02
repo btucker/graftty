@@ -14,7 +14,21 @@ final class MobileWorkspaceStore {
     private func key(hostID: UUID, path: String) -> String { "workspace.ipad.\(hostID).\(path)" }
 
     func layout(hostID: UUID, worktree: WorktreePanes) -> WorkspaceLayout<String> {
-        layouts[key(hostID: hostID, path: worktree.path)] ?? .initial(for: worktree)
+        let key = key(hostID: hostID, path: worktree.path)
+        return layouts[key] ?? defaults.data(forKey: key).flatMap {
+            try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0)
+        } ?? .initial(for: worktree)
+    }
+
+    /// Sidebar reads must not erase the prior sessions needed by detail cleanup.
+    func sidebarLayout(hostID: UUID, worktree: WorktreePanes) -> WorkspaceLayout<String> {
+        var layout = layout(hostID: hostID, worktree: worktree)
+        layout.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
+            agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []),
+            retained: Set(worktree.agents?.compactMap(\.presentationSessionName) ?? []),
+            completed: Set(worktree.agents?.filter(\.isCompleted).compactMap(\.presentationSessionName) ?? []),
+            preservingSelection: true)
+        return layout
     }
 
     func synchronize(hostID: UUID, worktree: WorktreePanes, focused: String?, revealFocused: Bool = true) {

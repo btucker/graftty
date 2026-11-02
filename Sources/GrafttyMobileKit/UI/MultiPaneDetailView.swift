@@ -197,13 +197,15 @@ struct MultiPaneDetailView: View {
                 ForEach(group.sessions, id: \.self) { session in
                     Button { selectSession(session) } label: {
                         HStack(spacing: 6) {
-                            AgentProviderIcon(provider: worktree.agents?.first { $0.presentationSessionName == session }?.provider)
-                            Text(sessionTitle(session)).lineLimit(1)
-                                .fontWeight(group.selected == session ? .medium : .regular)
                             if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
                                 MobileAgentStatusBadge(agent: agent, hostID: host.id,
-                                    needsInput: context.needsInput(session: session))
+                                    needsInput: context.needsInput(session: session),
+                                    isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
+                            } else {
+                                Image(systemName: "terminal")
                             }
+                            Text(sessionTitle(session)).lineLimit(1)
+                                .fontWeight(group.selected == session ? .medium : .regular)
                         }.padding(.horizontal, 10).frame(minHeight: 44)
                             .foregroundStyle(theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                             .overlay(alignment: .bottom) {

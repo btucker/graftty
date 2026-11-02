@@ -26,18 +26,23 @@ struct CompactAgentBar: View {
                             Label {
                                 Text("\(worktree.workspaceSessionTitle(target)) · \(AgentAssignmentStatus(agent: agent, needsInput: context.needsInput(session: target)).label)")
                                     .foregroundStyle(agent.isCompleted ? .secondary : .primary)
-                            } icon: { AgentProviderIcon(provider: agent.provider) }
+                            } icon: {
+                                Image(systemName: AgentAssignmentStatus(agent: agent,
+                                    needsInput: context.needsInput(session: target)).systemImage)
+                            }
                         }
                     }
                 }
             } label: {
                 HStack(spacing: 6) {
-                    AgentProviderIcon(provider: selectedAgent?.provider)
-                    Text(selectedAgent == nil ? "Agents" : worktree.workspaceSessionTitle(session)).lineLimit(1)
                     if let selectedAgent {
                         MobileAgentStatusBadge(agent: selectedAgent, hostID: hostID,
-                            needsInput: context.needsInput(session: session))
+                            needsInput: context.needsInput(session: session),
+                            isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
+                    } else {
+                        Image(systemName: "terminal")
                     }
+                    Text(selectedAgent == nil ? "Agents" : worktree.workspaceSessionTitle(session)).lineLimit(1)
                     Image(systemName: "chevron.down").font(.caption2)
                 }
             }.disabled(agents.isEmpty)
@@ -57,6 +62,8 @@ struct MobileAgentStatusBadge: View {
     let agent: AgentSessionInfo
     let hostID: UUID?
     let needsInput: Bool
+    /// The pane's turn activity; nil when unknown (AGENT-2.7).
+    var isBusy: Bool? = nil
     @Environment(\.retainedMobilePanes) private var retainedPanes
 
     private var disconnected: Bool {
@@ -67,7 +74,7 @@ struct MobileAgentStatusBadge: View {
 
     var body: some View {
         AgentStatusBadge(status: agent.status, needsInput: needsInput, failure: agent.failure,
-                         disconnected: disconnected, processObservation: agent.processObservation)
+                         disconnected: disconnected, processObservation: agent.processObservation, isBusy: isBusy)
     }
 }
 #endif

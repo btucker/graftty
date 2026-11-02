@@ -132,6 +132,9 @@ struct MainWindow: View {
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
                 remoteMacsModel: remoteMacsModel,
+                remoteWorkspaceLayout: { identity, worktree in
+                    remoteViewer.workspaceLayout(identity: identity, worktree: worktree)
+                },
                 appStateChanges: appStateChanges,
                 selectedRemoteIdentity: selectedRemoteIdentity,
                 selectedRemoteWorktreePath: selectedRemoteWorktreePath,
@@ -298,6 +301,7 @@ struct MainWindow: View {
                             PaneCommands.closePane(appState: $appState, terminalManager: terminalManager,
                                 targetID: slot, userInitiated: true)
                         },
+                        agentLiveness: claudeSessionRegistry,
                         onActivateTerminal: { terminalID in
                             makePaneFirstResponder(terminalID, when: { terminalManager.focusedTerminalID == terminalID })
                         },

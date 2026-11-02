@@ -117,7 +117,8 @@ private struct MobileAgentCard: View {
                     AgentProviderIcon(provider: agent.provider)
                     Text(agent.title).font(.body.weight(.semibold)).lineLimit(1)
                     Spacer(minLength: 4)
-                    MobileAgentStatusBadge(agent: agent.info, hostID: host.id, needsInput: isWaiting)
+                    MobileAgentStatusBadge(agent: agent.info, hostID: host.id, needsInput: isWaiting,
+                        isBusy: agent.state == .working ? true : agent.state == .idle ? false : nil)
                     Text(isWaiting ? "Your turn" : agent.status.label).font(.caption)
                         .foregroundStyle(theme.foreground.opacity(0.6)).lineLimit(1)
                 }
