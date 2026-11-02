@@ -5571,3 +5571,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.13** When a Quick Look integration run drives both provider TUIs, the test harness shall type unique prompts through the native keyboard, open and dismiss the production preview, capture every action, and fail unless all required retained and transient pane cases finish successfully.
 
 **TEST-1.14** If a loopback test peer's data channel does not open or arrive within its deadline, then the test fixture shall fail the wait with a data-channel-open timeout naming the channel label.
+
+**TEST-1.15** When the native Git relay fixture transfers objects, the test harness shall keep blocking subprocess I/O off cooperative workers and preserve the pushed objects and receiver result.
+
+**TEST-1.16** When a Git relay fixture command is cancelled, the test harness shall stop its subprocess and close its output before returning cancellation.
+
+**TEST-1.17** When a Git relay fixture transfer fails or is cancelled, the test harness shall close its channels and stop both subprocess groups before joining the sender, and reap both subprocesses before returning.
