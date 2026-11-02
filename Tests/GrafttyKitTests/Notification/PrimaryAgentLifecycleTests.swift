@@ -64,15 +64,19 @@ struct PrimaryAgentLifecycleTests {
         additional.paneSlotID = second
         worktree.agents = [primary, additional]
         platform.state.repos[0].worktrees[0] = worktree
+        // Dictionary iteration does not identify the primary pane in a multi-pane fixture.
+        let primarySession = ZmxLauncher.sessionName(for: try #require(worktree.paneSessions[first]))
+        let additionalSession = ZmxLauncher.sessionName(for: try #require(worktree.paneSessions[second]))
         let primaryText = try await AgentControl.sessionContext(path: "/repo", agentID: "codex-123456789abc",
-            paneSessionName: platform.paneSession, provider: .codex, platform: platform)
+            paneSessionName: primarySession, provider: .codex, platform: platform)
         let additionalText = try await AgentControl.sessionContext(path: "/repo", agentID: "codex-abcdef123456",
-            paneSessionName: ZmxLauncher.sessionName(for: try #require(worktree.paneSessions[second])),
-            provider: .codex, platform: platform)
+            paneSessionName: additionalSession, provider: .codex, platform: platform)
         #expect(primaryText.contains("primary agent"))
         #expect(!primaryText.contains("graftty agent finish"))
         #expect(additionalText.contains("graftty agent finish"))
         #expect(platform.state.repos[0].worktrees[0].agents.map(\.isPrimary) == [true, false])
+        #expect(platform.state.repos[0].worktrees[0].agents.map(\.nativeAgentID)
+            == ["codex-123456789abc", "codex-abcdef123456"])
     }
 
     @Test(arguments: [TeamHookRuntime.codex, .claude])
