@@ -4204,6 +4204,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-32.17** When enabling Windows sign-in startup for a WSL2 host, the installer shall scope the startup task to the current interactive user without elevation and retain a foreground Linux process without requiring an open terminal window.
 
+**REMOTE-32.18** When a native Windows host negotiates SSH, the application shall obtain cryptographic randomness from a verified Windows system provider and fail closed if entropy generation fails.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership

@@ -141,8 +141,9 @@ such as `~/projects`, for the Linux workload.
 
 This branch starts the port with `GrafttyWindowsTerminal`, a Swift library
 backed by Win32 ConPTY. **There is no Windows `graftty-host.exe` yet.**
-The Windows package builds this library, `GrafttyTunnel`, and their bootstrap tests. The full host and
-CLI still require the platform work below.
+The Windows package builds this library and its tests. Native Windows SSH is
+excluded until its dependency has a verified Windows cryptographic random
+source. The full host and CLI still require the platform work below.
 
 ## What exists
 
@@ -166,7 +167,7 @@ establish Windows 11 compatibility.
 authentication, host-key pinning, and Graftty's existing framing codecs with
 a message spanning multiple network reads. Negative cases reject unexpected
 host and client keys without accepting a timeout as success. The same tests
-run on Mac, Linux, and Windows. Their delegates are fixtures, so this does not
+run on Mac and Linux, including the WSL2 host's platform. Their delegates are fixtures, so this does not
 yet validate the host's production trust store or pairing path.
 
 The reverse-channel test creates a listener only on the parent side. After the
@@ -321,15 +322,14 @@ replacement for zmx. If sessions must survive host upgrades, the zmx daemon
 must outlive the host process. Disconnecting a viewer must never close the
 session's pseudoconsole.
 
-The Windows bootstrap pins SwiftNIO 2.104.0, which includes the upstream
-[Winsock and thread-handle fixes](https://github.com/apple/swift-nio/pull/3433).
-Version 2.98.0 failed Windows compilation on its `IPPROTO_UDP` conversion and
-thread-handle `Sendable` conformance. The Mac and Linux pin remains 2.98.0.
-The Windows bootstrap also pins NIOExtras 1.35.1 for its Windows `ucrt` imports;
-the earlier 1.34.1 tried to import `Glibc`. Other platforms retain their existing
-dependency lock.
-The Windows CI tests must still validate the complete networking dependency
-graph and real SSH exchanges.
+The native SSH probe compiled with SwiftNIO 2.104.0 and NIOExtras 1.35.1,
+then failed during key exchange because NIOSSH 0.13.0 traps on Windows in its
+random-number generator. The same unsupported-platform guard exists in
+[NIOSSH 0.15.1](https://github.com/apple/swift-nio-ssh/blob/0.15.1/Sources/NIOSSH/CSPRNG/CSPRNG.swift).
+The Windows package therefore exposes the terminal library only. A native SSH
+port needs a reviewed Windows entropy provider before it can expose a working
+transport. `REMOTE-32.18` records this requirement. Mac and Linux retain their
+existing dependency lock and active SSH tests.
 Windows must retain Graftty's identity authentication and typed SSH channels.
 The parent must adopt the accepted connection as a remote host link rather
 than starting a second connection back to Windows.
@@ -356,9 +356,9 @@ than starting a second connection back to Windows.
 1. Run the native terminal tests on Windows 11. Include PowerShell 7 and both
    agent CLIs, Unicode repository paths, sustained output, concurrent shutdown,
    Ctrl-C, interactive prompts, and terminal size changes.
-2. Run the isolated native SSH tests on Windows to prove the existing SwiftNIO,
-   NIOSSH, Crypto, framing, and parent-originated reverse channels. The bootstrap
-   package excludes Apple renderer and updater dependencies.
+2. Add a verified Windows CSPRNG provider to the SSH dependency, including
+   failure-path tests, then enable the native Windows transport target. Run
+   real framed SSH exchanges and parent-originated reverse channels on Windows.
 3. Port the pinned Graftty-patched zmx to native Windows, including process
    creation, ConPTY ownership, and local IPC. Test session survival on viewer
    disconnect and reconnect, plus parity for replay and paged history.

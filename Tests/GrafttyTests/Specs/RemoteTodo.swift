@@ -11,6 +11,11 @@ struct RemoteTodo {
     // MARK: - REMOTE-32.x — Windows host access and WSL2 deployment
 
     @Test("""
+@spec REMOTE-32.18: When a native Windows host negotiates SSH, the application shall obtain cryptographic randomness from a verified Windows system provider and fail closed if entropy generation fails.
+""", .disabled("upstream NIOSSH lacks a supported Windows CSPRNG; native Windows SSH remains follow-up work"))
+    func remote_32_18() async throws { }
+
+    @Test("""
 @spec REMOTE-32.4: When a Windows headless host establishes cloud-routed access, the application shall use graftty-server for outbound authenticated signaling while retaining terminal authorization on the devices.
 """, .disabled("cloud-routed Windows host access is not yet implemented"))
     func remote_32_4() async throws { }

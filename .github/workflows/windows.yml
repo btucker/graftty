@@ -58,10 +58,10 @@ jobs:
         with:
           swift-version: swift-6.4.1-release
           swift-build: 6.4.1-RELEASE
-      - name: Build and exercise native terminal and SSH backends
+      - name: Build and exercise the native terminal backend
         shell: pwsh
         run: |
           swift --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift test --no-parallel --filter 'WindowsTerminal|NativeSSHTransportTests' -Xswiftc -warnings-as-errors -Xcc -Wall -Xcc -Wextra -Xcc -Werror
+          swift test --no-parallel --filter WindowsTerminal -Xswiftc -warnings-as-errors -Xcc -Wall -Xcc -Wextra -Xcc -Werror
           exit $LASTEXITCODE

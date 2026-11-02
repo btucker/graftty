@@ -54,14 +54,24 @@ struct WindowsTerminalSessionTests {
             }
             return count
         }
-        let before = try handleCount()
-        for _ in 0..<10 {
+        func failLaunch() {
             #expect(throws: WindowsTerminalSession.Failure.self) {
                 try WindowsTerminalSession(executable: "C:\\graftty-does-not-exist\\shell.exe", arguments: [],
                     directory: directory, onOutput: { _ in })
             }
         }
-        #expect(try handleCount() <= before + 4)
+        // Warm up process/runtime initialization before measuring repeated
+        // failures, then bound how long deferred Windows cleanup may converge.
+        failLaunch()
+        let before = try handleCount()
+        for _ in 0..<10 { failLaunch() }
+        var after = try handleCount()
+        let deadline = Date().addingTimeInterval(2)
+        while after > before + 4 && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+            after = try handleCount()
+        }
+        #expect(after <= before + 4, "Handle counts before=\(before), after=\(after)")
     }
 
     @Test("@spec TERM-13.7: When a native Windows terminal uses a Unicode working directory and environment, the application shall pass both to the child without loss.")

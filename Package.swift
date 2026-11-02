@@ -4,41 +4,17 @@ import PackageDescription
 import Foundation
 
 #if os(Windows)
-// Bootstrap native terminal and outbound SSH transport without the Apple renderer
-// or compiling the still-POSIX host. This is not a Windows graftty-host product.
+// Bootstrap the native terminal without the Apple renderer or POSIX host.
+// Native SSH is pending: upstream NIOSSH has no supported Windows CSPRNG.
 let package = Package(
     name: "Graftty",
     products: [
         .library(name: "GrafttyWindowsTerminal", targets: ["GrafttyWindowsTerminal"]),
-        .library(name: "GrafttyTunnel", targets: ["GrafttyTunnel"]),
-    ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.0"),
-        // 2.104 includes the upstream Winsock/Sendable fixes needed on Windows.
-        // Keep the Mac/Linux pin below independent of this bootstrap package.
-        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.104.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.13.0"),
-        // Includes ucrt imports for Windows instead of the Glibc fallback.
-        .package(url: "https://github.com/apple/swift-nio-extras.git", exact: "1.35.1"),
     ],
     targets: [
         .target(name: "CGrafttyConPTY", linkerSettings: [.linkedLibrary("kernel32")]),
         .target(name: "GrafttyWindowsTerminal", dependencies: ["CGrafttyConPTY"]),
         .testTarget(name: "GrafttyWindowsTerminalTests", dependencies: ["GrafttyWindowsTerminal"]),
-        .target(name: "GrafttyTunnel", dependencies: [
-            .product(name: "NIOCore", package: "swift-nio"),
-            .product(name: "NIOEmbedded", package: "swift-nio"),
-            .product(name: "NIOPosix", package: "swift-nio"),
-            .product(name: "NIOExtras", package: "swift-nio-extras"),
-            .product(name: "NIOSSH", package: "swift-nio-ssh"),
-        ]),
-        .testTarget(name: "GrafttyWindowsTransportTests", dependencies: [
-            "GrafttyTunnel",
-            .product(name: "NIOCore", package: "swift-nio"),
-            .product(name: "NIOPosix", package: "swift-nio"),
-            .product(name: "NIOSSH", package: "swift-nio-ssh"),
-            .product(name: "Crypto", package: "swift-crypto"),
-        ]),
     ]
 )
 #else

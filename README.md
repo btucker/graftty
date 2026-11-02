@@ -42,8 +42,9 @@ connection to the parent Mac. Setup will not require an SSH login into Windows.
 Planned cloud connections use graftty-server for signaling and paired device
 keys for terminal authorization.
 The local WSL installer and resource configuration tools are available under
-`scripts/windows`. Native terminal and reverse-channel transport groundwork
-is also available for development. Cloud enrollment and the outbound host
+`scripts/windows`. Development groundwork includes a native Windows terminal
+and reverse-channel SSH tests on Mac and Linux. Native Windows SSH remains
+follow-up work. Cloud enrollment and the outbound host
 connection are not implemented yet.
 See [Windows headless host](docs/windows-host.md) for status and resource tuning.
 

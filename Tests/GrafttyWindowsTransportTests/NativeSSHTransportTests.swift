@@ -6,8 +6,9 @@ import NIOPosix
 import NIOSSH
 import Testing
 
-/// Runs unchanged on Mac, Linux, and Windows. These fixtures exercise the
-/// dependencies and the real Graftty framing codecs, not the host's trust store.
+/// Runs on Mac and Linux, including the WSL2 host's platform. These fixtures
+/// exercise dependencies and framing, not the host's trust store. Native
+/// Windows SSH awaits an audited system CSPRNG provider (REMOTE-32.18).
 @Suite(.serialized)
 struct NativeSSHTransportTests {
     @Test("@spec REMOTE-32.1: When a headless host uses native TCP SSH transport, the application shall carry framed messages bidirectionally with pinned Ed25519 host keys and public-key client authentication.", .timeLimit(.minutes(1)))

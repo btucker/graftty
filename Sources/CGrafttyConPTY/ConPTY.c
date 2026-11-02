@@ -91,6 +91,10 @@ uint32_t graftty_conpty_create(const uint16_t *executable, const uint16_t *comma
     if (!mutable_command) { error = ERROR_OUTOFMEMORY; goto cleanup; }
     memcpy(mutable_command, command, length * sizeof(wchar_t));
     startup.StartupInfo.cb = sizeof(startup);
+    // Null standard handles request ConPTY's console handles. Without this
+    // flag Windows can copy a redirected parent's pipes even with inheritance
+    // disabled, making the shell's application I/O bypass the pseudoconsole.
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     if (!CreateProcessW((const wchar_t *)executable, mutable_command, NULL, NULL, FALSE,
         EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, (void *)environment,
         (const wchar_t *)directory, &startup.StartupInfo, &process)) {
