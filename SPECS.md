@@ -3312,6 +3312,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.24** When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.
 
+**REMOTE-11.25** When a pane-control RPC times out, the client shall invalidate its channel before resuming the caller and send later mutations on a fresh channel so a late reply cannot answer another request.
+
+**REMOTE-11.26** When a pane-control caller is cancelled while awaiting a reply, the client shall consume that reply before sending a later mutation so cancellation cannot shift reply pairing.
+
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
