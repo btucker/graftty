@@ -96,7 +96,9 @@ struct WindowsTerminalSessionTests {
         let powershell = ProcessInfo.processInfo.environment["SystemRoot"]! + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
         let output = TerminalOutput()
         let ready = DispatchSemaphore(value: 0)
-        let program = "Write-Output 'graftty-ready'; Start-Sleep -Seconds 30"
+        // Emit readiness directly, without relying on PowerShell's output
+        // pipeline or formatter to flush before the long-running command.
+        let program = "[Console]::Out.WriteLine('graftty-ready'); [Console]::Out.Flush(); Start-Sleep -Seconds 30"
         let encoded = program.data(using: .utf16LittleEndian)!.base64EncodedString()
         let terminal = try WindowsTerminalSession(executable: powershell,
             arguments: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], directory: directory,
