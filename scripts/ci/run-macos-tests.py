@@ -11,14 +11,22 @@ import sys
 from test_plan import mac_filters, verify_swift_results, verify_xctest_results
 
 
-def swift_testing_runner():
+def swift_testing_runners(test_ids):
     """Use the installed SwiftPM runner without reloading the graph per batch.
 
     CI already built these products in its dedicated directory. Keep discovery
     through SwiftPM and retain its macOS runtime library search paths.
     """
     products = Path(".build/debug").resolve(strict=True)
-    binary = (products / "GrafttyPackageTests.xctest/Contents/MacOS/GrafttyPackageTests").resolve(strict=True)
+    modules = sorted({identifier.split(".", 1)[0] for identifier in test_ids
+                      if not identifier.startswith("OwnershipModelTests.")})
+    aggregate = "GrafttyPackageTests"
+    # The Swift build engine emits a bundle per target. Prefer those products
+    # over any cached aggregate, and require every discovered module's bundle.
+    per_target = any(bundle.stem != aggregate for bundle in products.glob("*.xctest"))
+    names = {module: module for module in modules} if per_target else {None: aggregate}
+    binaries = {module: (products / f"{name}.xctest/Contents/MacOS/{name}").resolve(strict=True)
+                for module, name in names.items()}
     swift = Path(subprocess.check_output(["xcrun", "--find", "swift"], text=True).strip())
     helper = swift.parent.parent / "libexec/swift/pm/swiftpm-testing-helper"
     if not helper.is_file() or not os.access(helper, os.X_OK):
@@ -33,8 +41,9 @@ def swift_testing_runner():
         environment[key] = value
     # /usr/bin/script strips inherited DYLD_* under SIP. Set these in its
     # child, after creating the PTY, as SwiftPM does before starting the helper.
-    return [sys.executable, str(Path(__file__).resolve()), "--swift-testing-batch", json.dumps(environment),
-            str(helper), "--test-bundle-path", str(binary), "--testing-library", "swift-testing"]
+    return {module: [sys.executable, str(Path(__file__).resolve()), "--swift-testing-batch", json.dumps(environment),
+                     str(helper), "--test-bundle-path", str(binary), "--testing-library", "swift-testing"]
+            for module, binary in binaries.items()}
 
 
 def run_swift_testing_batch(command, environment):
@@ -80,16 +89,23 @@ def main():
     (evidence / "test-plan.json").write_text(json.dumps(
         {"discoveredSwiftTests": inventory, "swiftFilters": filters,
          "discoveredXCTests": xctest_inventory, "xctestTargets": targets}, indent=2) + "\n")
-    testing_runner = swift_testing_runner()
+    testing_runners = swift_testing_runners(inventory)
+    result_paths = []
     with open(os.devnull) as stdin:
         for index, pattern in enumerate(filters, 1):
             print(f"::group::Swift Testing batch {index}/{len(filters)}", flush=True)
-            subprocess.run(["/usr/bin/script", "-q", str(evidence / f"swift-{index}.log"), *testing_runner,
-                            "--no-parallel", "--filter", pattern,
-                            "--xunit-output", str(evidence / f"swift-{index}.xml")],
-                           stdin=stdin, check=True)
+            for module, command in testing_runners.items():
+                if module is not None and not any(identifier.startswith(module + ".") and re.search(pattern, identifier)
+                                                  for identifier in inventory):
+                    continue
+                name = f"swift-{index}" + (f"-{module}" if module is not None else "")
+                result = evidence / f"{name}.xml"
+                subprocess.run(["/usr/bin/script", "-q", str(evidence / f"{name}.log"), *command,
+                                "--no-parallel", "--filter", pattern,
+                                "--xunit-output", str(result)], stdin=stdin, check=True)
+                result_paths.append(result)
             print("::endgroup::", flush=True)
-        verified = verify_swift_results(inventory, [evidence / f"swift-{i}.xml" for i in range(1, len(filters) + 1)])
+        verified = verify_swift_results(inventory, result_paths)
         (evidence / "verified-swift-tests.json").write_text(json.dumps(verified, indent=2) + "\n")
         for target in targets:
             print(f"::group::XCTest {target}", flush=True)
