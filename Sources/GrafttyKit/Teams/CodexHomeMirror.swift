@@ -188,7 +188,8 @@ public struct CodexHomeMirror: Sendable {
             // Also remove equivalent dotted-key entries under a parent table.
             let layout = tomlAssignmentLayout(in: section.lines)
             let blocks = layout.blocks.filter { block in
-                !localTables.contains((section.table ?? []) + block.key)
+                let key = (section.table ?? []) + block.key
+                return !localTables.contains(where: { key.starts(with: $0) })
             }
             lines.append(contentsOf: layout.prefixLines + blocks.flatMap(\.lines))
         }

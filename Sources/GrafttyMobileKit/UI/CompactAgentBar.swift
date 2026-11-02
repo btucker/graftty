@@ -8,6 +8,7 @@ struct CompactAgentBar: View {
     let worktree: WorktreePanes
     let session: String
     let onSelect: (String) -> Void
+    var onNewAgent: ((String) -> Void)? = nil
     var attentionContext: SidebarWorktreeContext? = nil
     var hostID: UUID? = nil
     var host: Host? = nil
@@ -48,7 +49,7 @@ struct CompactAgentBar: View {
             }.disabled(agents.isEmpty)
             Spacer(minLength: 0)
             if let host {
-                MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onSelect)
+                MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onNewAgent ?? onSelect)
                 WorktreePreviewMenu(host: host, worktree: worktree.path)
             }
         }.font(.callout).buttonStyle(.plain).padding(.horizontal, 14).frame(minHeight: 44)

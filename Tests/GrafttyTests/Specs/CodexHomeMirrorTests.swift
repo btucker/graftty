@@ -183,6 +183,26 @@ struct CodexHomeMirrorTests {
         }
     }
 
+    @Test("Managed hook decisions replace durable dotted state fields without duplicate tables.", arguments: ["hooks.state.\"example\".enabled = true\n", "[hooks]\nstate.\"example\".enabled = true\n", "[hooks.state]\n\"example\".enabled = true\n"])
+    func managedHookDecisionsReplaceDottedFields(durableText: String) throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let durableConfig = src.appendingPathComponent("config.toml")
+        let managedConfig = dst.appendingPathComponent("config.toml")
+        try writeFile(durableConfig, durableText)
+        let mirror = CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst)
+        try mirror.rebuild()
+        try writeFile(managedConfig, "[hooks.state.\"example\"]\nenabled = false\n")
+
+        for _ in 0..<2 {
+            try mirror.rebuild()
+            let rebuilt = try String(contentsOf: managedConfig, encoding: .utf8)
+            #expect(!rebuilt.contains("enabled = true"))
+            #expect(rebuilt.contains("[hooks.state.\"example\"]\nenabled = false"))
+            #expect(try String(contentsOf: durableConfig, encoding: .utf8) == durableText)
+        }
+    }
+
     @Test("Config refresh ignores hook-state examples inside multiline strings.")
     func hookStateExamplesAreNotApprovals() throws {
         let (src, dst) = try makeMirrorSandbox()

@@ -4894,6 +4894,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.151** While a selected worktree has no tabs, the application shall offer an enabled New agent control with a minimum 44-point touch target on iPhone and iPad.
 
+**AGENT-6.152** If a managed agent's terminal backend fails to start, then the application shall reject the launch and remove its unusable pane instead of reporting an attachable session.
+
+**AGENT-6.153** When an iPhone agent launch reply arrives before its inventory snapshot, the application shall retain the new session selection until the snapshot arrives and discard it if the user leaves the originating route.
+
 ## CLI — CLI
 
 ### CLI-1.x

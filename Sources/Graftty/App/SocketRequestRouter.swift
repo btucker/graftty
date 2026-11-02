@@ -341,7 +341,7 @@ extension SocketRequestRouter {
     }
 
     @MainActor
-    private static func addPane(
+    static func addPane(
         path: String,
         direction: PaneSplit,
         command: String?,
@@ -473,7 +473,26 @@ extension SocketRequestRouter {
         if agentRuntime != nil {
             // Like `worktree add`, start the agent even if the worktree's
             // views never mount; otherwise it waits until someone opens it.
-            terminalManager.handle(for: newPaneID)?.startForBackgroundLaunch()
+            let handle = terminalManager.handle(for: newPaneID)
+            func failedStartup(_ message: String) async -> ResponseMessage {
+                // Readiness can suspend while the user closes or replaces this pane.
+                if let handle, terminalManager.handle(for: newPaneID) === handle {
+                    PaneCommands.removeEndedPane(appState: appState, terminalManager: terminalManager,
+                        targetID: newPaneID, userInitiated: true)
+                }
+                await abandonLaunch()
+                return .error(message)
+            }
+            guard let handle, handle.startForBackgroundLaunch() else {
+                return await failedStartup("Could not start the agent's terminal backend.")
+            }
+            guard await handle.waitForBackendStartup(),
+                  await terminalManager.waitForExplicitInitialInputDelivery(for: newPaneID) else {
+                return await failedStartup("The terminal did not become ready to accept the agent launch command.")
+            }
+            guard terminalManager.handle(for: newPaneID) === handle else {
+                return await failedStartup("The agent's terminal was closed while starting.")
+            }
             let staged = launch
             let task = savedTask
             terminalManager.trackStagedLaunch(for: newPaneID) {
