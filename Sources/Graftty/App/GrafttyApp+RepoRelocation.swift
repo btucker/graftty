@@ -6,7 +6,75 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 
+/// Each waiter has its own stream so cancelling one creation cannot cancel
+/// the completion signal for other creations waiting on the same relocation.
+@MainActor
+private final class RepoRelocationCompletion {
+    private var succeeded: Bool?
+    private var waiters: [UUID: AsyncStream<Void>.Continuation] = [:]
+
+    func wait() async throws {
+        if succeeded == nil {
+            let waiterID = UUID()
+            let (events, continuation) = AsyncStream<Void>.makeStream()
+            waiters[waiterID] = continuation
+            defer { waiters[waiterID] = nil }
+            var iterator = events.makeAsyncIterator()
+            _ = await iterator.next()
+        }
+        try Task.checkCancellation()
+        guard succeeded == true else {
+            throw RepoRelocationInterrupted()
+        }
+    }
+
+    func finish(succeeded: Bool) {
+        self.succeeded = succeeded
+        for waiter in waiters.values { waiter.finish() }
+        waiters.removeAll()
+    }
+}
+
+private struct RepoRelocationInterrupted: LocalizedError {
+    var errorDescription: String? { "Repository relocation did not complete. Retry worktree creation after resolving the repository location." }
+}
+
+@MainActor
+private final class RepoRelocationState {
+    var revision = 0
+    var lastFailureRevision = 0
+    var active: [UUID: RepoRelocationCompletion] = [:]
+}
+
 extension GrafttyApp {
+    @MainActor
+    private static var repoRelocations: [UUID: RepoRelocationState] = [:]
+
+    @MainActor
+    static func repoRelocationRevision(_ repoID: UUID) -> Int {
+        repoRelocations[repoID]?.revision ?? 0
+    }
+
+    @MainActor
+    static func checkRepoRelocationFailures(_ repoID: UUID, since revision: Int) throws {
+        if let state = repoRelocations[repoID], state.lastFailureRevision > revision {
+            throw RepoRelocationInterrupted()
+        }
+    }
+
+    @MainActor
+    static func isRelocatingRepo(_ repoID: UUID) -> Bool {
+        !(repoRelocations[repoID]?.active.isEmpty ?? true)
+    }
+
+    @MainActor
+    static func waitForRepoRelocations(_ repoID: UUID) async throws {
+        while let completion = repoRelocations[repoID]?.active.values.first {
+            try await completion.wait()
+        }
+        try Task.checkCancellation()
+    }
+
     /// Pre-pass for `reconcileOnLaunch` implementing LAYOUT-4.6 (bookmark
     /// resolution at launch) and LAYOUT-4.9 (backfill mint for pre-upgrade
     /// entries without bookmarks).
@@ -135,6 +203,23 @@ extension GrafttyApp {
             return
         }
 
+        let relocationID = UUID()
+        let completion = RepoRelocationCompletion()
+        let relocationState = repoRelocations[repoID] ?? RepoRelocationState()
+        repoRelocations[repoID] = relocationState
+        relocationState.revision += 1
+        relocationState.active[relocationID] = completion
+        var succeeded = false
+        defer {
+            // Remove only this operation; a newer relocation may still be active.
+            relocationState.active[relocationID] = nil
+            relocationState.revision += 1
+            if !succeeded { relocationState.lastFailureRevision = relocationState.revision }
+            // Keep the revision after completion: a discovery may still be
+            // suspended with paths captured before this relocation ended.
+            completion.finish(succeeded: succeeded)
+        }
+
         // (b) Re-mint stale bookmark from the new path so future
         // resolves don't pay the staleness cost.
         if isStale, let fresh = try? RepoBookmark.mint(atPath: newRepoPath) {
@@ -183,7 +268,8 @@ extension GrafttyApp {
         // Every suspension can remove, reorder, or relocate this entry.
         // An offset from before discovery no longer identifies the repo.
         func currentIndex() -> Int? {
-            appState.wrappedValue.repos.firstIndex { $0.id == repoID && $0.path == newRepoPath }
+            guard !Task.isCancelled else { return nil }
+            return appState.wrappedValue.repos.firstIndex { $0.id == repoID && $0.path == newRepoPath }
         }
         guard currentIndex() != nil else { return }
 
@@ -247,6 +333,7 @@ extension GrafttyApp {
         worktreeMonitor.installRepoWatchers(repo: appState.wrappedValue.repos[repoIdx])
         remoteBranchStore.refresh(repoPath: newRepoPath)
         Self.persistAppState(appState.wrappedValue)
+        succeeded = true
 
         NSLog("[Graftty] relocateRepo: %@ → %@", oldRepoPath, newRepoPath)
     }

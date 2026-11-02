@@ -442,6 +442,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-4.14** When selection changes while repository relocation is suspended, the application shall resolve the latest selection by current worktree identity, relocate a selected surviving worktree, clear a selected stale worktree, and preserve a selected replacement, selection outside the relocation, or an explicit deselection.
 
+**LAYOUT-4.15** While repository relocation is in progress, concurrent worktree creation shall defer sibling adoption until relocation finishes and discovery is current, preserving original worktree identities and pane edits while retaining genuinely new siblings.
+
+**LAYOUT-4.16** If relocation fails, is cancelled, or its repository is removed, then the application shall fail waiting worktree creation without adopting stale siblings; cancelling one waiting creation shall leave relocation and other waiting creations active.
+
 ### LAYOUT-5.x — Window Lifecycle
 
 **LAYOUT-5.1** When the user closes the main window (Cmd+W, red traffic-light button, or `File → Close`), the application shall keep running as a foreground app — the Dock icon remains visible, background services (socket listener, stats/PR pollers, filesystem watchers, web access server) keep running, and any running terminal panes stay attached to their underlying zmx sessions. Closing the window is not a quit; the user explicitly issues `Cmd+Q` or `File → Quit` to terminate the app.
