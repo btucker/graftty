@@ -3,8 +3,25 @@ import Testing
 @testable import GrafttyKit
 
 @MainActor
-@Suite("@spec AGENT-6.148: When an agent is launched, the application shall enable bounded finish instructions and parent cleanup only for CLI-added additional agents in an existing worktree, preserving ongoing, UI, observed, and unknown-origin sessions.")
+@Suite("@spec AGENT-6.154: When an agent is launched, the application shall enable bounded finish instructions and parent cleanup only for CLI-added additional agents in an existing worktree, preserving ongoing, UI, observed, and unknown-origin sessions.")
 struct AgentTerminationScopeTests {
+    @Test(arguments: [false, true])
+    func viewerLaunchRecordsUIOriginAndKeepsTheSessionOngoing(hasPrimary: Bool) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.controlCapabilities.insert(.paneAgent)
+        if hasPrimary {
+            platform.state.repos[0].worktrees[0].agents = [ManagedAgent(name: "Primary", provider: .codex,
+                parent: nil, isPrimary: true)]
+        }
+        let response = await ViewerAgentLaunch.add(path: "/repo", provider: "codex", operationID: UUID(), platform: platform)
+        guard case .created = response else { Issue.record("Expected viewer launch"); return }
+        let agent = try #require(platform.state.repos[0].worktrees[0].agents.last)
+        #expect(agent.launchOrigin == .userInterface)
+        #expect(agent.isPrimary == !hasPrimary)
+        #expect(!agent.isBoundedAssignment)
+        #expect(!agent.launchPrompt(nil).contains("graftty agent finish"))
+    }
+
     @Test func failedWorktreeCreationReleasesItsCreator() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         var parent = ManagedAgent(name: "Creator", provider: .codex, parent: nil,

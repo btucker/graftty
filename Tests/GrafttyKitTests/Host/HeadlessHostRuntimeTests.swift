@@ -86,7 +86,7 @@ private actor HostDevContainerFake: CLIExecutor {
 
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
-    @Test("@spec AGENT-6.149: When a mobile client creates a pane and a provider starts there, the host shall treat the observed additional session as ongoing without bounded finish instructions or parent cleanup eligibility.")
+    @Test("@spec AGENT-6.155: When a mobile client creates a pane and a provider starts there, the host shall treat the observed additional session as ongoing without bounded finish instructions or parent cleanup eligibility.")
     func mobileCreatedPaneDoesNotBecomeABoundedAssignment() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -113,6 +113,66 @@ struct HeadlessHostRuntimeTests {
         #expect(restored.completion?.outcome == .interrupted)
         #expect(!restored.requiresAcknowledgment)
         #expect(terminal.starts.count == starts)
+    }
+
+    @Test("@spec IOS-9.19: When mobile worktree creation selects an existing branch, the application shall preserve its local or remote-only source and resolve an automatic source on the owning host before starting the default agent.", arguments: [TeamHookRuntime.codex, .claude], [RemoteRepositoryInfo.Branch.Source.local, .remoteOnly, .automatic])
+    func viewerCreationStartsDefaultAgent(provider: TeamHookRuntime, source: RemoteRepositoryInfo.Branch.Source) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        if source == .local {
+            _ = try await GitRunner.run(args: ["branch", "feature"], at: root.path)
+        } else {
+            _ = try await GitRunner.run(args: ["config", "remote.origin.url", root.path], at: root.path)
+            _ = try await GitRunner.run(args: ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"], at: root.path)
+            _ = try await GitRunner.run(args: ["update-ref", "refs/remotes/origin/feature", "HEAD"], at: root.path)
+        }
+        let installer = AgentPluginInstaller(grafttyCLIPath: "/test/graftty",
+            codexConfigurationURL: root.appendingPathComponent("codex-config.toml"),
+            claudeSettingsURL: root.appendingPathComponent("claude-settings.json"))
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state,
+            agentSetup: HostAgentSetup(configuration: config, executor: HostPluginExecutor(), installer: installer))
+
+        let response = await ViewerAgentLaunch.create(repository: root.path, name: "feature", branch: "feature", existingSource: source,
+            platform: runtime.controlPlatform, configuredProvider: { provider })
+
+        guard case .created(let path, let session) = response else { Issue.record("Expected default agent: \(response)"); return }
+        let worktree = try #require(runtime.state.worktree(forPath: path))
+        let agent = try #require(worktree.agents.first)
+        #expect(worktree.agents.count == 1)
+        #expect(agent.provider == provider)
+        #expect(agent.isPrimary == true)
+        #expect(agent.launchOrigin == .userInterface)
+        #expect(!agent.isBoundedAssignment)
+        #expect(!agent.launchPrompt(nil).contains("graftty agent finish"))
+        #expect(worktree.splitTree.allLeaves == agent.paneSlotID.map { [$0] })
+        #expect(agent.paneSlotID.flatMap { worktree.paneSessions[$0] }.map(runtime.launcher.sessionName(for:)) == session)
+        #expect(terminals.starts.count == 1)
+        #expect(terminals.starts.first?.sessionName == session)
+        if source != .local {
+            let upstream = try await GitRunner.run(args: ["rev-parse", "--abbrev-ref", "feature@{upstream}"], at: root.path)
+            #expect(upstream.trimmingCharacters(in: .whitespacesAndNewlines) == "origin/feature")
+        }
+    }
+
+    @Test("The remote add-agent request opens an empty worktree and returns its actual live session.")
+    func viewerAddsFirstAgentInEmptyWorktree() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state)
+        let request = WorktreeManagementRequest.addAgent(worktreeID: root.path, provider: "codex", operationID: UUID())
+        let response = await runtime.manage(request)
+        #expect(await runtime.manage(request) == response)
+        guard case .created(let path, let session) = response else { Issue.record("Expected agent: \(response)"); return }
+        let worktree = try #require(runtime.state.worktree(forPath: path))
+        #expect(worktree.agents.count == 1)
+        #expect(worktree.splitTree.allLeaves.count == 1)
+        #expect(terminals.live == [session])
+        #expect(terminals.starts.count == 1)
     }
 
     @Test("@spec AGENT-6.129: When a headless host launches a background agent, the application shall start its provider without changing the selected worktree, focused pane, or selected tab; an explicit tab selection shall focus the new agent.", arguments: [false, true], [false, true])

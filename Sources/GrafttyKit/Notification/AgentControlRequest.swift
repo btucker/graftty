@@ -24,6 +24,7 @@ public struct AgentControlRequest: Codable, Sendable, Equatable {
     public var branch: String?
     public var existing: Bool?
     public var selectTab: Bool?
+    public var existingBranchSource: BranchSelection.ExistingSource?
     public var launchOrigin: ManagedAgent.LaunchOrigin?
 
     public init(action: Action, callerWorktree: String, callerAgentID: String? = nil,
@@ -32,12 +33,14 @@ public struct AgentControlRequest: Codable, Sendable, Equatable {
                 worktree: String? = nil, provider: TeamHookRuntime? = nil, prompt: String? = nil,
                 parent: String? = nil, status: ManagedAgent.Status? = nil, operationID: String? = nil,
                 base: String? = nil, branch: String? = nil, existing: Bool? = nil, selectTab: Bool? = nil,
+                existingBranchSource: BranchSelection.ExistingSource? = nil,
                 launchOrigin: ManagedAgent.LaunchOrigin? = nil) {
         self.action = action; self.callerWorktree = callerWorktree; self.callerAgentID = callerAgentID
         self.paneSessionName = paneSessionName; self.agentID = agentID; self.assignmentID = assignmentID
         self.completionID = completionID; self.result = result; self.name = name; self.worktree = worktree
         self.provider = provider; self.prompt = prompt; self.parent = parent; self.status = status
         self.selectTab = selectTab
+        self.existingBranchSource = existingBranchSource
         self.launchOrigin = launchOrigin
         self.operationID = operationID; self.base = base; self.branch = branch; self.existing = existing
     }

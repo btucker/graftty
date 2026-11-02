@@ -1337,7 +1337,8 @@ public struct WorktreeListContent: View {
                     .create(repositoryID: request.repoPath,
                             worktreeName: request.worktreeName,
                             branchName: request.branchName,
-                            existingSource: submission.existingSource),
+                            existingSource: submission.existingSource,
+                            launchDefaultAgent: true),
                     using: provider
                 )
                 switch result {

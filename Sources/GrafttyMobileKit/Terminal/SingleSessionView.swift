@@ -96,6 +96,7 @@ struct SingleSessionView: View {
     private let isTerminalSheet: Bool
     @State private var terminalSheet = CompactTerminalPresentation()
     @State private var terminalSheetWorktree: WorktreePanes?
+    @State private var agentLaunchSelection = CompactAgentLaunchSelection()
     /// IPAD-2.26: contained routes keep the home-indicator inset, so their
     /// keyboard padding subtracts the gap between the window bottom and the
     /// content bottom. A safe-area inset alone would include the keyboard.
@@ -383,6 +384,11 @@ struct SingleSessionView: View {
         // this, SwiftUI also avoids the keyboard and the UIKit terminal
         // expands back into the keyboard safe area.
         .ignoresSafeArea(.keyboard, edges: isTerminalSheet || compactWorkspace != nil ? .bottom : [])
+        .onAppear { agentLaunchSelection.activate() }
+        .onDisappear { agentLaunchSelection.invalidate() }
+        .onChange(of: compactWorkspace) { _, workspace in
+            if let session = agentLaunchSelection.takeReady(in: workspace) { selectWorkspaceSession(session) }
+        }
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY + $0.safeAreaInsets.bottom } action: { windowBottom = $0 }
         .modifier(MobileWorktreeContextDrawer(context: worktreeContext, theme: terminalTheme, onShowAgent: { id in
             guard let session = compactWorkspace?.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
@@ -470,6 +476,11 @@ struct SingleSessionView: View {
     private var completedAgent: AgentSessionInfo? { sessionAgent.flatMap { $0.isCompleted ? $0 : nil } }
 
     private var compactAgentKey: String { "workspace.iphone.agent.\(step.host.id).\(step.worktreePath ?? "")" }
+    private func selectCreatedAgent(_ target: String, generation: UUID) {
+        if let session = agentLaunchSelection.created(target, generation: generation, in: compactWorkspace) {
+            selectWorkspaceSession(session)
+        }
+    }
     private func selectWorkspaceSession(_ target: String) {
         guard target != step.sessionName, let workspace = compactWorkspace,
               workspace.layout?.leaves.contains(where: { $0.sessionName == target }) == true
@@ -480,6 +491,7 @@ struct SingleSessionView: View {
         let destination = SessionStep(host: step.host, worktreePath: step.worktreePath, sessionName: target,
             title: workspace.agents?.first { $0.presentationSessionName == target }?.name ?? workspace.layout?.title(for: target) ?? "Terminal",
             worktreeProject: step.worktreeProject)
+        agentLaunchSelection.invalidate()
         if !navigationPath.isEmpty { navigationPath.removeLast() }
         navigationPath.append(destination)
     }
@@ -552,7 +564,10 @@ struct SingleSessionView: View {
             if let workspace = compactWorkspace {
                 Text(workspace.displayName).font(.subheadline).lineLimit(1).foregroundStyle(terminalTheme.foreground)
                     .frame(maxWidth: .infinity).padding(.leading, 68).padding(.trailing, 120).frame(height: 64)
-                CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession, attentionContext: worktreeContext, hostID: step.host.id, host: step.host, theme: terminalTheme)
+                let generation = agentLaunchSelection.generation
+                CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession,
+                    onNewAgent: { selectCreatedAgent($0, generation: generation) },
+                    attentionContext: worktreeContext, hostID: step.host.id, host: step.host, theme: terminalTheme)
             }
             if isCompactShellRoute {
                 ContentUnavailableView("Select an agent", systemImage: "terminal",
@@ -1046,6 +1061,7 @@ struct SingleSessionView: View {
     }
 
     func popToParent() {
+        agentLaunchSelection.invalidate()
         if let onBackToWorktrees {
             onBackToWorktrees()
             return

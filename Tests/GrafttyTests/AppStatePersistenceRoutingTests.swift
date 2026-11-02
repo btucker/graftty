@@ -117,15 +117,11 @@ private final class HeadlessRouter {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    /// Lets `pane add` create a real libghostty surface, as
-    /// `GrafttyAppPaneLifecycleTests` does; `/usr/bin/false` never attaches.
+    /// Initializes the app required by `createSurface`, which reuses the
+    /// reserved fake surface rather than starting a shell or a real agent.
     func enableSurfaces() {
         _ = NSApplication.shared
         terminalManager.initialize()
-        terminalManager.zmxLauncher = ZmxLauncher(
-            executable: URL(fileURLWithPath: "/usr/bin/false"),
-            zmxDir: directory.appendingPathComponent("zmx")
-        )
     }
 
     func router(for box: StateBox) -> SocketRequestRouter {
@@ -233,12 +229,31 @@ struct AgentLaunchPersistenceTests {
             #expect(onDisk.worktree(forPath: repoPath + "/.worktrees/agent-task") != nil)
         }
 
-        @Test func paneAddWithAnAgentFlushesTheNewPaneBeforeReplying() async throws {
+        @Test(arguments: [true, false])
+        func paneAddWithAnAgentFlushesTheNewPaneBeforeReplying(hasExistingPane: Bool) async throws {
             let probe = PersistenceProbe()
             let router = try HeadlessRouter()
-            let (state, existingPane) = runningWorktreeState()
+            var (state, existingPane) = runningWorktreeState()
+            if !hasExistingPane {
+                state.repos[0].worktrees[0].splitTree = SplitTree(root: nil)
+                state.repos[0].worktrees[0].paneSessions = [:]
+            }
+            let pane = PaneSlotID(), session = PaneSessionID()
+            var agent = ManagedAgent(name: "Persistence test", provider: .codex, parent: nil, status: .starting)
+            agent.paneSlotID = pane
+            agent.paneSessionID = session
+            state.repos[0].worktrees[0].agents = [agent]
             let box = StateBox(state)
             router.enableSurfaces()
+            let backend = FakeSurfaceHandleZmxBackend()
+            let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+            let handle = try #require(SurfaceHandle(
+                terminalID: pane, app: fakeApp(), worktreePath: repoPath,
+                socketPath: router.terminalManager.socketPath,
+                zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+                surfaceFactory: harness.factory, zmxBackendFactory: { _, _, _, _ in backend }
+            ))
+            router.terminalManager.insertSurfaceForTesting(handle, for: pane)
             defer {
                 for pane in box.state.worktree(forPath: repoPath)?.splitTree.allLeaves ?? [] {
                     router.terminalManager.evictSurface(terminalID: pane, forRetry: true)
@@ -246,16 +261,20 @@ struct AgentLaunchPersistenceTests {
             }
 
             let response = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
-                await router.route(.addPane(
+                await router.route(.addPane(AddPaneRequest(
                     path: repoPath, direction: .right, command: nil,
-                    agentRuntime: .codex, agentPrompt: nil
-                ), box)
+                    agentRuntime: .codex, managedAgent: agent, selectTab: false
+                )), box)
             }
 
             #expect(response == .ok, "\(String(describing: response))")
             let onDisk = try #require(probe.written.last, "the reply was sent before state.json was written")
             let panes = onDisk.worktree(forPath: repoPath)?.splitTree.allLeaves ?? []
-            #expect(panes.count == 2 && panes.contains(existingPane))
+            #expect(panes.count == (hasExistingPane ? 2 : 1))
+            #expect(panes.contains(pane))
+            #expect(panes.contains(existingPane) == hasExistingPane)
+            #expect(onDisk.worktree(forPath: repoPath)?.paneSessions[pane] == session)
+            #expect(backend.startCount == 1)
         }
     }
 
