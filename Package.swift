@@ -18,7 +18,8 @@ let package = Package(
         // Keep the Mac/Linux pin below independent of this bootstrap package.
         .package(url: "https://github.com/apple/swift-nio.git", exact: "2.104.0"),
         .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.13.0"),
-        .package(url: "https://github.com/apple/swift-nio-extras.git", exact: "1.34.1"),
+        // Includes ucrt imports for Windows instead of the Glibc fallback.
+        .package(url: "https://github.com/apple/swift-nio-extras.git", exact: "1.35.1"),
     ],
     targets: [
         .target(name: "CGrafttyConPTY", linkerSettings: [.linkedLibrary("kernel32")]),

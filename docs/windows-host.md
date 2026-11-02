@@ -325,6 +325,9 @@ The Windows bootstrap pins SwiftNIO 2.104.0, which includes the upstream
 [Winsock and thread-handle fixes](https://github.com/apple/swift-nio/pull/3433).
 Version 2.98.0 failed Windows compilation on its `IPPROTO_UDP` conversion and
 thread-handle `Sendable` conformance. The Mac and Linux pin remains 2.98.0.
+The Windows bootstrap also pins NIOExtras 1.35.1 for its Windows `ucrt` imports;
+the earlier 1.34.1 tried to import `Glibc`. Other platforms retain their existing
+dependency lock.
 The Windows CI tests must still validate the complete networking dependency
 graph and real SSH exchanges.
 Windows must retain Graftty's identity authentication and typed SSH channels.
