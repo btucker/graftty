@@ -672,6 +672,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.21** When a Mac pane resumes leading after applying an attachment grid, the application shall restore its full viewport before resizing the terminal, regardless of scrollbar style.
 
+**TERM-11.22** When an off-main Ghostty action reaches the main queue after its surface is closed or replaced, the application shall drop the action without reading C surface state or routing it to a replacement surface.
+
+**TERM-11.23** When a Ghostty action is deferred to the main queue, the application shall copy each consumed borrowed payload before the callback returns and preserve live-surface and app-scoped routing.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
@@ -967,6 +971,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-5.30** When a creating worktree is selected, the application shall display its progress and output in the terminal content area, switch to the terminal on success, and retain failed or interrupted diagnostics until a terminal is explicitly opened.
 
 **GIT-5.31** When worktree creation succeeds on Mac or mobile, the application shall hide the sidebar's Creation complete status one minute after completion while retaining creation diagnostics and keeping pending, failed, and interrupted statuses visible.
+
+**GIT-5.32** When pulling the default checkout before worktree creation, the application shall bound branch validation to five seconds and retain the fast-forward pull's twenty-second timeout.
+
+**GIT-5.33** If default-checkout branch validation times out, then the application shall report the failed lookup with exit code 124 and shall not run a pull.
 
 ### GIT-6.x — Auto-tracking Pinned Agents
 
@@ -1744,9 +1752,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-1.12** While the server is listening, the Settings pane shall render a **Base URL** row distinct from the diagnostic "Listening on" row. The Base URL is the HTTPS URL composed from the machine's MagicDNS FQDN (WEB-8.1) and the listening port — the URL a user copies to open the web client. It renders as a clickable `Link` opening the default browser, plus a copy button (`doc.on.doc`, accessible label "Copy URL") that writes to `NSPasteboard.general`. The "Listening on" row below is informational (which sockets are actually up) and must not be conflated with the Base URL. Plain selectable text is not sufficient for the Base URL — users were expected to triple-click, copy, then switch apps and paste (four steps for one ask).
 
-**WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
+**WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable or not answering status, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
 
 **WEB-1.15** While web access is enabled, the application shall query the Tailscale daemon off the main actor, so constructing the web server controller or applying a Web Access settings change returns without waiting for the daemon to respond.
+
+**WEB-1.16** When a LocalAPI request is cancelled, the application shall close its transport and finish with cancellation without waiting for the daemon's status, whois, or certificate receive timeout, while keeping socket I/O off the main actor and cooperative executor.
+
+**WEB-1.17** When a Tailscale status query fails with an unreachable socket, malformed response or invalid JSON, or HTTP 5xx, the application shall classify that attempt as transient; other HTTP errors and unrelated errors shall remain terminal.
+
+**WEB-1.18** When Web Access starts or stops a listener, the application shall await NIO lifecycle completion without blocking the main actor, close every partial bind on failure or cancellation, and allow the released port to be bound again.
+
+**WEB-1.19** When Web Access is disabled or reconfigured during bring-up or shutdown, the application shall cancel obsolete work, await its listener cleanup before replacement startup, and publish only the latest settings generation.
+
+**WEB-1.20** If a LocalAPI transport fails before its channel is initialized, then the application shall complete the request with a recoverable socket error and release all request resources.
+
+**WEB-1.21** While a LocalAPI request is pending, the application shall bound sending to two seconds and receive inactivity to two seconds for status and whois or ninety seconds for certificates, refreshing the receive deadline as bytes arrive.
+
+**WEB-1.22** When a LocalAPI request write completes, the application shall start the endpoint receive deadline on its event loop before resuming the caller's task, so executor delays cannot shorten certificate provisioning time.
 
 ### WEB-2.x — Authorization
 
@@ -1782,7 +1804,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-4.2** When the user disables web access, the application shall close all listening sockets and terminate all in-flight `zmx attach` children spawned for the web.
 
-**WEB-4.3** When the application quits, the application shall stop the server (same tear-down as 15.4.2) as part of normal shutdown.
+**WEB-4.3** When the application quits, the application shall await Web Access listener and session teardown before completing normal termination, while keeping the main actor responsive.
 
 **WEB-4.4** When a WebSocket connects, the application shall spawn one child `zmx attach --replay-grid <session>` whose PTY it owns, using the session naming and ZMX_DIR rules.
 
@@ -5585,3 +5607,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.13** When a Quick Look integration run drives both provider TUIs, the test harness shall type unique prompts through the native keyboard, open and dismiss the production preview, capture every action, and fail unless all required retained and transient pane cases finish successfully.
 
 **TEST-1.14** If a loopback test peer's data channel does not open or arrive within its deadline, then the test fixture shall fail the wait with a data-channel-open timeout naming the channel label.
+
+**TEST-1.15** When the native Git relay fixture transfers objects, the test harness shall keep blocking subprocess I/O off cooperative workers and preserve the pushed objects and receiver result.
+
+**TEST-1.16** When a Git relay fixture command is cancelled, the test harness shall stop its subprocess and close its output before returning cancellation.
+
+**TEST-1.17** When a Git relay fixture transfer fails or is cancelled, the test harness shall close its channels and stop both subprocess groups before joining the sender, and reap both subprocesses before returning.

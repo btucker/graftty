@@ -144,6 +144,8 @@ struct GrafttyApp: App {
     @State var appState: AppState
     @StateObject var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
+    @NSApplicationDelegateAdaptor(WebAccessTerminationDelegate.self)
+    private var webTerminationDelegate
     @StateObject private var updaterController: UpdaterController
     let services: AppServices
     /// Observable proxy for per-pane port bindings. Mutated by the
@@ -226,6 +228,9 @@ struct GrafttyApp: App {
         )
         _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
+        webTerminationDelegate.shutdown = { [weak webController] in
+            await webController?.shutdown()
+        }
     }
 
     /// If another Graftty process with our `CFBundleIdentifier` is
@@ -1129,14 +1134,9 @@ struct GrafttyApp: App {
             }
         }
 
-        // WEB-4.3: close the NIO listen sockets + SIGTERM any in-flight
-        // `zmx attach` children as part of normal shutdown. Process exit
-        // would eventually do both, but we can't rely on that: WEB-4.6's
-        // FD_CLOEXEC sweep inside PtyProcess is a defense-in-depth safety
-        // net, not the primary teardown path. Running stop() explicitly
-        // means the 500ms SIGTERM→waitpid window in WebSession.close()
-        // gets a chance to reap cleanly before NSApplication pulls the
-        // rug out.
+        // WEB-4.3: the application delegate defers normal termination until
+        // asynchronous Web Access listener/session cleanup finishes. Remaining
+        // synchronous persistence and service teardown still run here.
         let controller = webController
         let appServices = services
         let stateBinding = binding

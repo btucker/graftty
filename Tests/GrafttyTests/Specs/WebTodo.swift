@@ -88,10 +88,6 @@ struct WebTodo {
 """, .disabled("not yet implemented"))
     func web_4_2() async throws { }
 
-    @Test("""
-@spec WEB-4.3: When the application quits, the application shall stop the server (same tear-down as 15.4.2) as part of normal shutdown.
-""", .disabled("not yet implemented"))
-    func web_4_3() async throws { }
 
     @Test("""
 @spec WEB-6.1: The web server shall bind HTTPS only, using a cert+key pair fetched from Tailscale LocalAPI for the machine's MagicDNS name (WEB-8.2). The application shall not bind any HTTP listener; clients with old `http://` bookmarks will fail to connect until they update the URL.
