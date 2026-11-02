@@ -1,6 +1,11 @@
 import Foundation
 
 public final class SocketServer: @unchecked Sendable {
+    /// Lets a mutating handler discard preparation after its connection has
+    /// expired, including time spent waiting to enter the main actor.
+    /// Direct in-process handlers have no socket lifetime to check.
+    @TaskLocal public static var requestIsActive: @Sendable () -> Bool = { true }
+
     private let socketPath: String
     private var listenFD: Int32 = -1
     private var source: DispatchSourceRead?
@@ -366,7 +371,11 @@ public final class SocketServer: @unchecked Sendable {
                     fd: fd,
                     lease: lease
                 ) == true else { return }
-                let response = await onAsyncRequest(message)
+                let response = await Self.$requestIsActive.withValue({ [weak self] in
+                    self?.isConnectionActive(fd: fd, lease: lease) == true
+                }) {
+                    await onAsyncRequest(message)
+                }
                 self?.clientQueue.async { [weak self] in
                     self?.completeRequest(
                         fd: fd,

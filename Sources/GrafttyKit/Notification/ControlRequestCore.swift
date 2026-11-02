@@ -58,6 +58,8 @@ public enum ControlRequestCore {
         switch message {
         case .notify, .clear, .providerActivity:
             return nil
+        case .agent(let request):
+            return await AgentControl.handle(request, platform: platform)
         case .attentionReport(let callerPath, let callerAgentID, let recap):
             guard recap.isValid, platform.state.worktree(forPath: callerPath) != nil else {
                 return .error("invalid attention recap or unknown worktree")
@@ -115,7 +117,7 @@ public enum ControlRequestCore {
             return .capabilities(ControlCapability.allCases.filter(supported.contains).map(\.rawValue))
         case .agentPromptStagingCapability, .paneAgentCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability, .worktreeRemoveCapability,
-             .worktreePinnedRemovalCapability, .worktreePinCapability:
+             .worktreePinnedRemovalCapability, .worktreePinCapability, .projectAddCapability:
             guard let capability = ControlCapability(legacyProbe: message),
                   platform.controlCapabilities.contains(capability) else {
                 return .error("operation is unavailable on this host")
@@ -142,7 +144,7 @@ public enum ControlRequestCore {
                 return .error("unknown or expired worktree removal operation")
             }
             return .worktreeRemove(status)
-        case .listPanes, .addPane, .closePane, .showPane, .sendPane,
+        case .addProject, .listPanes, .addPane, .closePane, .showPane, .sendPane,
              .previewFiles, .previewImage, .offerResource, .setWorktreePinned,
              .remoteWorktree, .reconnectRemoteMac, .reconnectRemoteClient,
              .mcpConnection, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts,
@@ -279,6 +281,12 @@ public enum ControlRequestCore {
                                  attentionReason: AgentHookAttentionReason?, stopHookActive: Bool, turnID: String?,
                                  fallbackReport: AttentionFileRecapEvent?,
                                  platform: any ControlPlatform) async -> ResponseMessage {
+        if event != .sessionStart {
+            // Identity enrichment must not block activity, attention, or inbox delivery.
+            // Failed persistence leaves the session unbound for the next hook to retry.
+            try? await AgentControl.recoverObservedSession(path: callerPath, agentID: callerAgentID,
+                paneSessionName: paneSessionName, provider: runtime, providerSessionID: sessionID, platform: platform)
+        }
         recordHookLiveness(callerPath: callerPath, runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,
                            paneSessionName: paneSessionName, attentionReason: attentionReason, platform: platform)
         let action = AgentHookAttentionTransition.action(event: event, reason: attentionReason)
@@ -326,17 +334,30 @@ public enum ControlRequestCore {
         case .none:
             break
         }
+        if let index = platform.state.indices(forWorktreePath: callerPath), let session = paneSessionName,
+           let slot = platform.state.repos[index.repo].worktrees[index.worktree].paneSlot(forSessionName: session),
+           let ai = platform.state.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: {
+               $0.paneSlotID == slot && $0.nativeAgentID == callerAgentID && callerAgentID != nil
+           }) {
+            switch action {
+            case .record: platform.state.repos[index.repo].worktrees[index.worktree].agents[ai].observeWaiting(true)
+            case .clear: platform.state.repos[index.repo].worktrees[index.worktree].agents[ai].observeWaiting(false)
+            case .none, .recordStoppedTurn: break
+            }
+        }
         // A `.none` transition (PreToolUse, PermissionRequest) leaves state
         // untouched, so the headless host skips a state write per tool call.
         if action != AgentHookAttentionAction.none {
             do { try platform.stateDidChange() } catch { return .error(String(describing: error)) }
         }
 
-        // These hooks skip inbox scans. The turn-start reminder is constant
-        // context accepted by both providers before the ordinary turn.
+        // These hooks skip inbox scans. Turn start adds current lifetime guidance
+        // so an already-running primary does not retain old completion instructions.
         if isAttentionOnlyTeamHook(runtime: runtime, event: event) {
             return .teamHookOutput(event == .userPromptSubmit && platform.state.worktree(forPath: callerPath) != nil
-                ? (try? TeamHookRenderer.userPromptSubmit()) ?? "{}" : "{}")
+                ? (try? TeamHookRenderer.userPromptSubmit(assignmentContext: AgentControl.currentSessionInstructions(
+                    path: callerPath, agentID: callerAgentID, paneSessionName: paneSessionName,
+                    provider: runtime, platform: platform))) ?? "{}" : "{}")
         }
 
         do {
@@ -374,6 +395,10 @@ public enum ControlRequestCore {
                     ),
                     applicationSupportDirectory: platform.instructionsDirectory
                 )
+                instructions += "\n\n" + (try await AgentControl.sessionContext(path: callerPath, agentID: currentAgentID,
+                    paneSessionName: paneSessionName, provider: runtime, providerSessionID: sessionID, isSessionStart: true,
+                    isSubagent: presenceRecords.contains { $0.isSubagent == true && TeamAgentDirectory.identity(for: $0).rawValue == currentAgentID },
+                    platform: platform))
             }
             let handler = teamHandler(platform: platform, policy: policy)
             // ATTN-2.19: hook delivery parses the full inbox history and

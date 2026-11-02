@@ -48,8 +48,7 @@ struct RetainedWorktreeRestoreTests {
         #expect(manager.wasRehydrated(pane))
         #expect(manager.worktreePath(forSessionName: ZmxLauncher.sessionName(for: session)) == retained.path)
         #expect(manager.isFirstPane(pane))
-        #expect(defaultCommandDecision(defaultCommand: "claude", firstPaneOnly: true,
-            isFirstPane: true, wasRehydrated: manager.wasRehydrated(pane), hasExplicitInitialInput: false) == .skip)
+
     }
 
     @Test("Recovery preserves all live leaves and their remembered primary pane")

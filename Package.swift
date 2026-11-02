@@ -43,7 +43,8 @@ let package = Package(
 // package reference. Local packages are opt-in: manifest evaluation is cached,
 // so filesystem auto-discovery cannot reliably follow dependency changes.
 let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let publishedGhosttyRevision = "5d4d0e38f3220a3bfd5eb2827eea15ae49bc2263"
+// libghostty-spm 3.0.2026102902, built from Ghostty 1.4.0.
+let publishedGhosttyRevision = "ac9cb906df805388ec9c8fd6cf9cacd4e623719b"
 #if os(macOS)
 import CryptoKit
 
@@ -267,6 +268,7 @@ let package = Package(
         .target(
             name: "GrafttyCommandUI",
             dependencies: ["GrafttyProtocol"],
+            resources: [.process("Resources")],
             swiftSettings: strictWarnings
         ),
         .target(

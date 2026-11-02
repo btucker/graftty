@@ -28,3 +28,23 @@ public enum BranchSelection: Sendable, Hashable {
         }
     }
 }
+
+extension BranchSelection.ExistingSource: Codable {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        switch try container.decode(String.self) {
+        case "local": self = .local
+        case "remote_only": self = .remoteOnly
+        default:
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown existing branch source.")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .local: try container.encode("local")
+        case .remoteOnly: try container.encode("remote_only")
+        }
+    }
+}

@@ -51,6 +51,10 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             env["GRAFTTY_STARTUP_RECEIPT"] = startupReceipt?.path
         }
         env["GRAFTTY_SOCK"] = socketPath
+        let helper = bundleURL.pathExtension == "app"
+            ? bundleURL.appendingPathComponent("Contents/Helpers/graftty")
+            : bundleURL.appendingPathComponent("graftty")
+        if FileManager.default.isExecutableFile(atPath: helper.path) { env["GRAFTTY_AGENT_CLI"] = helper.path }
         // ZMX-6.6: zmx's no-command default-login-spawn reads $SHELL from
         // its env to decide what binary to exec. Set it explicitly so the
         // resolved user shell is used regardless of what the parent

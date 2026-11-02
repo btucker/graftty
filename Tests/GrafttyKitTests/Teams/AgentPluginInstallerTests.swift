@@ -736,10 +736,10 @@ struct AgentPluginInstallerTests {
         }
         let claudeManifest = try String(contentsOf: destination
             .appendingPathComponent("claude/plugins/graftty/.claude-plugin/plugin.json"))
-        #expect(claudeManifest.contains(#""version": "0.3.2""#))
+        #expect(claudeManifest.contains(#""version": "0.3.3""#))
         let codexManifest = try String(contentsOf: destination
             .appendingPathComponent("codex/plugins/graftty/.codex-plugin/plugin.json"))
-        #expect(codexManifest.contains(#""version": "0.3.2""#))
+        #expect(codexManifest.contains(#""version": "0.3.3""#))
     }
 
     @Test("""
@@ -758,7 +758,7 @@ struct AgentPluginInstallerTests {
     """)
     func materializedSkillsExplainRealWorktreeDelegation() throws {
         for skill in try preparedSkillTexts(named: "graftty-team") {
-            for token in ["graftty worktree add <name> --agent <codex|claude> --prompt-stdin", "Parent exact address:", "Parent fallback address:", "graftty team list --json", "references/worktrees.md"] {
+            for token in ["graftty agent add <name> --provider codex --prompt-stdin", "agent.nativeAgentID", "completion ID", "graftty team list --json", "references/worktrees.md"] {
                 #expect(skill.contains(token))
             }
             for policy in [
@@ -822,6 +822,30 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
+    @spec AGENT-6.146: When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to report again before each final response.
+    """)
+    func materializedRecapSkillRequestsAnEarlyFirstReport() throws {
+        for skill in try preparedSkillTexts(named: "graftty") {
+            let early = try #require(skill.range(of: "as soon as you understand the task"), "The recap skill does not ask for an early first report")
+            let turnEnd = try #require(skill.range(of: "before your final response"))
+            #expect(early.lowerBound < turnEnd.lowerBound, "The early report must come before the turn-end instruction")
+        }
+    }
+
+    @Test func materializedWorktreeReferenceKeepsPrimaryAgentsOpen() throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-primary-reference-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        for provider in ["codex", "claude"] {
+            let reference = destination.appendingPathComponent("\(provider)/plugins/graftty/skills/graftty-team/references/worktrees.md")
+            let text = try String(contentsOf: reference, encoding: .utf8)
+            #expect(text.contains("primary agent stays open"))
+            #expect(text.contains("graftty team send"))
+            #expect(text.contains("additional agents"))
+        }
+    }
+
+    @Test("""
     @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, optional history entries describing what changed and why without repeating current state, and task-related emoji choices, with a user question only when input is needed.
     """)
     func materializedRecapSkillRequestsTaskContext() throws {
@@ -874,7 +898,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.45: When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty worktree add and an agent instead, and document graftty pane add with an agent for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
+    @spec AGENT-6.45: When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty agent add, and document its existing-worktree option for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
     """)
     func materializedTeamSkillForbidsManualWorktrees() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -889,10 +913,10 @@ struct AgentPluginInstallerTests {
             #expect(!skill.contains("exactly one agent"))
             #expect(skill.contains("`git worktree add`"))
             #expect(skill.contains("worktree-isolated subagents"))
-            #expect(skill.contains("graftty pane add <worktree> --agent <codex|claude> --prompt-stdin"))
+            #expect(skill.contains("--worktree <name-or-path>"))
             #expect(skill.contains("unless the implementer hands off"))
-            #expect(skill.contains("<path>#<runtime>"))
-            #expect(skill.contains("only when no other agent of that runtime shares the worktree"))
+            #expect(skill.contains("exact native address"))
+            #expect(skill.contains("completion ID"))
             let worktrees = try String(contentsOf: destination.appendingPathComponent(
                 "\(provider)/plugins/graftty/skills/graftty-team/references/worktrees.md"
             ))

@@ -1049,10 +1049,15 @@ struct SocketIntegrationTests {
             of: Void.self
         )
         defer { handlerStartContinuation.finish() }
+        let (handlerFinishes, handlerFinishContinuation) = AsyncStream.makeStream(of: Void.self)
+        defer { handlerFinishContinuation.finish() }
         defer { gate.signal() }
         server.onAsyncRequest = { _ in
+            #expect(SocketServer.requestIsActive())
             handlerStartContinuation.yield(())
             Self.blockCurrentThread(on: gate, timeout: .now() + 10)
+            #expect(!SocketServer.requestIsActive(), "late handlers must see the expired connection")
+            handlerFinishContinuation.yield(())
             return .ok
         }
         try server.start()
@@ -1086,6 +1091,8 @@ struct SocketIntegrationTests {
         // and closes fd, so n == 0 within ~1.5s.
         #expect(n == 0, "Server must close fd at timeout, not wait for the handler")
         #expect(elapsed < 2.0, "Server must honor its 1s timeout, not wait for the handler's 10s (elapsed: \(elapsed)s)")
+        gate.signal()
+        try await expectSignal(from: handlerFinishes, timeout: .seconds(1))
     }
 
     /// A silent client that connects but never writes or closes must not
@@ -1275,6 +1282,14 @@ struct SocketIntegrationTests {
         let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { throw POSIXError(.ENOTSOCK) }
 
+        // A busy server can close as soon as connect succeeds. Darwin rejects
+        // SO_NOSIGPIPE after that close, so configure it before connecting.
+        guard GrafttyPOSIX.configureNoSigPipe(fd) == 0 else {
+            let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+            close(fd)
+            throw error
+        }
+
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         socketPath.withCString { ptr in
@@ -1301,7 +1316,6 @@ struct SocketIntegrationTests {
             throw POSIXError(.ECONNREFUSED)
         }
 
-        _ = GrafttyPOSIX.configureNoSigPipe(fd)
         return fd
     }
 

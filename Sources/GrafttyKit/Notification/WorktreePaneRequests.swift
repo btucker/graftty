@@ -13,11 +13,15 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
     public var base: String?
     public var command: String?
     public var agentRuntime: TeamHookRuntime?
+    public var managedAgent: ManagedAgent?
+    public var selectTab: Bool?
     public var agentPrompt: String?
     public var operationID: String?
+    public var existingBranchSource: BranchSelection.ExistingSource?
 
     public init(callerWorktree: String, worktreeName: String, branchName: String, existing: Bool, base: String?,
-                command: String?, agentRuntime: TeamHookRuntime?, agentPrompt: String?, operationID: String?) {
+                command: String?, agentRuntime: TeamHookRuntime?, agentPrompt: String?, operationID: String?, managedAgent: ManagedAgent? = nil, selectTab: Bool? = nil,
+                existingBranchSource: BranchSelection.ExistingSource? = nil) {
         self.callerWorktree = callerWorktree
         self.worktreeName = worktreeName
         self.branchName = branchName
@@ -26,7 +30,10 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
         self.command = command
         self.agentRuntime = agentRuntime
         self.agentPrompt = agentPrompt
+        self.managedAgent = managedAgent
+        self.selectTab = selectTab
         self.operationID = operationID
+        self.existingBranchSource = existingBranchSource
     }
 
     enum CodingKeys: String, CodingKey {
@@ -36,7 +43,10 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
         case existing, base, command
         case agentRuntime = "agent_runtime"
         case agentPrompt = "agent_prompt"
+        case managedAgent = "managed_agent"
+        case selectTab = "select_tab"
         case operationID = "operation_id"
+        case existingBranchSource = "existing_branch_source"
     }
 }
 
@@ -48,20 +58,26 @@ public struct AddPaneRequest: Codable, Sendable, Equatable {
     public var direction: PaneSplit
     public var command: String?
     public var agentRuntime: TeamHookRuntime?
+    public var managedAgent: ManagedAgent?
+    public var selectTab: Bool?
     public var agentPrompt: String?
 
     public init(path: String, direction: PaneSplit, command: String?, agentRuntime: TeamHookRuntime? = nil,
-                agentPrompt: String? = nil) {
+                agentPrompt: String? = nil, managedAgent: ManagedAgent? = nil, selectTab: Bool? = nil) {
         self.path = path
         self.direction = direction
         self.command = command
         self.agentRuntime = agentRuntime
         self.agentPrompt = agentPrompt
+        self.managedAgent = managedAgent
+        self.selectTab = selectTab
     }
 
     enum CodingKeys: String, CodingKey {
         case path, direction, command
         case agentRuntime = "agent_runtime"
         case agentPrompt = "agent_prompt"
+        case managedAgent = "managed_agent"
+        case selectTab = "select_tab"
     }
 }

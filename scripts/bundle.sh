@@ -117,7 +117,7 @@ done
 # crash). GrafttyKitResourceBundle.resolve() (CONFIG-2.6) bridges the gap by
 # locating the bundle under Contents/Resources first; this copy is what it
 # finds. Do not "simplify" by dropping either side.
-for b in "$BIN_DIR"/*_GrafttyKit.bundle "$BIN_DIR"/*_GrafttyCLI.bundle; do
+for b in "$BIN_DIR"/*_GrafttyKit.bundle "$BIN_DIR"/*_GrafttyCLI.bundle "$BIN_DIR"/*_GrafttyCommandUI.bundle; do
     [[ -e "$b" ]] || continue
     cp -R "$b" "$APP/Contents/Resources/$(basename "$b")"
 done
@@ -212,6 +212,22 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>NSApplication</string>
     <key>UTExportedTypeDeclarations</key>
     <array>
+      <dict>
+        <key>UTTypeIdentifier</key>
+        <string>com.graftty.workspace-tab</string>
+        <key>UTTypeDescription</key>
+        <string>Graftty workspace tab</string>
+        <key>UTTypeConformsTo</key>
+        <array><string>public.data</string></array>
+      </dict>
+      <dict>
+        <key>UTTypeIdentifier</key>
+        <string>com.graftty.sidebar-project-move</string>
+        <key>UTTypeDescription</key>
+        <string>Graftty project reorder</string>
+        <key>UTTypeConformsTo</key>
+        <array><string>public.data</string></array>
+      </dict>
       <dict>
         <key>UTTypeIdentifier</key>
         <string>com.graftty.sidebar-worktree-move</string>

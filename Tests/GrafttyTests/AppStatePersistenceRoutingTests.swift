@@ -100,6 +100,7 @@ private final class HeadlessRouter {
     let remoteBranchStore = RemoteBranchStore()
     /// Shared across `route` calls so a retry sees the original operation.
     let worktreeCreations = CLIWorktreeCreationStore()
+    let worktreeMonitor = WorktreeMonitor()
     let remoteMacsModel: RemoteMacsModel
 
     init() throws {
@@ -116,15 +117,11 @@ private final class HeadlessRouter {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    /// Lets `pane add` create a real libghostty surface, as
-    /// `GrafttyAppPaneLifecycleTests` does; `/usr/bin/false` never attaches.
+    /// Initializes the app required by `createSurface`, which reuses the
+    /// reserved fake surface rather than starting a shell or a real agent.
     func enableSurfaces() {
         _ = NSApplication.shared
         terminalManager.initialize()
-        terminalManager.zmxLauncher = ZmxLauncher(
-            executable: URL(fileURLWithPath: "/usr/bin/false"),
-            zmxDir: directory.appendingPathComponent("zmx")
-        )
     }
 
     func router(for box: StateBox) -> SocketRequestRouter {
@@ -138,7 +135,7 @@ private final class HeadlessRouter {
             terminalManager: terminalManager,
             teamInbox: teamInbox,
             teamEventDispatcher: dispatcher,
-            worktreeMonitor: WorktreeMonitor(),
+            worktreeMonitor: worktreeMonitor,
             statsStore: WorktreeStatsStore(),
             prStatusStore: PRStatusStore(remoteBranchStore: remoteBranchStore),
             worktreeCreations: worktreeCreations,
@@ -174,6 +171,31 @@ private func runningWorktreeState() -> (AppState, PaneSlotID) {
     return (state, pane)
 }
 
+@MainActor
+struct ManagedPaneCloseRoutingTests {
+    @Test("@spec AGENT-6.102: When Mac pane controls close a managed terminal, the application shall claim asynchronous teardown before removing its view and preserve a retryable interrupted outcome if teardown fails.")
+    func failedTeardownKeepsManagedPane() async throws {
+        let (initial, slot) = runningWorktreeState()
+        let box = StateBox(initial)
+        var agent = ManagedAgent(name: "Child", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
+        agent.paneSlotID = slot
+        box.state.repos[0].worktrees[0].agents = [agent]
+        let host = try HeadlessRouter()
+        let router = host.router(for: box)
+        let probe = PersistenceProbe()
+        await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            router.installManagedPaneClose()
+            PaneCommands.closePane(appState: box.binding, terminalManager: host.terminalManager,
+                targetID: slot, userInitiated: true)
+            #expect(box.state.repos[0].worktrees[0].splitTree.containsLeaf(slot))
+            for _ in 0..<100 where box.state.repos[0].worktrees[0].agents[0].failure == nil { await Task.yield() }
+            #expect(box.state.repos[0].worktrees[0].agents[0].status == .interrupted)
+            #expect(box.state.repos[0].worktrees[0].agents[0].completion?.outcome == .interrupted)
+            #expect(box.state.repos[0].worktrees[0].paneSessions[slot] != nil)
+        }
+    }
+}
+
 @Suite(.serialized)
 @MainActor
 struct AgentLaunchPersistenceTests {
@@ -207,12 +229,31 @@ struct AgentLaunchPersistenceTests {
             #expect(onDisk.worktree(forPath: repoPath + "/.worktrees/agent-task") != nil)
         }
 
-        @Test func paneAddWithAnAgentFlushesTheNewPaneBeforeReplying() async throws {
+        @Test(arguments: [true, false])
+        func paneAddWithAnAgentFlushesTheNewPaneBeforeReplying(hasExistingPane: Bool) async throws {
             let probe = PersistenceProbe()
             let router = try HeadlessRouter()
-            let (state, existingPane) = runningWorktreeState()
+            var (state, existingPane) = runningWorktreeState()
+            if !hasExistingPane {
+                state.repos[0].worktrees[0].splitTree = SplitTree(root: nil)
+                state.repos[0].worktrees[0].paneSessions = [:]
+            }
+            let pane = PaneSlotID(), session = PaneSessionID()
+            var agent = ManagedAgent(name: "Persistence test", provider: .codex, parent: nil, status: .starting)
+            agent.paneSlotID = pane
+            agent.paneSessionID = session
+            state.repos[0].worktrees[0].agents = [agent]
             let box = StateBox(state)
             router.enableSurfaces()
+            let backend = FakeSurfaceHandleZmxBackend()
+            let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+            let handle = try #require(SurfaceHandle(
+                terminalID: pane, app: fakeApp(), worktreePath: repoPath,
+                socketPath: router.terminalManager.socketPath,
+                zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+                surfaceFactory: harness.factory, zmxBackendFactory: { _, _, _, _ in backend }
+            ))
+            router.terminalManager.insertSurfaceForTesting(handle, for: pane)
             defer {
                 for pane in box.state.worktree(forPath: repoPath)?.splitTree.allLeaves ?? [] {
                     router.terminalManager.evictSurface(terminalID: pane, forRetry: true)
@@ -220,16 +261,20 @@ struct AgentLaunchPersistenceTests {
             }
 
             let response = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
-                await router.route(.addPane(
+                await router.route(.addPane(AddPaneRequest(
                     path: repoPath, direction: .right, command: nil,
-                    agentRuntime: .codex, agentPrompt: nil
-                ), box)
+                    agentRuntime: .codex, managedAgent: agent, selectTab: false
+                )), box)
             }
 
             #expect(response == .ok, "\(String(describing: response))")
             let onDisk = try #require(probe.written.last, "the reply was sent before state.json was written")
             let panes = onDisk.worktree(forPath: repoPath)?.splitTree.allLeaves ?? []
-            #expect(panes.count == 2 && panes.contains(existingPane))
+            #expect(panes.count == (hasExistingPane ? 2 : 1))
+            #expect(panes.contains(pane))
+            #expect(panes.contains(existingPane) == hasExistingPane)
+            #expect(onDisk.worktree(forPath: repoPath)?.paneSessions[pane] == session)
+            #expect(backend.startCount == 1)
         }
     }
 
@@ -511,6 +556,7 @@ private func twoPaneState(ratio: Double = 0.3) -> (AppState, PaneSlotID, PaneSlo
         direction: .horizontal, ratio: ratio, left: .leaf(left), right: .leaf(right)
     )))
     worktree.paneSessions = [left: PaneSessionID(), right: PaneSessionID()]
+    worktree.workspaceLayout = .preserving(worktree.splitTree)
     let state = AppState(
         repos: [RepoEntry(path: repoPath, displayName: "repo", worktrees: [worktree])],
         selectedWorktreePath: repoPath
@@ -805,5 +851,158 @@ struct WindowlessBackgroundSaveTests {
         try await probe.fireArmedSave()
 
         #expect(probe.written.last?.worktree(forPath: repoPath)?.branch == "renamed")
+    }
+}
+
+@MainActor
+struct ProjectAddPersistenceTests {
+    @Test("@spec PROJECT-1.12: When the Mac app registers a Git project, the application shall install repository watchers so external worktree additions update the shared project list without restarting the app.")
+    func watchesExternalWorktreeAdditions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-watch-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        defer { router.worktreeMonitor.stopAll() }
+        let box = StateBox(AppState())
+        let bridge = WorktreeMonitorBridge(appState: box.binding, statsStore: WorktreeStatsStore(),
+            prStatusStore: PRStatusStore(remoteBranchStore: router.remoteBranchStore), remoteBranchStore: router.remoteBranchStore)
+        router.worktreeMonitor.delegate = bridge
+        try await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(router.worktreeMonitor.liveFdCountForTesting > 0)
+            _ = try await GitRunner.run(args: ["worktree", "add", "-b", "feature", root.appendingPathComponent("linked").path], at: root.path)
+            let deadline = ContinuousClock.now + .seconds(3)
+            while box.state.repos.first?.worktrees.count != 2 && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(box.state.repos.first?.worktrees.map(\.branch).contains("feature") == true)
+        }
+    }
+
+    @Test("@spec PROJECT-1.13: When a registered repository receives its first commit and an external branch switch, the application shall update its branch in the shared project model without restarting.")
+    func watchesFirstCommitAndBranchSwitchInUnbornProject() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-first-commit-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        defer { router.worktreeMonitor.stopAll() }
+        let box = StateBox(AppState())
+        let bridge = WorktreeMonitorBridge(appState: box.binding, statsStore: WorktreeStatsStore(),
+            prStatusStore: PRStatusStore(remoteBranchStore: router.remoteBranchStore), remoteBranchStore: router.remoteBranchStore)
+        router.worktreeMonitor.delegate = bridge
+        try await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            _ = try await GitRunner.run(args: ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+            _ = try await GitRunner.run(args: ["switch", "-c", "feature"], at: root.path)
+            let deadline = ContinuousClock.now + .seconds(3)
+            while box.state.repos.first?.worktrees.first?.branch != "feature" && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(box.state.repos.first?.worktrees.first?.branch == "feature")
+            let descriptors = router.worktreeMonitor.liveFdCountForTesting
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(router.worktreeMonitor.liveFdCountForTesting == descriptors)
+        }
+    }
+
+    @Test func expiredSocketCannotRegisterWithFreshPreparationBudget() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-expired-socket-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let fixture = try HeadlessRouter()
+        let box = StateBox(AppState())
+        let response = await SocketServer.$requestIsActive.withValue({ false }) {
+            await fixture.route(.addProject(path: root.path), box)
+        }
+        guard case .error(let message) = response else {
+            Issue.record("expired socket must fail even when preparation is fast")
+            return
+        }
+        #expect(message.contains("timed out"))
+        #expect(box.state.repos.isEmpty)
+        #expect(fixture.worktreeMonitor.liveFdCountForTesting == 0)
+    }
+
+    @Test func expiredPreparationCannotRegisterLater() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-expired-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let fixture = try HeadlessRouter()
+        let box = StateBox(AppState())
+        let router = fixture.router(for: box)
+        var instant = ContinuousClock.now
+        let response = await router.addProject(path: root.path, prepare: { path in
+            let prepared = try await ProjectRegistration.prepare(path: path)
+            instant += .seconds(SocketServer.defaultRequestTimeoutSeconds + 1)
+            return prepared
+        }, now: { instant })
+        guard case .error(let message) = response else {
+            Issue.record("expired preparation must fail")
+            return
+        }
+        #expect(message.contains("timed out"))
+        #expect(box.state.repos.isEmpty)
+        #expect(fixture.worktreeMonitor.liveFdCountForTesting == 0)
+    }
+
+    @Test func persistenceFailureIsReportedAndRetryIsSafe() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-save-failure-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        let box = StateBox(AppState())
+        probe.failWrites(with: CocoaError(.fileWriteNoPermission))
+        await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            guard case .error(let message) = await router.route(.addProject(path: root.path), box) else {
+                Issue.record("save failure must not report success")
+                return
+            }
+            #expect(message.contains(root.path))
+            #expect(probe.written.isEmpty)
+            probe.failWrites(with: nil)
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(probe.written.last?.repos.count == 1)
+        }
+    }
+
+    @Test("@spec PROJECT-1.11: When the Mac app accepts a project addition, the application shall update its shared project model and persist the registration before replying, including when no window is open.")
+    func additionPersistsBeforeReplyAndRetryPreservesState() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-router-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        let box = StateBox(AppState())
+        let changes = AppStateChanges()
+        changes.publish(onMarkDirtyOf: probe.persister)
+        try await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            let saved = try #require(probe.written.last)
+            #expect(saved.repos.count == 1)
+            #expect(saved.repos[0].path == CanonicalPath.canonicalize(root.path))
+            #expect(saved.repos[0].worktrees.map(\.branch) == ["trunk"])
+            #expect(box.state == saved)
+            #expect(changes.currentRevision > 0)
+            let owner = WorktreeOrigin(deviceID: .init(value: "test-mac"), deviceLabel: "Mac", relayDepth: 0)
+            let projects = SidebarHostController.shared.localProjects(box.state.repos, owner: owner)
+            #expect(projects.count == 1)
+            #expect(projects.first?.name == saved.repos[0].displayName)
+            #expect(box.state.selectedWorktreePath == nil)
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(box.state == saved)
+            #expect(probe.written.last == saved)
+            #expect(await router.route(.addProject(path: root.appendingPathComponent("missing").path), box) != .ok)
+            #expect(box.state == saved)
+        }
     }
 }

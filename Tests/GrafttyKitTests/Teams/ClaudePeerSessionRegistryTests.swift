@@ -102,6 +102,48 @@ struct ClaudePeerSessionRegistryTests {
         ) == nil)
     }
 
+    @Test("""
+    @spec AGENT-6.63: If a Claude registry row holds a complete JSON object followed by stale bytes from an earlier, longer rewrite, then the application shall read the leading object as that session's row, while a row whose object never completes shall remain unreadable.
+    """)
+    func readsRowWithStaleTrailingBytes() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-claude-registry-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Claude 2.1.314 rewrote a row in place one byte shorter and left the
+        // previous object's closing brace behind.
+        try write(
+            #"{"pid":101,"sessionId":"trailing","cwd":"/repo/feature","name":"re{vie}wer","kind":"interactive","peerProtocol":1,"messagingSocketPath":"/tmp/cc-socks/101.sock"}}"#,
+            to: root.appendingPathComponent("101.json")
+        )
+        try write(
+            #"{"pid":102,"sessionId":"longer-tail","cwd":"/repo/feature","peerProtocol":1,"messagingSocketPath":"/tmp/cc-socks/102.sock"},"kind":"interactive"}"#,
+            to: root.appendingPathComponent("102.json")
+        )
+        try write(
+            #"{"pid":103,"sessionId":"truncated","cwd":"/repo/feature","peerProtocol":1,"messagingSocketPath":"/tmp/cc-socks/103.sock""#,
+            to: root.appendingPathComponent("103.json")
+        )
+
+        let registry = ClaudePeerSessionRegistry(
+            directory: root,
+            processStartTimeMicroseconds: { _ in 10_001 },
+            socketIsReachable: { _ in true }
+        )
+        func record(_ sessionID: String) -> TeamPresenceRecord? {
+            registry.presenceRecord(
+                sessionID: sessionID, expectedWorktree: "/repo/feature", teamID: "/repo", paneSessionName: nil
+            )
+        }
+        let trailing = try #require(record("trailing"))
+        #expect(trailing.pid == 101)
+        #expect(trailing.nativeDisplayName == "re{vie}wer")
+        #expect(trailing.transport == .claude(socketPath: "/tmp/cc-socks/101.sock", protocolVersion: 1))
+        #expect(record("longer-tail")?.pid == 102)
+        #expect(record("truncated") == nil)
+    }
+
     @Test("The default registry follows Claude's configured state directory.")
     func defaultDirectoryHonorsClaudeConfigDirectory() {
         let home = URL(fileURLWithPath: "/Users/example")

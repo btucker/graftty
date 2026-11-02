@@ -22,7 +22,7 @@ struct WorktreeRowGutter: View {
                 ahead: stats.ahead,
                 behind: stats.behind,
                 hasUncommittedChanges: stats.hasUncommittedChanges,
-                aheadColor: Self.aheadColor(theme)
+                aheadColor: Self.aheadColor(theme), behindColor: theme.foreground.opacity(0.75)
             )
             .help(tooltip(stats))
         }

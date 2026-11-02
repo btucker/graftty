@@ -15,6 +15,9 @@ fi
 FIRST_ATTEMPT_LOG=""
 RESULTS_DIRECTORY="${RESULTS_DIRECTORY:-.ci-results/ios}"
 mkdir -p "$RESULTS_DIRECTORY"
+# Xcode refuses to overwrite a result bundle. Keep each invocation separate
+# from earlier runs, including processes that finish after CI cancellation.
+SHARD_RESULTS_DIRECTORY="$(mktemp -d "$RESULTS_DIRECTORY/run.XXXXXX")"
 SIMULATOR_UDIDS=("$SIMULATOR_UDID")
 
 delete_simulator() {
@@ -63,7 +66,7 @@ run_test_shard() {
     -xctestrun "${XCTESTRUN_PATHS[0]}" \
     -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
     -destination-timeout 60 \
-    -resultBundlePath "$RESULTS_DIRECTORY/batch-$TEST_BATCH-attempt-$1.xcresult" \
+    -resultBundlePath "$SHARD_RESULTS_DIRECTORY/batch-$TEST_BATCH-attempt-$1.xcresult" \
     "${TEST_ARGUMENTS_ARRAY[@]}" \
     test-without-building
 }

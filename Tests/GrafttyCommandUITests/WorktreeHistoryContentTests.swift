@@ -7,6 +7,34 @@ import Testing
 
 @MainActor
 struct WorktreeHistoryContentTests {
+    @Test("@spec CONTEXT-52: When a structured question reply appears in the shared Mac and mobile timeline, the application shall display each question as secondary text above its readable answer without provider wrappers or transport identifiers, wrapping within the available width.", arguments: [260.0, 390.0], [ColorScheme.dark, .light])
+    func harnessRepliesShowReadableQuestionsAndAnswers(width: Double, scheme: ColorScheme) async throws {
+        let question = "Should the CLI and graftty-team changes stay part of this design exploration for now, or should I implement them in this worktree too?"
+        let answer = "Design together first, then implement"
+        let body = try JSONSerialization.data(withJSONObject: [["question": question, "answer": answer, "questionItemId": "opaque-transport-id"]])
+        var history = WorktreeHistory()
+        history.record(.init(text: "<send_user_message_question_reply>\(String(decoding: body, as: UTF8.self))</send_user_message_question_reply>",
+            at: Date(timeIntervalSince1970: 1_793_456_880), runtime: "codex"))
+        let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary)
+            .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true)
+            .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme)
+            .environment(\.accessibilityEnabled, true))
+        let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        let labels = accessibilityLabels(in: host)
+        #expect(labels.contains { $0.contains(question) })
+        #expect(labels.contains { $0.contains(answer) })
+        #expect(!labels.contains { $0.contains("send_user_message_question_reply") || $0.contains("opaque-transport-id") })
+        #expect(abs(host.fittingSize.width - width) < 1)
+        try capture(host, named: "harness-reply-\(Int(width))-\(scheme == .dark ? "dark" : "light")")
+    }
+
     @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall align sender and time beside a quiet timeline rail with message text on one reading edge, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two multiline gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0])
     func humanInputAndPeerMessages(width: Double) async throws {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
@@ -217,11 +245,16 @@ struct WorktreeHistoryContentTests {
     private func accessibilityLabels(in root: NSView) -> Set<String> {
         var pending: [NSObject] = [root], seen: Set<ObjectIdentifier> = [], labels: Set<String> = []
         let label = NSSelectorFromString("accessibilityLabel")
+        let value = NSSelectorFromString("accessibilityValue")
         let children = NSSelectorFromString("accessibilityChildren")
         while let object = pending.popLast(), seen.count < 4096 {
             guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
             if object.responds(to: label), let value = object.perform(label)?.takeUnretainedValue() as? String {
                 labels.insert(value)
+            }
+            // Selectable native text exposes its contents as the accessibility value.
+            if object.responds(to: value), let text = object.perform(value)?.takeUnretainedValue() as? String {
+                labels.insert(text)
             }
             if object.responds(to: children), let values = object.perform(children)?.takeUnretainedValue() as? [NSObject] {
                 pending.append(contentsOf: values)

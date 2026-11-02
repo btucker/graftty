@@ -31,6 +31,7 @@ struct MainWindow: View {
     @EnvironmentObject private var updaterController: UpdaterController
 
     @State private var showsWorktreeContext = false
+    @State private var requestedRemoteAgent: String?
     @State private var sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mac")
 
     /// Column visibility state — must be a real `@State` rather than a
@@ -100,6 +101,29 @@ struct MainWindow: View {
         let repository: RemoteRepositoryInfo
     }
 
+    @ViewBuilder private func remoteWorkspaceContent(for remote: RemoteMac) -> some View {
+        if let snapshot = selectedRemoteWorktreeSnapshot {
+            RemoteWorkspaceContentView(viewer: remoteViewer, terminalManager: terminalManager,
+                worktree: snapshot, identity: RemoteMacIdentity(remote), focused: focusedRemoteTerminalID,
+                onFocus: { terminalID in
+                    attentionOpenGeneration &+= 1
+                    remoteViewer.focusTerminal(terminalID)
+                }, agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
+                    let response = try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
+                        request: .addAgent(worktreeID: snapshot.path, provider: provider, operationID: operationID))
+                    switch response {
+                    case .created(_, let session): return session
+                    case .error(_, let message, _, _): throw AgentLaunchError(message)
+                    default: throw AgentLaunchError("The host returned an unexpected response.")
+                    }
+                }, conversationRequest: { id, action in
+                    try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
+                        request: .agentConversation(worktreeID: snapshot.path, agentID: id, action: action))
+                })
+                .id(RemoteWorktreeViewerController.WorktreeKey(identity: RemoteMacIdentity(remote), worktreePath: snapshot.path))
+        }
+    }
+
     var body: some View {
         NavigationSplitView(
             columnVisibility: $columnVisibility
@@ -116,6 +140,9 @@ struct MainWindow: View {
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
                 remoteMacsModel: remoteMacsModel,
+                remoteWorkspaceLayout: { identity, worktree in
+                    remoteViewer.workspaceLayout(identity: identity, worktree: worktree)
+                },
                 appStateChanges: appStateChanges,
                 selectedRemoteIdentity: selectedRemoteIdentity,
                 selectedRemoteWorktreePath: selectedRemoteWorktreePath,
@@ -157,7 +184,11 @@ struct MainWindow: View {
             // lights and the sidebar toggle; the detail column does the
             // same for the breadcrumb.
         } detail: {
-            MainWindowDetailLayout {
+            MainWindowDetailLayout(headerWash: WorktreeHeaderWash(
+                identity: .resolve(isMainCheckout: selectedRemoteWorktreeSnapshot?.isMainCheckout ?? isHomeCheckout,
+                    emoji: BreadcrumbBar.selectedWorktreeEmoji(localEmoji: selectedWorktree?.emoji, remoteWorktree: selectedRemoteWorktreeSnapshot)),
+                project: selectedIdentityProject, iconData: selectedProjectIconData,
+                background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
                 BreadcrumbBar(
                     repoName: selectedRemoteWorktreeSnapshot?.repoDisplayName
                         ?? selectedRepo?.displayName,
@@ -189,12 +220,25 @@ struct MainWindow: View {
                     onSelectHistory: selectHistoryTarget,
                     onRefreshPR: refreshPR,
                     project: selectedIdentityProject, projectIconData: selectedProjectIconData,
-                    previewWorktreePath: selectedRemoteIdentity == nil ? selectedWorktree?.path : nil,
-                    previewInlinePane: selectedWorktree.flatMap {
-                        ImagePreviewLayout.visiblePane(tree: $0.splitTree, focused: $0.focusedPaneSlotID)
+                    previewWorktreePath: selectedRemoteIdentity.map { "remote-preview:\($0):\(selectedRemoteWorktreeSnapshot?.path ?? "")" } ?? selectedWorktree?.path,
+                    previewInlinePane: selectedRemoteIdentity != nil ? nil : selectedWorktree.flatMap { worktree in
+                        worktree.presentationPane.flatMap { slot in
+                            worktree.visiblePaneSlots.contains(slot) && !worktree.hasCompletedContent(in: slot) ? slot : nil
+                        }
                     },
                     previewWorktreeForPane: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) },
-                    onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil
+                    previewCatalogRequest: selectedRemoteIdentity.flatMap { identity in
+                        selectedRemoteWorktreeSnapshot.map { snapshot in
+                            { request in
+                                let response = try await remoteMacsModel.sendWorktreeManagement(identity: identity,
+                                    request: .openResource(worktreeID: snapshot.path, request: request))
+                                guard case .openResource(let result) = response else { throw RemoteOpenStore.Failure.invalidFile }
+                                return result
+                            }
+                        }
+                    },
+                    onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil,
+                    showsContext: showsWorktreeContext
                 )
             } content: {
                 if let selectedRemoteMac {
@@ -206,20 +250,8 @@ struct MainWindow: View {
                                 remoteViewer.selectRemoteWorktree(selectedRemoteMac, worktreePath: row.path,
                                     acknowledging: false, inspectingCreation: false)
                             } : nil)
-                    } else if selectedRemoteWorktreePath != nil,
-                       remoteViewer.splitTree.root != nil {
-                        TerminalContentView(
-                            terminalManager: terminalManager,
-                            splitTree: $remoteViewer.splitTree,
-                            focusedPaneSlotID: focusedRemoteTerminalID,
-                            theme: terminalManager.theme,
-                            onFocusTerminal: { terminalID in
-                                attentionOpenGeneration &+= 1
-                                remoteViewer.focusTerminal(terminalID)
-                            },
-                            agentScrollbackMap: agentScrollbackMap
-                        )
-                        .padding(.leading, 6)
+                    } else if selectedRemoteWorktreePath != nil, selectedRemoteWorktreeSnapshot != nil {
+                        remoteWorkspaceContent(for: selectedRemoteMac)
                     } else if remoteViewer.isOpeningSelectedWorktree {
                         ProgressView("Starting remote worktree…")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -238,14 +270,9 @@ struct MainWindow: View {
                             _ = selectWorktree(row.path, acknowledging: false, inspectingCreation: false)
                         } : nil)
                 } else if let worktree = selectedWorktreeBinding {
-                    TerminalContentView(
+                    WorkspaceContentView(
                         terminalManager: terminalManager,
-                        splitTree: Binding(
-                            get: { worktree.wrappedValue.splitTree },
-                            set: { worktree.wrappedValue.splitTree = $0 }
-                        ),
-                        focusedPaneSlotID: worktree.wrappedValue.focusedPaneSlotID,
-                        theme: terminalManager.theme,
+                        worktree: worktree,
                         onFocusTerminal: { terminalID in
                             attentionOpenGeneration &+= 1
                             // Persist the focus change on the model BEFORE
@@ -263,12 +290,31 @@ struct MainWindow: View {
                             }
                             terminalManager.setFocus(terminalID)
                         },
-                        previewWorktreePath: selectedWorktree?.path,
-                        agentScrollbackMap: agentScrollbackMap
+                        onNewTerminal: {
+                            worktree.wrappedValue.ensureWorkspaceLayout()
+                            if let target = worktree.wrappedValue.splitTree.allLeaves.first {
+                                if let slot = PaneCommands.splitPane(appState: $appState, terminalManager: terminalManager,
+                                    targetID: target, split: .down) {
+                                    worktree.wrappedValue.workspaceLayout?.addTerminal(slot)
+                                }
+                            } else {
+                                _ = PaneCommands.startWorktree(path: worktree.wrappedValue.path, appState: $appState,
+                                    terminalManager: terminalManager)
+                                if let slot = worktree.wrappedValue.splitTree.allLeaves.first {
+                                    worktree.wrappedValue.workspaceLayout?.addTerminal(slot)
+                                }
+                            }
+                        },
+                        onCloseTerminal: { slot in
+                            PaneCommands.closePane(appState: $appState, terminalManager: terminalManager,
+                                targetID: slot, userInitiated: true)
+                        },
+                        agentLiveness: claudeSessionRegistry,
+                        onActivateTerminal: { terminalID in
+                            makePaneFirstResponder(terminalID, when: { terminalManager.focusedTerminalID == terminalID })
+                        },
+                        agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext
                     )
-                    // A hair of breathing room so terminal text doesn't
-                    // slam into the sidebar divider.
-                    .padding(.leading, 6)
                 } else {
                     ContentUnavailableView(
                         "No Worktree Selected",
@@ -276,23 +322,16 @@ struct MainWindow: View {
                         description: Text("Select a worktree from the sidebar or add a repository.")
                     )
                 }
-            }
-            .safeAreaInset(edge: .trailing, spacing: 0) {
+            } inspector: {
                 if showsWorktreeContext, let context = selectedContext {
-                    HStack(spacing: 0) {
-                        Divider()
-                        WorktreeContextPanel(context: context, foreground: terminalManager.theme.foreground,
-                            secondary: terminalManager.theme.foreground.opacity(0.6),
-                            onClose: { showsWorktreeContext = false })
-                            .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
-                                openContextWorktree(path, remoteIdentity: identity)
-                            }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
-                                await revealInTerminal(request, remoteIdentity: identity)
-                            }))
-                            .frame(width: 360)
-                            .background(terminalManager.theme.background)
-                            .padding(.top, 30)
-                    }
+                    WorktreeContextPanel(context: context, theme: terminalManager.theme.core,
+                        readTranscript: transcriptReader, showAgent: agentTabOpener, onClose: { showsWorktreeContext = false })
+                        .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
+                            openContextWorktree(path, remoteIdentity: identity)
+                        }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
+                            await revealInTerminal(request, remoteIdentity: identity)
+                        }))
+                        .frame(width: 360)
                 }
             }
             .ignoresSafeArea(.container, edges: .top)
@@ -539,6 +578,27 @@ struct MainWindow: View {
             return selectedRemoteWorktreePath.map { .remote(identity, $0) }
         }
         return appState.selectedWorktreePath.map { .local($0) }
+    }
+
+    private var agentTabOpener: ((String) -> Void)? {
+        if selectedRemoteIdentity != nil { return { requestedRemoteAgent = $0 } }
+        guard let worktree = selectedWorktreeBinding else { return nil }
+        return { id in
+            guard let slot = worktree.wrappedValue.showAgentTab(id) else { return }
+            if worktree.wrappedValue.hasCompletedContent(in: slot) { terminalManager.clearFocus() }
+            else { terminalManager.setFocus(slot) }
+        }
+    }
+
+    private var transcriptReader: (@MainActor (String) async -> String?)? {
+        guard selectedRemoteIdentity == nil else { return nil }
+        return { id in await readAgentTranscript(id) }
+    }
+
+    private func readAgentTranscript(_ id: String) async -> String? {
+        guard let agent = selectedWorktree?.agents.first(where: { $0.id == id }) else { return nil }
+        do { return try await OffMainIO.run { try AgentArchiveStore().preview(agent) } }
+        catch { return "Could not read transcript: " + error.localizedDescription }
     }
 
     private func historyItem(_ target: WorktreeNavigationTarget) -> BreadcrumbHistoryItem? {
@@ -890,7 +950,8 @@ struct MainWindow: View {
                     continue
                 }
 
-                if appState.repos[repoIdx].worktrees[wtIdx].state == .closed {
+                if appState.repos[repoIdx].worktrees[wtIdx].state == .closed,
+                   !appState.repos[repoIdx].worktrees[wtIdx].agents.contains(where: { $0.completion != nil }) {
                     _ = PaneCommands.startWorktree(
                         path: path,
                         appState: $appState,
@@ -929,12 +990,14 @@ struct MainWindow: View {
         // typing immediately after a sidebar click without having to also
         // click into the terminal.
         if let wt = appState.worktree(forPath: path),
-           let target = wt.firstPane {
+           let target = wt.presentationPane, wt.hasCompletedContent(in: target) {
+            terminalManager.clearFocus()
+        } else if let wt = appState.worktree(forPath: path), let target = wt.presentationPane {
             makePaneFirstResponder(
                 target,
                 when: {
                     appState.selectedWorktreePath == path
-                        && appState.worktree(forPath: path)?.firstPane == target
+                        && appState.worktree(forPath: path)?.presentationPane == target
                 }
             )
         }
@@ -1217,8 +1280,9 @@ struct MainWindow: View {
 
     private func setWorktreeSurfacesVisible(_ visible: Bool, worktreePath: String) {
         guard let wt = appState.worktree(forPath: worktreePath), wt.state == .running else { return }
+        let visibleSlots = wt.visiblePaneSlots
         for terminalID in wt.splitTree.allLeaves {
-            terminalManager.setVisible(visible, for: terminalID)
+            terminalManager.setVisible(visible && visibleSlots.contains(terminalID), for: terminalID)
         }
     }
 
@@ -1575,18 +1639,11 @@ struct MainWindow: View {
         }
 
         Task { @MainActor in
-            let discovered: [DiscoveredWorktree]
+            let registration: ProjectRegistration
             do {
-                discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+                registration = try await ProjectRegistration.prepare(path: selectWorktree ?? repoPath)
             } catch {
-                // User-initiated path: the user picked a folder in the
-                // Add Repository dialog. If git discovery fails (folder
-                // isn't a repo, git binary missing, permissions), a
-                // silent `return` leaves the user wondering why nothing
-                // happened. Surface the failure in an alert so they can
-                // pick a different folder or investigate. GIT-1.2.
-                NSLog("[Graftty] addRepoFromPath: discover failed for %@: %@",
-                      repoPath, String(describing: error))
+                NSLog("[Graftty] addRepoFromPath: discover failed for %@: %@", repoPath, String(describing: error))
                 let alert = NSAlert()
                 alert.messageText = "Could not add repository"
                 alert.informativeText = "\(repoPath)\n\n\(String(describing: error))"
@@ -1594,31 +1651,12 @@ struct MainWindow: View {
                 alert.runModal()
                 return
             }
-            let worktrees = discovered.map { WorktreeEntry(path: $0.path, branch: $0.branch) }
-            let displayName = URL(fileURLWithPath: repoPath).lastPathComponent
-            let bookmark = try? RepoBookmark.mint(atPath: repoPath)
-            if bookmark == nil {
-                NSLog("[Graftty] addRepoFromPath: bookmark mint failed for %@; rename-recovery disabled for this entry", repoPath)
+            registration.apply(to: &appState)
+            if let repo = appState.repos.first(where: { $0.path == registration.repo.path }) {
+                worktreeMonitor.installRepoWatchers(repo: repo)
             }
-            // Capture the main-checkout branch at add time so the sidebar
-            // has a stable default-branch label even before the first
-            // origin/HEAD poll lands (or for repos with no remote at all).
-            let mainCheckoutBranch = discovered.first(where: { $0.path == repoPath })?.branch
-            let repo = RepoEntry(
-                path: repoPath,
-                displayName: displayName,
-                worktrees: worktrees,
-                bookmark: bookmark,
-                defaultBranchHint: mainCheckoutBranch
-            )
-            appState.addRepo(repo)
-            remoteBranchStore.refresh(repoPath: repoPath)
-
-            if let wt = selectWorktree {
-                self.selectWorktree(wt)
-            } else if let first = worktrees.first {
-                self.selectWorktree(first.path)
-            }
+            remoteBranchStore.refresh(repoPath: registration.repo.path)
+            self.selectWorktree(registration.selectedWorktreePath)
 
             // After the repo lands in `appState` so the user sees the
             // new sidebar row before the nudge explains why its PR

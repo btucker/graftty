@@ -22,6 +22,7 @@ final class SocketRequestRouter {
     let terminalManager: TerminalManager
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
+    let worktreeMonitor: WorktreeMonitor
     let worktreeManagement: WorktreeManagement
     let remoteBranchStore: RemoteBranchStore
     let agentRegistry: ClaudeSessionRegistry
@@ -47,6 +48,7 @@ final class SocketRequestRouter {
         self.terminalManager = terminalManager
         self.teamInbox = teamInbox
         self.teamEventDispatcher = teamEventDispatcher
+        self.worktreeMonitor = worktreeMonitor
         self.worktreeManagement = WorktreeManagement(
             appState: appState, terminalManager: terminalManager, teamInbox: teamInbox,
             teamEventDispatcher: teamEventDispatcher, worktreeMonitor: worktreeMonitor,
@@ -103,6 +105,9 @@ final class SocketRequestRouter {
 
     /// Mac-specific dispatch for requests the shared core does not own.
     func handlePaneRequest(_ message: NotificationMessage) async -> ResponseMessage? {
+        if case .addProject(let path) = message {
+            return await addProject(path: path)
+        }
         if case .mcpConnection(let request) = message {
             guard let parentMCPConnections else { return .error("Parent MCP service is unavailable") }
             return await parentMCPConnections.handle(request)
@@ -121,6 +126,34 @@ final class SocketRequestRouter {
         }
         return response
     }
+
+    func addProject(
+        path: String,
+        prepare: (String) async throws -> ProjectRegistration = { try await ProjectRegistration.prepare(path: $0) },
+        now: () -> ContinuousClock.Instant = { .now }
+    ) async -> ResponseMessage {
+        // SocketServer releases an expired request without cancelling its task.
+        // Reserve time for persistence and discard slow preparation before it
+        // can register a project after the CLI has reported a lost connection.
+        let deadline = now() + .seconds(SocketServer.defaultRequestTimeoutSeconds - 1)
+        do {
+            let registration = try await prepare(path)
+            try Task.checkCancellation()
+            guard now() < deadline, SocketServer.requestIsActive() else {
+                return .error("Project discovery timed out at \(path); retry when the directory is responsive.")
+            }
+            registration.apply(to: &appState.wrappedValue)
+            if let repo = appState.wrappedValue.repos.first(where: { $0.path == registration.repo.path }) {
+                worktreeMonitor.installRepoWatchers(repo: repo)
+            }
+            remoteBranchStore.refresh(repoPath: registration.repo.path)
+            try await GrafttyApp.persistAppStateNow(appState.wrappedValue)
+            return .ok
+        } catch {
+            return .error("Could not add project at \(path): \(error.localizedDescription)")
+        }
+    }
+
 }
 
 extension SocketRequestRouter {
@@ -230,7 +263,7 @@ extension SocketRequestRouter {
             return listPanes(path: path, appState: appState, terminalManager: terminalManager)
         case .addPane(let request):
             return await addPane(path: request.path, direction: request.direction, command: request.command,
-                                 agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, teamInbox: teamInbox,
+                                 agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, managedAgent: request.managedAgent, selectTab: request.selectTab, teamInbox: teamInbox,
                                  appState: appState, terminalManager: terminalManager)
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
@@ -308,12 +341,14 @@ extension SocketRequestRouter {
     }
 
     @MainActor
-    private static func addPane(
+    static func addPane(
         path: String,
         direction: PaneSplit,
         command: String?,
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?,
+        managedAgent: ManagedAgent?,
+        selectTab: Bool?,
         teamInbox: TeamInbox,
         appState: Binding<AppState>,
         terminalManager: TerminalManager
@@ -325,8 +360,13 @@ extension SocketRequestRouter {
         ) {
             return .error(error)
         }
+        if managedAgent != nil, let worktree = appState.wrappedValue.worktree(forPath: path),
+           worktree.state == .closed, worktree.firstPane != nil {
+            _ = PaneCommands.startWorktree(path: path, appState: appState, terminalManager: terminalManager)
+        }
         func splitTargetError() -> String? {
             guard let wt = appState.wrappedValue.worktree(forPath: path) else { return "not tracked" }
+            if managedAgent != nil, wt.firstPane == nil, [.running, .closed].contains(wt.state) { return nil }
             guard wt.state == .running else { return "worktree not running" }
             return wt.firstPane == nil ? "no panes to split" : nil
         }
@@ -345,11 +385,11 @@ extension SocketRequestRouter {
         }
         if let agentRuntime {
             do {
-                launch = try WorktreeAgentLaunchCommand.prepare(agent: agentRuntime, prompt: agentPrompt, exactCommand: nil)
+                launch = try WorktreeAgentLaunchCommand.prepare(agent: agentRuntime, prompt: agentPrompt, exactCommand: nil, managedAgent: managedAgent)
             } catch {
                 return .error("could not stage agent prompt: \(error.localizedDescription)")
             }
-            if let repo = appState.wrappedValue.repo(forWorktreePath: path),
+            if managedAgent == nil, let repo = appState.wrappedValue.repo(forWorktreePath: path),
                let branch = appState.wrappedValue.worktree(forPath: path)?.branch {
                 // Map pane sessions on the main actor; read presence inside the
                 // off-main save, after its pending-task check (AGENT-6.57).
@@ -385,16 +425,47 @@ extension SocketRequestRouter {
         }
         // ATTN-1.25: hand the command to surface creation, which runs it
         // once the shell is ready; typing after the split could arrive first.
-        guard let targetID = appState.wrappedValue.worktree(forPath: path)?.firstPane,
-              let newPaneID = PaneCommands.splitPane(
+        let newPaneID: PaneSlotID
+        if let managedAgent, let reserved = managedAgent.paneSlotID,
+           appState.wrappedValue.worktree(forPath: path)?.firstPane == nil {
+            guard PaneCommands.startWorktree(path: path, appState: appState, terminalManager: terminalManager,
+                extraInitialInput: PaneAgentLaunch.initialInput(launch.command), initialAgent: managedAgent) == .started else {
+                await abandonLaunch()
+                return .error("Could not start the agent's first pane.")
+            }
+            newPaneID = reserved
+            guard terminalManager.handle(for: newPaneID) != nil else {
+                PaneCommands.removeEndedPane(appState: appState, terminalManager: terminalManager,
+                    targetID: newPaneID, userInitiated: true)
+                await abandonLaunch()
+                return .error("Could not create the agent's terminal surface.")
+            }
+        } else if let targetID = appState.wrappedValue.worktree(forPath: path)?.firstPane,
+              let splitPaneID = PaneCommands.splitPane(
                   appState: appState,
                   terminalManager: terminalManager,
                   targetID: targetID,
                   split: direction,
-                  extraInitialInput: PaneAgentLaunch.initialInput(launch.command)
-              ) else {
+                  extraInitialInput: PaneAgentLaunch.initialInput(launch.command),
+                  activateNewPane: selectTab ?? (managedAgent == nil),
+                  preserveZoom: selectTab != true && managedAgent != nil,
+                  reservedSlot: managedAgent?.paneSlotID,
+                  reservedSession: managedAgent?.paneSessionID
+              ) {
+            newPaneID = splitPaneID
+        } else {
             await abandonLaunch()
             return .error("split failed")
+        }
+        if let managedAgent, let index = appState.wrappedValue.indices(forWorktreePath: path),
+           let ai = appState.wrappedValue.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: { $0.id == managedAgent.id }) {
+            appState.wrappedValue.repos[index.repo].worktrees[index.worktree].agents[ai].paneSlotID = newPaneID
+            do { try GrafttyApp.persistAppStateSynchronously(appState.wrappedValue) }
+            catch {
+                PaneCommands.removeEndedPane(appState: appState, terminalManager: terminalManager, targetID: newPaneID, userInitiated: true)
+                await abandonLaunch()
+                return .error("Could not save agent session: \(error.localizedDescription)")
+            }
         }
         // ATTN-1.28: destroying the pane removes a prompt file its loader never
         // ran and withdraws the durable task. Both are no-ops once the agent
@@ -402,7 +473,26 @@ extension SocketRequestRouter {
         if agentRuntime != nil {
             // Like `worktree add`, start the agent even if the worktree's
             // views never mount; otherwise it waits until someone opens it.
-            terminalManager.handle(for: newPaneID)?.startForBackgroundLaunch()
+            let handle = terminalManager.handle(for: newPaneID)
+            func failedStartup(_ message: String) async -> ResponseMessage {
+                // Readiness can suspend while the user closes or replaces this pane.
+                if let handle, terminalManager.handle(for: newPaneID) === handle {
+                    PaneCommands.removeEndedPane(appState: appState, terminalManager: terminalManager,
+                        targetID: newPaneID, userInitiated: true)
+                }
+                await abandonLaunch()
+                return .error(message)
+            }
+            guard let handle, handle.startForBackgroundLaunch() else {
+                return await failedStartup("Could not start the agent's terminal backend.")
+            }
+            guard await handle.waitForBackendStartup(),
+                  await terminalManager.waitForExplicitInitialInputDelivery(for: newPaneID) else {
+                return await failedStartup("The terminal did not become ready to accept the agent launch command.")
+            }
+            guard terminalManager.handle(for: newPaneID) === handle else {
+                return await failedStartup("The agent's terminal was closed while starting.")
+            }
             let staged = launch
             let task = savedTask
             terminalManager.trackStagedLaunch(for: newPaneID) {
@@ -412,7 +502,12 @@ extension SocketRequestRouter {
                 }
             }
         }
-        if let agentRuntime, let index = appState.wrappedValue.indices(forWorktreePath: path) {
+        if selectTab == true, let agentRuntime,
+           let session = appState.wrappedValue.worktree(forPath: path)?.paneSessions[newPaneID] {
+            AgentNotificationActivation.shared.enqueue(.init(runtime: agentRuntime, worktreePath: path,
+                sessionID: managedAgent?.id ?? "", paneSessionName: ZmxLauncher.sessionName(for: session), attentionTimestamp: Date()))
+        }
+        if managedAgent == nil, let agentRuntime, let index = appState.wrappedValue.indices(forWorktreePath: path) {
             appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
                 .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: agentRuntime)
             // As in `createWorktree`: no window may be observing state.

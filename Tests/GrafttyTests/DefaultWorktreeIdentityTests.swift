@@ -14,7 +14,7 @@ struct DefaultWorktreeIdentityTests {
         home.emoji = "🐸"
         home.emojiSource = .manual
         home.unseenAgentStop = .init(agentName: "Codex", stoppedAt: Date(),
-            recap: .init(title: "Review", completed: "Done", next: "Review"))
+            recap: .init(title: "Review", completed: "Done", next: "Review", need: "Approve the release?"))
         var linked = WorktreeEntry(path: "/repo/linked", branch: "main")
         linked.emoji = "🚀"
         linked.emojiSource = .agent

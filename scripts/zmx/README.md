@@ -31,9 +31,13 @@ that exact source revision and carries these downstream changes:
   probe can consume keystrokes entered immediately after attach, while a
   no-probe seed contains default colors rather than Graftty's actual surface
   state and must not replace the user's theme;
-- preserve Graftty's prior 10 MB scrollback retention budget, with a separate
-  high line ceiling. Upstream's new 2,000-line setting combines with Ghostty's
-  10 KB default byte budget and discards most of a 10,000-line fixture;
+- retain libghostty 1.4's default 50 MB scrollback page budget, with a
+  separate high line ceiling. Ghostty counts page allocations rather than
+  text, so the earlier 10 MB budget kept only about 7,000 rows of a
+  156-column session and reattached panes stopped there. Upstream's new
+  2,000-line setting combines with Ghostty's 10 KB default byte budget and
+  discards most of a 10,000-line fixture. The 50 MB budget ships in
+  `graftty8`; existing daemons keep 10 MB until their sessions restart;
 - preserve zmx's legacy 4-byte `Resize` message while negotiating a separate
   pixel-size extension. The new protocol also bridges the directional tag
   18/19 shapes used by Graftty 0.6 so N-1 pixel-only resizes keep working, and
@@ -82,6 +86,16 @@ This behavior ships in `graftty7`. Existing daemon processes keep their old
 export behavior until their sessions are deliberately restarted. A new client
 labels an old daemon's oversized-page refusal as a transfer limit, rather than
 client memory exhaustion. Upgrading the app does not restart active sessions.
+
+Starting with `graftty9`, height-only resizes within the current screen's backing
+pages preserve pending history checkpoints, including resizes caused by a new
+client attaching. These changes preserve row widths, so older pages remain
+compatible. A height increase that exposes older backing pages still expires
+checkpoints because live screen edits could change unsent rows. Width changes
+also expire checkpoints, even if the terminal later returns to its original
+width. History clearing, screen replacement, and pruning still reject discarded
+pages. Existing daemon processes keep their previous resize behavior until their
+sessions restart.
 
 `zmx attach --replay-grid` is the host's legacy VT bridge mode. It prefixes
 stdout with `GFTGRID1`, then two little-endian u16 fields for columns and rows,

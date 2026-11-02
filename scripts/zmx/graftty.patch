@@ -2,15 +2,17 @@ diff --git a/src/cfg.zig b/src/cfg.zig
 index bec7963..4db0e44 100644
 --- a/src/cfg.zig
 +++ b/src/cfg.zig
-@@ -9,7 +9,11 @@ const cross = @import("cross.zig");
+@@ -9,7 +9,13 @@ const cross = @import("cross.zig");
 
  socket_dir: []const u8,
  log_dir: []const u8,
 -max_scrollback_lines: usize = 2_000, // same default as tmux
-+// Preserve Graftty's pre-snapshot 10 MB retention budget. The experimental
++// Match libghostty 1.4's default scrollback-limit-bytes. Ghostty counts page
++// allocations, not text, so 10 MB kept only ~7,000 rows of a 156-column
++// session and reattached panes stopped there (TERM-12.47). The experimental
 +// branch otherwise falls back to Ghostty's 10 KB default while adding a line
 +// cap, which discards most of a 10,000-line session.
-+max_scrollback_bytes: usize = 10_000_000,
++max_scrollback_bytes: usize = 50_000_000,
 +max_scrollback_lines: usize = 10_000_000,
  dir_mode: u32 = 0o750,
  log_mode: u32 = 0o640,

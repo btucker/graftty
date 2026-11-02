@@ -130,6 +130,22 @@ struct WorktreeAdd: ParsableCommand {
             throw ValidationError(error)
         }
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        if remote == nil, let provider = agent.flatMap(TeamHookRuntime.init(rawValue:)) {
+            var operation = try AgentCLI.request(.add)
+            operation.name = name
+            operation.provider = provider
+            operation.prompt = resolvedPrompt
+            operation.operationID = UUID().uuidString.lowercased()
+            operation.base = base
+            operation.branch = branch
+            operation.existing = existing
+            let records = try AgentCLI.exchange(operation, deadline: deadline)
+            try AgentCLI.printRecords(records, json: false)
+            if wait, let id = records.first?.operationID {
+                try waitForCreation(response: CLIEnv.sendRequest(.worktreeCreateStatus(operationID: id)), deadline: deadline)
+            }
+            return
+        }
         // Capability probes use the same two-second request transport as the
         // mutation. Give transient app stalls a short bounded retry window,
         // while preserving most of the caller's timeout for the real work.
@@ -309,14 +325,21 @@ struct WorktreeAdd: ParsableCommand {
         send: (NotificationMessage) throws -> ResponseMessage = {
             try SocketClient.sendExpectingResponse($0)
         },
+        now: () -> Date = Date.init,
         sleep: (TimeInterval) -> Void = {
             Thread.sleep(forTimeInterval: $0)
         },
         writeError: (String) -> Void = CLIEnv.printError
     ) throws -> ResponseMessage {
+        let activity: String
+        if case .worktreeRemoveStatus = message {
+            activity = "removal"
+        } else {
+            activity = "creation"
+        }
         var operationMayExist: Bool
         switch message {
-        case .worktreeCreateStatus, .remoteWorktree(_, .status):
+        case .worktreeCreateStatus, .worktreeRemoveStatus, .remoteWorktree(_, .status):
             operationMayExist = true
         default:
             operationMayExist = false
@@ -341,29 +364,29 @@ struct WorktreeAdd: ParsableCommand {
                         writeError(error.description)
                         throw ExitCode(1)
                     }
-                    if Date() < deadline {
+                    if now() < deadline {
                         sleep(0.1)
                         continue
                     }
                     writeError(
-                        "timed out waiting for worktree creation; operation \(operationID) may still finish"
+                        "timed out waiting for worktree \(activity); operation \(operationID) may still finish"
                     )
                     throw ExitCode(1)
                 case .socketTimeout, .socketClosedWithoutResponse,
                      .socketError:
                     operationMayExist = true
-                    if Date() < deadline {
+                    if now() < deadline {
                         sleep(0.1)
                         continue
                     }
                     writeError(
-                        "timed out waiting for worktree creation; operation \(operationID) may still finish"
+                        "timed out waiting for worktree \(activity); operation \(operationID) may still finish"
                     )
                     throw ExitCode(1)
                 case .socketPermissionDenied:
                     writeError(error.description)
                     if operationMayExist {
-                        writeError("worktree creation operation \(operationID) may still finish")
+                        writeError("worktree \(activity) operation \(operationID) may still finish")
                     }
                     throw ExitCode(1)
                 case .notInsideWorktree, .appNotRunning, .staleControlSocket,
@@ -478,33 +501,50 @@ struct WorktreeRemove: ParsableCommand {
 
         try requirePinnedRemovalSupport()
 
-        var response = try CLIEnv.sendRequest(removalRequest(worktreePath: worktreePath))
+        let response = try CLIEnv.sendRequest(removalRequest(worktreePath: worktreePath))
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        try waitForRemoval(response: response, deadline: deadline)
+    }
 
+    func waitForRemoval(
+        response initialResponse: ResponseMessage,
+        deadline: Date,
+        send: (NotificationMessage) throws -> ResponseMessage = {
+            try SocketClient.sendExpectingResponse($0)
+        },
+        now: () -> Date = Date.init,
+        sleep: (TimeInterval) -> Void = Thread.sleep(forTimeInterval:),
+        writeLine: (String) -> Void = { print($0) },
+        writeError: (String) -> Void = CLIEnv.printError
+    ) throws {
+        var response = initialResponse
         while true {
-            let operation = try CLIEnv.expect(response, for: "worktree remove") {
+            let operation = try CLIEnv.expect(response, for: "worktree remove", writeError: writeError) {
                 if case .worktreeRemove(let operation) = $0 { operation } else { nil }
             }
             switch operation.state {
             case .pending:
-                guard Date() < deadline else {
-                    CLIEnv.printError(
+                guard now() < deadline else {
+                    writeError(
                         "timed out waiting for worktree removal; operation \(operation.operationID) may still finish"
                     )
                     throw ExitCode(1)
                 }
-                Thread.sleep(forTimeInterval: 0.1)
-                response = try CLIEnv.sendRequest(
-                    .worktreeRemoveStatus(operationID: operation.operationID)
+                sleep(0.1)
+                response = try WorktreeAdd.sendRequestRetryingTimeout(
+                    .worktreeRemoveStatus(operationID: operation.operationID),
+                    operationID: operation.operationID,
+                    deadline: deadline,
+                    send: send, now: now, sleep: sleep, writeError: writeError
                 )
             case .removed:
                 let path = WorktreeAgentLaunchCommand.shellLiteral(
                     operation.worktreePath
                 )
-                print("removed worktree=\(path)  branch-preserved=true")
+                writeLine("removed worktree=\(path)  branch-preserved=true")
                 return
             case .failed:
-                CLIEnv.printError(Self.failureMessage(operation))
+                writeError(Self.failureMessage(operation))
                 throw ExitCode(1)
             }
         }
@@ -679,6 +719,8 @@ enum CapabilityProbe {
 extension ControlCapability {
     var unsupportedMessage: String {
         switch self {
+        case .managedAgents:
+            "the running Graftty app does not support agent lifecycle commands; relaunch the updated app, then retry"
         case .agentPromptStaging:
             "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry"
         case .paneAgent:
@@ -693,6 +735,8 @@ extension ControlCapability {
             "the running Graftty app does not support worktree remove; quit and relaunch the updated app, then retry"
         case .worktreePinnedRemoval:
             "the running Graftty app does not support safe pinned-worktree removal; quit and relaunch the updated app, then retry"
+        case .projectAdd:
+            "the running Graftty app does not support project add; quit and relaunch the updated app, then retry"
         case .worktreePin:
             "the running Graftty app does not support worktree pinning; relaunch the updated app, then retry"
         }
@@ -700,6 +744,8 @@ extension ControlCapability {
 
     var verificationMessage: String {
         switch self {
+        case .managedAgents:
+            "could not verify agent lifecycle support; relaunch Graftty, then retry"
         case .agentPromptStaging:
             "could not verify agent prompt staging support; quit and relaunch Graftty, then retry"
         case .paneAgent:
@@ -714,20 +760,10 @@ extension ControlCapability {
             "could not verify worktree remove support; quit and relaunch Graftty, then retry"
         case .worktreePinnedRemoval:
             "could not verify pinned-worktree removal protection; quit and relaunch Graftty, then retry"
+        case .projectAdd:
+            "could not verify project add support; quit and relaunch the updated Graftty app, then retry"
         case .worktreePin:
             "could not verify worktree pinning support; relaunch the updated Graftty app, then retry"
         }
-    }
-}
-
-enum WorktreeRequestNames {
-    static func resolve(name: String, branch: String?, existing: Bool) -> (worktree: String, branch: String) {
-        let worktree = normalize(name)
-        let requestedBranch = branch ?? (existing ? name : worktree)
-        return (worktree, existing ? requestedBranch : normalize(requestedBranch))
-    }
-
-    private static func normalize(_ value: String) -> String {
-        WorktreeNameSanitizer.trimForSubmit(WorktreeNameSanitizer.sanitize(value))
     }
 }

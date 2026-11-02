@@ -42,6 +42,20 @@ public struct GhosttyThemeColors: Sendable, Equatable {
     }
     public var sidebarBackground: Color { Self.color(sidebarBackgroundRGB) }
 
+    /// Opaque reading background that retains the terminal palette's hue.
+    public var contextBackground: Color { Self.color(contextBackgroundRGB) }
+
+    public var contextBackgroundRGB: RGB {
+        let fraction = isDark ? 0.095 : 0.045
+        return RGB(
+            r: backgroundRGB.r + (foregroundRGB.r - backgroundRGB.r) * fraction,
+            g: backgroundRGB.g + (foregroundRGB.g - backgroundRGB.g) * fraction,
+            b: backgroundRGB.b + (foregroundRGB.b - backgroundRGB.b) * fraction
+        )
+    }
+
+    public var contextSeparator: Color { foreground.opacity(isDark ? 0.19 : 0.13) }
+
     public var sidebarBackgroundRGB: RGB {
         let shift = isDark ? 0.06 : -0.06
         return RGB(

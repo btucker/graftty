@@ -116,6 +116,7 @@ public enum WorktreeAgentLaunchCommand {
         agent: TeamHookRuntime?,
         prompt: String?,
         exactCommand: String?,
+        managedAgent: ManagedAgent? = nil,
         promptDirectory: URL = AppState.defaultDirectory
             .appendingPathComponent("agent-launch-prompts", isDirectory: true),
         fileManager: FileManager = .default
@@ -136,37 +137,55 @@ public enum WorktreeAgentLaunchCommand {
 
         try securePromptDirectory(promptDirectory, fileManager: fileManager)
 
-        let promptFile = promptDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("prompt")
-        let initialTask = initialPrompt(prompt)
-        guard fileManager.createFile(
-            atPath: promptFile.path,
-            contents: Data(initialTask.utf8),
-            attributes: [.posixPermissions: NSNumber(value: Int16(0o600))]
-        ) else {
-            throw CocoaError(
-                .fileWriteUnknown,
-                userInfo: [NSFilePathErrorKey: promptFile.path]
-            )
+        let promptFile: URL?
+        let loader: String
+        if let conversation = managedAgent?.resumingSessionID {
+            guard !conversation.isEmpty, !conversation.utf8.contains(0), !conversation.hasPrefix("-") else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            // Resume the saved conversation without adding a synthetic user turn.
+            promptFile = nil
+            loader = agent == .claude
+                ? "claude --resume \(shellLiteral(conversation))"
+                : "codex resume \(shellLiteral(conversation))"
+        } else {
+            let file = promptDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("prompt")
+            let contextualTask = managedAgent?.launchPrompt(prompt) ?? initialPrompt(prompt)
+            // Lifecycle identity also arrives through SessionStart. Preserve the task's full budget.
+            let initialTask = contextualTask.utf8.count <= maximumPromptBytes ? contextualTask : initialPrompt(prompt)
+            guard fileManager.createFile(atPath: file.path, contents: Data(initialTask.utf8),
+                attributes: [.posixPermissions: NSNumber(value: Int16(0o600))]) else {
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: file.path])
+            }
+            do {
+                try fileManager.setAttributes([.posixPermissions: NSNumber(value: Int16(0o600))], ofItemAtPath: file.path)
+            } catch {
+                try? fileManager.removeItem(at: file)
+                throw error
+            }
+            promptFile = file
+            let invocation = (managedAgent?.paneSessionID == nil ? "exec " : "")
+                + "\(agent.rawValue) -- \"$_graftty_agent_prompt\""
+            // The sentinel preserves trailing newlines stripped by command substitution.
+            loader = "_graftty_agent_prompt_file=\(shellLiteral(file.path)); _graftty_agent_prompt=\"$(/bin/cat \"$_graftty_agent_prompt_file\"; _graftty_status=$?; /usr/bin/printf x; exit \"$_graftty_status\")\" && /bin/rm -f \"$_graftty_agent_prompt_file\" && _graftty_agent_prompt=\"${_graftty_agent_prompt%x}\" && \(invocation)"
         }
-        do {
-            try fileManager.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o600))],
-                ofItemAtPath: promptFile.path
-            )
-        } catch {
-            try? fileManager.removeItem(at: promptFile)
-            throw error
-        }
-
-        // The user's configured interactive shell only parses a simple command
-        // plus one quoted argument. A known POSIX shell owns the loader syntax,
-        // so csh/tcsh/fish users get the same behavior as zsh users. The
-        // sentinel preserves trailing newlines stripped by command substitution.
-        let fileLiteral = shellLiteral(promptFile.path)
-        let loader = "_graftty_agent_prompt_file=\(fileLiteral); _graftty_agent_prompt=\"$(/bin/cat \"$_graftty_agent_prompt_file\"; _graftty_status=$?; /usr/bin/printf x; exit \"$_graftty_status\")\" && /bin/rm -f \"$_graftty_agent_prompt_file\" && _graftty_agent_prompt=\"${_graftty_agent_prompt%x}\" && exec \(agent.rawValue) -- \"$_graftty_agent_prompt\""
-        let command = "/bin/sh -c \(shellLiteral(loader))"
+        // Keep a foreground observer even if the provider exits into a surviving interactive shell.
+        let observer: String
+        if let managedAgent, let session = managedAgent.paneSessionID {
+            let report: String
+            do {
+                report = try AgentLifecycleHandoff(directory: promptDirectory.appendingPathComponent("lifecycle"))
+                    .shellExitReport(agentID: managedAgent.id, assignmentID: managedAgent.assignmentID, sessionID: session)
+            } catch {
+                if let promptFile { try? fileManager.removeItem(at: promptFile) }
+                throw error
+            }
+            observer = "trap \(shellLiteral("_graftty_exit=$?; \(report); exit \"$_graftty_exit\"")) EXIT; "
+        } else { observer = "" }
+        let identity = managedAgent.map {
+            "export GRAFTTY_MANAGED_AGENT_ID=\(shellLiteral($0.id)) GRAFTTY_ASSIGNMENT_ID=\(shellLiteral($0.assignmentID.uuidString)); "
+        } ?? ""
+        let command = "/bin/sh -c \(shellLiteral(identity + observer + loader))"
         return PreparedWorktreeAgentLaunch(command: command, promptFile: promptFile)
     }
 

@@ -9,7 +9,7 @@ runtime legacy attachment protocol until their sessions restart.
 
 The dependency fork owns engine and wrapper sources, the native patch recipe,
 all five architecture slices, probes, immutable binary releases, and provenance.
-See [the package build instructions](https://github.com/btucker/libghostty-spm/tree/3.0.2026102901/Paging).
+See [the package build instructions](https://github.com/btucker/libghostty-spm/tree/3.0.2026102902/Paging).
 Graftty no longer builds a replacement package during CI or release bundling.
 
 ## Develop the dependency locally

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -96,6 +97,35 @@ class PrepareShellTests(unittest.TestCase):
             "stty -echo; printf '__NOECHO_%s__\\n' READY\n",
         )
         self.assertEqual(attach.clear_count, 1)
+
+
+class GridProbeTests(unittest.TestCase):
+    def test_shell_diagnostic_cannot_split_the_grid_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            stty = Path(directory) / "stty"
+            stty.write_text(
+                "#!/bin/sh\n"
+                "printf 'sh: child setpgid: Operation not permitted\\n' >&2\n"
+                "printf '39 112\\n'\n"
+            )
+            stty.chmod(0o755)
+
+            class ShellAttach:
+                output = ""
+
+                def write(self, command: str) -> None:
+                    self.output = subprocess.run(
+                        ["/bin/sh", "-c", command], env={"PATH": directory},
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, check=True,
+                    ).stdout
+
+                def wait_for(self, marker: str) -> str:
+                    if marker not in self.output:
+                        raise AssertionError(self.output)
+                    return self.output
+
+            compatibility.assert_grid(ShellAttach(), 39, 112, "GRID")
 
 
 if __name__ == "__main__":

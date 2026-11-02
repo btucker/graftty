@@ -9,6 +9,7 @@ private final class HostTerminalFake: HostTerminalDriver {
     var starts: [ZmxSpawnConfiguration] = []
     var killed: [String] = []
     var failStart = false
+    var leavesSessionAliveAfterKill = false
     var duringStart: (@MainActor () async throws -> Void)?
     func sessions() async throws -> Set<String> { live }
     func start(_ configuration: ZmxSpawnConfiguration) async throws {
@@ -17,7 +18,7 @@ private final class HostTerminalFake: HostTerminalDriver {
         starts.append(configuration)
         live.insert(configuration.sessionName)
     }
-    func kill(_ session: String) async throws { killed.append(session); live.remove(session) }
+    func kill(_ session: String) async throws { killed.append(session); if !leavesSessionAliveAfterKill { live.remove(session) } }
     func send(_ text: String, to session: String) async throws {}
     func show(_ session: String, lines: Int) async throws -> String { "hello" }
     func detachAll() {}
@@ -85,6 +86,236 @@ private actor HostDevContainerFake: CLIExecutor {
 
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
+    @Test("@spec AGENT-6.155: When a mobile client creates a pane and a provider starts there, the host shall treat the observed additional session as ongoing without bounded finish instructions or parent cleanup eligibility.")
+    func mobileCreatedPaneDoesNotBecomeABoundedAssignment() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let first = try await runtime.openWorktree(root.path)
+        _ = try await AgentControl.sessionContext(path: root.path, agentID: "codex-123456789abc",
+            paneSessionName: first, provider: .codex, platform: runtime.controlPlatform)
+        let response = await runtime.control(.split(target: first, direction: .right))
+        guard case .splitCreated(let second) = response else { Issue.record("Expected mobile pane creation"); return }
+        let context = try await AgentControl.sessionContext(path: root.path, agentID: "codex-abcdef123456",
+            paneSessionName: second, provider: .codex, platform: runtime.controlPlatform)
+        let agent = try #require(runtime.state.worktree(forPath: root.path)?.agents.last)
+        #expect(agent.isPrimary == false)
+        #expect(agent.launchOrigin == .observedSession)
+        #expect(!agent.isBoundedAssignment)
+        #expect(!context.contains("graftty agent finish"))
+        #expect(context.contains("Keep this session open"))
+        terminal.live.remove(second)
+        let starts = terminal.starts.count
+        try await runtime.restore()
+        let restored = try #require(runtime.state.worktree(forPath: root.path)?.agents.last)
+        #expect(restored.paneSlotID == agent.paneSlotID)
+        #expect(restored.completion?.outcome == .interrupted)
+        #expect(!restored.requiresAcknowledgment)
+        #expect(terminal.starts.count == starts)
+    }
+
+    @Test("@spec IOS-9.19: When mobile worktree creation selects an existing branch, the application shall preserve its local or remote-only source and resolve an automatic source on the owning host before starting the default agent.", arguments: [TeamHookRuntime.codex, .claude], [RemoteRepositoryInfo.Branch.Source.local, .remoteOnly, .automatic])
+    func viewerCreationStartsDefaultAgent(provider: TeamHookRuntime, source: RemoteRepositoryInfo.Branch.Source) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        if source == .local {
+            _ = try await GitRunner.run(args: ["branch", "feature"], at: root.path)
+        } else {
+            _ = try await GitRunner.run(args: ["config", "remote.origin.url", root.path], at: root.path)
+            _ = try await GitRunner.run(args: ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"], at: root.path)
+            _ = try await GitRunner.run(args: ["update-ref", "refs/remotes/origin/feature", "HEAD"], at: root.path)
+        }
+        let installer = AgentPluginInstaller(grafttyCLIPath: "/test/graftty",
+            codexConfigurationURL: root.appendingPathComponent("codex-config.toml"),
+            claudeSettingsURL: root.appendingPathComponent("claude-settings.json"))
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state,
+            agentSetup: HostAgentSetup(configuration: config, executor: HostPluginExecutor(), installer: installer))
+
+        let response = await ViewerAgentLaunch.create(repository: root.path, name: "feature", branch: "feature", existingSource: source,
+            platform: runtime.controlPlatform, configuredProvider: { provider })
+
+        guard case .created(let path, let session) = response else { Issue.record("Expected default agent: \(response)"); return }
+        let worktree = try #require(runtime.state.worktree(forPath: path))
+        let agent = try #require(worktree.agents.first)
+        #expect(worktree.agents.count == 1)
+        #expect(agent.provider == provider)
+        #expect(agent.isPrimary == true)
+        #expect(agent.launchOrigin == .userInterface)
+        #expect(!agent.isBoundedAssignment)
+        #expect(!agent.launchPrompt(nil).contains("graftty agent finish"))
+        #expect(worktree.splitTree.allLeaves == agent.paneSlotID.map { [$0] })
+        #expect(agent.paneSlotID.flatMap { worktree.paneSessions[$0] }.map(runtime.launcher.sessionName(for:)) == session)
+        #expect(terminals.starts.count == 1)
+        #expect(terminals.starts.first?.sessionName == session)
+        if source != .local {
+            let upstream = try await GitRunner.run(args: ["rev-parse", "--abbrev-ref", "feature@{upstream}"], at: root.path)
+            #expect(upstream.trimmingCharacters(in: .whitespacesAndNewlines) == "origin/feature")
+        }
+    }
+
+    @Test("The remote add-agent request opens an empty worktree and returns its actual live session.")
+    func viewerAddsFirstAgentInEmptyWorktree() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state)
+        let request = WorktreeManagementRequest.addAgent(worktreeID: root.path, provider: "codex", operationID: UUID())
+        let response = await runtime.manage(request)
+        #expect(await runtime.manage(request) == response)
+        guard case .created(let path, let session) = response else { Issue.record("Expected agent: \(response)"); return }
+        let worktree = try #require(runtime.state.worktree(forPath: path))
+        #expect(worktree.agents.count == 1)
+        #expect(worktree.splitTree.allLeaves.count == 1)
+        #expect(terminals.live == [session])
+        #expect(terminals.starts.count == 1)
+    }
+
+    @Test("@spec AGENT-6.129: When a headless host launches a background agent, the application shall start its provider without changing the selected worktree, focused pane, or selected tab; an explicit tab selection shall focus the new agent.", arguments: [false, true], [false, true])
+    func managedLaunchPreservesFocusUnlessSelected(select: Bool, fromAgent: Bool) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state)
+        _ = try await runtime.openWorktree(root.path)
+        let previous = try #require(runtime.state.worktree(forPath: root.path)?.focusedPaneSlotID)
+        runtime.state.selectedWorktreePath = "/other-worktree"
+        if fromAgent {
+            var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
+            parent.paneSlotID = previous
+            runtime.state.repos[0].worktrees[0].agents.append(parent)
+        }
+        runtime.state.repos[0].worktrees[0].ensureWorkspaceLayout()
+        runtime.state.repos[0].worktrees[0].workspaceLayout?.select(previous)
+        let before = try #require(runtime.state.repos[0].worktrees[0].workspaceLayout)
+        let response = await runtime.handle(.agent(.init(action: .add, callerWorktree: root.path,
+            name: "Reviewer", worktree: root.path, provider: .codex, selectTab: select)))
+        guard case .agents(let records) = response else { Issue.record("Expected launch: \(response)"); return }
+        let slot = try #require(records.first?.agent.paneSlotID)
+        runtime.state.repos[0].worktrees[0].ensureWorkspaceLayout()
+        let worktree = try #require(runtime.state.worktree(forPath: root.path))
+        #expect(terminals.starts.count == 2)
+        #expect(worktree.focusedPaneSlotID == (select ? slot : previous))
+        #expect(runtime.state.selectedWorktreePath == (select ? root.path : "/other-worktree"))
+        let after = try #require(worktree.workspaceLayout)
+        if select { #expect(after.group(containing: slot)?.selected == slot) }
+        else {
+            for group in before.groups { #expect(after.group(containing: group.selected)?.selected == group.selected) }
+            #expect(after.selectedTerminal == before.selectedTerminal)
+            #expect(after.drawerVisible == before.drawerVisible)
+        }
+    }
+
+    @Test("@spec AGENT-6.112: When an ordinary headless pane close targets a managed agent, the application shall preserve its transcript and interrupted outcome and reject teardown while its children require acknowledgment.")
+    func ordinaryManagedCloseUsesSharedTransition() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let name = try await runtime.openWorktree(root.path)
+        let slot = try #require(runtime.state.worktree(forPath: root.path)?.splitTree.allLeaves.first)
+        var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
+        parent.paneSlotID = slot
+        var child = ManagedAgent(name: "Child", provider: .codex,
+            parent: TeamInboxEndpoint(member: "Parent", worktree: root.path, runtime: "codex", agentID: "codex-123456789abc"), launchOrigin: .cliAgentAdd, isPrimary: false)
+        child.parentManagedAgentID = parent.id
+        runtime.state.repos[0].worktrees[0].agents = [parent, child]
+        await #expect(throws: (any Error).self) { try await runtime.closePane(target: name) }
+        #expect(terminal.killed.isEmpty)
+        #expect(runtime.state.repos[0].worktrees[0].agents[0].completion == nil)
+        runtime.state.repos[0].worktrees[0].agents.removeLast()
+        try await runtime.closePane(target: name)
+        let closed = runtime.state.repos[0].worktrees[0].agents[0]
+        #expect(closed.status == .interrupted)
+        #expect(closed.completion?.outcome == .interrupted)
+        #expect(closed.transcript == nil)
+        #expect(try runtime.controlPlatform.agentArchives.read(#require(closed.transcriptArchive)) == "hello")
+        #expect(!terminal.live.contains(name))
+    }
+    @Test("@spec AGENT-6.107: While a headless host is shutting down, the application shall reject managed launches in existing worktrees and retain the failed outcome without starting another session.")
+    func shutdownRejectsManagedPaneLaunch() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        _ = try await runtime.openWorktree(root.path)
+        let starts = terminal.starts.count
+        runtime.isShuttingDown = true
+        let response = await runtime.handle(.agent(.init(action: .add, callerWorktree: root.path,
+            name: "Late child", worktree: root.path, provider: .codex)))
+        guard case .error = response else { Issue.record("Shutdown accepted a managed launch"); return }
+        #expect(terminal.starts.count == starts)
+        #expect(runtime.state.repos[0].worktrees[0].agents.first?.status == .failed)
+        #expect(runtime.state.repos[0].worktrees[0].agents.first?.paneSlotID == nil)
+    }
+    @Test("@spec AGENT-6.100: When a reserved managed session is absent after host restart, the application shall retain an interrupted outcome instead of silently relaunching an ordinary shell as that agent.")
+    func missingManagedSessionIsInterruptedOnRestore() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let name = try await runtime.openWorktree(root.path)
+        let slot = try #require(runtime.state.worktree(forPath: root.path)?.splitTree.allLeaves.first)
+        var agent = ManagedAgent(name: "Child", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
+        agent.paneSlotID = slot
+        runtime.state.repos[0].worktrees[0].agents = [agent]
+        terminal.live.remove(name)
+        let starts = terminal.starts.count
+        try await runtime.restore()
+        #expect(terminal.starts.count == starts)
+        #expect(runtime.state.repos[0].worktrees[0].agents[0].status == .interrupted)
+        #expect(runtime.state.repos[0].worktrees[0].agents[0].paneSlotID == nil)
+    }
+    @Test("@spec AGENT-6.94: When a provider sends its first session hook during headless startup, the application shall already expose its exact reserved session binding.")
+    func managedBindingExistsDuringStart() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        _ = try await runtime.openWorktree(root.path)
+        terminal.duringStart = {
+            let tree = try #require(runtime.state.worktree(forPath: root.path))
+            let agent = try #require(tree.agents.first)
+            let slot = try #require(agent.paneSlotID)
+            let session = try #require(tree.paneSessions[slot])
+            #expect(session == agent.paneSessionID)
+            _ = try await AgentControl.sessionContext(path: root.path, agentID: "codex-123456789abc",
+                paneSessionName: runtime.launcher.sessionName(for: session), provider: .codex, platform: runtime.controlPlatform)
+        }
+        let response = await runtime.handle(.agent(.init(action: .add, callerWorktree: root.path,
+            name: "Child", worktree: root.path, provider: .codex)))
+        guard case .agents = response else { Issue.record("Launch failed: \(response)"); return }
+        #expect(runtime.state.worktree(forPath: root.path)?.agents.first?.nativeAgentID == "codex-123456789abc")
+    }
+
+    @Test("@spec AGENT-6.95: If reserved headless startup fails and rollback cannot end the session, then the application shall retain its exact binding and a failed outcome for parent cleanup.")
+    func failedRollbackRetainsLiveBinding() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        _ = try await runtime.openWorktree(root.path)
+        terminal.leavesSessionAliveAfterKill = true
+        terminal.duringStart = {
+            let tree = try #require(runtime.state.worktree(forPath: root.path))
+            let agent = try #require(tree.agents.first)
+            let session = try #require(agent.paneSessionID)
+            terminal.live.insert(runtime.launcher.sessionName(for: session))
+            throw CocoaError(.fileWriteUnknown)
+        }
+        _ = await runtime.handle(.agent(.init(action: .add, callerWorktree: root.path,
+            name: "Child", worktree: root.path, provider: .codex)))
+        let tree = try #require(runtime.state.worktree(forPath: root.path))
+        let child = try #require(tree.agents.first)
+        #expect(child.status == .failed)
+        #expect(child.completion?.outcome == .failed)
+        #expect(child.paneSlotID != nil)
+        #expect(child.paneSlotID.flatMap { tree.paneSessions[$0] } == child.paneSessionID)
+    }
     private func fixture() throws -> (URL, HostConfiguration, AppState) {
         let rawRoot = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent("gh-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
@@ -863,17 +1094,30 @@ struct HeadlessHostRuntimeTests {
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.attention?.clearAfter == Attention.clearAfterMaxSeconds)
     }
 
-    @Test("The headless host advertises every control capability except pane agents and remote worktrees")
+    @Test("@spec AGENT-6.78: If a terminal driver accepts agent teardown but the session remains alive, then the application shall preserve its pane mapping and cleanup obligation.")
+    func closeVerifiesProcessExitBeforeRemovingPane() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let driver = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: driver, initialState: state)
+        let session = try await runtime.openWorktree(root.path)
+        driver.leavesSessionAliveAfterKill = true
+        await #expect(throws: (any Error).self) { try await runtime.closePane(target: session) }
+        #expect(runtime.state.worktree(forPath: root.path)?.paneSlot(forSessionName: session) != nil)
+    }
+
+    @Test("The headless host advertises every control capability except remote worktrees and Mac project registration")
     func headlessCapabilities() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
         #expect(await runtime.handle(.capabilities) == .capabilities([
-            "agent_prompt_staging", "worktree_base", "worktree_create_idempotency", "worktree_remove",
+            "managed_agents", "agent_prompt_staging", "pane_agent", "worktree_base", "worktree_create_idempotency", "worktree_remove",
             "worktree_pinned_removal", "worktree_pin",
         ]))
-        #expect(await runtime.handle(.paneAgentCapability) == .error("operation is unavailable on this host"))
+        #expect(await runtime.handle(.paneAgentCapability) == .ok)
         #expect(await runtime.handle(.remoteWorktreeCapability) == .error("operation is unavailable on this host"))
+        #expect(await runtime.handle(.projectAddCapability) == .error("operation is unavailable on this host"))
     }
 
     @Test("@spec REMOTE-22.48: When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.")

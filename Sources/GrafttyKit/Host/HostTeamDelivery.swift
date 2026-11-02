@@ -32,6 +32,7 @@ public extension HeadlessHostRuntime {
             defer { Task { await bridge.close() } }
             while !Task.isCancelled {
                 guard let self else { return }
+                await AgentControl.reconcileOutbox(platform: self.controlPlatform)
                 if let names = try? await self.terminals.sessions() { liveness.replace(names) }
                 let records = await Task.detached { (try? storage.listAll()) ?? [] }.value
                 let targets = Dictionary(grouping: records.filter { $0.isSubagent != true }, by: \.worktree)

@@ -88,6 +88,8 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
 }
 
 public enum NotificationMessage: Sendable, Equatable {
+    case addProject(path: String)
+    case projectAddCapability
     case linuxSetupIdentity
     case completeLinuxSetup(LinuxHostSetupResult)
     case previewFiles(path: String, targets: [String], paneSessionName: String? = nil)
@@ -131,6 +133,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case createWorktree(CreateWorktreeRequest)
     /// Asks which `ControlCapability` values the app supports (ATTN-2.27).
     case capabilities
+    case agent(AgentControlRequest)
     case agentPromptStagingCapability
     case worktreeBaseCapability
     case worktreeCreateIdempotencyCapability
@@ -235,6 +238,11 @@ extension NotificationMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .addProject(let path):
+            try container.encode("add_project", forKey: .type)
+            try container.encode(path, forKey: .path)
+        case .projectAddCapability:
+            try container.encode("project_add_capability", forKey: .type)
         case .linuxSetupIdentity:
             try container.encode("linux_setup_identity", forKey: .type)
         case .completeLinuxSetup(let result):
@@ -368,6 +376,9 @@ extension NotificationMessage: Codable {
         case .createWorktree(let request):
             try container.encode("create_worktree", forKey: .type)
             try request.encode(to: encoder)
+        case .agent(let request):
+            try container.encode("agent", forKey: .type)
+            try container.encode(request, forKey: .request)
         case .capabilities:
             try container.encode("capabilities", forKey: .type)
         case .agentPromptStagingCapability:
@@ -406,6 +417,10 @@ extension NotificationMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "add_project":
+            self = .addProject(path: try container.decode(String.self, forKey: .path))
+        case "project_add_capability":
+            self = .projectAddCapability
         case "linux_setup_identity":
             self = .linuxSetupIdentity
         case "complete_linux_setup":
@@ -553,6 +568,8 @@ extension NotificationMessage: Codable {
             self = .teamList(callerWorktree: path)
         case "create_worktree":
             self = .createWorktree(try CreateWorktreeRequest(from: decoder))
+        case "agent":
+            self = .agent(try container.decode(AgentControlRequest.self, forKey: .request))
         case "capabilities":
             self = .capabilities
         case "agent_prompt_staging_capability":
@@ -881,6 +898,7 @@ public enum ResponseMessage: Sendable, Equatable {
     case worktreeRemove(WorktreeRemoveStatus)
     /// `ControlCapability` raw values; unknown names from a newer app are kept.
     case capabilities([String])
+    case agents([AgentControlRecord])
 }
 
 public extension ResponseMessage {
@@ -904,6 +922,7 @@ public extension ResponseMessage {
         case .worktreeCreateRetry: "worktree_create_retry"
         case .worktreeRemove: "worktree_remove"
         case .capabilities: "capabilities"
+        case .agents: "agents"
         }
     }
 }
@@ -913,7 +932,7 @@ extension ResponseMessage: Codable {
         case type, code, message, panes, output, messages, text, operation, identity, capabilities, hosts, placement, agentSkills, mcpProxy, mcpConnections
         case operationID = "operation_id"
         case teamName = "team_name"
-        case members
+        case members, agents
         case nextBeforeID = "next_before_id"
         case nextAfterID = "next_after_id"
         case snapshotThroughID = "snapshot_through_id"
@@ -962,6 +981,8 @@ extension ResponseMessage: Codable {
             try container.encode(operation, forKey: .operation)
         case .worktreeRemove(let operation):
             try container.encode(operation, forKey: .operation)
+        case .agents(let records):
+            try container.encode(records, forKey: .agents)
         case .capabilities(let names):
             try container.encode(names, forKey: .capabilities)
         }
@@ -1018,6 +1039,8 @@ extension ResponseMessage: Codable {
             self = .worktreeCreate(
                 try container.decode(WorktreeCreateStatus.self, forKey: .operation)
             )
+        case "agents":
+            self = .agents(try container.decode([AgentControlRecord].self, forKey: .agents))
         case "capabilities":
             self = .capabilities(try container.decode([String].self, forKey: .capabilities))
         case "worktree_remove":

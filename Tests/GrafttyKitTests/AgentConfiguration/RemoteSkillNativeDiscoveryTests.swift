@@ -50,7 +50,7 @@ struct RemoteSkillNativeDiscoveryTests {
         let child = try DuplexSubprocess(executable: URL(fileURLWithPath: "/bin/sh"),
             arguments: ["-c", "cd \"$1\" && shift && exec \"$@\"", "graftty-skill-probe", workspace.path, binary] + args,
             environment: environment)
-        let stream = SkillProbeStream(child: child)
+        let stream = NativeAgentProbeStream(child: child)
         let names: Set<String>
         if runtime == .codex {
             try stream.send(["id": 1, "method": "initialize", "params": ["clientInfo": ["name": "graftty_skill_probe", "version": "1"], "capabilities": ["experimentalApi": true]]])
@@ -86,39 +86,5 @@ struct RemoteSkillNativeDiscoveryTests {
         // Discovery must not mutate the staged configuration.
         _ = try RemoteSkillStore(directory: fixture.root.appendingPathComponent("store"))
             .stage(fixture.capture(runtime), parentID: "fixture-parent", projectID: "fixture-project")
-    }
-}
-
-private final class SkillProbeStream {
-    let child: DuplexSubprocess
-    var buffer = Data()
-    init(child: DuplexSubprocess) { self.child = child }
-    func send(_ value: [String: Any]) throws {
-        var data = try JSONSerialization.data(withJSONObject: value)
-        data.append(10)
-        try child.input.write(contentsOf: data)
-    }
-    func receive(matching: ([String: Any]) -> Bool) throws -> [String: Any] {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(25))
-        while ContinuousClock.now < deadline {
-            while let newline = buffer.firstIndex(of: 10) {
-                let line = buffer.prefix(upTo: newline)
-                buffer.removeSubrange(...newline)
-                guard let message = try JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-                if matching(message) { return message }
-            }
-            var descriptor = pollfd(fd: child.output.fileDescriptor, events: Int16(POLLIN), revents: 0)
-            let result = poll(&descriptor, 1, 100)
-            if result < 0 && errno == EINTR { continue }
-            guard result >= 0 else { throw RemoteSkillError("Agent discovery polling failed") }
-            if result == 0 { continue }
-            var bytes = [UInt8](repeating: 0, count: 65536)
-            let count = GrafttyPOSIX.read(descriptor.fd, &bytes, bytes.count)
-            if count < 0 && errno == EINTR { continue }
-            guard count > 0 else { throw RemoteSkillError("Agent exited before discovery completed") }
-            guard buffer.count + count <= 4 * 1024 * 1024 else { throw RemoteSkillError("Agent discovery response exceeds limit") }
-            buffer.append(contentsOf: bytes.prefix(count))
-        }
-        throw RemoteSkillError("Agent discovery timed out")
     }
 }

@@ -319,6 +319,34 @@ func scrollbackMapClearsMobileControls(controlsHeight: Double) {
 }
 
 @MainActor
+@Suite("@spec CONTEXT-49: While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge, retain a fixed 44-point touch target, expand the card inward while held, dragged, or hovered, and collapse it when interaction ends or is cancelled without changing its vertical scrub coordinates.")
+struct ScrollbackMapMobileCollapseTests {
+    @Test func idleAndExpandedCardsKeepTheSameTouchTarget() throws {
+        let timeline = sampleTimeline()
+        let map = ScrollbackMap.locate(ScrollbackMap.messages(in: timeline), rows: sampleRows())
+        let viewport = ScrollbackViewport(offset: 520, length: 60, total: 600)
+        for active in [false, true] {
+            let overlay = ScrollbackMapOverlay(map: map, viewport: viewport,
+                entries: ScrollbackMapEntry.entries(in: timeline), gists: .shared,
+                focusY: active ? 70 : nil, scroll: { _ in })
+            let host = NSHostingView(rootView: overlay.mobileInputCard)
+            #expect(host.fittingSize == CGSize(width: 44, height: 150))
+            try render(overlay.mobileInputCard.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing),
+                       size: CGSize(width: 390, height: 200), named: active ? "scrollback-map-mobile-expanded" : "scrollback-map-mobile-collapsed")
+        }
+    }
+
+    @Test func presentationExpandsInwardWithoutMovingTheStripVertically() {
+        let idle = ScrollbackMapLayout.mobileCardFrame(isActive: false)
+        let active = ScrollbackMapLayout.mobileCardFrame(isActive: true)
+        #expect(idle == CGRect(x: 40, y: 0, width: 4, height: 150))
+        #expect(active == CGRect(x: 4, y: 0, width: 34, height: 150))
+        #expect(idle.minY == active.minY && idle.height == active.height)
+        #expect(ScrollbackMapLayout.stripY(forCardY: 70) == 64)
+    }
+}
+
+@MainActor
 @Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
 struct ScrollbackMapRebuildTests {
     @Test func hiddenPaneNeverScans() async {

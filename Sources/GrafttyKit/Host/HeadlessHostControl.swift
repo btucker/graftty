@@ -35,6 +35,10 @@ public extension HeadlessHostRuntime {
     func manage(_ request: WorktreeManagementRequest) async -> WorktreeManagementResponse {
         do {
             switch request {
+            case let .addAgent(path, provider, operationID):
+                return await ViewerAgentLaunch.add(path: path, provider: provider, operationID: operationID, platform: controlPlatform)
+            case let .agentConversation(path, agentID, action):
+                return await AgentControl.conversation(path: path, agentID: agentID, action: action, platform: controlPlatform)
             case .agentCompletions, .worktreeAgentCompletions:
                 let repos = state.repos
                 let presence = presence
@@ -50,7 +54,11 @@ public extension HeadlessHostRuntime {
                 }
             case .listRepositories:
                 return .repositories(await repositoryInfo())
-            case .create(let repository, let name, let branch, let source):
+            case .create(let repository, let name, let branch, let source, let launchDefaultAgent):
+                if launchDefaultAgent {
+                    return await ViewerAgentLaunch.create(repository: repository, name: name, branch: branch,
+                        existingSource: source, platform: controlPlatform)
+                }
                 do {
                     let result = try await createWorktree(repository: repository, name: name, branch: branch,
                         existing: source != nil, remoteOnly: source == .remoteOnly)
@@ -144,13 +152,34 @@ public extension HeadlessHostRuntime {
                     PaneInfo(id: offset + 1, title: worktree.paneTitleMetadata[slot]?.title, focused: worktree.focusedPaneSlotID == slot)
                 })
             case .addPane(let request):
-                // The CLI checks the pane-agent capability first, which this
-                // host does not advertise; refuse rather than run a plain split.
-                guard request.agentRuntime == nil, request.agentPrompt == nil else { throw HostRuntimeError.invalid("pane add --agent is not supported on this host") }
-                let worktree = try requireWorktree(request.path)
-                if let slot = worktree.focusedPaneSlotID ?? worktree.splitTree.allLeaves.first, let session = worktree.paneSessions[slot] {
-                    _ = try await splitPane(target: launcher.sessionName(for: session), direction: PaneControlRequest.SplitDirection(rawValue: request.direction.rawValue) ?? .right, command: request.command)
-                } else { _ = try await openWorktree(request.path, command: request.command) }
+                guard !isShuttingDown, placements.drain == nil else {
+                    throw HostRuntimeError.busy("Host is shutting down or draining")
+                }
+                if let error = CLIWorktreeCreationPolicy.paneAddError(agentRuntime: request.agentRuntime,
+                    command: request.command, agentPrompt: request.agentPrompt) { throw HostRuntimeError.invalid(error) }
+                let launch = try WorktreeAgentLaunchCommand.prepare(agent: request.agentRuntime, prompt: request.agentPrompt,
+                    exactCommand: request.command, managedAgent: request.managedAgent,
+                    promptDirectory: configuration.stateDirectory.appendingPathComponent("agent-launch-prompts"))
+                do {
+                    let worktree = try requireWorktree(request.path)
+                    let created: String
+                    if worktree.state == .running, let slot = worktree.focusedPaneSlotID ?? worktree.splitTree.allLeaves.first,
+                       let session = worktree.paneSessions[slot] {
+                        created = try await splitPane(target: launcher.sessionName(for: session),
+                            direction: PaneControlRequest.SplitDirection(rawValue: request.direction.rawValue) ?? .right,
+                            command: launch.command, managedAgent: request.managedAgent,
+                            selectTab: request.selectTab ?? (request.managedAgent == nil))
+                    } else { created = try await openWorktree(request.path, command: launch.command, selectTab: request.selectTab ?? (request.managedAgent == nil)) }
+                    // The exact binding was persisted before terminals.start.
+                    if request.selectTab == true {
+                        let (path, slot) = try resolve(created)
+                        let index = try indices(path)
+                        state.repos[index.repo].worktrees[index.worktree].ensureWorkspaceLayout()
+                        state.repos[index.repo].worktrees[index.worktree].workspaceLayout?.select(slot)
+                        state.selectedWorktreePath = path
+                        try save()
+                    }
+                } catch { launch.discardPromptFile(); throw error }
                 return .ok
             case .closePane(let path, let index): try await closePane(target: paneSession(path, index: index))
             case .sendPane(let path, let index, let text, let enter):

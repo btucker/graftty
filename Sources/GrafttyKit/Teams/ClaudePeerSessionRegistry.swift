@@ -99,8 +99,53 @@ public struct ClaudePeerSessionRegistry: Sendable {
             .filter { $0.pathExtension == "json" }
             .compactMap { url in
                 guard let data = try? Data(contentsOf: url) else { return nil }
-                return try? decoder.decode(RegistryRecord.self, from: data)
+                return Self.decodeRecord(data, decoder: decoder)
             }
+    }
+
+    /// Claude rewrites a row in place, and a shorter rewrite can leave bytes
+    /// of the previous object behind it (Claude 2.1.314 left a trailing `}`
+    /// after an ENOSPC rewrite). The leading object is the current row; a row
+    /// whose object never completes stays unreadable (AGENT-6.63).
+    private static func decodeRecord(_ data: Data, decoder: JSONDecoder) -> RegistryRecord? {
+        if let record = try? decoder.decode(RegistryRecord.self, from: data) {
+            return record
+        }
+        guard let end = leadingObjectEnd(in: data) else { return nil }
+        return try? decoder.decode(RegistryRecord.self, from: data.prefix(end))
+    }
+
+    /// The byte count of the first complete top-level JSON object in `data`,
+    /// or nil when no object closes.
+    private static func leadingObjectEnd(in data: Data) -> Int? {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (offset, byte) in data.enumerated() {
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if byte == UInt8(ascii: "\\") {
+                    escaped = true
+                } else if byte == UInt8(ascii: "\"") {
+                    inString = false
+                }
+                continue
+            }
+            switch byte {
+            case UInt8(ascii: "\""):
+                inString = true
+            case UInt8(ascii: "{"):
+                depth += 1
+            case UInt8(ascii: "}"):
+                depth -= 1
+                if depth == 0 { return offset + 1 }
+                if depth < 0 { return nil }
+            default:
+                break
+            }
+        }
+        return nil
     }
 
     /// Compares recorded and expected worktree paths through symlink

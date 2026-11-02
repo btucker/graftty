@@ -10,6 +10,31 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct MacPagedTerminalTests {
+    @Test("@spec TERM-12.50: When a Mac terminal receives a live source-grid acknowledgment, the application shall update its parser grid without refitting the owner viewport or entering checkpoint-restore presentation.")
+    func liveGridDoesNotRefitOwnerViewport() async throws {
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        var preparations: [DisplayGrid?] = []
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: {
+            preparations.append($0)
+            terminal.prepareGrid($0)
+        })
+        let coordinator = PagedTerminalCoordinator(renderer: renderer, send: { _ in })
+        let before = ghostty_surface_size(terminal.raw)
+        let source = try DisplayGrid(cols: before.columns, rows: max(1, before.rows / 2))
+        let applied = try await coordinator.handle(.grid(cols: source.cols, rows: source.rows))
+        #expect(applied == source)
+        #expect(preparations.isEmpty)
+        try await Task.sleep(for: .milliseconds(100))
+        let after = ghostty_surface_size(terminal.raw)
+        #expect(after.width_px == before.width_px)
+        #expect(after.height_px == before.height_px)
+        #expect(ghostty_surface_grid_matches(terminal.raw, source.cols, source.rows))
+        // Initial restoration still has to fit the checkpoint's physical grid.
+        try await renderer.resize(cols: source.cols, rows: source.rows)
+        #expect(preparations == [source])
+    }
+
     @Test("@spec DIST-1.8: When the Mac terminal tests run with the committed dependency, the renderer shall support paging so native checkpoint and history tests execute.")
     func publishedDependencySupportsPaging() {
         #expect(MacPagedTerminalRenderer.isSupported)
@@ -17,6 +42,15 @@ struct MacPagedTerminalTests {
 
     @Test("@spec TERM-12.36: When a detached local Mac pane is mounted again, the application shall retain every history line, including history shorter than one viewport, through native paging or legacy replay.", .timeLimit(.minutes(1)), arguments: MacPagedTerminalRenderer.isSupported ? [false, true] : [true], [40, 10000])
     func mountedPaneRestoresDetachedHistory(legacy: Bool, lineCount: Int) async throws {
+        try await restoreDetachedHistory(legacy: legacy, lineCount: lineCount)
+    }
+
+    @Test("@spec TERM-12.47: While a session's scrollback fits within libghostty's default 50,000,000-byte page budget, the zmx daemon shall retain every row, so a Mac pane reattaching to a 20,000-line session restores every line instead of only the newest 10,000,000 bytes of pages.", .timeLimit(.minutes(2)), .enabled(if: MacPagedTerminalRenderer.isSupported))
+    func daemonRetainsLibghosttyDefaultScrollbackBudget() async throws {
+        try await restoreDetachedHistory(legacy: false, lineCount: 20000)
+    }
+
+    private func restoreDetachedHistory(legacy: Bool, lineCount: Int) async throws {
         let fixture = try await HistoryDaemon.make(lineCount: lineCount, redrawPrompt: legacy)
         defer { fixture.close() }
         _ = NSApplication.shared
@@ -95,11 +129,81 @@ struct MacPagedTerminalTests {
         }
         let rows = Set(restoredText.split(whereSeparator: \.isNewline).map(String.init))
         let missingRows = (0..<lineCount).filter { !rows.contains(String(format: "history-row-%06d", $0)) }
-        #expect(missingRows.isEmpty, "Missing restored rows: \(missingRows.prefix(30))")
+        #expect(missingRows.isEmpty, "Missing \(missingRows.count) restored rows: \(missingRows.prefix(30))")
         #expect(handle.presentationGrid == nil)
     }
 
     #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.48: When a terminal's height changes within its current backing pages without changing its columns, the application shall keep retained older history fetchable on Mac and mobile without requiring a replacement checkpoint, including after a height round trip.", .timeLimit(.minutes(1)), arguments: [[UInt16(30)], [UInt16(16)], [UInt16(30), 16, 24]])
+    func heightChangesPreservePendingHistory(heights: [UInt16]) async throws {
+        try await verifyHistoryAfterHeightChanges(heights, requiresRecovery: false)
+    }
+
+    @Test("@spec TERM-12.49: If a height increase exposes older backing pages to live screen edits, then the application shall require checkpoint recovery on Mac and mobile even after the original height is restored, rather than import potentially edited history.", .timeLimit(.minutes(1)))
+    func heightGrowthIntoUnloadedPagesRequiresRecovery() async throws {
+        try await verifyHistoryAfterHeightChanges([1000, 24], requiresRecovery: true)
+    }
+
+    private func verifyHistoryAfterHeightChanges(_ heights: [UInt16], requiresRecovery: Bool) async throws {
+        let fixture = try await HistoryDaemon.make(lineCount: 2000)
+        defer { fixture.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: fixture.launcher.executable,
+            zmxDir: fixture.launcher.zmxDir, sessionName: "history"))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        guard case .checkpoint(let checkpoint) = try #require(await events.next()) else {
+            Issue.record("Expected a current-screen checkpoint"); return
+        }
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        try await renderer.install(checkpoint, generation: 1)
+        for rows in heights {
+            try stream.resize(windowSize: .init(cols: checkpoint.cols, rows: rows))
+            var resized = false
+            while let event = await events.next() {
+                if case .output(let data) = event { terminal.access.write(data) }
+                if case .grid(let cols, let height) = event {
+                    try await renderer.setSourceGrid(cols: cols, rows: height)
+                    resized = cols == checkpoint.cols && height == rows
+                    if resized { break }
+                }
+            }
+            try #require(resized)
+        }
+        var ordinal: UInt64 = 0
+        while true {
+            try await stream.requestHistory(.init(incarnation: checkpoint.incarnation, checkpointID: checkpoint.id,
+                requestID: ordinal + 1, ordinal: ordinal, screen: 0))
+            var receivedPage: PagedTerminalPage?
+            while let event = await events.next() {
+                switch event {
+                case .output(let data): terminal.access.write(data)
+                case .grid(let cols, let rows): try await renderer.setSourceGrid(cols: cols, rows: rows)
+                case .page(let page): receivedPage = page
+                case .unavailable(let failure) where requiresRecovery:
+                    #expect(failure.reason == .expired)
+                    return
+                default:
+                    Issue.record("Height-only resizing must not expire older history: \(event)"); return
+                }
+                if receivedPage != nil { break }
+            }
+            let page = try #require(receivedPage)
+            try #require(!requiresRecovery, "Growth into unloaded source pages must require recovery")
+            try #require(await renderer.appendHistory(page.data, screen: 0, generation: 1) == .applied)
+            if page.complete { break }
+            ordinal += 1
+            try #require(ordinal < 200)
+        }
+        #expect(terminal.firstHistoryRow().contains("history-row-000000"))
+        let numberedRows = terminal.text(screen: GHOSTTY_POINT_SCREEN)
+            .split(whereSeparator: \.isNewline).map(String.init)
+            .filter { $0.hasPrefix("history-row-") }
+        #expect(numberedRows == (0..<2000).map { String(format: "history-row-%06d", $0) })
+    }
+
     @Test("@spec TERM-12.43: When retained history contains dense wide-character rows, the application shall transfer contiguous bounded pages on Mac and mobile without reporting a memory limit solely because a native page exceeds the transport budget, preserve identical retries, and continue scrolling and live output across checkpoint recovery.", .timeLimit(.minutes(1)))
     func denseWideHistoryPagesStayBoundedAndRecover() async throws {
         let lineCount = 2000
@@ -521,11 +625,11 @@ struct MacPagedTerminalTests {
             ghostty_surface_set_size(raw, UInt32(clamping: width), UInt32(clamping: height))
         }
 
-        func text() -> String {
+        func text(screen: ghostty_point_tag_e = GHOSTTY_POINT_VIEWPORT) -> String {
             var text = ghostty_text_s()
             let selection = ghostty_selection_s(
-                top_left: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
-                bottom_right: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0), rectangle: false)
+                top_left: .init(tag: screen, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+                bottom_right: .init(tag: screen, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0), rectangle: false)
             guard ghostty_surface_read_text(raw, selection, &text) else { return "" }
             defer { ghostty_surface_free_text(raw, &text) }
             return text.text.map { String(decoding: Data(bytes: $0, count: Int(text.text_len)), as: UTF8.self) } ?? ""

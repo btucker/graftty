@@ -46,3 +46,23 @@ public enum RemoteOpenResponse: Codable, Sendable, Equatable {
     case url(URL)
     case authentication(url: URL, callbackHost: String)
 }
+
+/// A collection remains selectable independently of its originating pane or recipient.
+public struct WorktreePreviewCollection: Identifiable, Sendable, Equatable {
+    public let id: UUID
+    public let offers: [RemoteOpenOffer]
+    public var title: String { offers.map(\.filename).joined(separator: ", ") }
+}
+
+public extension RemoteOpenOffer {
+    static func previewCollections(in offers: [RemoteOpenOffer]) -> [WorktreePreviewCollection] {
+        var order: [UUID] = []
+        var groups: [UUID: [RemoteOpenOffer]] = [:]
+        for offer in offers where offer.isNativePreview && offer.url == nil {
+            let id = offer.previewGroupID ?? offer.id
+            if groups[id] == nil { order.append(id) }
+            groups[id, default: []].append(offer)
+        }
+        return order.reversed().map { WorktreePreviewCollection(id: $0, offers: groups[$0] ?? []) }
+    }
+}

@@ -452,7 +452,9 @@ def prepare_shell(attach: Attach) -> None:
 
 
 def assert_grid(attach: Attach, rows: int, cols: int, marker: str) -> None:
-    attach.write(f"printf '{marker}:'; stty size\n")
+    # Finish the external command before printing the marker, so shell job
+    # control diagnostics cannot land between the marker and its grid.
+    attach.write(f"printf '%s:%s\\n' {shlex.quote(marker)} \"$(stty size)\"\n")
     output = attach.wait_for(f"{marker}:{rows} {cols}")
     if f"{marker}:{rows} {cols}" not in output:
         raise AssertionError(f"wrong grid after cross-version resize: {output!r}")

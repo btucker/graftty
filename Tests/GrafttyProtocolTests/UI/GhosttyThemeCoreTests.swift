@@ -71,6 +71,27 @@ struct GhosttyThemeCoreTests {
         #expect(abs(veryLightSide.b - 0.94) < 0.001)
     }
 
+    @Test("@spec CONTEXT-53: While Context is visible on Mac or mobile, the application shall use an opaque inspector background blended from the Ghostty background toward its foreground, with greater separation for dark themes than light themes, and a fine foreground-derived edge.")
+    func contextBackgroundFollowsTheme() {
+        let palettes: [(GhosttyThemeColors.RGB, GhosttyThemeColors.RGB, Double)] = [
+            (.init(r: 0.145, g: 0.161, b: 0.184), .init(r: 0.92, g: 0.93, b: 0.94), 0.095),
+            (.init(r: 0.98, g: 0.97, b: 0.94), .init(r: 0.23, g: 0.25, b: 0.27), 0.045),
+            (.init(r: 0.16, g: 0.15, b: 0.13), .init(r: 0.90, g: 0.86, b: 0.76), 0.095)
+        ]
+        for (background, foreground, fraction) in palettes {
+            let theme = GhosttyThemeColors(backgroundRGB: background, foregroundRGB: foreground)
+            let inspector = theme.contextBackgroundRGB
+            for (base, text, result) in [(background.r, foreground.r, inspector.r),
+                                          (background.g, foreground.g, inspector.g),
+                                          (background.b, foreground.b, inspector.b)] {
+                #expect(abs(result - (base + (text - base) * fraction)) < 0.00001)
+                #expect(result > min(base, text) && result < max(base, text))
+            }
+            #expect(theme.contextBackground == Color(.sRGB, red: inspector.r, green: inspector.g, blue: inspector.b, opacity: 1))
+            #expect(theme.contextSeparator == theme.foreground.opacity(theme.isDark ? 0.19 : 0.13))
+        }
+    }
+
     @Test("Color builders return SwiftUI Color in sRGB")
     func colorBuildersExist() {
         let theme = GhosttyThemeColors.fallback

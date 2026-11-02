@@ -15,10 +15,8 @@ struct SettingsView: View {
         case cli
     }
 
-    @AppStorage(SettingsKeys.defaultCommand) private var defaultCommand: String = ""
     @AppStorage(SettingsKeys.worktreeAutoSleep) private var worktreeAutoSleep = false
     @AppStorage(SettingsKeys.worktreeAutoSleepMinutes) private var worktreeAutoSleepMinutes = 15
-    @AppStorage("defaultCommandFirstPaneOnly") private var firstPaneOnly: Bool = true
     @AppStorage(SettingsKeys.editorKind) private var editorKind: String = ""
     @AppStorage(SettingsKeys.editorAppBundleID) private var editorAppBundleID: String = ""
     @AppStorage(SettingsKeys.editorCliCommand) private var editorCliCommand: String = ""
@@ -59,22 +57,6 @@ struct SettingsView: View {
             Toggle("Show project rail", isOn: $showsProjectRail)
             Text("Turn off to group all projects and worktrees in one sidebar.")
                 .font(.caption).foregroundStyle(.secondary)
-            Divider().padding(.vertical, 4)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Default command:")
-                TextField("", text: $defaultCommand, prompt: Text("e.g., claude"))
-                    .textFieldStyle(.roundedBorder)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Toggle("Run in first pane only", isOn: $firstPaneOnly)
-
-            Text("Runs automatically when a worktree opens. Leave empty to disable.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             Divider().padding(.vertical, 4)
 
             Text("Editor")

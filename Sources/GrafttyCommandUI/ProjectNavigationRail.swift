@@ -71,7 +71,6 @@ public struct ProjectNavigationRail: View {
     public var localDeviceID: RemoteDeviceID?
     public var management: () -> AnyView
     public var aboveManagement: () -> AnyView
-    @State private var dropTarget: String?
     @State private var resizeStartWidth: Double?
 
     public init(projects: [SidebarProject], counts: [String: Int], workingCounts: [String: Int] = [:], icons: [String: Data], selectedID: String?,
@@ -98,13 +97,11 @@ public struct ProjectNavigationRail: View {
                 LazyVStack(spacing: 3) {
                     ForEach(projects) { project in
                         projectButton(project)
-                            .overlay(alignment: .top) { if dropTarget == project.id { Rectangle().fill(Color.accentColor).frame(height: 2) } }
-                            .draggable("graftty-project:" + project.id)
-                            .dropDestination(for: String.self) { values, location in
-                                guard allowsReordering, let value = values.first, value.hasPrefix("graftty-project:") else { return false }
-                                onMove(String(value.dropFirst("graftty-project:".count)), project.id, location.y > 22)
-                                return true
-                            } isTargeted: { dropTarget = $0 ? project.id : nil }
+                            .modifier(ProjectReorderTarget(projectID: project.id, allowsReordering: allowsReordering,
+                                onSelect: { onSelect(project) }, onDrop: { payload, placement in
+                                    payload.performMove(to: project.id, placement: placement, projectIDs: projects.map(\.id),
+                                                        allowsReordering: allowsReordering, onMove: onMove)
+                                }))
                     }
                 }.padding(.horizontal, 6)
             }

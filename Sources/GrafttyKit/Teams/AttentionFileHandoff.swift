@@ -250,6 +250,16 @@ public struct AttentionFileHandoff: Sendable {
         try JSONEncoder().encode(event).write(to: rootDirectory.appendingPathComponent(name), options: .atomic)
     }
 
+    /// Transcript-only answers have stable identities and do not reset turn-start markers.
+    public func input(_ input: WorktreeHistory.UserInput, worktree: String, runtime: TeamHookRuntime, sessionID: String) throws {
+        guard !worktree.isEmpty, !input.text.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
+        try ensureDirectory()
+        let event = AttentionFileProgressEvent(worktree: worktree, agentID: nil, runtime: runtime,
+            sessionID: sessionID, progressedAt: Date(timeIntervalSinceReferenceDate: input.timestamp), userInput: input)
+        try JSONEncoder().encode(event).write(
+            to: rootDirectory.appendingPathComponent("progress-input-\(input.id).json"), options: .atomic)
+    }
+
     /// Replays durable events after a restart and removes each file only after
     /// its handler returns. Repeating a card after an app crash is safer than
     /// silently losing the stopped turn.
@@ -325,7 +335,8 @@ public struct AttentionFileHandoff: Sendable {
         var events: [(URL, AttentionFileActivityEvent)] = []
         for file in files {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            let maximumSize = file.lastPathComponent.hasPrefix("response-") ? 65_536 : 16_384
+            let hasCapturedContent = file.lastPathComponent.hasPrefix("response-") || file.lastPathComponent.hasPrefix("progress-")
+            let maximumSize = hasCapturedContent ? 65_536 : 16_384
             guard values.isRegularFile == true, (values.fileSize ?? 0) <= maximumSize else {
                 try? FileManager.default.removeItem(at: file)
                 continue

@@ -981,6 +981,17 @@ final class RemoteMacsModel: ObservableObject {
     ) async -> WorktreeManagementResponse? {
         switch request {
         case .agentSkills, .placement: return nil // Admission belongs to the directly authenticated parent.
+        case let .addAgent(worktreeID, provider, operationID):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
+            let response = await forwardManagement(identity: route.identity,
+                request: .addAgent(worktreeID: route.path, provider: provider, operationID: operationID))
+            guard case .created(let path, let pane) = response else { return response }
+            let promoted = relayRouter.registerCreatedWorktree(identity: route.identity, path: path, paneSessionName: pane)
+            return .created(worktreeID: promoted.worktreeID, paneID: promoted.paneID)
+        case let .agentConversation(worktreeID, agentID, action):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
+            return await forwardManagement(identity: route.identity,
+                request: .agentConversation(worktreeID: route.path, agentID: agentID, action: action))
         case .worktreeAgentCompletions(let worktreeID):
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
             let response = await forwardManagement(identity: route.identity,
@@ -1022,7 +1033,7 @@ final class RemoteMacsModel: ObservableObject {
         case .listRepositories:
             return .repositories(await promotedRepositoriesForRelay())
 
-        case .create(let repositoryID, let worktreeName, let branchName, let existingSource):
+        case .create(let repositoryID, let worktreeName, let branchName, let existingSource, let launchDefaultAgent):
             guard let route = relayRouter.resolveRepository(repositoryID) else {
                 return nil
             }
@@ -1033,7 +1044,8 @@ final class RemoteMacsModel: ObservableObject {
                         repositoryID: route.repositoryID,
                         worktreeName: worktreeName,
                         branchName: branchName,
-                        existingSource: existingSource
+                        existingSource: existingSource,
+                        launchDefaultAgent: launchDefaultAgent
                     )
                 )
                 guard case .created(let worktreeID, let paneID) = response else {
