@@ -22,13 +22,16 @@ public enum ViewerAgentLaunch {
 
     public static func create(repository: String, name: String, branch: String,
                               existingSource: RemoteRepositoryInfo.Branch.Source?,
+                              agent: WorktreeAgentConfiguration = .init(),
                               platform: any ControlPlatform,
                               configuredProvider: @MainActor () -> TeamHookRuntime? = {
                                   AgentPreference.migrate()
                                   return AgentPreference.provider()
                               }) async -> WorktreeManagementResponse {
         let provider: TeamHookRuntime
-        do { provider = try AgentPreference.resolve(explicit: nil, configured: configuredProvider()) }
+        let explicit = agent.provider.flatMap(TeamHookRuntime.init(rawValue:))
+        if agent.provider != nil, explicit == nil { return failure("Unknown agent provider.") }
+        do { provider = try AgentPreference.resolve(explicit: explicit, configured: configuredProvider()) }
         catch { return failure("Choose a default agent in Agent teams settings on the host, then try again.") }
         guard platform.state.repos.contains(where: { $0.path == repository }) else {
             return failure("This repository is no longer available.")
@@ -47,7 +50,7 @@ public enum ViewerAgentLaunch {
         case nil: branchSource = nil
         }
         let response = await AgentControl.handle(.init(action: .add, callerWorktree: repository,
-            name: name, provider: provider, operationID: UUID().uuidString, branch: branch,
+            name: name, provider: provider, prompt: agent.initialPrompt, operationID: UUID().uuidString, branch: branch,
             existing: existingSource != nil, selectTab: false, existingBranchSource: branchSource), platform: platform)
         guard case .agents(let records) = response, let record = records.first,
               let operation = record.operationID else { return result(response) }

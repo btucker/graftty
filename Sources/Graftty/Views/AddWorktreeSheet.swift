@@ -17,7 +17,7 @@ struct AddWorktreeSheet: View {
     let branchEntries: [BranchPickerEntry]
     let defaultBranchStatus: WebServer.RepoInfo.DefaultBranchStatus?
     let onPullDefaultBranch: () async -> String?
-    let onSubmit: (String, BranchSelection) async -> String?
+    let onSubmit: (String, BranchSelection, WorktreeAgentConfiguration) async -> String?
     let onCancel: () -> Void
 
     @State private var controller: AddWorktreeFormController
@@ -27,6 +27,7 @@ struct AddWorktreeSheet: View {
     @State private var errorMessage: String?
 
     @FocusState private var worktreeFieldFocused: Bool
+    @FocusState private var taskFieldFocused: Bool
 
     init(
         repoDisplayName: String,
@@ -34,7 +35,7 @@ struct AddWorktreeSheet: View {
         branchEntries: [BranchPickerEntry] = [],
         defaultBranchStatus: WebServer.RepoInfo.DefaultBranchStatus? = nil,
         onPullDefaultBranch: @escaping () async -> String? = { nil },
-        onSubmit: @escaping (String, BranchSelection) async -> String?,
+        onSubmit: @escaping (String, BranchSelection, WorktreeAgentConfiguration) async -> String?,
         onCancel: @escaping () -> Void
     ) {
         self.repoDisplayName = repoDisplayName
@@ -119,6 +120,24 @@ struct AddWorktreeSheet: View {
                 }
             }
 
+            Picker("Agent", selection: $controller.agent.provider) {
+                Text("Default agent").tag(String?.none)
+                Text("Codex").tag(Optional("codex"))
+                Text("Claude").tag(Optional("claude"))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("What do you want to do?").foregroundStyle(.secondary)
+                TextEditor(text: $controller.agent.taskDescription)
+                    .focused($taskFieldFocused)
+                    .font(.body)
+                    .frame(height: 100)
+                    .padding(4)
+                    .border(Color.secondary.opacity(0.3))
+                    .accessibilityLabel("What do you want to do?")
+                Text("Optional. Sent as the agent's first message.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             if shouldOfferDefaultBranchPull, let status = defaultBranchStatus {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(status.branchName) is \(status.behindCount) \(status.behindCount == 1 ? "commit" : "commits") behind \(status.remoteRef).")
@@ -161,7 +180,7 @@ struct AddWorktreeSheet: View {
                         Text("Create")
                     }
                 }
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(.return, modifiers: taskFieldFocused ? .command : [])
                 .disabled(!controller.canSubmit || isSubmitting || isPullingDefaultBranch || shouldOfferDefaultBranchPull)
             }
         }
@@ -185,7 +204,7 @@ struct AddWorktreeSheet: View {
         defer { isSubmitting = false }
 
         let wt = WorktreeNameSanitizer.trimForSubmit(controller.worktreeName)
-        if let err = await onSubmit(wt, selection) {
+        if let err = await onSubmit(wt, selection, controller.agent) {
             errorMessage = err
         }
     }

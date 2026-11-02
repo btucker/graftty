@@ -7,6 +7,15 @@ import Testing
 
 @Suite("CLI worktree creation and agent launch")
 struct CLIWorktreeCreationTests {
+    @Test("A task can target the host default agent without an explicit provider")
+    func taskUsesDefaultAgent() throws {
+        let command = try WorktreeAdd.parse(["feature", "--prompt", "Fix the tests.\nKeep this line."])
+        #expect(command.agent == nil)
+        #expect(command.prompt == "Fix the tests.\nKeep this line.")
+        #expect(throws: (any Error).self) {
+            _ = try WorktreeAdd.parse(["feature", "--command", "echo task", "--prompt", "conflicting task"])
+        }
+    }
     @Test("@spec AGENT-5.17: When `graftty worktree add` is accepted, the CLI shall default to asynchronous creation and return the pending operation ID and stable worktree address without waiting for Git or agent launch, for local and remote creation; `--wait` shall retain blocking completion and `--async` shall explicitly select the default.")
     func asyncCreationReturnsBeforePolling() throws {
         for args in [["fix", "--agent", "codex"], ["fix", "--async", "--agent", "codex"],

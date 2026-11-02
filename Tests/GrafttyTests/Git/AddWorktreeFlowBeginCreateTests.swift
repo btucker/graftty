@@ -9,7 +9,7 @@ import GrafttyProtocol
 @Suite("AddWorktreeFlow.beginCreate")
 struct AddWorktreeFlowBeginCreateTests {
     @Test("""
-    @spec GIT-5.21: CLI worktree creation shall start the first terminal backend before reporting success because no terminal view is guaranteed to mount. Native sidebar creation shall select the completed worktree and defer its first zmx attach until the terminal view has a nonzero AppKit layout, with a bounded focus retry as a fallback if the normal layout callback is missed. Web creation shall leave the hidden Mac surface deferred because the web client attaches to the returned zmx session itself.
+    @spec GIT-5.21: When worktree creation launches an agent or originates from the CLI, the application shall start the first terminal backend before reporting success. When native sidebar or web creation explicitly requests only a shell, the application shall defer the first Mac attach until the terminal view has a nonzero layout or the web client attaches.
     """)
     func terminalStartTimingMatchesCreationEntryPoint() {
         #expect(

@@ -15,6 +15,7 @@ private extension WorktreeManagementResponse {
 struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
+    let worktreeManagement: WorktreeManagement
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let claudeSessionRegistry: ClaudeSessionRegistry
@@ -66,6 +67,7 @@ struct MainWindow: View {
     init(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
+        worktreeManagement: WorktreeManagement,
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
         claudeSessionRegistry: ClaudeSessionRegistry,
@@ -79,6 +81,7 @@ struct MainWindow: View {
     ) {
         _appState = appState
         self.terminalManager = terminalManager
+        self.worktreeManagement = worktreeManagement
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
         self.claudeSessionRegistry = claudeSessionRegistry
@@ -422,12 +425,13 @@ struct MainWindow: View {
                     )
                     return response.errorMessage
                 },
-                onSubmit: { worktreeName, branch in
+                onSubmit: { worktreeName, branch, agent in
                     let response = await remoteMacsModel.createWorktree(
                         on: request.remoteMac,
                         repositoryID: request.repository.id,
                         worktreeName: worktreeName,
-                        branch: branch
+                        branch: branch,
+                        agent: agent
                     )
                     if case .created = response {
                         pendingAddRemoteWorktree = nil
@@ -1306,43 +1310,28 @@ struct MainWindow: View {
         terminalManager.promoteToFirstResponder(terminalID, when: shouldFocus, onFocused: onFocused)
     }
 
-    /// Two-phase create: `beginCreate` (sync) inserts a placeholder so
-    /// the sheet dismisses immediately, then a detached `Task` runs
-    /// `finishCreate` which spawns git's hooks in the background and
-    /// promotes the placeholder to `.running` (or removes it + alerts
-    /// on failure — the sheet is gone, so an inline error isn't an
-    /// option). `discoveryFailed` from finishCreate is logged not
-    /// alerted because the worktree IS on disk by that point.
+    /// Dismiss after shared creation admission, then select the worktree
+    /// once its first agent session can attach.
     private func addWorktree(
         repo: RepoEntry,
         worktreeName: String,
-        branch: BranchSelection
+        branch: BranchSelection,
+        agent: WorktreeAgentConfiguration
     ) async -> String? {
-        let beginResult = AddWorktreeFlow.beginCreate(
+        let beginResult = await worktreeManagement.beginCreation(
             repoPath: repo.path,
             worktreeName: worktreeName,
             branch: branch,
-            appState: $appState
+            agent: agent
         )
-        let worktreePath: String
+        let accepted: WorktreeCreateStatus
         switch beginResult {
         case .failure(let err): return err.userMessage
-        case .success(let path): worktreePath = path
+        case .success(let status): accepted = status
         }
 
-        let dispatcher = teamEventDispatcher
         Task { @MainActor in
-            let result = await AddWorktreeFlow.finishCreate(
-                repoPath: repo.path,
-                worktreePath: worktreePath,
-                branch: branch,
-                appState: $appState,
-                worktreeMonitor: worktreeMonitor,
-                statsStore: statsStore,
-                terminalManager: terminalManager,
-                teamEventDispatcher: dispatcher,
-                terminalStartTiming: AddWorktreeFlow.terminalStartTiming(for: .nativeSidebar)
-            )
+            let result = await worktreeManagement.waitForCreation(accepted)
             switch result {
             case .failure(let err):
                 if let msg = err.userMessage {

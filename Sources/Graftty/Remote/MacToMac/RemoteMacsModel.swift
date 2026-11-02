@@ -811,7 +811,8 @@ final class RemoteMacsModel: ObservableObject {
         on remoteMac: RemoteMac,
         repositoryID: String,
         worktreeName: String,
-        branch: BranchSelection
+        branch: BranchSelection,
+        agent: WorktreeAgentConfiguration = .init()
     ) async -> WorktreeManagementResponse {
         let existingSource: RemoteRepositoryInfo.Branch.Source?
         switch branch {
@@ -831,7 +832,8 @@ final class RemoteMacsModel: ObservableObject {
                 repositoryID: repositoryID,
                 worktreeName: worktreeName,
                 branchName: branch.branchName,
-                existingSource: existingSource
+                existingSource: existingSource,
+                agent: agent
             )
         )
         _ = try? await refreshRepositories(on: remoteMac)
@@ -1033,7 +1035,7 @@ final class RemoteMacsModel: ObservableObject {
         case .listRepositories:
             return .repositories(await promotedRepositoriesForRelay())
 
-        case .create(let repositoryID, let worktreeName, let branchName, let existingSource, let launchDefaultAgent):
+        case .create(let repositoryID, let worktreeName, let branchName, let existingSource, let launchDefaultAgent, let agent):
             guard let route = relayRouter.resolveRepository(repositoryID) else {
                 return nil
             }
@@ -1045,7 +1047,8 @@ final class RemoteMacsModel: ObservableObject {
                         worktreeName: worktreeName,
                         branchName: branchName,
                         existingSource: existingSource,
-                        launchDefaultAgent: launchDefaultAgent
+                        launchDefaultAgent: launchDefaultAgent,
+                        agent: agent
                     )
                 )
                 guard case .created(let worktreeID, let paneID) = response else {

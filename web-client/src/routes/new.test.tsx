@@ -59,6 +59,27 @@ afterEach(() => {
   navigateMock.mockReset();
 });
 
+// @spec WEB-7.17: When the Add worktree form is displayed, the application shall select the default agent, allow another provider and an optional multiline task description, and submit both without treating Return in the description as creation.
+test('worktree creation selects an agent and sends its initial task', async () => {
+  const user = userEvent.setup();
+  let posted: Record<string, unknown> | null = null;
+  installFetch({ repos: [{ path: '/repo', displayName: 'repo' }], post: async (init) => {
+    posted = JSON.parse(init?.body as string) as Record<string, unknown>;
+    return jsonResponse({ sessionName: 'agent-session', worktreePath: '/repo/.worktrees/task' });
+  } });
+  render(<NewWorktreePage />);
+  const agent = await screen.findByLabelText('Agent') as HTMLSelectElement;
+  expect(agent.value).toBe('');
+  await user.selectOptions(agent, 'claude');
+  await user.type(screen.getByLabelText('Worktree name'), 'task');
+  await user.type(screen.getByLabelText('What do you want to do?'), 'Fix the tests.{Enter}Keep $(literal syntax).');
+  expect(posted).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+  await waitFor(() => expect(posted).toMatchObject({ agent: {
+    provider: 'claude', taskDescription: 'Fix the tests.\nKeep $(literal syntax).',
+  } }));
+});
+
 // @spec WEB-7.6: The bundled web client shall expose an "Add worktree" entry point on its root page that routes to `/new`. `/new` shall render a form containing (a) a repository picker populated from `GET /repos` (hidden when only one repo is tracked), (b) a worktree-name field, (c) a branch-name field defaulting to mirror the worktree-name field until the user types a differing branch name. Both name fields shall sanitize input live to the same allowed set as the native sheet (`A-Z a-z 0-9 . _ - /`, consecutive disallowed chars collapsing to a single `-`) and shall trim whitespace plus leading/trailing `-` / `.` at submit time. On successful `POST /worktrees` the client shall navigate to `/session/<sessionName>`; on failure it shall display the server's `error` message inline next to the form.
 test('new worktree form mirrors, sanitizes, submits, and navigates', async () => {
   const user = userEvent.setup();
@@ -109,6 +130,7 @@ test('new worktree form mirrors, sanitizes, submits, and navigates', async () =>
     repoPath: '/repo/beta',
     worktreeName: 'my-feature/foo-x',
     branchName: 'release-candidate',
+    agent: { taskDescription: '' },
   }]);
 });
 
@@ -171,6 +193,8 @@ test('new worktree form offers to pull a stale default checkout before creating'
   render(<NewWorktreePage />);
 
   await user.type(await screen.findByLabelText('Worktree name'), 'feature-x');
+  await user.selectOptions(screen.getByLabelText('Agent'), 'claude');
+  await user.type(screen.getByLabelText('What do you want to do?'), 'Fix tests.{Enter}Keep this context.');
   await user.click(screen.getByRole('button', { name: 'Create' }));
 
   expect(await screen.findByText(/main is 2 commits behind origin\/main/)).toBeTruthy();
@@ -179,6 +203,8 @@ test('new worktree form offers to pull a stale default checkout before creating'
   await user.click(screen.getByRole('button', { name: 'Pull First' }));
   await waitFor(() => expect(pullBodies).toEqual([{ repoPath: '/repo/alpha' }]));
   expect(screen.queryByText(/main is 2 commits behind origin\/main/)).toBeNull();
+  expect((screen.getByLabelText('Agent') as HTMLSelectElement).value).toBe('claude');
+  expect((screen.getByLabelText('What do you want to do?') as HTMLTextAreaElement).value).toBe('Fix tests.\nKeep this context.');
 
   await user.click(screen.getByRole('button', { name: 'Create' }));
 
@@ -192,6 +218,7 @@ test('new worktree form offers to pull a stale default checkout before creating'
     repoPath: '/repo/alpha',
     worktreeName: 'feature-x',
     branchName: 'feature-x',
+    agent: { provider: 'claude', taskDescription: 'Fix tests.\nKeep this context.' },
   }]);
 });
 
@@ -235,6 +262,7 @@ test('new worktree form creates immediately when declining the default-branch pu
     repoPath: '/repo/alpha',
     worktreeName: 'feature-y',
     branchName: 'feature-y',
+    agent: { taskDescription: '' },
   }]);
 });
 

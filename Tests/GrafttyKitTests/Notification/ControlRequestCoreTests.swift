@@ -37,6 +37,11 @@ struct ControlRequestCoreTests {
         var agentCloseFailure: String?
         var liveAgentSessionNames: Set<String>?
         var finishCreation: ((CLIWorktreeCreationPlan) -> String?)?
+        var defaultAgentProvider: TeamHookRuntime? = .codex
+        var creationAdmissions: [String] = []
+        func creationDidBegin(repoPath: String, worktreePath: String, operationID: String) {
+            creationAdmissions.append(operationID)
+        }
         var beforeAgentClose: (@MainActor () async -> Void)?
         var beforeCompletionAppend: (@MainActor () async throws -> Void)?
         var controlCapabilities: Set<ControlCapability> = [.worktreeBase]

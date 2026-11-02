@@ -6,6 +6,17 @@ import Testing
 
 @Suite("AddWorktreeSheetView submit policy")
 struct AddWorktreeSheetViewTests {
+    @Test("Mobile creation retains selected provider and exact optional initial task")
+    func requestRetainsAgentConfiguration() {
+        let empty = CreateWorktreeClient.Request(repoPath: "repo", worktreeName: "feature", branchName: "feature")
+        #expect(empty.agent.provider == nil)
+        #expect(empty.agent.initialPrompt == nil)
+        let prompt = "Fix the tests.\nKeep $(literal syntax).\n"
+        let request = CreateWorktreeClient.Request(repoPath: "repo", worktreeName: "feature", branchName: "feature",
+            agent: .init(provider: "claude", taskDescription: prompt))
+        #expect(request.agent.provider == "claude")
+        #expect(request.agent.initialPrompt == prompt)
+    }
     @Test("""
 @spec IOS-9.17: If the mobile Add Worktree sheet has no authenticated paired connection, then the application shall fail its repository list closed instead of reading repositories over unauthenticated HTTP.
 """)
@@ -21,12 +32,13 @@ struct AddWorktreeSheetViewTests {
     }
 
     @Test("""
-@spec IOS-9.10: While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
+@spec IOS-9.10: While the mobile Add Worktree sheet is valid and not submitting, pressing Return in a single-line field shall submit Create; Return in the optional task description shall insert a newline, and invalid or already-submitting forms shall ignore submission.
 """)
     func returnSubmitPolicy() {
         #expect(AddWorktreeSheetView.shouldSubmitOnReturn(canSubmit: true, isSubmitting: false))
         #expect(!AddWorktreeSheetView.shouldSubmitOnReturn(canSubmit: false, isSubmitting: false))
         #expect(!AddWorktreeSheetView.shouldSubmitOnReturn(canSubmit: true, isSubmitting: true))
+        #expect(!AddWorktreeSheetView.shouldSubmitOnReturn(canSubmit: true, isSubmitting: false, editingTaskDescription: true))
     }
 
     @Test("""

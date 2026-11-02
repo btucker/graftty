@@ -30,7 +30,8 @@ struct WorktreeManagementQueryTests {
                                                      templateProvider: { "" }),
             worktreeMonitor: WorktreeMonitor(), statsStore: statsStore ?? WorktreeStatsStore(), prStatusStore: PRStatusStore(),
             remoteBranchStore: RemoteBranchStore(), worktreeCreations: CLIWorktreeCreationStore(),
-            worktreeRemovals: CLIWorktreeRemovalStore(), localOrigin: origin
+            worktreeRemovals: CLIWorktreeRemovalStore(), localOrigin: origin,
+            agentPromptDirectory: root.appendingPathComponent("prompts")
         )
     }
 
@@ -38,6 +39,26 @@ struct WorktreeManagementQueryTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-wtm-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return URL(fileURLWithPath: CanonicalPath.canonicalize(root.path), isDirectory: true)
+    }
+
+    @Test("@spec GIT-5.36: When a user creates a worktree with an agent from the Add worktree form, the application shall retain user-origin creation history rather than recording the repository as its creating agent.")
+    func formAgentCreationRetainsUserHistory() async throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("missing-repo").path
+        let box = StateBox(AppState(repos: [RepoEntry(path: repo, displayName: "repo", worktrees: [
+            WorktreeEntry(path: repo, branch: "main")
+        ])]))
+        let management = service(box, root: root)
+        await GrafttyApp.$appStatePersisterOverride.withValue(AppStatePersister(directory: root.appendingPathComponent("state"))) {
+            let result = await management.beginCreation(repoPath: repo, worktreeName: "feature",
+                branch: .createNew(name: "feature"), agent: .init(provider: "codex"))
+            guard case .success(let status) = result else { Issue.record("Expected creation admission"); return }
+            #expect(box.state.worktree(forPath: status.worktreePath)?.history?.origin?.source == .user)
+            // The repository is deliberately absent. Finish the rejected Git
+            // operation before removing the isolated fixture; no agent runs.
+            _ = await management.waitForCreation(status)
+        }
     }
 
     @Test("Web repository rows carry no branch list; paired-device and relayed rows do")

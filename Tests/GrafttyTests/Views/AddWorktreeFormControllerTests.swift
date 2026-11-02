@@ -6,6 +6,24 @@ import GrafttyProtocol
 
 @Suite("AddWorktreeFormController")
 struct AddWorktreeFormControllerTests {
+    @Test("Agent choice and multiline task survive branch-mode changes; empty tasks remain optional")
+    func agentAndTaskSurviveModeChanges() {
+        let form = AddWorktreeFormController(initialWorktreeName: "feature")
+        #expect(form.agent.provider == nil)
+        #expect(form.agent.initialPrompt == nil)
+        #expect(form.canSubmit)
+        let prompt = "Fix the tests.\nKeep $(literal syntax).\n"
+        form.agent.provider = "claude"
+        form.agent.taskDescription = prompt
+        form.branchMode = .existing
+        form.pickExistingBranch(someEntry())
+        form.branchMode = .newBranch
+        #expect(form.agent.provider == "claude")
+        #expect(form.agent.initialPrompt == prompt)
+        form.agent.taskDescription = " \n\t"
+        #expect(form.agent.initialPrompt == nil)
+        #expect(form.canSubmit)
+    }
 
     private func someEntry(name: String = "feat") -> BranchPickerEntry {
         BranchPickerEntry(

@@ -666,7 +666,7 @@ private func testDispatcher(_ root: URL) -> TeamEventDispatcher {
 @MainActor
 struct WindowlessWorktreeLifecycleSaveTests {
 
-    @Test func aSocketCreateWithoutAnAgentSavesItsPlaceholder() async throws {
+    @Test func aSocketCreateWithAnExplicitShellSavesItsPlaceholder() async throws {
         let probe = PersistenceProbe()
         let router = try HeadlessRouter()
         let box = StateBox(runningWorktreeState().0)
@@ -674,7 +674,7 @@ struct WindowlessWorktreeLifecycleSaveTests {
         let response = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
             await router.route(.createWorktree(
                 callerWorktree: repoPath, worktreeName: "plain", branchName: "plain",
-                existing: false, base: nil, command: nil,
+                existing: false, base: nil, command: "exec /bin/sh",
                 agentRuntime: nil, agentPrompt: nil, operationID: "op-plain"
             ), box)
         }
@@ -717,7 +717,7 @@ struct WindowlessWorktreeLifecycleSaveTests {
             worktreeCreations: CLIWorktreeCreationStore(), worktreeRemovals: CLIWorktreeRemovalStore())
         let result = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
             await service.create(repoPath: repo, worktreeName: "feature",
-                branch: .useExisting(name: "feature", source: .local), entryPoint: .pairedClient)
+                branch: .useExisting(name: "feature", source: .local), entryPoint: .pairedClient, launchAgent: false)
         }
         guard case .success = result else {
             Issue.record("creation failed: \(result)")

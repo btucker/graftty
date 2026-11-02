@@ -168,7 +168,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
         deviceID: RemoteDeviceID,
         fingerprint: RemoteIdentityFingerprint
     )
-    case create(repositoryID: String, worktreeName: String, branchName: String, existingSource: RemoteRepositoryInfo.Branch.Source?, launchDefaultAgent: Bool = false)
+    case create(repositoryID: String, worktreeName: String, branchName: String, existingSource: RemoteRepositoryInfo.Branch.Source?, launchDefaultAgent: Bool = true, agent: WorktreeAgentConfiguration = .init())
     case pullDefaultBranch(repositoryID: String)
     case open(worktreeID: String)
     case delete(worktreeID: String, force: Bool)
@@ -182,7 +182,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
 
 extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case openResource, placement, agentSkills, agentID, action, conversation, provider, operationID, launchDefaultAgent
+        case openResource, placement, agentSkills, agentID, action, conversation, provider, operationID, launchDefaultAgent, agent
         case type, repositoryID, worktreeID, worktreeName, branchName,
              existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode
     }
@@ -249,13 +249,14 @@ extension WorktreeManagementRequest: Codable {
             try c.encode("connect_remote_mac", forKey: .type)
             try c.encode(deviceID, forKey: .deviceID)
             try c.encode(fingerprint, forKey: .fingerprint)
-        case let .create(repositoryID, worktreeName, branchName, existingSource, launchDefaultAgent):
+        case let .create(repositoryID, worktreeName, branchName, existingSource, launchDefaultAgent, agent):
             try c.encode("create", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
             try c.encode(worktreeName, forKey: .worktreeName)
             try c.encode(branchName, forKey: .branchName)
             try c.encodeIfPresent(existingSource, forKey: .existingSource)
             try c.encode(launchDefaultAgent, forKey: .launchDefaultAgent)
+            try c.encode(agent, forKey: .agent)
         case .pullDefaultBranch(let repositoryID):
             try c.encode("pull_default_branch", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
@@ -323,7 +324,8 @@ extension WorktreeManagementRequest: Codable {
                     RemoteRepositoryInfo.Branch.Source.self,
                     forKey: .existingSource
                 ),
-                launchDefaultAgent: try c.decodeIfPresent(Bool.self, forKey: .launchDefaultAgent) ?? false
+                launchDefaultAgent: try c.decodeIfPresent(Bool.self, forKey: .launchDefaultAgent) ?? true,
+                agent: try c.decodeIfPresent(WorktreeAgentConfiguration.self, forKey: .agent) ?? .init()
             )
         case "pull_default_branch":
             self = .pullDefaultBranch(

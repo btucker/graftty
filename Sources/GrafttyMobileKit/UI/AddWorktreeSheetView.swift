@@ -29,6 +29,8 @@ public struct AddWorktreeSheetView: View {
     @State private var branchMirrorsWorktree: Bool = true
     @State private var branchMode: BranchMode = .newBranch
     @State private var isSubmitting: Bool = false
+    @State private var agent = WorktreeAgentConfiguration()
+    @FocusState private var taskDescriptionFocused: Bool
 
     enum BranchMode { case newBranch, existing }
 
@@ -47,8 +49,8 @@ public struct AddWorktreeSheetView: View {
         self.onSubmit = onSubmit
     }
 
-    public static func shouldSubmitOnReturn(canSubmit: Bool, isSubmitting: Bool) -> Bool {
-        canSubmit && !isSubmitting
+    public static func shouldSubmitOnReturn(canSubmit: Bool, isSubmitting: Bool, editingTaskDescription: Bool = false) -> Bool {
+        canSubmit && !isSubmitting && !editingTaskDescription
     }
 
     static func initialTargetID(
@@ -116,7 +118,7 @@ public struct AddWorktreeSheetView: View {
                         ProgressView().controlSize(.small)
                     } else {
                         Button("Create") { submit() }
-                            .keyboardShortcut(.defaultAction)
+                            .keyboardShortcut(.return, modifiers: taskDescriptionFocused ? .command : [])
                             .disabled(!canSubmit)
                     }
                 }
@@ -198,6 +200,24 @@ public struct AddWorktreeSheetView: View {
                             }
                         }
                 }
+            }
+            Section("Agent") {
+                Picker("Agent", selection: $agent.provider) {
+                    Text("Default agent").tag(String?.none)
+                    Text("Codex").tag(Optional("codex"))
+                    Text("Claude").tag(Optional("claude"))
+                }
+            }
+            Section {
+                TextEditor(text: $agent.taskDescription)
+                    .focused($taskDescriptionFocused)
+                    .submitLabel(.return)
+                    .frame(minHeight: 100)
+                    .accessibilityLabel("What do you want to do?")
+            } header: {
+                Text("What do you want to do?")
+            } footer: {
+                Text("Optional. Sent as the agent's first message.")
             }
         }
         .submitLabel(.done)
@@ -299,7 +319,8 @@ public struct AddWorktreeSheetView: View {
     }
 
     private func submitFromReturn() {
-        guard Self.shouldSubmitOnReturn(canSubmit: canSubmit, isSubmitting: isSubmitting) else { return }
+        guard Self.shouldSubmitOnReturn(canSubmit: canSubmit, isSubmitting: isSubmitting,
+                                        editingTaskDescription: taskDescriptionFocused) else { return }
         submit()
     }
 
@@ -312,7 +333,8 @@ public struct AddWorktreeSheetView: View {
             repoPath: repoPath,
             worktreeName: WorktreeNameSanitizer.trimForSubmit(worktreeName),
             branchName: WorktreeNameSanitizer.trimForSubmit(branchName),
-            existing: branchMode == .existing
+            existing: branchMode == .existing,
+            agent: agent
         )
         onSubmit(Submission(
             request: request,

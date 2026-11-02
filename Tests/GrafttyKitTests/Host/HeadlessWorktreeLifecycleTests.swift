@@ -62,7 +62,7 @@ struct HeadlessWorktreeLifecycleTests {
                         base: String? = nil, command: String? = nil, agent: TeamHookRuntime? = nil,
                         prompt: String? = nil, caller: String? = nil) async -> ResponseMessage {
         await host.runtime.handle(.createWorktree(callerWorktree: caller ?? host.repo, worktreeName: name,
-            branchName: branch ?? name, existing: existing, base: base, command: command,
+            branchName: branch ?? name, existing: existing, base: base, command: command ?? (agent == nil ? "exec /bin/sh" : nil),
             agentRuntime: agent, agentPrompt: prompt, operationID: UUID().uuidString))
     }
 
@@ -312,7 +312,7 @@ struct HeadlessWorktreeLifecycleTests {
 
         func remoteCreation(_ name: String, from device: RemoteDeviceID) async throws -> WorktreeCreateStatus {
             let creation = RemoteWorktreeCreation(callerWorktree: "/elsewhere/project", project: host.repo,
-                worktreeName: name, branchName: name, existing: false, base: nil, command: nil,
+                worktreeName: name, branchName: name, existing: false, base: nil, command: "exec /bin/sh",
                 agentRuntime: nil, agentPrompt: nil, operationID: operationID)
             let response = await host.runtime.remoteTeam(.worktree(.create(creation)), deviceID: device)
             guard case .worktreeCreate(var status) = response else {
@@ -354,7 +354,7 @@ struct HeadlessWorktreeLifecycleTests {
 
         let local = try await finished(host, await host.runtime.handle(.createWorktree(
             callerWorktree: host.repo, worktreeName: "local", branchName: "local", existing: false,
-            base: nil, command: nil, agentRuntime: nil, agentPrompt: nil, operationID: operationID)))
+            base: nil, command: "exec /bin/sh", agentRuntime: nil, agentPrompt: nil, operationID: operationID)))
         #expect(local.state == .ready)
         #expect(local.worktreePath == host.repo + "/.worktrees/local")
         #expect(host.terminals.starts.count == 3)
@@ -552,7 +552,7 @@ struct HeadlessWorktreeLifecycleTests {
         #expect(host.runtime.state.worktree(forPath: dirty)?.state == .running)
 
         #expect(await host.runtime.manage(.create(repositoryID: host.repo, worktreeName: "dirty", branchName: "other",
-            existingSource: nil)) == .error(code: "create-failed",
+            existingSource: nil, launchDefaultAgent: false)) == .error(code: "create-failed",
             message: "worktree destination already exists or is invalid", forceAllowed: false, shortStatus: nil))
 
         try await git(["branch", "taken"], at: host.repo)
@@ -568,7 +568,7 @@ struct HeadlessWorktreeLifecycleTests {
         }
         #expect(macMessage.contains("taken") && !macMessage.hasPrefix("gitFailed("))
         let headlessResponse = await host.runtime.manage(.create(repositoryID: host.repo, worktreeName: "git-refused",
-            branchName: "taken", existingSource: nil))
+            branchName: "taken", existingSource: nil, launchDefaultAgent: false))
         #expect(headlessResponse == .creationFailure(message: macMessage))
     }
 

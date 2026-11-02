@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import GrafttyProtocol
 
 public enum CreateWorktreeClient {
 
@@ -8,17 +9,20 @@ public enum CreateWorktreeClient {
         public let worktreeName: String
         public let branchName: String
         public let existing: Bool
+        public let agent: WorktreeAgentConfiguration
 
         public init(
             repoPath: String,
             worktreeName: String,
             branchName: String,
-            existing: Bool = false
+            existing: Bool = false,
+            agent: WorktreeAgentConfiguration = .init()
         ) {
             self.repoPath = repoPath
             self.worktreeName = worktreeName
             self.branchName = branchName
             self.existing = existing
+            self.agent = agent
         }
     }
 
