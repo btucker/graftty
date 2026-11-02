@@ -47,7 +47,10 @@ struct CompactAgentBar: View {
                 }
             }.disabled(agents.isEmpty)
             Spacer(minLength: 0)
-            if let host { WorktreePreviewMenu(host: host, worktree: worktree.path) }
+            if let host {
+                MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onSelect)
+                WorktreePreviewMenu(host: host, worktree: worktree.path)
+            }
         }.font(.callout).buttonStyle(.plain).padding(.horizontal, 14).frame(minHeight: 44)
             .foregroundStyle(theme.foreground).background(theme.background)
             .environment(\.colorScheme, theme.isDark ? .dark : .light)

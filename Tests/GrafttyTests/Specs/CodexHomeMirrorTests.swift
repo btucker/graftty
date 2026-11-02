@@ -122,6 +122,90 @@ struct CodexHomeMirrorTests {
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: mirrorConfig.path)) == nil)
     }
 
+    @Test("""
+    @spec TEAM-10.24: When Graftty refreshes a managed Codex config, the application shall retain hook trust hashes and enablement saved in that managed home, refresh other settings from the durable config, and leave the durable config unchanged.
+    """, arguments: [false, true])
+    func managedHookDecisionsSurviveConfigRefresh(durableHasHookState: Bool) throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let durableConfig = src.appendingPathComponent("config.toml")
+        let managedConfig = dst.appendingPathComponent("config.toml")
+        let priorState = durableHasHookState ? """
+
+        [hooks.state."graftty@graftty:hooks/hooks.json:stop:0:0"]
+        trusted_hash = "sha256:old-definition"
+        trusted_content_hash = "sha256:old-content"
+        enabled = true
+        """ : ""
+        try writeFile(durableConfig, "model = \"old-model\"\n" + priorState)
+        let mirror = CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst)
+        try mirror.rebuild()
+
+        let acceptedState = """
+        [hooks.state."graftty@graftty:hooks/hooks.json:stop:0:0"]
+        trusted_hash = "sha256:accepted-definition"
+        trusted_content_hash = "sha256:accepted-content"
+        enabled = false
+
+        [hooks.state.'other-plugin@example:hooks/hooks.json:session_start:0:0'] # local approval
+        trusted_hash = "sha256:other-definition"
+        """
+        try writeFile(managedConfig, """
+        model = "runtime-only-model"
+        [features]
+        hooks = true
+        \(acceptedState)
+        """)
+
+        let updatedDurable = """
+        model = "new-model"
+        [features]
+        hooks = false
+        [mcp_servers.new_server]
+        url = "https://example.com/mcp"
+        \(priorState)
+        [hooks.state."durable-only"]
+        enabled = false
+        """
+        try writeFile(durableConfig, updatedDurable)
+
+        for _ in 0..<2 {
+            try mirror.rebuild()
+            let rebuilt = try String(contentsOf: managedConfig, encoding: .utf8)
+            #expect(rebuilt.contains(acceptedState))
+            #expect(rebuilt.contains("model = \"new-model\""))
+            #expect(rebuilt.contains("hooks = false"))
+            #expect(rebuilt.contains("[mcp_servers.new_server]"))
+            #expect(rebuilt.contains("[hooks.state.\"durable-only\"]"))
+            #expect(!rebuilt.contains("old-definition"))
+            #expect(!rebuilt.contains("runtime-only-model"))
+            #expect(try String(contentsOf: durableConfig, encoding: .utf8) == updatedDurable)
+        }
+    }
+
+    @Test("Config refresh ignores hook-state examples inside multiline strings.")
+    func hookStateExamplesAreNotApprovals() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let durableConfig = src.appendingPathComponent("config.toml")
+        let durableText = "model = \"new-model\"\n"
+        try writeFile(durableConfig, durableText)
+        let mirror = CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst)
+        try mirror.rebuild()
+        try writeFile(dst.appendingPathComponent("config.toml"), """
+        instructions = '''
+        [hooks.state."example"]
+        trusted_hash = "sha256:never-approved"
+        '''
+        [hooks.Stop]
+        command = "runtime-only-hook"
+        """)
+
+        try mirror.rebuild()
+
+        #expect(try String(contentsOf: dst.appendingPathComponent("config.toml"), encoding: .utf8) == durableText)
+    }
+
     @Test("Dangling symlinks (entries the user deleted) are pruned on rebuild.")
     func prunesDanglingSymlinks() throws {
         let (src, dst) = try makeMirrorSandbox()

@@ -39,7 +39,7 @@ struct MultiPaneDetailView: View {
                     if let visible = currentWorkspace.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                         render(visible, at: .root)
                     } else {
-                        Text("No active agents").frame(maxWidth: .infinity, maxHeight: .infinity)
+                        emptyWorkspace
                     }
                     if currentWorkspace.drawerVisible { drawerResizeHandle(available: geometry.size.height) }
                     // IPAD-1.31: the toolbar toggles the drawer; no bar while it's closed.
@@ -56,10 +56,7 @@ struct MultiPaneDetailView: View {
                     }
                 }
             } else {
-                ContentUnavailableView(
-                    "No panes running",
-                    systemImage: "terminal"
-                )
+                emptyWorkspace
             }
         }
         .onAppear { reconcileWorkspace(revealFocused: true) }
@@ -76,6 +73,14 @@ struct MultiPaneDetailView: View {
             keyboardFrame = KeyboardFrameObservation(bottomInset: inset, sequence: keyboardFrame.sequence &+ 1)
         }
         .animation(.easeInOut(duration: 0.25), value: keyboardFrame.bottomInset)
+    }
+
+    private var emptyWorkspace: some View {
+        ContentUnavailableView {
+            Label("No active agents", systemImage: "terminal")
+        } actions: {
+            MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onSelectPane)
+        }
     }
 
     private func render(

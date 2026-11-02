@@ -9,6 +9,36 @@ import Testing
 @MainActor
 @Suite("GrafttyApp pane lifecycle")
 struct GrafttyAppPaneLifecycleTests {
+    @Test("@spec AGENT-6.150: When a managed agent starts in a worktree with no panes, the application shall use its reserved pane and session as the first pane without creating a shell first or changing the selected worktree.", arguments: [WorktreeState.closed, .running])
+    func firstManagedAgentUsesReservedSession(state initialState: WorktreeState) throws {
+        let pane = PaneSlotID(), session = PaneSessionID()
+        var agent = ManagedAgent(name: "First", provider: .codex, parent: nil, status: .starting)
+        agent.paneSlotID = pane
+        agent.paneSessionID = session
+        var worktree = WorktreeEntry(path: "/repo/empty", branch: "empty", state: initialState)
+        worktree.agents = [agent]
+        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])],
+            selectedWorktreePath: "/repo/other")
+        let binding = Binding<AppState>(get: { state }, set: { state = $0 })
+        let manager = TerminalManager(socketPath: "/tmp/graftty-first-agent-test.sock")
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(terminalID: pane, app: fakeApp(), worktreePath: worktree.path,
+            socketPath: "/tmp/graftty-first-agent-test.sock", zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory, zmxBackendFactory: { _, _, _, _ in backend }))
+        manager.insertSurfaceForTesting(handle, for: pane)
+
+        #expect(PaneCommands.startWorktree(path: worktree.path, appState: binding, terminalManager: manager,
+            startSurfacesInBackground: true, initialAgent: agent) == .started)
+
+        let opened = state.repos[0].worktrees[0]
+        #expect(opened.splitTree.allLeaves == [pane])
+        #expect(opened.paneSessions == [pane: session])
+        #expect(opened.state == .running)
+        #expect(backend.startCount == 1)
+        #expect(state.selectedWorktreePath == "/repo/other")
+    }
+
     @Test("""
     @spec REMOTE-13.13: When a user selects a closed remote worktree or a \
     relayed client opens one, the owning Mac shall start the worktree \

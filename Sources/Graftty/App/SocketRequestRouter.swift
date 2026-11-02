@@ -360,11 +360,13 @@ extension SocketRequestRouter {
         ) {
             return .error(error)
         }
-        if managedAgent != nil, appState.wrappedValue.worktree(forPath: path)?.state == .closed {
+        if managedAgent != nil, let worktree = appState.wrappedValue.worktree(forPath: path),
+           worktree.state == .closed, worktree.firstPane != nil {
             _ = PaneCommands.startWorktree(path: path, appState: appState, terminalManager: terminalManager)
         }
         func splitTargetError() -> String? {
             guard let wt = appState.wrappedValue.worktree(forPath: path) else { return "not tracked" }
+            if managedAgent != nil, wt.firstPane == nil, [.running, .closed].contains(wt.state) { return nil }
             guard wt.state == .running else { return "worktree not running" }
             return wt.firstPane == nil ? "no panes to split" : nil
         }
@@ -423,8 +425,23 @@ extension SocketRequestRouter {
         }
         // ATTN-1.25: hand the command to surface creation, which runs it
         // once the shell is ready; typing after the split could arrive first.
-        guard let targetID = appState.wrappedValue.worktree(forPath: path)?.firstPane,
-              let newPaneID = PaneCommands.splitPane(
+        let newPaneID: PaneSlotID
+        if let managedAgent, let reserved = managedAgent.paneSlotID,
+           appState.wrappedValue.worktree(forPath: path)?.firstPane == nil {
+            guard PaneCommands.startWorktree(path: path, appState: appState, terminalManager: terminalManager,
+                extraInitialInput: PaneAgentLaunch.initialInput(launch.command), initialAgent: managedAgent) == .started else {
+                await abandonLaunch()
+                return .error("Could not start the agent's first pane.")
+            }
+            newPaneID = reserved
+            guard terminalManager.handle(for: newPaneID) != nil else {
+                PaneCommands.removeEndedPane(appState: appState, terminalManager: terminalManager,
+                    targetID: newPaneID, userInitiated: true)
+                await abandonLaunch()
+                return .error("Could not create the agent's terminal surface.")
+            }
+        } else if let targetID = appState.wrappedValue.worktree(forPath: path)?.firstPane,
+              let splitPaneID = PaneCommands.splitPane(
                   appState: appState,
                   terminalManager: terminalManager,
                   targetID: targetID,
@@ -434,7 +451,9 @@ extension SocketRequestRouter {
                   preserveZoom: selectTab != true && managedAgent != nil,
                   reservedSlot: managedAgent?.paneSlotID,
                   reservedSession: managedAgent?.paneSessionID
-              ) else {
+              ) {
+            newPaneID = splitPaneID
+        } else {
             await abandonLaunch()
             return .error("split failed")
         }

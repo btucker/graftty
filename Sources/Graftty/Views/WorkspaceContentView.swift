@@ -60,7 +60,7 @@ struct WorkspaceContentView: View {
                 } else {
                     VStack(spacing: 12) {
                         Text("No active agents").font(.headline)
-                        newAgentMenu
+                        newAgentMenu.controlSize(.large)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if layout.drawerVisible {
@@ -145,7 +145,7 @@ struct WorkspaceContentView: View {
                                 })
                                 .contextMenu { tabMenu(tab, group: group?.id) }
                         }
-                        newAgentMenu
+                        newAgentMenu.menuStyle(.borderlessButton)
                     }
                 }
             }.font(.system(size: 13))
@@ -299,25 +299,17 @@ struct WorkspaceContentView: View {
     }
 
     private var newAgentMenu: some View {
-        Menu {
-            if let preferred = AgentPreference.provider() {
-                Button("New \(preferred.displayName) agent (default)") { launch(preferred) }
-                Divider()
-            }
-            ForEach(TeamHookRuntime.allCases, id: \.rawValue) { provider in
-                Button { launch(provider) } label: {
-                    Label { Text("New \(provider.displayName) agent") } icon: { AgentProviderIcon(provider: provider.rawValue) }
-                }
-            }
-        } label: { Label("New agent", systemImage: "plus") }
-            .menuStyle(.borderlessButton).fixedSize().disabled(launching)
+        NewAgentMenu { provider, operationID in
+            guard let request else { throw AgentLaunchError("Agent controls are not ready.") }
+            let response = await request(.init(action: .add, callerWorktree: worktree.path,
+                name: "Agent \(worktree.agents.count + 1)", worktree: worktree.path,
+                provider: provider.flatMap(TeamHookRuntime.init(rawValue:)),
+                operationID: operationID.uuidString, selectTab: true))
+            if case .error(let message) = response { throw AgentLaunchError(message) }
+        }
+            .fixedSize().disabled(launching)
             .foregroundStyle(theme.foreground.opacity(0.7))
             .padding(.horizontal, 8)
-    }
-
-    private func launch(_ provider: TeamHookRuntime) {
-        perform(.init(action: .add, callerWorktree: worktree.path, name: "\(provider.displayName) \(worktree.agents.count + 1)",
-            worktree: worktree.path, provider: provider, operationID: UUID().uuidString, selectTab: true))
     }
     private func perform(_ operation: AgentControlRequest) {
         guard let request else { failure = "Agent controls are not ready."; return }
