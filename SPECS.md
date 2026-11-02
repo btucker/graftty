@@ -676,6 +676,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.46** When a display owner sends complete terminal mouse reports through an owner-authorized SSH paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.
 
+### TERM-13.x — Native Windows terminal backend
+
+**TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
+
+**TERM-13.2** When a native Windows terminal receives an environment, the application shall encode a sorted double-null-terminated UTF-16 block and reject case-insensitive duplicate names or embedded nulls.
+
+**TERM-13.3** If a native Windows terminal launch exceeds the Win32 command-line limit, then the application shall reject the launch before creating a process.
+
+**TERM-13.4** When a native Windows terminal runs a shell, the application shall deliver its UTF-8 output through ConPTY and drain final output before close returns.
+
+**TERM-13.5** When a native Windows terminal receives input or a size change, the application shall forward it to the pseudoconsole and reject operations after close.
+
+**TERM-13.6** If a native Windows terminal cannot create its child process, then the application shall return a launch error and release the pseudoconsole and pipe handles.
+
+**TERM-13.7** When a native Windows terminal uses a Unicode working directory and environment, the application shall pass both to the child without loss.
+
+**TERM-13.8** If terminal input is blocked while a native Windows terminal closes, then the application shall interrupt the writer and finish shutdown without waiting for the child to read input.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -3963,6 +3981,38 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-31.19** When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.
 
 **REMOTE-31.20** When connecting through a registered compute provider, the application shall select the adapter by provider identifier, preserve the enrollment operation and pinned host identity, and recheck adapter authorization without requiring AWS-specific identifiers in shared connection code.
+
+### REMOTE-32.x — Windows host transport and WSL2 deployment
+
+**REMOTE-32.1** When a headless host uses native TCP SSH transport, the application shall carry framed messages bidirectionally with pinned Ed25519 host keys and public-key client authentication.
+
+**REMOTE-32.2** If a native TCP SSH connection presents an unexpected host or client key, then the application shall reject the connection before delivering framed application data.
+
+**REMOTE-32.3** When a headless machine initiates its authenticated connection to the parent Mac, the application shall carry parent-originated control channels on that connection without opening a listener on the headless machine.
+
+**REMOTE-32.4** When a Windows headless host establishes cloud-routed access, the application shall use graftty-server for outbound authenticated signaling while retaining terminal authorization on the devices.
+
+**REMOTE-32.5** When pairing a Windows headless host with its parent Mac, the application shall require user-confirmed device-key verification independent of graftty-server account membership and shall reject unconfirmed identity changes.
+
+**REMOTE-32.6** When processing cloud-routed signaling, the application shall authenticate both device identities and bind the session, roles, nonces, expiry, and offer or answer bytes before allocating terminal access.
+
+**REMOTE-32.7** While terminal or control traffic traverses graftty-server infrastructure or TURN, the application shall encrypt and authenticate that traffic end to end using the paired device identities without releasing session private keys to those services.
+
+**REMOTE-32.8** When a cloud-routed Windows host connection reconnects or replaces its transport, the application shall perform fresh device authentication and reject stale or altered signaling without automatically replaying terminal input or mutating commands.
+
+**REMOTE-32.9** When a device revokes a remote peer or its resource capabilities, the application shall stop affected active operations and reject reconnect attempts independently of signaling-server state or TURN credential lifetime.
+
+**REMOTE-32.10** When the parent Mac registers an outbound Windows host connection, the application shall bind it to the authenticated device key and shall not grant Windows permission to control Mac resources from its signaling or transport role.
+
+**REMOTE-32.11** While persisting a native Windows host identity, the application shall protect the private key using current-user Windows cryptographic protection and restrictive file access, and shall not fall back to plaintext private-key storage.
+
+**REMOTE-32.12** While running a headless host under WSL2, the application shall use the pinned Graftty-patched zmx session implementation and preserve the Mac and Linux ownership, detach, reattach, replay, history, and resize behavior.
+
+**REMOTE-32.13** While the Windows user is signed in and the WSL2 host is enabled, the application shall support background host operation when terminal windows are closed or the screen is locked.
+
+**REMOTE-32.14** When preparing a WSL2 host, the application shall report effective CPU and memory limits and propose resource settings with explicit Windows memory headroom while preserving unrelated existing WSL configuration.
+
+**REMOTE-32.15** When preparing a WSL2 project without an explicit storage override, the application shall place repositories, worktrees, and build caches in the Linux filesystem.
 
 ## CHROME — Dedicated Chrome tabs
 

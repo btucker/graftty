@@ -3,6 +3,42 @@
 import PackageDescription
 import Foundation
 
+#if os(Windows)
+// Bootstrap native terminal and outbound SSH transport without the Apple renderer
+// or compiling the still-POSIX host. This is not a Windows graftty-host product.
+let package = Package(
+    name: "Graftty",
+    products: [
+        .library(name: "GrafttyWindowsTerminal", targets: ["GrafttyWindowsTerminal"]),
+        .library(name: "GrafttyTunnel", targets: ["GrafttyTunnel"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.98.0"),
+        .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.13.0"),
+        .package(url: "https://github.com/apple/swift-nio-extras.git", exact: "1.34.1"),
+    ],
+    targets: [
+        .target(name: "CGrafttyConPTY", linkerSettings: [.linkedLibrary("kernel32")]),
+        .target(name: "GrafttyWindowsTerminal", dependencies: ["CGrafttyConPTY"]),
+        .testTarget(name: "GrafttyWindowsTerminalTests", dependencies: ["GrafttyWindowsTerminal"]),
+        .target(name: "GrafttyTunnel", dependencies: [
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOEmbedded", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOExtras", package: "swift-nio-extras"),
+            .product(name: "NIOSSH", package: "swift-nio-ssh"),
+        ]),
+        .testTarget(name: "GrafttyWindowsTransportTests", dependencies: [
+            "GrafttyTunnel",
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOSSH", package: "swift-nio-ssh"),
+            .product(name: "Crypto", package: "swift-crypto"),
+        ]),
+    ]
+)
+#else
 // The same selection policy applies to SwiftPM, bundle.sh, and Xcode's local
 // package reference. Local packages are opt-in: manifest evaluation is cached,
 // so filesystem auto-discovery cannot reliably follow dependency changes.
@@ -184,6 +220,7 @@ let package = Package(
         .executable(name: "graftty-host", targets: ["GrafttyHost"]),
         .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
+        .library(name: "GrafttyWindowsTerminal", targets: ["GrafttyWindowsTerminal"]),
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
@@ -203,6 +240,24 @@ let package = Package(
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "72a09adb79e0b7112df92949612533c013c6c664"),
     ] + appleDependencies,
     targets: ([
+        .target(name: "CGrafttyConPTY"),
+        .target(
+            name: "GrafttyWindowsTerminal",
+            dependencies: [.target(name: "CGrafttyConPTY", condition: .when(platforms: [.windows]))],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
+            name: "GrafttyWindowsTerminalTests",
+            dependencies: ["GrafttyWindowsTerminal"],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(name: "GrafttyWindowsTransportTests", dependencies: [
+            "GrafttyTunnel",
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOSSH", package: "swift-nio-ssh"),
+            .product(name: "Crypto", package: "swift-crypto"),
+        ], swiftSettings: strictWarnings),
         .target(
             name: "GrafttyProtocol",
             dependencies: cryptoDependencies,
@@ -433,3 +488,4 @@ let package = Package(
         ),
     ] : [])
 )
+#endif
