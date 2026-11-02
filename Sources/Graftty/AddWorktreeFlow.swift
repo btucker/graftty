@@ -25,6 +25,21 @@ import GrafttyProtocol
 /// orchestration dependencies.
 @MainActor
 enum AddWorktreeFlow {
+    // beginCreate and finishCreate can run in separate tasks. Keep relocation
+    // provenance with the pending operation rather than its later task's start.
+    private static var creationRelocationBaselines: [String: (repoID: UUID, revision: Int)] = [:]
+
+    private static func discardFinishedCreationBaselines(in repo: RepoEntry) {
+        let pending = Set(repo.worktrees.compactMap { worktree -> String? in
+            guard let progress = worktree.creationProgress, progress.isPending else { return nil }
+            return progress.operationID
+        })
+        // Scope cleanup to this repository; other state bindings can be active.
+        creationRelocationBaselines = creationRelocationBaselines.filter {
+            $0.value.repoID != repo.id || pending.contains($0.key)
+        }
+    }
+
     /// Host-managed zmx panes normally wait for their AppKit view's first
     /// settled layout before attaching. Background creation has no guarantee
     /// that a view will ever mount, so each caller must choose deliberately.
@@ -92,10 +107,25 @@ enum AddWorktreeFlow {
     ) -> Swift.Result<String, FlowError> {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
-        return appState.wrappedValue.insertCreatingWorktree(
+        var candidate = before
+        let result = candidate.insertCreatingWorktree(
             repoPath: repoPath, worktreeName: worktreeName, branch: branch,
             base: base, creationOrigin: creationOrigin
         )
+        guard case .success(let path) = result else { return result }
+        guard let repo = before.repos.first(where: { $0.path == repoPath }) else { return .failure(.repoNotFound) }
+        if GrafttyApp.isRelocatingRepo(repo.id),
+           FileManager.default.fileExists(atPath: path + "/.git") {
+            // The model can still hold the occupied checkout's old path.
+            // Reject before publishing a diagnostic placeholder at its destination.
+            return .failure(.pathCollision)
+        }
+        discardFinishedCreationBaselines(in: repo)
+        if let operationID = candidate.worktree(forPath: path)?.creationProgress?.operationID {
+            creationRelocationBaselines[operationID] = (repo.id, GrafttyApp.repoRelocationRevision(repo.id))
+        }
+        appState.wrappedValue = candidate
+        return result
     }
 
     /// Phase two: run `git worktree add`, discover the result, arm
@@ -118,15 +148,34 @@ enum AddWorktreeFlow {
         terminalManager: TerminalManager,
         teamEventDispatcher: TeamEventDispatcher,
         initialCommand: String? = nil,
-        terminalStartTiming: TerminalStartTiming
+        terminalStartTiming: TerminalStartTiming,
+        discover: @MainActor (String) async throws -> [DiscoveredWorktree] = { try await GitWorktreeDiscovery.discover(repoPath: $0) }
     ) async -> Swift.Result<Result, FlowError> {
         let before = appState.wrappedValue
         let operationID = before.worktree(forPath: worktreePath)?.creationProgress?.operationID
+        let baseline = operationID.flatMap { creationRelocationBaselines.removeValue(forKey: $0) }
+        guard let repo = before.repos.first(where: { $0.path == repoPath }) else {
+            return .failure(.discoveryFailed("repository vanished before creation"))
+        }
+        let repoID = repo.id
+        if let baseline, baseline.repoID != repoID {
+            return .failure(.discoveryFailed("repository was replaced before creation"))
+        }
+        discardFinishedCreationBaselines(in: repo)
+        let creationRevision = baseline?.revision ?? GrafttyApp.repoRelocationRevision(repoID)
+        func creationIsCurrent() -> Bool {
+            guard let (repo, worktree) = appState.wrappedValue.indices(forWorktreePath: worktreePath) else { return false }
+            return appState.wrappedValue.repos[repo].id == repoID
+                && appState.wrappedValue.repos[repo].path == repoPath
+                && appState.wrappedValue.repos[repo].worktrees[worktree].creationProgress?.operationID == operationID
+        }
         var succeeded = false
         var failureMessage = "Creation did not finish. See Git and hook output for details."
         defer {
-            appState.wrappedValue.transitionCreation(at: worktreePath,
-                to: succeeded ? .ready : .failed, error: succeeded ? nil : failureMessage, operationID: operationID)
+            if creationIsCurrent() {
+                appState.wrappedValue.transitionCreation(at: worktreePath,
+                    to: succeeded ? .ready : .failed, error: succeeded ? nil : failureMessage, operationID: operationID)
+            }
             GrafttyApp.persistAppStateIfChanged(appState, from: before)
         }
         // For .useExisting, the start point is the existing branch itself;
@@ -138,8 +187,18 @@ enum AddWorktreeFlow {
                 "AddWorktreeFlow: base must be nil when reusing an existing branch"
             )
         }
+        do {
+            try Task.checkCancellation()
+            try GrafttyApp.checkRepoRelocationFailures(repoID, since: creationRevision)
+        } catch {
+            failureMessage = error.localizedDescription
+            return .failure(.discoveryFailed(failureMessage))
+        }
         let startPoint = await GitWorktreeAdd.startPoint(for: branch, base: base, repoPath: repoPath)
 
+        guard creationIsCurrent() else {
+            return .failure(.discoveryFailed("creation row was replaced while resolving its start point"))
+        }
         GrafttyApp.persistingChanges(to: appState) {
             appState.wrappedValue.transitionCreation(at: worktreePath, to: .git, operationID: operationID)
         }
@@ -154,6 +213,7 @@ enum AddWorktreeFlow {
                 // worktree before running the mutation from the repo root.
                 startPointResolutionPath: base == nil ? nil : baseResolutionPath,
                 onOutput: { output in
+                    guard creationIsCurrent() else { return }
                     GrafttyApp.persistingChanges(to: appState) {
                         appState.wrappedValue.recordCreationOutput(output, at: worktreePath, operationID: operationID)
                     }
@@ -164,7 +224,7 @@ enum AddWorktreeFlow {
             return .failure(WorktreeCreationError(gitAddFailure: error))
         }
 
-        guard appState.wrappedValue.worktree(forPath: worktreePath)?.creationProgress?.operationID == operationID else {
+        guard creationIsCurrent() else {
             return .failure(.discoveryFailed("creation row was replaced while Git ran"))
         }
         GrafttyApp.persistingChanges(to: appState) {
@@ -176,16 +236,31 @@ enum AddWorktreeFlow {
         // attempt to spawn its terminal. FSEvents on `.git/worktrees/`
         // will also fire `worktreeMonitorDidDetectChange` asynchronously
         // — that path is idempotent, so duplicate discovery is a no-op.
-        let discovered: [DiscoveredWorktree]
+        var discovered: [DiscoveredWorktree]
         do {
-            discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+            while true {
+                try GrafttyApp.checkRepoRelocationFailures(repoID, since: creationRevision)
+                let revision = GrafttyApp.repoRelocationRevision(repoID)
+                discovered = try await discover(repoPath)
+                try Task.checkCancellation()
+                try GrafttyApp.checkRepoRelocationFailures(repoID, since: creationRevision)
+                // Relocation still has old worktree paths until its final merge.
+                // Wait and rediscover instead of adopting moved rows as new IDs.
+                // Check again after every discovery, in the same actor turn as adoption.
+                if GrafttyApp.repoRelocationRevision(repoID) == revision,
+                   !GrafttyApp.isRelocatingRepo(repoID) { break }
+                try await GrafttyApp.waitForRepoRelocations(repoID)
+            }
         } catch {
             failureMessage = "Could not discover the created worktree: \(error)"
             return .failure(.discoveryFailed("\(error)"))
         }
 
         guard let (repoIdx, wtIdx) = appState.wrappedValue
-            .indices(forWorktreePath: worktreePath) else {
+            .indices(forWorktreePath: worktreePath),
+              appState.wrappedValue.repos[repoIdx].id == repoID,
+              appState.wrappedValue.repos[repoIdx].path == repoPath,
+              appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].creationProgress?.operationID == operationID else {
             return .failure(.discoveryFailed(
                 "placeholder vanished from app state during create"
             ))
