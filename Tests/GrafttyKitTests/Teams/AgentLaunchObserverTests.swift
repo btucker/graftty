@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyKit
 
 struct AgentLaunchObserverTests {
-    @Test("@spec AGENT-6.136: When a saved Claude or Codex conversation restarts, the launcher shall pass its exact conversation ID as one argument, publish the new assignment environment, and report exits for that new launch.", arguments: [TeamHookRuntime.claude, .codex])
+    @Test("@spec AGENT-6.136: When a saved Claude or Codex conversation restarts, the launcher shall pass its exact conversation ID as one argument, publish the new assignment environment, omit synthetic user prompts and bounded finish instructions, and report exits for that new launch.", arguments: [TeamHookRuntime.claude, .codex])
     func resumedProviderReceivesExactConversation(provider: TeamHookRuntime) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-resume-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -11,7 +11,7 @@ struct AgentLaunchObserverTests {
         let executable = root.appendingPathComponent(provider.rawValue)
         try "#!/bin/sh\nprintf '%s\\n' \"$GRAFTTY_ASSIGNMENT_ID\" \"$@\" > \"$RESUME_ARGS\"\nexit 9\n".write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        var agent = ManagedAgent(name: "Resume", provider: provider, parent: nil)
+        var agent = ManagedAgent(name: "Resume", provider: provider, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSessionID = PaneSessionID()
         agent.providerSessionID = "exact conversation's ID"
         let completion = try agent.finish(assignment: agent.assignmentID, result: "First result")
@@ -30,8 +30,10 @@ struct AgentLaunchObserverTests {
         process.standardError = FileHandle.nullDevice
         try process.run()
         process.waitUntilExit()
+        #expect(launch.promptFile == nil)
+        #expect(!agent.sessionInstructions.contains("graftty agent finish"))
         let received = try String(contentsOf: args, encoding: .utf8).components(separatedBy: "\n")
-        #expect(Array(received.prefix(4)) == [agent.assignmentID.uuidString, provider == .claude ? "--resume" : "resume", "exact conversation's ID", "--"])
+        #expect(Array(received.dropLast()) == [agent.assignmentID.uuidString, provider == .claude ? "--resume" : "resume", "exact conversation's ID"])
         let event = try #require(AgentLifecycleHandoff(directory: prompts.appendingPathComponent("lifecycle")).pending().first?.1)
         #expect(event.assignmentID == agent.launchAssignmentID)
         #expect(event.exitCode == 9)

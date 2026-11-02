@@ -27,13 +27,27 @@ class MacRunnerTests(unittest.TestCase):
         previous_mask = signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
         self.addCleanup(signal.pthread_sigmask, signal.SIG_SETMASK, previous_mask)
 
-    def run_fixture(self, outcome="complete"):
+    def run_fixture(self, outcome="complete", layout="legacy", split_suites=False):
         run_process = subprocess.run
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            binary = root / ".build/debug/GrafttyPackageTests.xctest/Contents/MacOS/GrafttyPackageTests"
-            binary.parent.mkdir(parents=True)
-            binary.touch()
+            products = root / ".build/debug"
+            if layout != "legacy":
+                (root / ".build/out/Products/Debug").mkdir(parents=True)
+                products.symlink_to("out/Products/Debug", target_is_directory=True)
+            products.mkdir(parents=True, exist_ok=True)
+            modules = ["KitTests", "OtherTests"]
+            names = ["GrafttyPackageTests"] if layout == "legacy" else modules.copy()
+            if layout.startswith("mixed"):
+                names.append("GrafttyPackageTests")
+            if layout.endswith("missing"):
+                names.remove("OtherTests")
+            binaries = {}
+            for name in names:
+                binary = products / f"{name}.xctest/Contents/MacOS/{name}"
+                binary.parent.mkdir(parents=True)
+                binary.touch()
+                binaries[name] = binary.resolve()
             toolchain = root / "toolchain"
             helper = toolchain / "usr/libexec/swift/pm/swiftpm-testing-helper"
             helper.parent.mkdir(parents=True)
@@ -42,12 +56,13 @@ class MacRunnerTests(unittest.TestCase):
                 helper.chmod(0o755)
             platform = root / "MacOSX.platform"
             commands = []
+            other_suite = "Separate" if split_suites else "Parent"
 
             def discover(command, **kwargs):
                 if command[:2] == ["swift", "test"]:
                     self.assertIn("list", command)
                     if "--disable-xctest" in command:
-                        return "KitTests.Parent/parameterized(_:)\nKitTests.Parent/disabled()\n"
+                        return "KitTests.Parent/parameterized(_:)\nKitTests.Parent/disabled()\n" + f"OtherTests.{other_suite}/second()\n"
                     return "MacTests.Native/testPass\n"
                 if command == ["xcrun", "--find", "swift"]:
                     return str(toolchain / "usr/bin/swift") + "\n"
@@ -59,7 +74,8 @@ class MacRunnerTests(unittest.TestCase):
                 commands.append(command)
                 transcript = Path(command[2])
                 if str(helper) in command:
-                    self.assertIn(str(binary.resolve()), command)
+                    binary = Path(command[command.index("--test-bundle-path") + 1])
+                    self.assertEqual(binary, binaries[binary.name])
                     self.assertIn("--no-parallel", command)
                     expected_environment = {
                         "DYLD_FRAMEWORK_PATH": ":".join(("caller-frameworks", str(platform / "Developer/Library/Frameworks"),
@@ -88,10 +104,14 @@ class MacRunnerTests(unittest.TestCase):
                     if outcome == "failed":
                         raise subprocess.CalledProcessError(1, command)
                     xml = Path(command[command.index("--xunit-output") + 1])
-                    xml.write_text('<testsuites>' if outcome == "truncated" else '''<testsuites><testsuite>
-                      <testcase classname="KitTests.Parent" name="parameterized(_:)"/>
-                      <testcase classname="KitTests.Parent" name="disabled()"><skipped/></testcase>
-                    </testsuite></testsuites>''')
+                    cases = []
+                    if binary.name in ("GrafttyPackageTests", "KitTests"):
+                        cases.extend(['<testcase classname="KitTests.Parent" name="parameterized(_:)"/>',
+                                      '<testcase classname="KitTests.Parent" name="disabled()"><skipped/></testcase>'])
+                    if binary.name in ("GrafttyPackageTests", "OtherTests"):
+                        cases.append(f'<testcase classname="OtherTests.{other_suite}" name="second()"/>')
+                    xml.write_text('<testsuites>' if outcome == "truncated" else
+                                   '<testsuites><testsuite>' + ''.join(cases) + '</testsuite></testsuites>')
                 else:
                     self.assertIn("--disable-swift-testing", command)
                     transcript.write_text("Test Case '-[MacTests.Native testPass]' passed (0.001 seconds).\n")
@@ -117,6 +137,37 @@ class MacRunnerTests(unittest.TestCase):
         self.assertIn("KitTests.Parent/disabled()", swift_results)
         self.assertIn("KitTests.Parent/parameterized(_:)", swift_results)
         self.assertIn("MacTests.Native/testPass", xctest_results)
+
+    def test_runs_every_target_product_and_verifies_shared_suite_names_once(self):
+        commands, swift_results, xctest_results = self.run_fixture(layout="per-target")
+        self.assertEqual(len(commands), 3)
+        self.assertEqual(json.loads(swift_results), ["KitTests.Parent/disabled()",
+                                                   "KitTests.Parent/parameterized(_:)",
+                                                   "OtherTests.Parent/second()"])
+        self.assertEqual(json.loads(xctest_results), ["MacTests.Native/testPass"])
+
+    def test_mixed_cached_products_prefer_targets_without_loading_the_aggregate(self):
+        commands, _, _ = self.run_fixture(layout="mixed")
+        self.assertEqual(len(commands), 3)
+        bundles = [command[command.index("--test-bundle-path") + 1]
+                   for command in commands if "--test-bundle-path" in command]
+        self.assertEqual([Path(bundle).name for bundle in bundles], ["KitTests", "OtherTests"])
+
+    def test_batches_skip_irrelevant_bundles_and_verify_all_modules(self):
+        with mock.patch.object(mac_runner, "mac_filters", side_effect=lambda inventory: test_plan.mac_filters(inventory, batch_size=1)):
+            commands, swift_results, _ = self.run_fixture(layout="per-target", split_suites=True)
+        self.assertEqual(len(commands), 3)
+        reports = [Path(command[command.index("--xunit-output") + 1]).name
+                   for command in commands if "--xunit-output" in command]
+        self.assertEqual(reports, ["swift-1-KitTests.xml", "swift-2-OtherTests.xml"])
+        self.assertEqual(json.loads(swift_results), ["KitTests.Parent/disabled()",
+                                                   "KitTests.Parent/parameterized(_:)",
+                                                   "OtherTests.Separate/second()"])
+
+    def test_missing_target_never_falls_back_to_a_cached_aggregate(self):
+        for layout in ("per-target-missing", "mixed-missing"):
+            with self.subTest(layout=layout), self.assertRaises(FileNotFoundError):
+                self.run_fixture(layout=layout)
 
     def test_helper_failure_is_not_a_successful_batch(self):
         with self.assertRaises(subprocess.CalledProcessError):

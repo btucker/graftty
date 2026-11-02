@@ -240,7 +240,7 @@ struct WorkspaceContentView: View {
                 if let next = layout.focusedSession { focus(next) }
                 else { terminalManager.clearFocus() }
             }
-        } else if let agent = agent(slot), let completion = agent.completion, agent.requiresAcknowledgment {
+        } else if let agent = agent(slot), let completion = agent.completion {
             Button(completion.outcome == .interrupted || completion.outcome == .failed ? "Acknowledge and close agent" : "Close completed agent") { perform(.init(action: .close, callerWorktree: worktree.path, agentID: agent.id, completionID: completion.id)) }
         }
     }
@@ -304,7 +304,7 @@ struct WorkspaceContentView: View {
             let response = await request(.init(action: .add, callerWorktree: worktree.path,
                 name: "Agent \(worktree.agents.count + 1)", worktree: worktree.path,
                 provider: provider.flatMap(TeamHookRuntime.init(rawValue:)),
-                operationID: operationID.uuidString, selectTab: true))
+                operationID: operationID.uuidString, selectTab: true, launchOrigin: .userInterface))
             if case .error(let message) = response { throw AgentLaunchError(message) }
         }
             .fixedSize().disabled(launching)

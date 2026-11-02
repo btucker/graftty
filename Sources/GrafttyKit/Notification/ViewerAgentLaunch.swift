@@ -16,7 +16,7 @@ public enum ViewerAgentLaunch {
         let explicit = provider.flatMap(TeamHookRuntime.init(rawValue:))
         let response = await AgentControl.handle(.init(action: .add, callerWorktree: path,
             name: "Agent \(worktree.agents.count + 1)", worktree: path, provider: explicit,
-            operationID: operationID.uuidString, selectTab: false), platform: platform)
+            operationID: operationID.uuidString, selectTab: false, launchOrigin: .userInterface), platform: platform)
         return result(response)
     }
 
@@ -48,7 +48,8 @@ public enum ViewerAgentLaunch {
         }
         let response = await AgentControl.handle(.init(action: .add, callerWorktree: repository,
             name: name, provider: provider, operationID: UUID().uuidString, branch: branch,
-            existing: existingSource != nil, selectTab: false, existingBranchSource: branchSource), platform: platform)
+            existing: existingSource != nil, selectTab: false, existingBranchSource: branchSource,
+            launchOrigin: .userInterface), platform: platform)
         guard case .agents(let records) = response, let record = records.first,
               let operation = record.operationID else { return result(response) }
         // Creation continues in its host-owned task if the viewer disconnects.

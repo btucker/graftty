@@ -117,8 +117,10 @@ public final class HeadlessHostRuntime {
                     let name = launcher.sessionName(for: session)
                     // A surviving daemon needs no new startup attach. Remote
                     // clients will attach when they choose this pane.
-                    if !live.contains(name), state.repos[ri].worktrees[wi].agents.contains(where: { $0.paneSlotID == slot && $0.status != .closed }) {
-                        state.repos[ri].worktrees[wi].recordManagedSessionEnd(slot: slot, reason: "Terminal process was absent after restart")
+                    if !live.contains(name), let agent = state.repos[ri].worktrees[wi].agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) {
+                        state.repos[ri].worktrees[wi].recordManagedSessionEnd(slot: slot, reason: "Terminal process was absent after restart",
+                            preserveView: !agent.isBoundedAssignment)
+                        if !agent.isBoundedAssignment { continue }
                         state.repos[ri].worktrees[wi].splitTree = state.repos[ri].worktrees[wi].splitTree.removing(slot)
                         state.repos[ri].worktrees[wi].clearPaneSession(for: slot)
                         if state.repos[ri].worktrees[wi].splitTree.leafCount == 0 { state.repos[ri].worktrees[wi].state = .closed }

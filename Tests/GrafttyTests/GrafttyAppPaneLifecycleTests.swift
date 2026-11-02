@@ -487,7 +487,7 @@ struct GrafttyAppPaneLifecycleTests {
         var source = WorktreeEntry(path: "/repo/source", branch: "source", state: .running,
             splitTree: SplitTree(root: .leaf(slot)))
         source.paneSessions[slot] = session
-        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         agent.paneSlotID = slot
         source.agents = [agent]
         let target = WorktreeEntry(path: "/repo/target", branch: "target")

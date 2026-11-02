@@ -76,6 +76,9 @@ struct AgentCLITests {
     }
     @Test("@spec AGENT-6.72: When invoking agent add, the CLI shall accept an optional existing worktree and provider, preserve the prompt, and reject conflicting prompt sources or an unsupported provider.")
     func creationArguments() throws {
+        // Agent, pane, and worktree CLI launches share this request factory.
+        #expect(try AgentCLI.request(.add, targetFallback: "/repo").launchOrigin == .cliAgentAdd)
+        #expect(try AgentCLI.request(.list, targetFallback: "/repo").launchOrigin == nil)
         let command = try AgentAdd.parse(["review", "--worktree", "current", "--provider", "claude", "--prompt-stdin"])
         #expect(command.worktree == "current")
         #expect(command.provider == "claude")

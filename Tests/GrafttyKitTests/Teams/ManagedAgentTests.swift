@@ -5,7 +5,7 @@ import Testing
 struct ManagedAgentTests {
     @Test("@spec AGENT-6.66: When an agent explicitly finishes an assignment, the application shall retain its result and completion identity until cleanup succeeds, including across persistence and repeated finish requests.")
     func durableCompletion() throws {
-        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         let assignment = agent.assignmentID
         let first = try agent.finish(assignment: assignment, result: "Reviewed the changes.")
         #expect(agent.status == .awaitingCleanup)
@@ -28,7 +28,7 @@ struct ManagedAgentTests {
 
     @Test("@spec AGENT-6.67: When a completed agent resumes, the application shall reject completion and cleanup requests for its earlier assignment while preserving the earlier result.")
     func staleCompletionCannotCloseResumedWork() throws {
-        var agent = ManagedAgent(name: "Review", provider: .claude, parent: nil)
+        var agent = ManagedAgent(name: "Review", provider: .claude, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         let oldAssignment = agent.assignmentID
         let completion = try agent.finish(assignment: oldAssignment, result: "First pass")
         try agent.resume()
@@ -45,7 +45,7 @@ struct ManagedAgentTests {
 
     @Test("@spec AGENT-6.68: While an agent is running or waiting for input, the application shall require explicit assignment completion before parent cleanup.")
     func turnEndIsNotCompletion() throws {
-        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
         #expect(throws: ManagedAgent.LifecycleError.staleCompletion) {
             try agent.beginClose(completion: UUID())
         }
