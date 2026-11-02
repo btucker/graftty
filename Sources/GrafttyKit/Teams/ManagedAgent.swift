@@ -223,6 +223,26 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         guard status == .closed, let conversation = providerSessionID, !conversation.isEmpty else {
             throw LifecycleError.invalidState
         }
+        resetConversationAssignment()
+        resumingSessionID = conversation
+        launchOrigin = .resumedSession
+        paneSlotID = presentationSlotID ?? PaneSlotID()
+        if paneSessionID == nil { paneSessionID = PaneSessionID() }
+        processObservation = nil
+        status = .starting
+    }
+
+    /// A new provider started in a surviving ongoing shell owns a fresh assignment.
+    mutating func recoverOngoingConversation() {
+        guard !isBoundedAssignment, completion != nil,
+              [.interrupted, .failed, .awaitingCleanup].contains(status) else { return }
+        resetConversationAssignment()
+        launchOrigin = .observedSession
+        resumingSessionID = nil
+        status = .running
+    }
+
+    private mutating func resetConversationAssignment() {
         if let transcriptArchive { transcriptHistory = (transcriptHistory ?? [:]).merging([assignmentID: transcriptArchive]) { _, new in new } }
         transcriptArchive = nil
         transcript = nil
@@ -234,12 +254,6 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         deliveryFailure = nil
         failure = nil
         initialPrompt = nil
-        resumingSessionID = conversation
-        launchOrigin = .resumedSession
-        paneSlotID = presentationSlotID ?? PaneSlotID()
-        if paneSessionID == nil { paneSessionID = PaneSessionID() }
-        processObservation = nil
-        status = .starting
     }
 
     /// A restart that never acquired a live binding is safe to retry after host recovery.

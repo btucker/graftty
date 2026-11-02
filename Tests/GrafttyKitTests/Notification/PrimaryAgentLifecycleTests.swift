@@ -107,7 +107,8 @@ struct PrimaryAgentLifecycleTests {
         parent.nativeAgentID = "codex-123456789abc"
         let completion = try parent.finish(assignment: parent.assignmentID, result: "Created the worktree")
         var primary = ManagedAgent(name: "Primary", provider: .codex,
-            parent: .init(member: "main", worktree: "/repo", runtime: "codex", agentID: parent.nativeAgentID))
+            parent: .init(member: "main", worktree: "/repo", runtime: "codex", agentID: parent.nativeAgentID),
+            status: creationPending ? .starting : .running)
         primary.parentManagedAgentID = parent.id
         primary.isPrimary = true
         primary.launchTargetWorktree = "/repo/child"
@@ -123,13 +124,14 @@ struct PrimaryAgentLifecycleTests {
         }
         let response = await AgentControl.handle(.init(action: .close, callerWorktree: "/repo",
             agentID: parent.id, completionID: completion.id), platform: platform)
-        if creationPending {
+        if creationPending && !interrupted {
             #expect(response == .error(AgentControlError.activeChildren.localizedDescription))
             #expect(platform.closedAgentSlots.isEmpty)
         } else {
             guard case .agents = response else { Issue.record("Expected cleanup, got \(response)"); return }
-            #expect(platform.state.worktree(forPath: "/repo/child")?.agents.first?.status == (interrupted ? .interrupted : .running))
-            #expect(platform.state.worktree(forPath: "/repo/child")?.agents.first?.requiresAcknowledgment == false)
+            let retained = try #require(platform.state.repos.flatMap(\.worktrees).flatMap(\.agents).first { $0.id == primary.id })
+            #expect(retained.status == (interrupted ? .interrupted : .running))
+            #expect(!retained.requiresAcknowledgment)
         }
     }
 

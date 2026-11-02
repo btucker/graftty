@@ -78,20 +78,25 @@ extension SocketRequestRouter: ControlPlatform {
         terminalManager.managedSessionMissing = { [weak self] slot in
             guard let self, let worktree = self.state.repos.flatMap(\.worktrees).first(where: {
                 $0.agents.contains { $0.paneSlotID == slot && $0.status != .closed }
-            }) else { return }
+            }), let agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) else { return }
             try AgentControl.sessionEnded(path: worktree.path, slot: slot,
-                reason: "Terminal process was absent after restart", platform: self)
+                reason: "Terminal process was absent after restart", preserveView: !agent.isBoundedAssignment, platform: self)
         }
         terminalManager.managedPaneClose = { [weak self] slot, userInitiated in
             guard let self, let worktree = self.state.repos.flatMap(\.worktrees).first(where: {
                 $0.agents.contains { $0.paneSlotID == slot && $0.status != .closed }
-            }) else { return false }
+            }), let agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) else { return false }
             Task { @MainActor in
                 do {
                     if userInitiated {
                         try await AgentControl.interruptSession(path: worktree.path, slot: slot, platform: self)
                     } else if try await !self.agentSessionIsAlive(worktree: worktree.path, slot: slot) {
-                        let bounded = self.state.worktree(forPath: worktree.path)?.agents.first { $0.paneSlotID == slot }?.isBoundedAssignment == true
+                        guard let current = self.state.worktree(forPath: worktree.path),
+                              current.paneSessions[slot] == worktree.paneSessions[slot],
+                              let currentAgent = current.agents.first(where: {
+                                  $0.id == agent.id && $0.assignmentID == agent.assignmentID && $0.paneSlotID == slot && $0.status != .closed
+                              }) else { return }
+                        let bounded = currentAgent.isBoundedAssignment
                         try AgentControl.sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited",
                             preserveView: !bounded, platform: self)
                         if bounded {

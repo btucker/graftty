@@ -78,7 +78,8 @@ public enum AgentControl {
     }
 
     public static func sessionContext(path: String, agentID: String?, paneSessionName: String?,
-                                      provider: TeamHookRuntime, providerSessionID: String? = nil, isSubagent: Bool = false, platform: any ControlPlatform) async throws -> String {
+                                      provider: TeamHookRuntime, providerSessionID: String? = nil, isSessionStart: Bool = false,
+                                      isSubagent: Bool = false, platform: any ControlPlatform) async throws -> String {
         guard !isSubagent else { return "" }
         guard let index = platform.state.indices(forWorktreePath: path) else { return "" }
         var worktree = platform.state.repos[index.repo].worktrees[index.worktree]
@@ -102,10 +103,13 @@ public enum AgentControl {
            var agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) {
             guard agent.provider == provider else { return "" }
             agent.isPrimary = worktree.isPrimaryAgent(agent)
+            if isSessionStart || (providerSessionID?.isEmpty == false && providerSessionID != agent.providerSessionID) {
+                agent.recoverOngoingConversation()
+            }
             agent.paneSlotID = slot
             agent.paneSessionID = worktree.paneSessions[slot]
             if let providerSessionID, !providerSessionID.isEmpty { agent.providerSessionID = providerSessionID }
-            if agent.nativeAgentID != agentID { agent.nativeBindingDate = Date() }
+            if isSessionStart || agent.nativeAgentID != agentID { agent.nativeBindingDate = Date() }
             agent.nativeAgentID = agentID
             agent.observeWaiting(false)
             try save(agent, path: path, platform: platform)
@@ -181,6 +185,9 @@ public enum AgentControl {
                agent.parent?.agentID != caller || agent.parent?.worktree != request.callerWorktree {
                 throw AgentControlError.parentRequired
             }
+            if [.close, .resume].contains(request.action), request.callerAgentID != nil, !agent.isBoundedAssignment {
+                throw ManagedAgent.LifecycleError.ongoingSession
+            }
             switch request.action {
             case .show:
                 expireDetailSnapshots()
@@ -244,9 +251,6 @@ public enum AgentControl {
                     try? await reconcileCompletions(repoIndex: index, agentID: agent.id, platform: platform)
                 }
             case .close:
-                if request.callerAgentID != nil, !agent.isBoundedAssignment {
-                    throw ManagedAgent.LifecycleError.ongoingSession
-                }
                 guard closingAgents.insert(agent.id).inserted else {
                     return .error("Cleanup is already in progress. Retry with the same completion ID.")
                 }
@@ -280,8 +284,8 @@ public enum AgentControl {
                 guard let currentRepo = platform.state.repos.first(where: { $0.path == repoPath }) else { throw AgentControlError.unknownAgent }
                 guard !hasOpenChildren(of: agent, in: currentRepo) else { throw AgentControlError.activeChildren }
                 agent.isPrimary = platform.state.worktree(forPath: path)?.isPrimaryAgent(agent)
-                // A fresh provider invocation receives the new assignment in both its
-                // environment and launch instructions. The old process cannot finish it.
+                // A fresh provider invocation receives the new assignment through its
+                // environment and hook context, without a synthetic user prompt.
                 if agent.status != .closed {
                     guard let completion = agent.completion else { throw ManagedAgent.LifecycleError.invalidState }
                     try agent.beginClose(completion: completion.id)
@@ -486,10 +490,10 @@ public enum AgentControl {
         repo.worktrees.contains { worktree in
             worktree.agents.contains { child in
                 guard child.parent != nil, child.status != .closed else { return false }
-                // An ongoing worktree is independent after reservation moves there.
-                // Explicit completion or interruption still requires acknowledgment.
+                // Only a pending worktree reservation temporarily binds an ongoing
+                // agent to its creator. Failed creations cannot leave a cleanup trap.
                 if !child.isBoundedAssignment,
-                   child.launchTargetWorktree == nil || child.launchTargetWorktree == worktree.path { return false }
+                   child.status != .starting || child.launchTargetWorktree == nil || child.launchTargetWorktree == worktree.path { return false }
                 if let stableParent = child.parentManagedAgentID { return stableParent == parent.id }
                 return parent.nativeAgentID != nil && child.parent?.agentID == parent.nativeAgentID
             }
@@ -665,7 +669,7 @@ public enum AgentControl {
         for worktree in repo.worktrees {
             for var agent in worktree.agents {
                 guard agentID == nil || agentID == agent.id else { continue }
-                guard agent.requiresAcknowledgment, let completion = agent.completion, let parent = agent.parent,
+                guard agent.isBoundedAssignment, let completion = agent.completion, let parent = agent.parent,
                       agent.deliveredCompletionID != completion.id else { continue }
                 let key = completion.id.uuidString
                 let completedAgent = agent

@@ -11,7 +11,7 @@ Use `graftty agent add <name> --prompt-stdin --json` to create a worktree and it
 - `--timeout <seconds>` bounds `--wait`, defaults to 300, and does not cancel accepted creation.
 - The JSON response retains the managed identity, assignment ID, operation ID, and worktree. Use `graftty worktree status <operation-id>` for a new worktree's Git/hook progress.
 
-The initial task is retained in the managed record for recovery. Confirm native-agent reachability before relinquishing the delegated scope. A new worktree's primary agent stays open for ongoing work, even when another agent created it. It reports a finished task to its creator with `graftty team send` and keeps the session available. Only additional agents in an existing worktree use `graftty agent finish` and the parent's explicit `graftty agent close --completion` for assignment cleanup, as described in the [team skill](../SKILL.md).
+The initial task is retained in the managed record for recovery. Confirm native-agent reachability before relinquishing the delegated scope. A new worktree's primary agent stays open for ongoing work, even when another agent created it. It reports a finished task to its creator with `graftty team send` and keeps the session available. Only additional agents added by CLI agent-launch commands to an existing worktree use `graftty agent finish` and the parent's explicit `graftty agent close --completion` for assignment cleanup, as described in the [team skill](../SKILL.md).
 
 The lower-level `graftty worktree add` remains available for explicit branch selection with `--branch` and `--existing`. `graftty pane add --command` creates an ordinary terminal running a specified shell line. These commands are not the preferred agent-creation path.
 

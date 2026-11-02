@@ -16,7 +16,8 @@ struct AgentAdd: ParsableCommand {
         assignment, and operation IDs. Creation is accepted asynchronously; use --wait to wait
         for the new worktree's launch. Existing-worktree agents share files with its implementer.
         Agents launch in the background. Use --select-tab to open the new agent on the host.
-        When a child finishes, its parent receives a durable cleanup instruction.
+        Only CLI-added additional agents in existing worktrees have bounded assignments.
+        When one finishes, its parent receives a durable cleanup instruction.
         Native Claude and Codex subagents remain available for work within a session.
         """)
     @Argument(help: "Agent name; also the worktree name when creating a worktree") var name: String
@@ -48,7 +49,6 @@ struct AgentAdd: ParsableCommand {
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: initialTask) { throw ValidationError(error) }
         var request = try AgentCLI.request(.add, targetFallback: target)
         request.name = name; request.worktree = target; request.selectTab = selectTab
-        request.launchOrigin = .cliAgentAdd
         request.provider = provider.flatMap(TeamHookRuntime.init(rawValue:))
         request.prompt = initialTask; request.operationID = UUID().uuidString.lowercased(); request.base = base
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
@@ -176,7 +176,8 @@ enum AgentCLI {
         let caller = try callerWorktree(targetFallback: targetFallback)
         return .init(action: action, callerWorktree: caller,
             callerAgentID: TeamMessageInput.currentAgentID(worktreePath: caller),
-            paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: ProcessInfo.processInfo.environment))
+            paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: ProcessInfo.processInfo.environment),
+            launchOrigin: action == .add ? .cliAgentAdd : nil)
     }
     static func callerWorktree(targetFallback: String? = nil, state: AppState? = nil,
                                paneSessionName: String? = TeamRegisterPaneResolver.paneSessionName(env: ProcessInfo.processInfo.environment),
@@ -261,7 +262,7 @@ enum AgentCLI {
                 if let failure = agent.failure { print("failure=\(failure)") }
                 if let completion = agent.completion {
                     print(completion.result)
-                    if agent.status != .closed { print("cleanup=graftty agent close \(agent.id) --completion \(completion.id.uuidString)") }
+                    if agent.requiresAcknowledgment { print("cleanup=graftty agent close \(agent.id) --completion \(completion.id.uuidString)") }
                 }
             }
         }

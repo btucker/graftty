@@ -240,7 +240,7 @@ struct WorkspaceContentView: View {
                 if let next = layout.focusedSession { focus(next) }
                 else { terminalManager.clearFocus() }
             }
-        } else if let agent = agent(slot), let completion = agent.completion, agent.requiresAcknowledgment {
+        } else if let agent = agent(slot), let completion = agent.completion {
             Button(completion.outcome == .interrupted || completion.outcome == .failed ? "Acknowledge and close agent" : "Close completed agent") { perform(.init(action: .close, callerWorktree: worktree.path, agentID: agent.id, completionID: completion.id)) }
         }
     }

@@ -5,6 +5,74 @@ import Testing
 @MainActor
 @Suite("@spec AGENT-6.148: When an agent is launched, the application shall enable bounded finish instructions and parent cleanup only for CLI-added additional agents in an existing worktree, preserving ongoing, UI, observed, and unknown-origin sessions.")
 struct AgentTerminationScopeTests {
+    @Test func failedWorktreeCreationReleasesItsCreator() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        var parent = ManagedAgent(name: "Creator", provider: .codex, parent: nil,
+            launchOrigin: .cliAgentAdd, isPrimary: false)
+        parent.nativeAgentID = "codex-123456789abc"
+        parent.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
+        let completion = try parent.finish(assignment: parent.assignmentID, result: "Created work")
+        platform.state.repos[0].worktrees[0].agents = [parent]
+        platform.finishCreation = { plan in
+            platform.state.removeWorktree(atPath: plan.worktreePath)
+            return "Git failed"
+        }
+        let response = await AgentControl.handle(.init(action: .add, callerWorktree: "/repo",
+            callerAgentID: parent.nativeAgentID, name: "failed-child", provider: .codex,
+            launchOrigin: .cliAgentAdd), platform: platform)
+        guard case .agents(let rows) = response else { Issue.record("Expected accepted launch"); return }
+        let childID = try #require(rows.first?.agent.id)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !platform.state.repos[0].worktrees[0].agents.contains(where: { $0.id == childID && $0.status == .failed }),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(platform.state.repos[0].worktrees[0].agents.contains { $0.id == childID && $0.status == .failed })
+        let close = await AgentControl.handle(.init(action: .close, callerWorktree: "/repo",
+            agentID: parent.id, completionID: completion.id), platform: platform)
+        guard case .agents = close else { Issue.record("Failed ongoing worktree trapped its creator"); return }
+    }
+
+    @Test func closedBoundedAgentStillDeliversAnUndeliveredResult() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        var agent = ManagedAgent(name: "Review", provider: .codex,
+            parent: .init(member: "main", worktree: "/repo", runtime: "codex", agentID: "codex-123456789abc"),
+            launchOrigin: .cliAgentAdd, isPrimary: false)
+        let completion = try agent.finish(assignment: agent.assignmentID, result: "Durable result")
+        try agent.beginClose(completion: completion.id)
+        agent.didClose()
+        platform.state.repos[0].worktrees[0].agents = [agent]
+        await AgentControl.reconcileOutbox(platform: platform)
+        let rows = try platform.teamInbox.messages(teamID: "/repo")
+        #expect(rows.count == 1)
+        #expect(rows.first?.body.contains("Durable result") == true)
+    }
+
+    @Test(arguments: [false, true])
+    func newObservedProviderReplacesAnInterruptedOngoingAssignment(sameConversation: Bool) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        var agent = ManagedAgent(name: "Ongoing", provider: .codex, parent: nil,
+            launchOrigin: .userInterface, isPrimary: false)
+        agent.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
+        agent.nativeAgentID = "codex-123456789abc"
+        agent.providerSessionID = "old-conversation"
+        agent.sessionEnded(reason: "Provider exited")
+        platform.state.repos[0].worktrees[0].agents = [agent]
+        _ = try await AgentControl.sessionContext(path: "/repo", agentID: agent.nativeAgentID,
+            paneSessionName: platform.paneSession, provider: .codex, providerSessionID: "old-conversation", platform: platform)
+        #expect(platform.state.repos[0].worktrees[0].agents[0].completion != nil)
+        _ = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo",
+            callerAgentID: sameConversation ? agent.nativeAgentID : "codex-abcdef123456", runtime: .codex,
+            event: .sessionStart, sessionID: sameConversation ? "old-conversation" : "new-conversation",
+            paneSessionName: platform.paneSession), platform: platform)
+        let current = platform.state.repos[0].worktrees[0].agents[0]
+        #expect(current.status == .running)
+        #expect(current.completion == nil)
+        #expect(current.assignmentID != agent.assignmentID)
+        #expect(current.results == agent.results)
+        #expect(!current.isBoundedAssignment)
+    }
+
     @Test(arguments: [ManagedAgent.LaunchOrigin.cliAgentAdd, .userInterface, nil], [false, true])
     func existingWorktreeRequiresExplicitCLIOriginAndAnExistingPrimary(origin: ManagedAgent.LaunchOrigin?, hasPrimary: Bool) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
