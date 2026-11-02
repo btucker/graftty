@@ -344,6 +344,9 @@ struct MainWindow: View {
         // matching the theme's dark/light-ness so system chrome (traffic
         // lights, context menus, alerts) renders with correct contrast.
         .windowBackgroundTint(theme: terminalManager.theme)
+        .onChange(of: terminalManager.theme, initial: true) { _, theme in
+            previewWindows.updateTheme(theme)
+        }
         .installUpdateBadgeAccessory(controller: updaterController)
         .sheet(item: remotePairingRequestBinding) { request in
             RemotePairingRequestSheet(

@@ -24,7 +24,7 @@ struct WorktreePreviewMenu: View {
         Menu {
             if collections.isEmpty { Text("No previews in this worktree") }
             ForEach(collections) { collection in
-                Button(collection.title) {
+                Button(collection.menuTitle) {
                     open(collection.offers)
                 }
             }

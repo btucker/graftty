@@ -62,8 +62,9 @@ enum FilePreviewRequest {
                     return .error("The preview request or its display leader changed before delivery. Retry graftty preview.")
                 }
                 let entry = FilePreviewHistory.shared.record(files: files, pane: scope.pane, worktreePath: scope.worktreePath,
-                    id: published.first?.previewGroupID ?? UUID())
+                    id: published.first?.previewGroupID ?? UUID(), createdAt: published.first?.createdAt ?? Date())
                 previews.dismiss(scope.pane)
+                FilePreviewWindows.shared.updateTheme(terminalManager.theme)
                 FilePreviewWindows.shared.show(entry, activate: false, resolveInlineWorktree: { [weak terminalManager] pane in
                     terminalManager?.worktreePath(for: pane)
                 })

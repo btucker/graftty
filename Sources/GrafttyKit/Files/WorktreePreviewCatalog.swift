@@ -27,7 +27,7 @@ struct WorktreePreviewCatalog {
     }
 
     mutating func publish(_ snapshots: [FilePreviewLoader.Snapshot], worktree: String,
-                          paneSessionName: String) throws -> [RemoteOpenOffer] {
+                          paneSessionName: String, now: Date) throws -> [RemoteOpenOffer] {
         try load()
         guard (1...FilePreviewLoader.maximumFiles).contains(snapshots.count),
               snapshots.allSatisfy({ (0...RemoteOpenOffer.maxBytes).contains($0.bytes.count) }),
@@ -40,7 +40,7 @@ struct WorktreePreviewCatalog {
         let offers = snapshots.map {
             RemoteOpenOffer(id: UUID(), filename: $0.filename, byteCount: $0.bytes.count,
                 paneSessionName: paneSessionName, previewKind: "file",
-                previewGroupID: group)
+                previewGroupID: group, createdAt: now)
         }
         let record = Record(worktree: worktree, offers: offers)
         if let directory {

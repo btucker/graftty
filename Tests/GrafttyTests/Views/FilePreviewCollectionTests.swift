@@ -6,11 +6,11 @@ import Testing
 
 @MainActor
 struct FilePreviewCollectionTests {
-    @Test("@spec IMAGE-1.14: While the native preview tray toolbar is visible, the application shall keep collection navigation, file selection, Open… and Close controls legible and reachable in both wide and narrow panes.")
+    @Test("@spec IMAGE-1.14: While the native preview tray toolbar is visible, the application shall hide single-file navigation and keep available file selection, Open and Close controls legible and reachable in both wide and narrow panes.")
     func toolbarControlsFitNarrowAndWidePanes() throws {
         _ = NSApplication.shared
         let file = try FilePreviewFile(.init(filename: "long filename.html", bytes: Data()))
-        let tray = NativeFilePreviewTray(preview: .init(files: [file]), onDismiss: {}, onInteraction: { _ in })
+        let tray = NativeFilePreviewTray(preview: .init(files: [file, file]), onDismiss: {}, onInteraction: { _ in })
         defer { tray.tearDown() }
         for width in [180.0, 240, 320, 800] {
             tray.frame = NSRect(x: 0, y: 0, width: width, height: 240)
@@ -19,13 +19,40 @@ struct FilePreviewCollectionTests {
                 #expect(control.frame.minX >= 0 && control.frame.maxX <= width)
                 #expect(control.frame.minY >= 0 && control.frame.maxY <= tray.header.bounds.height)
             }
-            #expect(tray.open.frame.width >= tray.open.intrinsicContentSize.width)
+            #expect(tray.open.frame.width >= (width < 720 ? 24 : tray.open.intrinsicContentSize.width))
             #expect(!tray.picker.frame.intersects(tray.open.frame))
             #expect(!tray.picker.frame.intersects(tray.close.frame))
         }
     }
 
-    @Test("@spec IMAGE-1.15: When the user selects Open… from a native preview tray, the application shall open the selected original file in its default application and display launch errors without dismissing the collection.")
+    @Test("Single-file previews omit disabled navigation and the file dropdown.")
+    func singleFileCollapsesNavigation() throws {
+        _ = NSApplication.shared
+        let file = try FilePreviewFile(.init(filename: "only.html", bytes: Data()))
+        let tray = NativeFilePreviewTray(preview: .init(files: [file]), onDismiss: {}, onInteraction: { _ in })
+        defer { tray.tearDown() }
+        tray.frame = NSRect(x: 0, y: 0, width: 800, height: 240)
+        tray.layoutSubtreeIfNeeded()
+        #expect(tray.previous.isHidden && tray.next.isHidden)
+        #expect(tray.picker.isHidden)
+        #expect(tray.header.frame.height == 36)
+    }
+
+    @Test("Files with identical names remain distinct menu choices in request order.")
+    func duplicateFilenamesRemainSelectable() throws {
+        _ = NSApplication.shared
+        let files = try ["first", "second"].map { try FilePreviewFile(.init(filename: "report.html", bytes: Data($0.utf8))) }
+        let tray = NativeFilePreviewTray(preview: .init(files: files), onDismiss: {}, onInteraction: { _ in })
+        defer { tray.tearDown() }
+        #expect(tray.picker.numberOfItems == 2)
+        let menu = try #require(tray.picker.menu)
+        try #require(menu.numberOfItems == 2)
+        menu.performActionForItem(at: 1)
+        #expect(tray.previewURL == files[1].url)
+        #expect(tray.selectedIndex == 1)
+    }
+
+    @Test("@spec IMAGE-1.15: When the user selects Open from a native preview tray, the application shall open the selected original file in its default application and display launch errors without dismissing the collection.")
     func opensOriginalAndReportsLaunchErrors() async throws {
         let original = URL(fileURLWithPath: "/tmp/original-report.html")
         let file = try FilePreviewFile(.init(filename: "report.html", bytes: Data()), sourceURL: original)

@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import GrafttyKit
+import GrafttyProtocol
 
 /// Session history owns snapshots independently of pane and window lifetime.
 @MainActor
@@ -13,7 +14,9 @@ final class FilePreviewHistory: ObservableObject {
         let preview: ImagePreviewStore.Preview
         let pane: PaneSlotID
         let worktreePath: String
-        var createdAt: Date { preview.createdAt }
+        var createdAt: Date? { preview.createdAt }
+
+        var menuTitle: String { WorktreePreviewCollection.menuTitle(title, createdAt: createdAt) }
 
         var title: String {
             preview.files.count == 1 ? preview.filename : "\(preview.filename) + \(preview.files.count - 1) more"
@@ -26,12 +29,16 @@ final class FilePreviewHistory: ObservableObject {
         let recent = entries.filter { $0.worktreePath == worktreePath }
         var seen = Set(recent.map(\.id))
         let additional = active.filter { $0.worktreePath == worktreePath && seen.insert($0.id).inserted }
-        return (recent + additional).sorted { $0.preview.createdInstant > $1.preview.createdInstant }
+        return (recent + additional).sorted {
+            let lhs = $0.createdAt ?? .distantPast
+            let rhs = $1.createdAt ?? .distantPast
+            return lhs == rhs ? $0.preview.createdInstant > $1.preview.createdInstant : lhs > rhs
+        }
     }
 
     @discardableResult
-    func record(files: [FilePreviewFile], pane: PaneSlotID, worktreePath: String, id: UUID = UUID()) -> Entry {
-        let entry = Entry(preview: .init(files: files, id: id), pane: pane, worktreePath: worktreePath)
+    func record(files: [FilePreviewFile], pane: PaneSlotID, worktreePath: String, id: UUID = UUID(), createdAt: Date? = Date()) -> Entry {
+        let entry = Entry(preview: .init(files: files, id: id, createdAt: createdAt), pane: pane, worktreePath: worktreePath)
         entries.removeAll { $0.id == id && $0.worktreePath == worktreePath }
         entries.insert(entry, at: 0)
         if entries.count > Self.maximumEntries { entries.removeLast(entries.count - Self.maximumEntries) }

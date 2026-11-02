@@ -4418,9 +4418,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit file preview intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, retain previews without an available leader for manual worktree browsing, and reject unmappable recipients and invalid origins before publication.
 
-**IMAGE-1.14** While the native preview tray toolbar is visible, the application shall keep collection navigation, file selection, Open… and Close controls legible and reachable in both wide and narrow panes.
+**IMAGE-1.14** While the native preview tray toolbar is visible, the application shall hide single-file navigation and keep available file selection, Open and Close controls legible and reachable in both wide and narrow panes.
 
-**IMAGE-1.15** When the user selects Open… from a native preview tray, the application shall open the selected original file in its default application and display launch errors without dismissing the collection.
+**IMAGE-1.15** When the user selects Open from a native preview tray, the application shall open the selected original file in its default application and display launch errors without dismissing the collection.
 
 **IMAGE-1.16** When the user drags the image tray header, corner grip, or bottom edge, the application shall move or resize the tray within the terminal content bounds while retaining usable controls and an unobscured terminal region, without resizing the terminal grid.
 
@@ -4484,6 +4484,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.11** When a pane with a preview moves to another worktree, the application shall resolve active preview controls and return navigation against its current worktree while retaining the original request's history grouping.
 
+**PREVIEW-1.12** While a Mac preview window is open, the application shall use one path bar for worktree, files and history, and disallow automatic system tabs.
+
+**PREVIEW-1.13** While preview chrome follows the Ghostty theme, the application shall update its window and tray colors without changing Quick Look's system document appearance.
+
+**PREVIEW-1.14** While a preview has earlier requests or multiple files, the application shall combine file selection and deduplicated worktree history in one menu, show collection navigation only for multiple files, and raise an existing worktree window without replacing its selection.
+
+**PREVIEW-1.15** When a remote preview window is hidden or closed and reopened, the application shall retain its remote catalog transport for browsing and downloading history.
+
+**PREVIEW-1.16** When a library download is superseded before task cancellation is observed, the application shall discard its result without changing the selected preview or appending discarded history.
+
 ### PREVIEW-2.x
 
 **PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.
@@ -4505,6 +4515,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PREVIEW-2.9** When a downloaded mobile preview is dismissed, the application shall retain session-scoped access to its snapshots after host offers expire and pane views are recreated, without downloading again or automatically reopening it.
 
 **PREVIEW-2.10** While a native preview covers a mobile terminal, the application shall preserve its live terminal channel and mounted session through presentation and dismissal, and perform normal pane cleanup only when the pane is actually removed.
+
+**PREVIEW-2.11** When clients browse preview history, the application shall use the first filename and remaining file count as the collection title, preserve optional creation times across connections, and omit unknown times from legacy offers.
 
 ### PREVIEW-3.x
 

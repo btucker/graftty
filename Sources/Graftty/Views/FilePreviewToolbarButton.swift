@@ -79,14 +79,12 @@ struct FilePreviewToolbarButton: View {
         Group {
         if !entries.isEmpty || !catalog.isEmpty {
             Menu {
-                ForEach(catalog.filter { collection in !entries.contains { $0.id == collection.id } }) { collection in
-                    Button(collection.title) { openCollection(collection) }
-                }
-                ForEach(entries) { entry in
-                    Button {
-                        show(entry)
-                    } label: {
-                        Text(entry.title + " · " + entry.createdAt.formatted(date: .omitted, time: .shortened))
+                ForEach(FilePreviewNavigation(worktreePath: worktreePath, entries: entries, catalog: catalog).choices) { choice in
+                    Button(choice.title) {
+                        switch choice {
+                        case .session(let entry): show(entry)
+                        case .stored(let collection): openCollection(collection)
+                        }
                     }
                 }
             } label: {
@@ -145,24 +143,10 @@ struct FilePreviewToolbarButton: View {
         download = Task { @MainActor in
             defer { if downloadID == id { loading = false; download = nil; downloadID = nil } }
             do {
-                var files: [FilePreviewFile] = []
-                guard (1...20).contains(collection.offers.count),
-                      collection.offers.allSatisfy({ (0...RemoteOpenOffer.maxBytes).contains($0.byteCount) }),
-                      collection.offers.reduce(0, { $0 + $1.byteCount }) <= FilePreviewLoader.maximumTotalBytes else { throw FilePreviewLoader.Failure.tooLarge }
-                for offer in collection.offers {
-                    var bytes = Data()
-                    while bytes.count < offer.byteCount {
-                        try Task.checkCancellation()
-                        guard case .chunk(let chunk) = try await request(.read(id: offer.id, offset: bytes.count)),
-                              !chunk.isEmpty, chunk.count <= RemoteOpenOffer.chunkBytes,
-                              chunk.count <= offer.byteCount - bytes.count else { throw RemoteOpenStore.Failure.invalidFile }
-                        bytes.append(chunk)
-                    }
-                    let snapshot = FilePreviewLoader.Snapshot(filename: offer.filename, bytes: bytes)
-                    files.append(try await Task.detached { try FilePreviewFile(snapshot) }.value)
-                }
+                let files = try await FilePreviewCollectionLoader.load(collection) { try await request($0) }
                 try Task.checkCancellation()
-                let entry = history.record(files: files, pane: inlinePane ?? PaneSlotID(), worktreePath: worktreePath, id: collection.id)
+                let entry = history.record(files: files, pane: inlinePane ?? PaneSlotID(), worktreePath: worktreePath,
+                    id: collection.id, createdAt: collection.createdAt)
                 show(entry)
             } catch is CancellationError {} catch { if downloadID == id { self.error = error.localizedDescription } }
         }
@@ -173,6 +157,6 @@ struct FilePreviewToolbarButton: View {
     }
 
     private func show(_ entry: FilePreviewHistory.Entry) {
-        windows.show(entry, inlinePane: inlinePane, resolveInlineWorktree: resolveInlineWorktree)
+        windows.show(entry, inlinePane: inlinePane, resolveInlineWorktree: resolveInlineWorktree, catalogRequest: catalogRequest)
     }
 }

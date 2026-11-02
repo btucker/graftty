@@ -31,7 +31,8 @@ struct ImagePreviewControlTests {
         _ = NSApplication.shared
         let terminal = ImagePreviewControlTerminal(frame: .zero)
         let pane = PaneSlotID(id: UUID())
-        let preview = try ImagePreviewStore.Preview(image: try fixture(), filename: "drag me.png")
+        let file = try FilePreviewFile(.init(filename: "drag me.png", bytes: Data()))
+        let preview = ImagePreviewStore.Preview(files: [file, file])
         func root(pane: PaneSlotID, preview: ImagePreviewStore.Preview?) -> some View {
             ImagePreviewControlTerminalView(view: terminal).overlay(alignment: .top) {
                 ImagePreviewOverlay(pane: pane, preview: preview, onDismiss: {})
@@ -56,7 +57,7 @@ struct ImagePreviewControlTests {
         try await Task.sleep(for: .milliseconds(20))
         hosted.layoutSubtreeIfNeeded()
         #expect(tray.bounds.size == CGSize(width: 600, height: 390))
-        let headerPoint = tray.header.convert(NSPoint(x: 40, y: 22), to: nil)
+        let headerPoint = tray.header.convert(NSPoint(x: 2, y: 2), to: nil)
         let header = try #require(hosted.hitTest(hosted.superview?.convert(headerPoint, from: nil) ?? headerPoint))
         try drag(header, from: headerPoint, to: NSPoint(x: headerPoint.x + 100, y: headerPoint.y - 100), window: window)
         try await Task.sleep(for: .milliseconds(20))
@@ -85,7 +86,7 @@ struct ImagePreviewControlTests {
         hosted.rootView = root(pane: otherPane, preview: nil)
         try await Task.sleep(for: .milliseconds(20))
         #expect(descendants(hosted).compactMap { $0 as? NativeFilePreviewTray }.isEmpty)
-        hosted.rootView = root(pane: otherPane, preview: try .init(image: try fixture(), filename: "other worktree.png"))
+        hosted.rootView = root(pane: otherPane, preview: .init(files: [file, file]))
         try await Task.sleep(for: .milliseconds(20))
         hosted.layoutSubtreeIfNeeded()
         let otherTray = try #require(descendants(hosted).compactMap { $0 as? NativeFilePreviewTray }.first)
