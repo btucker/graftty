@@ -15,7 +15,7 @@ struct SidebarAttentionIdentityTests {
                           isBusy: false, attentionSource: .userNotify),
             sidebar: .init(id: "stable", projectID: "project",
                 unseenAgentStop: .init(agentName: "Codex", stoppedAt: .now,
-                    recap: .init(title: "Review changes", completed: "Checked changes", next: "Apply fixes"))))
+                    recap: .init(title: "Review changes", completed: "Checked changes", next: "Apply fixes", need: "Approve the fixes?"))))
     }
 
     @Test func everyAttentionSourceUsesWorktreeName() {

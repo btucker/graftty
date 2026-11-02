@@ -29,7 +29,8 @@ struct RenderedTerminalViewportTests {
             container.layoutIfNeeded()
             return container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
         }
-        let minimumClearance = fixture.host.view.safeAreaInsets.top + (embedded ? 1 : 68)
+        let viewportTop = embedded ? fixture.host.view.safeAreaInsets.top : fixture.window.bounds.minY
+        let minimumClearance = viewportTop + (embedded ? 0 : fixture.host.view.safeAreaInsets.top + 68)
         client.session.receive(Data("prompt".utf8))
         try await waitForLayout("first prompt") { client.session.readViewportText()?.contains("prompt") == true }
         #expect(textFrame().minY >= minimumClearance)
@@ -37,7 +38,7 @@ struct RenderedTerminalViewportTests {
 
         client.session.receive(Data("\r\nsecond line".utf8))
         try await waitForLayout("multiline terminal reaches top edge") {
-            abs(textFrame().minY - fixture.window.bounds.minY) < 1
+            abs(textFrame().minY - viewportTop) < 1
         }
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
         #expect(container.acceptsTerminalInput(at: CGPoint(x: 100, y: 1)))
@@ -53,7 +54,7 @@ struct RenderedTerminalViewportTests {
         let repeats = (wrappedCharacter == "x" ? columns : columns / 2) + 5
         client.session.receive(Data(String(repeating: wrappedCharacter, count: repeats).utf8))
         try await waitForLayout("soft-wrapped first line removes clearance") {
-            abs(textFrame().minY - fixture.window.bounds.minY) < 1
+            abs(textFrame().minY - viewportTop) < 1
         }
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
 
@@ -61,7 +62,7 @@ struct RenderedTerminalViewportTests {
         client.session.receive(Data((String(repeating: "\r\noutput", count: rows * 2)
                                      + "\u{1b}[2J\u{1b}[Hprompt").utf8))
         try await waitForLayout("scrollback removes clearance even with one visible line") {
-            abs(textFrame().minY - fixture.window.bounds.minY) < 1
+            abs(textFrame().minY - viewportTop) < 1
         }
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
     }
@@ -136,7 +137,7 @@ struct RenderedTerminalViewportTests {
                 "An embedded pane must follow its parent's keyboard observation, not its own subscription")
     }
 
-    @Test("@spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.")
+    @Test("@spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall keep workspace tabs and terminals below navigation chrome, extend the terminal tree to the bottom detail-column edge, and respect the sidebar boundary.")
     func embeddedCanvasStaysInsideTheIPadDetailColumn() async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
         let fixture = makeFixture(client: client, embedded: true)
@@ -149,7 +150,7 @@ struct RenderedTerminalViewportTests {
         #expect(abs(containerFrame.maxX - fixture.window.bounds.maxX) < 1)
         #expect(abs(canvasFrame.minX - containerFrame.minX) < 1)
         #expect(abs(canvasFrame.maxX - containerFrame.maxX) < 1)
-        #expect(abs(containerFrame.minY - fixture.window.bounds.minY) < 1)
+        #expect(abs(containerFrame.minY - fixture.host.view.safeAreaInsets.top) < 1)
         #expect(abs(containerFrame.maxY - fixture.window.bounds.maxY) < 1)
         #expect(abs(canvasFrame.minY - containerFrame.minY) < 1)
         #expect(abs(canvasFrame.maxY - containerFrame.maxY) < 1)
@@ -186,6 +187,32 @@ struct RenderedTerminalViewportTests {
         #expect(backFrame.width >= 44 && backFrame.height >= 44,
                 "Back's rendered control is \(backFrame.size), below the 44pt minimum tap target")
         #expect(fixture.window.bounds.contains(backFrame))
+    }
+
+    @Test("@spec IPAD-2.24: While a compact Terminal sheet is visible, the application shall reserve only the keyboard overlap within its safe content bounds.", arguments: [CGFloat(0), CGFloat(300)])
+    func sheetKeyboardClearance(keyboardInset: CGFloat) async throws {
+        let client = SessionClient(sessionName: "sheet", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let terminal = SingleSessionView(step: SessionStep(host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!),
+            sessionName: "sheet", title: "Shell"), navigationPath: .constant(NavigationPath()),
+            isFullScreen: false, isTerminalSheet: true, initialClient: client,
+            initialController: MobileTerminalControllerFactory.make(configText: "font-size = 14"),
+            initialKeyboardBottomInset: keyboardInset)
+        let fixture = makeHostingFixture(content: AnyView(VStack(spacing: 0) {
+            Text("Terminal").frame(height: 44)
+            terminal
+        }.ignoresSafeArea(.keyboard)))
+        defer { fixture.window.isHidden = true }
+        let container = try await renderedContainer(in: fixture.host.view)
+        try await Task.sleep(for: .milliseconds(150))
+        fixture.host.view.layoutIfNeeded()
+        let frame = container.convert(container.bounds, to: fixture.window)
+        let bottomInset = fixture.host.view.safeAreaInsets.bottom
+        let expectedBottom = fixture.window.bounds.maxY - max(bottomInset, keyboardInset) - (keyboardInset > 0 ? 58 : 0)
+        #expect(abs(frame.maxY - expectedBottom) < 1)
+        #expect(frame.minY >= fixture.host.view.safeAreaInsets.top + 44)
     }
 
     private func makeFixture(client: SessionClient, keyboardInset: CGFloat = 0, embedded: Bool = false,
@@ -247,12 +274,15 @@ struct RenderedTerminalViewportTests {
         [root] + root.subviews.flatMap { descendants(of: $0) }
     }
 
-    private func waitForLayout(_ stage: String, condition: () -> Bool) async throws {
+    private func waitForLayout(_ stage: String, sourceLocation: SourceLocation = #_sourceLocation,
+                               condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
-        while !condition(), ContinuousClock.now < deadline {
+        // The predicate can advance UIKit layout. Finish on the ready frame
+        // already observed instead of evaluating it again after the loop.
+        while !condition() {
+            try #require(ContinuousClock.now < deadline, "Timed out waiting for \(stage)", sourceLocation: sourceLocation)
             try await Task.sleep(for: .milliseconds(20))
         }
-        try #require(condition(), "Timed out waiting for \(stage)")
     }
 }
 

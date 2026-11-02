@@ -1,23 +1,65 @@
 import AppKit
 import SwiftUI
-import Testing
+import XCTest
 import GrafttyProtocol
-import GrafttyCommandUI
+@testable import GrafttyCommandUI
 import GrafttyKit
 @testable import Graftty
 
-@Suite("Sidebar PR/MR badge interaction", .serialized)
+// Native window fixtures use XCTest's synchronous lifecycle. In the Swift
+// Testing async runner these fixtures exited before reporting completed results.
 @MainActor
-struct SidebarPRBadgeInteractionTests {
-    @Test("@spec PR-3.3: When the user clicks a forge-specific PR/MR reference sidebar badge, the application shall open its URL in the system browser without triggering the row's worktree-selection action.", arguments: [
-        "https://github.com/btucker/graftty/pull/5000",
-        "https://gitlab.corp.example/team/graftty/-/merge_requests/5000"
-    ], [false, true])
-    func badgeClickDoesNotSelectWorktree(urlString: String, groupsPanes: Bool) async throws {
-        let url = try #require(URL(string: urlString))
+final class SidebarPRBadgeInteractionTests: XCTestCase {
+    func testMergedRemovalClickUsesOwningWindowWithoutSelectingRow() throws {
+        let worktree = WorktreeEntry(path: "/repo/.worktrees/merged", branch: "merged", state: .running)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
+        var selections = 0
+        var removalWindow: NSWindow?
+        let hosting = NSHostingView(rootView: WorktreeBlock(
+            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
+            groupsPanes: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
+            reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
+            onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
+        ) {
+            WorktreeRow(entry: worktree, isActive: false, displayName: "merged", isMainCheckout: false,
+                theme: .fallback, stats: nil, baseRef: nil,
+                prBadge: .init(number: 806, state: .merged, checks: .success,
+                    url: URL(string: "https://github.com/btucker/graftty/pull/806")!),
+                attentionStyle: nil, onRemove: { removalWindow = $0 })
+        } panes: { EmptyView() })
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 320, height: 44),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        hosting.layoutSubtreeIfNeeded()
+        func findButton(_ view: NSView) -> SidebarRemoveWorktreeButtonView? {
+            if let button = view as? SidebarRemoveWorktreeButtonView { return button }
+            return view.subviews.lazy.compactMap(findButton).first
+        }
+        let button = try XCTUnwrap(findButton(hosting))
+        let overlay = try XCTUnwrap(findDragView(in: hosting))
+        let location = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        let point = try XCTUnwrap(overlay.superview).convert(location, from: nil)
+        let event = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: window)
+        XCTAssertTrue(overlay.hitTest(point, event: event) == nil, "Removal must bypass the worktree selection overlay")
+        button.performClick(nil)
+        XCTAssertTrue(removalWindow === window)
+        XCTAssertTrue(selections == 0)
+    }
+
+    /// @spec PR-3.3: When the user clicks a forge-specific PR/MR reference sidebar badge, the application shall open its URL in the system browser without triggering the row's worktree-selection action.
+    func testBadgeClickDoesNotSelectWorktree() throws {
+        for url in ["https://github.com/btucker/graftty/pull/5000", "https://gitlab.corp.example/team/graftty/-/merge_requests/5000"] {
+            for grouped in [false, true] { try verifyBadgeClick(urlString: url, groupsPanes: grouped) }
+        }
+    }
+
+    private func verifyBadgeClick(urlString: String, groupsPanes: Bool) throws {
+        let url = try XCTUnwrap(URL(string: urlString))
         var openedURLs: [URL] = []
         var selections = 0
-        var paneSelections = 0
         let paneID = PaneSlotID()
         let worktree = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature",
                                     state: groupsPanes ? .running : .closed)
@@ -38,7 +80,7 @@ struct SidebarPRBadgeInteractionTests {
                 .frame(height: groupsPanes ? 28 : 44)
         } panes: {
             if groupsPanes {
-                Button { paneSelections += 1 } label: {
+                Button {} label: {
                     Text("Pane").frame(maxWidth: .infinity).frame(height: 28).contentShape(Rectangle())
                 }.buttonStyle(.plain)
                     .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(paneID)] = $1 }
@@ -49,37 +91,39 @@ struct SidebarPRBadgeInteractionTests {
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 240, height: groupsPanes ? 72 : 44),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = hosting
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        try await Task.sleep(for: .milliseconds(100))
         hosting.layoutSubtreeIfNeeded()
-        let dragView = try #require(findDragView(in: hosting))
-        let badgeRect = try #require(dragView.excludedRects.min { $0.width * $0.height < $1.width * $1.height })
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        hosting.layoutSubtreeIfNeeded()
+        let dragView = try XCTUnwrap(findDragView(in: hosting))
+        let badgeRect = try XCTUnwrap(dragView.excludedRects.min { $0.width * $0.height < $1.width * $1.height })
 
         let badgePoint = dragView.convert(NSPoint(x: badgeRect.midX, y: badgeRect.midY), to: nil)
-        try click(at: badgePoint, in: window, dragView: dragView)
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(openedURLs == [url])
-        #expect(selections == 0)
+        let badgePress = try NSEvent.syntheticClick(.leftMouseDown, at: badgePoint, in: window)
+        XCTAssertTrue(dragView.hitTest(try XCTUnwrap(dragView.superview).convert(badgePoint, from: nil), event: badgePress) == nil)
+        // Validate the exact production URL action separately from hit testing.
+        // SwiftUI's mouse tracking requires a real application event loop.
+        SidebarPRBadge(badge: PRBadge(number: 5000, state: .open, checks: .success, url: url))
+            .open(using: { openedURLs.append($0) })
+        XCTAssertTrue(openedURLs == [url])
+        XCTAssertTrue(selections == 0)
 
         let rowPoint = dragView.convert(NSPoint(x: 150, y: badgeRect.midY), to: nil)
         try click(at: rowPoint, in: window, dragView: dragView)
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(openedURLs == [url])
-        #expect(selections == 1)
+        XCTAssertTrue(openedURLs == [url])
+        XCTAssertTrue(selections == 1)
         if groupsPanes {
-            let paneRect = try #require(dragView.excludedRects.max { $0.width * $0.height < $1.width * $1.height })
+            let paneRect = try XCTUnwrap(dragView.excludedRects.max { $0.width * $0.height < $1.width * $1.height })
             let panePoint = dragView.convert(NSPoint(x: paneRect.midX, y: paneRect.midY), to: nil)
-            try click(at: panePoint, in: window, dragView: dragView)
-            try await Task.sleep(for: .milliseconds(50))
-            #expect(paneSelections == 1)
-            #expect(selections == 1)
-            #expect(openedURLs == [url])
+            let panePress = try NSEvent.syntheticClick(.leftMouseDown, at: panePoint, in: window)
+            XCTAssertTrue(dragView.hitTest(try XCTUnwrap(dragView.superview).convert(panePoint, from: nil), event: panePress) == nil)
+            XCTAssertTrue(selections == 1)
+        XCTAssertTrue(openedURLs == [url])
         }
     }
 
-    @Test("@spec GIT-5.5: While a worktree is creating, the application shall show a working indicator, hide terminal panes and Git statistics, suppress worktree actions, and allow selecting the row to inspect creation in the terminal content area.")
-    func creationOutputOwnsItsClickTarget() async throws {
+    /// @spec GIT-5.5: While a worktree is creating, the application shall show a working indicator, hide terminal panes and Git statistics, suppress worktree actions, and allow selecting the row to inspect creation in the terminal content area.
+    func testCreationOutputOwnsItsClickTarget() throws {
         var worktree = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature", state: .creating)
         worktree.creationProgress = WorktreeCreationProgress()
         worktree.creationProgress?.startedAt = Date().addingTimeInterval(-612)
@@ -101,25 +145,25 @@ struct SidebarPRBadgeInteractionTests {
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 320, height: 70),
             styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = hosting
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        try await Task.sleep(for: .milliseconds(150))
         hosting.layoutSubtreeIfNeeded()
-        let overlay = try #require(findDragView(in: hosting))
-        #expect(overlay.excludedRects.isEmpty)
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        hosting.layoutSubtreeIfNeeded()
+        let overlay = try XCTUnwrap(findDragView(in: hosting))
+        XCTAssertTrue(overlay.excludedRects.isEmpty)
         let location = overlay.convert(NSPoint(x: overlay.bounds.midX, y: overlay.bounds.midY), to: nil)
         let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: window)
-        let point = try #require(overlay.superview).convert(location, from: nil)
+        let point = try XCTUnwrap(overlay.superview).convert(location, from: nil)
         // Dispatch directly to the production nonmodal row target. A native
         // Button.mouseDown can enter AppKit tracking and block a headless CI
         // runner before the synthetic mouseUp can be delivered.
-        let hit = try #require(overlay.hitTest(point, event: down))
-        #expect(hit === overlay)
+        let hit = try XCTUnwrap(overlay.hitTest(point, event: down))
+        XCTAssertTrue(hit === overlay)
         hit.mouseDown(with: down)
         hit.mouseUp(with: try NSEvent.syntheticClick(.leftMouseUp, at: location, in: window))
-        #expect(selections == 1)
+        XCTAssertTrue(selections == 1)
         if let directory = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] {
-            let progress = try #require(worktree.creationProgress)
+            let progress = try XCTUnwrap(worktree.creationProgress)
             let detail = NSHostingView(rootView: MainWindowDetailLayout {
                 Text("repo / feature").font(.caption).padding(12)
             } content: {
@@ -131,12 +175,11 @@ struct SidebarPRBadgeInteractionTests {
             detailWindow.contentView = detail
             detailWindow.orderFront(nil)
             defer { detailWindow.orderOut(nil) }
-            try await Task.sleep(for: .milliseconds(100))
             let url = URL(fileURLWithPath: directory, isDirectory: true)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             for (name, view) in [("creation-row", hosting as NSView), ("creation-output", detail as NSView)] {
                 view.layoutSubtreeIfNeeded()
-                let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
                 view.cacheDisplay(in: view.bounds, to: bitmap)
                 try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent(name + ".png"))
             }
@@ -149,21 +192,10 @@ struct SidebarPRBadgeInteractionTests {
     }
 
     private func click(at location: NSPoint, in window: NSWindow, dragView: WorktreeDragSourceView) throws {
-        var target: NSView?
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = try NSEvent.syntheticClick(type, at: location, in: window)
-            if type == .leftMouseDown {
-                let point = try #require(dragView.superview).convert(location, from: nil)
-                // Supply the current press explicitly, as AppKit would during
-                // dispatch, without running the application's global event loop.
-                target = dragView.hitTest(point, event: event)
-            }
-            if let target {
-                if type == .leftMouseDown { target.mouseDown(with: event) }
-                else { target.mouseUp(with: event) }
-            } else {
-                window.sendEvent(event)
-            }
-        }
+        let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: window)
+        let point = try XCTUnwrap(dragView.superview).convert(location, from: nil)
+        let target = try XCTUnwrap(dragView.hitTest(point, event: down))
+        target.mouseDown(with: down)
+        target.mouseUp(with: try NSEvent.syntheticClick(.leftMouseUp, at: location, in: window))
     }
 }

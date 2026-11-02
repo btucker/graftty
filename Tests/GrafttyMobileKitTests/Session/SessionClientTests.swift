@@ -12,6 +12,26 @@ import GrafttyRemoteClient
 @MainActor
 struct SessionClientTests {
 
+    @Test("@spec AGENT-6.145: When a mobile conversation restarts with the same terminal name, the application shall discard the retained previous-assignment client before attaching even if its process-end event has not arrived.")
+    func resumedAssignmentReplacesLiveRetainedClient() {
+        let pool = RetainedPaneClientPool<RetainedMobilePane>(capacity: 2)
+        let key = RetainedPaneClientPool<RetainedMobilePane>.Key(hostID: UUID(), sessionName: "same-session")
+        let old = pool.acquire(key) {
+            RetainedMobilePane(client: SessionClient(sessionName: "same-session", webSocketFactory: { DelayedReceiveWS() }), assignmentID: "old")
+        }
+        defer { pool.remove(key) }
+        #expect(old.client.connectionState != .ended)
+        #expect(!RetainedMobilePane.discardPreviousAssignment(from: pool, key: key, assignmentID: "old"))
+        #expect(pool.cached(key) === old)
+        #expect(RetainedMobilePane.discardPreviousAssignment(from: pool, key: key, assignmentID: "new"))
+        #expect(pool.cached(key) == nil)
+        let new = pool.acquire(key) {
+            RetainedMobilePane(client: SessionClient(sessionName: "same-session", webSocketFactory: { DelayedReceiveWS() }), assignmentID: "new")
+        }
+        #expect(new !== old)
+        #expect(!RetainedMobilePane.discardPreviousAssignment(from: pool, key: key, assignmentID: "new"))
+    }
+
     @Test("The production reconnect backoff doubles from 1s to a 30s cap over six attempts")
     func productionBackoffScheduleDoublesToCap() {
         #expect(SessionClient.productionBackoffSchedule() == [1, 2, 4, 8, 16, 30])

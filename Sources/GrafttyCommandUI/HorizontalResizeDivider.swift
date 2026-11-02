@@ -93,6 +93,9 @@ final class HorizontalResizeDividerView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(label: String, separatorIdentifier: String?) {
+        setAccessibilityElement(true)
+        setAccessibilityRole(.splitter)
+        setAccessibilityOrientation(.horizontal)
         setAccessibilityIdentifier(label)
         setAccessibilityLabel(label)
         separator.setAccessibilityIdentifier(separatorIdentifier)
@@ -101,6 +104,18 @@ final class HorizontalResizeDividerView: NSView {
     override func layout() {
         super.layout()
         separator.frame = NSRect(x: 0, y: floor(bounds.midY), width: bounds.width, height: 1)
+    }
+
+    override func accessibilityPerformIncrement() -> Bool {
+        onResize?(20)
+        onResizeEnd?()
+        return true
+    }
+
+    override func accessibilityPerformDecrement() -> Bool {
+        onResize?(-20)
+        onResizeEnd?()
+        return true
     }
 
     override func resetCursorRects() {

@@ -31,7 +31,7 @@ import GrafttyRemoteClient
              .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
              .moveWorktree(let repositoryID, _, _, _), .setWorktreeOrder(let repositoryID, _):
             return repositoryID.hasPrefix("relay-repository-")
-        case .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
+        case .agentConversation(let worktreeID, _, _), .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
              .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _):
             return worktreeID.hasPrefix("relay-worktree-")
@@ -290,6 +290,9 @@ extension GrafttyApp {
                 return .error(code: "skills-unavailable", message: "Skill staging is unavailable on this host.", forceAllowed: false, shortStatus: nil)
             case .placement:
                 return .error(code: "placement-unavailable", message: "Placement admission is unavailable on this host.", forceAllowed: false, shortStatus: nil)
+            case let .agentConversation(path, agentID, action):
+                let router = await MainActor.run { SocketRequestRouter(appState: appStateBinding, terminalManager: terminalManager, services: services) }
+                return await AgentControl.conversation(path: path, agentID: agentID, action: action, platform: router)
             case .agentCompletions:
                 return .agentCompletions(await terminalManager.agentCompletionLoader?(nil, nil) ?? [])
             case .worktreeAgentCompletions(let worktreeID):

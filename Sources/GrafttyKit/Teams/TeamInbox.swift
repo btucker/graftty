@@ -276,6 +276,22 @@ public final class TeamInbox {
     }
 
     @discardableResult
+    public func appendAgentCompletion(teamID: String, teamName: String, to: TeamInboxEndpoint,
+                                      completionID: UUID, body: String) throws -> TeamInboxMessage {
+        try withWorktreeWatermarkLock(teamID: teamID, worktree: to.worktree) {
+            let key = completionID.uuidString
+            if let existing = try messages(teamID: teamID).first(where: {
+                $0.kind == "agent_completion" && $0.batchID == key && $0.to == to
+            }) { return existing }
+            let message = TeamInboxMessage(id: idGenerator(), batchID: key, createdAt: now(),
+                team: teamName, repoPath: teamID, from: .system(repoPath: teamID), to: to,
+                priority: .normal, kind: "agent_completion", body: body)
+            try append(message, teamID: teamID)
+            return message
+        }
+    }
+
+    @discardableResult
     public func appendBroadcast(
         teamID: String,
         teamName: String,

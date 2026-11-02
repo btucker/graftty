@@ -41,14 +41,33 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
     }
     func postAgentNotification(_ content: AgentStopNotificationContent, worktreePath: String) {}
     func hookDeliveryPolicy(presence: [TeamPresenceRecord]) -> TeamHookDeliveryPolicy { TeamHookDeliveryPolicy() }
-    /// This host cannot launch an agent in an added pane, and it has no
-    /// paired-Mac transport for remote worktree creation.
+    /// Paired-Mac worktree creation and project registration are unavailable here.
     var controlCapabilities: Set<ControlCapability> {
-        Set(ControlCapability.allCases).subtracting([.paneAgent, .remoteWorktree, .projectAdd])
+        Set(ControlCapability.allCases).subtracting([.remoteWorktree, .projectAdd])
     }
 
     var worktreeCreation: any CLIWorktreeCreationPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }
     var worktreeRemoval: any CLIWorktreeRemovalPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }
+
+    func agentSessionNames() async throws -> Set<String> { try await runtime.terminals.sessions() }
+
+    func agentSessionIsAlive(worktree path: String, slot: PaneSlotID) async throws -> Bool {
+        guard let session = state.worktree(forPath: path)?.paneSessions[slot] else { return false }
+        return try await runtime.terminals.sessions().contains(runtime.launcher.sessionName(for: session))
+    }
+
+    func closeAgentSession(worktree path: String, slot: PaneSlotID) async throws {
+        guard let worktree = state.worktree(forPath: path), let session = worktree.paneSessions[slot] else { return }
+        let name = runtime.launcher.sessionName(for: session)
+        if try await runtime.terminals.sessions().contains(name) {
+            let history = try await runtime.terminals.show(name, lines: Int.max)
+            try await AgentControl.archiveTranscript(history, path: path, slot: slot, session: session, platform: self)
+        }
+        try await runtime.closePaneSession(target: name)
+        guard try await !runtime.terminals.sessions().contains(name) else {
+            throw HostRuntimeError.invalid("Agent session is still running")
+        }
+    }
 
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         await runtime.hostRequest(message)
