@@ -37,7 +37,9 @@ Both runtimes (Claude, Codex) need to participate. Codex hook wiring is incomple
 
 ### 1. Codex hook completion via `CODEX_HOME` mirror
 
-The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirrors the user's real `~/.codex/` via symlinks for every entry except `hooks.json` and `config.toml`, which graftty generates, and `app-server-control`, which stays a real mirror-local runtime directory because Codex rejects a symlink there. Authentication plus feature, plugin, marketplace, and MCP administration is routed to the durable home instead of the generated snapshot; a later managed-session launch refreshes the snapshot and symlinks any newly created plugin cache.
+The Codex wrapper sets `CODEX_HOME` to a Graftty-controlled directory that mirrors the user's real `~/.codex/` via symlinks, including `config.toml`. Codex writes hook approvals and enablement through that link to the durable config, so new sessions retain the user's choices. Graftty generates `hooks.json`; `app-server-control` stays a real mirror-local runtime directory because Codex rejects a symlink there. Authentication plus feature, plugin, marketplace, and MCP administration runs against the durable home. A later managed-session launch links any newly created plugin cache.
+
+When replacing an older generated config snapshot, Graftty preserves divergent contents in `~/.codex/config.toml.graftty-snapshot` with a numeric suffix if needed. The durable config remains authoritative. Hooks whose approvals existed only in the old snapshot require one native review after the upgrade. Later reviews persist, and Codex still requires review when a hook definition changes.
 
 ```
 ~/.graftty/agent-hooks/codex-home/
@@ -49,8 +51,8 @@ The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirro
 ├── skills/          -> ~/.codex/skills/          (symlink)
 ├── app-server-control/                         (real, mirror-local runtime directory)
 ├── … (all other ~/.codex entries symlinked)
-├── hooks.json       (graftty-owned: union merge of user's + graftty's hooks)
-└── config.toml      (graftty-owned snapshot of durable user configuration)
+├── hooks.json       (user hooks with legacy Graftty hooks removed)
+└── config.toml      -> ~/.codex/config.toml      (symlink; native hook choices persist)
 ```
 
 **Wrapper script:**
@@ -85,8 +87,8 @@ The wrapper runs Codex as a foreground child, records its status, performs expli
 **`graftty internal sync-codex-home`** is fast (directory walk + symlink ops), idempotent, and runs before the first enabled wrapper invocation, including configuration administration, so one-time legacy state is recovered before durable mutations proceed. A wrapper invoked from an existing managed session inherits the same `CODEX_HOME` and skips the redundant write, which also avoids attempting an Application Support write from inside the active agent sandbox:
 
 1. Before every rebuild, move real state entries created in the managed home—other than Graftty-generated files and mirror-local runtime directories—into the durable home, preserving merge conflicts in recovery paths. Then, for every entry in `~/.codex/`, ensure a symlink in graftty home pointing to it, skipping `hooks.json`, `config.toml`, and the mirror-local `app-server-control` runtime directory.
-2. Build `<graftty home>/hooks.json` as the union merge of user's `~/.codex/hooks.json` (if any) and graftty's current `SessionStart` hook. Sentinel-based: graftty's entries are the ones whose handler `command` starts with the literal `graftty team hook codex`. On rebuild, strip stale graftty delivery entries from every event first, then append the current `SessionStart` entry.
-3. Snapshot durable `config.toml` into the managed home. On the first upgrade from the legacy generated config, reconcile a newer legacy copy's feature and Codex administration tables into the durable config while restoring the user's durable `features.hooks` setting and retaining unrelated durable settings; if the durable file is newer, preserve a recovery copy with Graftty's generated hook override removed rather than overwriting newer configuration.
+2. Build `<graftty home>/hooks.json` from the user's `~/.codex/hooks.json`, if present. Strip legacy Graftty hook groups from every event. The provider plugin owns Graftty's lifecycle hooks.
+3. Link managed `config.toml` to the durable config, creating an empty durable file if needed. Preserve a divergent snapshot in `config.toml.graftty-snapshot` before replacing it. The existing pre-v3 migration still runs first: reconcile a newer legacy copy's feature and Codex administration tables into the durable config while restoring the user's durable `features.hooks` setting and retaining unrelated durable settings; if the durable file is newer, preserve a recovery copy with Graftty's generated hook override removed rather than overwriting newer configuration.
 4. Prune dangling symlinks (entries the user has since deleted from `~/.codex/`).
 
 The wrapper enables Codex hooks with the launch-scoped `--enable hooks` override. `run_durable_administration` opens the pre-existing mirror lock read-only, asks `/usr/bin/lockf` to lock that inherited descriptor, and keeps it open while Codex runs; this shares the mirror rebuild's BSD lock without obscuring signal-derived command status. It attempts that lock even if this invocation's mirror sync failed, because another process may already be rebuilding. Pre-upgrade managed homes with no readable lock file run directly rather than trying to create Graftty-owned state from the agent sandbox. If the filesystem rejects an exclusive lock on the read-only descriptor, the wrapper warns and continues without coordination rather than suppressing the requested Codex command. The same durable routing applies when hooks are disabled unless the caller supplied a custom `CODEX_HOME`. It prints reload guidance after successful feature, plugin, marketplace, or MCP mutations because running sessions discover configuration and tools at startup; login and logout do not need that guidance. A sandboxed agent may still require the normal filesystem approval to mutate user-global `~/.codex` state; the wrapper does not bypass that security boundary.
@@ -94,7 +96,7 @@ The wrapper enables Codex hooks with the launch-scoped `--enable hooks` override
 **Why this shape:**
 
 - Wrapper-scoped: only graftty-launched Codex sessions see graftty's hooks. Plain `codex` outside the wrapper is unaffected (no `CODEX_HOME` set).
-- Normal Codex configuration commands run against the durable home, while ordinary managed sessions consume a snapshot and Graftty-owned hook file.
+- Normal Codex configuration commands run against the durable home. Managed sessions read and write the same durable config through a symlink and use a Graftty-owned hook file.
 - Concurrent sessions are safe: graftty home is static between rebuilds; multiple sessions read the same files via the same symlinks.
 - Crash-safe: nothing to restore on abnormal exit.
 - User's own hooks still fire (union-merged into graftty's `hooks.json`).
