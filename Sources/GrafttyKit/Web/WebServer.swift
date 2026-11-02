@@ -301,6 +301,10 @@ public final class WebServer {
     /// socket buffer. Unused in production.
     internal static var testingChildSndBuf: Int?
 
+    var beforeBindForTests: (() -> EventLoopFuture<Void>)?
+    var shutdownForTests: ((EventLoopGroup, @escaping @Sendable (Error?) -> Void) -> Void)?
+    private var shutdownFuture: EventLoopFuture<Void>?
+    private var shutdownPending = false
     private var group: EventLoopGroup?
     private var channels: [Channel] = []
 
@@ -316,8 +320,27 @@ public final class WebServer {
         self.tlsProvider = tlsProvider
     }
 
+    /// Synchronous compatibility entry point for non-async clients. App
+    /// lifecycle code uses startAsync/stopAsync and never waits on NIO.
     public func start() throws {
+        try startFuture().wait()
+    }
+
+    public func startAsync() async throws {
+        try Task.checkCancellation()
+        do {
+            try await startFuture().get()
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            await stopAsync()
+            throw CancellationError()
+        }
+    }
+
+    private func startFuture() throws -> EventLoopFuture<Void> {
         precondition(group == nil, "WebServer already started")
+        precondition(!shutdownPending, "WebServer still stopping")
+        shutdownFuture = nil
         guard !bindAddresses.isEmpty else {
             status = .tailscaleUnavailable
             throw Status.tailscaleUnavailable.asError
@@ -380,33 +403,69 @@ public final class WebServer {
                 }
             }
 
-        do {
-            channels = try bindAddresses.map { try bootstrap.bind(host: $0, port: config.port).wait() }
-        } catch {
-            try? group.syncShutdownGracefully()
-            self.group = nil
-            if Self.isAddressInUse(error) {
-                status = .portUnavailable
-            } else {
-                status = .error("\(error)")
+        let configuredBootstrap = bootstrap
+        let loop = MultiThreadedEventLoopGroup.singleton.next()
+        // Retain every successful bind as it happens. A later failure must
+        // close earlier listeners before shutting down their event loops.
+        var bound = loop.makeSucceededVoidFuture()
+        for address in bindAddresses {
+            bound = bound.flatMap {
+                let ready = self.beforeBindForTests?() ?? loop.makeSucceededVoidFuture()
+                return ready.hop(to: loop).flatMap {
+                    configuredBootstrap.bind(host: address, port: self.config.port).hop(to: loop)
+                }.map { channel in
+                    self.channels.append(channel)
+                }
             }
-            throw error
         }
-        // When config.port == 0, the kernel assigns an ephemeral port; read it
-        // back from the first bound channel so callers can discover the actual
-        // listening port. If multiple binds produce different ports (not
-        // expected with a fixed non-zero port, but defensible), the first one
-        // wins.
-        let actualPort = channels.first?.localAddress?.port ?? config.port
-        status = .listening(addresses: bindAddresses, port: actualPort)
+        return bound.map {
+            // Port 0 asks the kernel to assign an ephemeral port. Report the
+            // first listener's actual port, matching the synchronous API.
+            let actualPort = self.channels.first?.localAddress?.port ?? self.config.port
+            self.status = .listening(addresses: self.bindAddresses, port: actualPort)
+        }.flatMapError { error in
+            self.stopFuture().flatMapThrowing {
+                self.status = Self.isAddressInUse(error) ? .portUnavailable : .error("\(error)")
+                throw error
+            }
+        }
     }
 
     public func stop() {
-        for c in channels { try? c.close().wait() }
+        try? stopFuture().wait()
+    }
+
+    public func stopAsync() async {
+        try? await stopFuture().get()
+    }
+
+    private func stopFuture() -> EventLoopFuture<Void> {
+        guard let group else {
+            status = .stopped
+            return shutdownFuture ?? MultiThreadedEventLoopGroup.singleton.next().makeSucceededVoidFuture()
+        }
+        let loop = MultiThreadedEventLoopGroup.singleton.next()
+        let closing = channels.map { $0.close().hop(to: loop) }
         channels.removeAll()
-        try? group?.syncShutdownGracefully()
-        group = nil
-        status = .stopped
+        self.group = nil
+        shutdownPending = true
+        let stopping = EventLoopFuture.whenAllComplete(closing, on: loop).flatMap { _ in
+            let shutdown = loop.makePromise(of: Void.self)
+            // NIO delivers this callback on its shutdown queue, after all
+            // channels and event loops finish. Never wait on an event loop.
+            let completion: @Sendable (Error?) -> Void = { error in
+                if let error { shutdown.fail(error) } else { shutdown.succeed(()) }
+            }
+            if let shutdownForTests = self.shutdownForTests {
+                shutdownForTests(group, completion)
+            } else {
+                group.shutdownGracefully(completion)
+            }
+            return shutdown.futureResult
+        }.map { self.status = .stopped }
+        stopping.whenComplete { _ in self.shutdownPending = false }
+        shutdownFuture = stopping
+        return stopping
     }
 
     /// Recognise an "address already in use" bind failure across the

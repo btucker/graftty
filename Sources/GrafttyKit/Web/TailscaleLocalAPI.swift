@@ -1,4 +1,6 @@
 import Foundation
+import NIOCore
+import NIOPosix
 
 /// Client for the Tailscale LocalAPI. Two install flavors, two transports:
 ///
@@ -32,7 +34,7 @@ import Foundation
 /// All failure modes throw. Callers are expected to treat any thrown
 /// error as "deny" (fail-closed). The top-level `WebServer` never
 /// binds without a successful `status()` call.
-public struct TailscaleLocalAPI {
+public struct TailscaleLocalAPI: Sendable {
 
     /// Candidate Unix-socket paths, tried in order.
     public static let defaultSocketPaths: [String] = [
@@ -43,7 +45,7 @@ public struct TailscaleLocalAPI {
     /// Where the macsys (DMG) install publishes its TCP port + auth token.
     public static let defaultMacsysSupportDir: String = "/Library/Tailscale"
 
-    public struct Status: Equatable {
+    public struct Status: Equatable, Sendable {
         public let loginName: String
         public let tailscaleIPs: [String]
         /// The machine's MagicDNS fully-qualified name, trailing dot
@@ -53,7 +55,7 @@ public struct TailscaleLocalAPI {
         public let dnsName: String?
     }
 
-    public struct Whois: Equatable {
+    public struct Whois: Equatable, Sendable {
         public let loginName: String
     }
 
@@ -70,19 +72,22 @@ public struct TailscaleLocalAPI {
     /// Which transport to use for this client. `autoDetected()` picks
     /// one based on what's on disk; tests construct instances directly
     /// via `init(socketPath:)` (Unix) or the internal transport init.
-    enum Transport: Equatable {
+    enum Transport: Equatable, Sendable {
         case unixSocket(path: String)
         case tcpLocalhost(port: Int, authToken: String)
     }
 
     let transport: Transport
+    private let channelOpened: (@Sendable (Channel) -> Void)?
 
     public init(socketPath: String) {
         self.transport = .unixSocket(path: socketPath)
+        self.channelOpened = nil
     }
 
-    init(transport: Transport) {
+    init(transport: Transport, channelOpened: (@Sendable (Channel) -> Void)? = nil) {
         self.transport = transport
+        self.channelOpened = channelOpened
     }
 
     /// Auto-detect a reachable Tailscale LocalAPI endpoint. Probes Unix
@@ -300,8 +305,8 @@ public struct TailscaleLocalAPI {
     /// cert endpoint's "HTTPS disabled" response) go through this;
     /// the simpler `request(path:)` funnels through here too.
     ///
-    /// `recvTimeoutSeconds` sets `SO_RCVTIMEO` for this call. The 2 s
-    /// default fits the WebServer auth hot path (`whois`, `status`);
+    /// `recvTimeoutSeconds` bounds receive inactivity on the event loop.
+    /// The 2 s default fits the WebServer auth hot path (`whois`, `status`);
     /// `certPair` overrides to a longer value because first-time
     /// Let's Encrypt minting can pause tailscaled for 10–30 s before
     /// the response starts streaming. WEB-8.5.
@@ -309,58 +314,65 @@ public struct TailscaleLocalAPI {
         path: String,
         recvTimeoutSeconds: Int = 2
     ) async throws -> (Int, Data) {
-        let fd: Int32
-        let hostHeader: String
+        try Task.checkCancellation()
+        if case .tcpLocalhost(let port, _) = transport, !(1...65535).contains(port) {
+            throw Error.socketUnreachable
+        }
+        let requestState = LocalAPIRequestState()
+        let loop = MultiThreadedEventLoopGroup.singleton.next()
+        let response = loop.makePromise(of: Data.self)
+        let handler = LocalAPIResponseHandler(
+            response: response, receiveTimeout: .seconds(Int64(recvTimeoutSeconds))
+        )
         let authHeader: String
         switch transport {
-        case .unixSocket(let socketPath):
-            fd = try Self.openUnixSocket(path: socketPath)
-            hostHeader = "local-tailscaled.sock"
-            // Empty basic auth: user is implicit via the local socket.
+        case .unixSocket:
             authHeader = "Basic Og=="
-        case .tcpLocalhost(let port, let token):
-            fd = try Self.openTCPLocalhost(port: port)
-            hostHeader = "local-tailscaled.sock"
-            let creds = Data(":\(token)".utf8).base64EncodedString()
-            authHeader = "Basic \(creds)"
+        case .tcpLocalhost(_, let token):
+            authHeader = "Basic " + Data(":\(token)".utf8).base64EncodedString()
         }
-        defer { close(fd) }
-
-        // Send timeout stays short — the request payload is <200 bytes
-        // and any send-side hang means tailscaled is unresponsive.
-        // Recv timeout is per-call so cert minting can wait for Let's
-        // Encrypt without affecting the auth-path defaults. WEB-8.5.
-        var sendTimeout = timeval(tv_sec: 2, tv_usec: 0)
-        var recvTimeout = timeval(tv_sec: recvTimeoutSeconds, tv_usec: 0)
-        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout, socklen_t(MemoryLayout<timeval>.size))
-        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, socklen_t(MemoryLayout<timeval>.size))
-
-        // HTTP/1.0 avoids Transfer-Encoding: chunked responses that the
-        // macsys TCP LocalAPI emits for larger payloads (e.g., `status`).
-        // We make one request per connection anyway, so we gain nothing
-        // from 1.1 framing — 1.0 + Connection: close just works.
-        let req = """
-        GET \(path) HTTP/1.0\r
-        Host: \(hostHeader)\r
-        Authorization: \(authHeader)\r
-        Connection: close\r
-        \r\n
-        """
-        let reqBytes = Array(req.utf8)
-        let sent = reqBytes.withUnsafeBufferPointer { buf in
-            GrafttyPOSIX.send(fd, buf.baseAddress, buf.count, 0)
-        }
-        if sent != reqBytes.count { throw Error.socketUnreachable }
-
-        var buffer = Data()
-        var chunk = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let n = chunk.withUnsafeMutableBufferPointer { buf in
-                GrafttyPOSIX.recv(fd, buf.baseAddress, buf.count, 0)
+        let request = "GET \(path) HTTP/1.0\r\nHost: local-tailscaled.sock\r\nAuthorization: \(authHeader)\r\nConnection: close\r\n\r\n"
+        let buffer: Data
+        do {
+            buffer = try await withTaskCancellationHandler {
+                let bootstrap = ClientBootstrap(group: loop)
+                    .connectTimeout(.seconds(2))
+                    .channelInitializer { channel in
+                        return channel.pipeline.addHandler(handler).map {
+                            requestState.install(channel)
+                            channelOpened?(channel)
+                        }
+                    }
+                let channel: Channel
+                switch transport {
+                case .unixSocket(let path):
+                    channel = try await bootstrap.connect(unixDomainSocketPath: path).get()
+                case .tcpLocalhost(let port, _):
+                    channel = try await bootstrap.connect(
+                        to: SocketAddress(ipAddress: "127.0.0.1", port: port)
+                    ).get()
+                }
+                try Task.checkCancellation()
+                var bytes = channel.allocator.buffer(capacity: request.utf8.count)
+                bytes.writeString(request)
+                try await channel.writeAndFlush(bytes).get()
+                channel.pipeline.fireUserInboundEventTriggered(LocalAPIRequestSent())
+                return try await response.futureResult.get()
+            } onCancel: {
+                requestState.cancel()
             }
-            if n <= 0 { break }
-            buffer.append(contentsOf: chunk[0..<n])
+        } catch {
+            // Bootstrap may reject an address or fail to allocate a socket
+            // before installing a handler. Settle its promise on every exit,
+            // using the handler's event-loop-confined single-completion guard.
+            try? await loop.submit { handler.fail(error) }.get()
+            await requestState.close()
+            try Task.checkCancellation()
+            if error is Error { throw error }
+            throw Error.socketUnreachable
         }
+        await requestState.close()
+        try Task.checkCancellation()
 
         // Split headers + body.
         guard let split = Self.findDoubleCRLF(in: buffer) else {
@@ -378,59 +390,6 @@ public struct TailscaleLocalAPI {
         return (code, Data(body))
     }
 
-    private static func openUnixSocket(path: String) throws -> Int32 {
-        let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
-        if fd < 0 { throw Error.socketUnreachable }
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let pathBytes = path.utf8CString
-        guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
-            close(fd)
-            throw Error.socketUnreachable
-        }
-        withUnsafeMutablePointer(to: &addr.sun_path) { sunPath in
-            sunPath.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dst in
-                _ = pathBytes.withUnsafeBufferPointer { src in
-                    memcpy(dst, src.baseAddress!, src.count)
-                }
-            }
-        }
-        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
-        let rc = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                GrafttyPOSIX.connect(fd, sockPtr, size)
-            }
-        }
-        if rc != 0 {
-            close(fd)
-            throw Error.socketUnreachable
-        }
-        return fd
-    }
-
-    private static func openTCPLocalhost(port: Int) throws -> Int32 {
-        let fd = socket(AF_INET, GrafttyPOSIX.streamSocket, 0)
-        if fd < 0 { throw Error.socketUnreachable }
-
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(UInt16(port)).bigEndian
-        addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-
-        let size = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let rc = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                GrafttyPOSIX.connect(fd, sockPtr, size)
-            }
-        }
-        if rc != 0 {
-            close(fd)
-            throw Error.socketUnreachable
-        }
-        return fd
-    }
-
     private static func findDoubleCRLF(in data: Data) -> Int? {
         guard data.count >= 4 else { return nil }
         let base = data.startIndex
@@ -441,5 +400,113 @@ public struct TailscaleLocalAPI {
             }
         }
         return nil
+    }
+}
+
+/// Owns a request's channel across the cancellation/initializer race. The
+/// handler is event-loop confined; only channel installation needs a lock.
+private final class LocalAPIRequestState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var channel: Channel?
+    private var cancelled = false
+
+    func install(_ channel: Channel) {
+        let shouldClose = lock.withLock {
+            self.channel = channel
+            return cancelled
+        }
+        if shouldClose { channel.close(promise: nil) }
+    }
+
+    func cancel() {
+        let channel = lock.withLock {
+            cancelled = true
+            return self.channel
+        }
+        channel?.close(promise: nil)
+    }
+
+    func close() async {
+        let channel = lock.withLock { self.channel }
+        if let channel {
+            try? await channel.close().get()
+            try? await channel.closeFuture.get()
+        }
+    }
+}
+
+/// HTTP/1.0 responses end at EOF. Both the write and each read have bounded
+/// waits, matching the former send/receive timeouts without blocking a thread.
+struct LocalAPIRequestSent: Sendable {}
+
+final class LocalAPIResponseHandler: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+    private let response: EventLoopPromise<Data>
+    private let receiveTimeout: TimeAmount
+    private var bytes = Data()
+    private var timeout: Scheduled<Void>?
+    private var finished = false
+
+    init(response: EventLoopPromise<Data>, receiveTimeout: TimeAmount) {
+        self.response = response
+        self.receiveTimeout = receiveTimeout
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        armTimeout(context: context, delay: .seconds(2), error: .socketUnreachable)
+        context.fireChannelActive()
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if event is LocalAPIRequestSent {
+            armTimeout(context: context, delay: receiveTimeout)
+        } else {
+            context.fireUserInboundEventTriggered(event)
+        }
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        finish(.failure(TailscaleLocalAPI.Error.socketUnreachable))
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var chunk = unwrapInboundIn(data)
+        bytes.append(contentsOf: chunk.readBytes(length: chunk.readableBytes) ?? [])
+        armTimeout(context: context, delay: receiveTimeout)
+    }
+
+    private func armTimeout(
+        context: ChannelHandlerContext,
+        delay: TimeAmount,
+        error: TailscaleLocalAPI.Error = .malformedResponse
+    ) {
+        guard !finished else { return }
+        timeout?.cancel()
+        timeout = context.eventLoop.scheduleTask(in: delay) {
+            self.finish(.failure(error))
+            context.close(promise: nil)
+        }
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        finish(.success(bytes))
+        context.fireChannelInactive()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: any Swift.Error) {
+        finish(.failure(TailscaleLocalAPI.Error.malformedResponse))
+        context.close(promise: nil)
+    }
+
+    func fail(_ error: any Swift.Error) {
+        finish(.failure(error))
+    }
+
+    private func finish(_ result: Result<Data, any Swift.Error>) {
+        guard !finished else { return }
+        finished = true
+        timeout?.cancel()
+        timeout = nil
+        response.completeWith(result)
     }
 }
