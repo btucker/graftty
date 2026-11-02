@@ -122,10 +122,12 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
             event: try container.decode(TeamHookEvent.self, forKey: .event),
             sessionID: try container.decodeIfPresent(String.self, forKey: .sessionID),
             paneSessionName: try container.decodeIfPresent(String.self, forKey: .paneSessionName),
-            attentionReason: try container.decodeIfPresent(AgentHookAttentionReason.self, forKey: .attentionReason),
+            // New enum strings are optional evidence; malformed field types still throw.
+            attentionReason: try container.decodeIfPresent(String.self, forKey: .attentionReason)
+                .flatMap(AgentHookAttentionReason.init(rawValue:)),
             stopHookActive: try container.decodeIfPresent(Bool.self, forKey: .stopHookActive) ?? false,
-            providerSleepActivity: try container.decodeIfPresent(ProviderSleepActivity.self,
-                                                                 forKey: .providerSleepActivity),
+            providerSleepActivity: try container.decodeIfPresent(String.self, forKey: .providerSleepActivity)
+                .flatMap(ProviderSleepActivity.init(rawValue:)),
             turnID: try container.decodeIfPresent(String.self, forKey: .turnID),
             fallbackReport: try container.decodeIfPresent(AttentionFileRecapEvent.self, forKey: .fallbackReport)
         )
