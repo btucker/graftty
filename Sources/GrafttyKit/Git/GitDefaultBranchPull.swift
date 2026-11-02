@@ -20,10 +20,12 @@ public enum GitDefaultBranchPull {
             throw Error.gitFailed(exitCode: 1, stderr: "default branch is unknown")
         }
         let currentBranch: String
+        var commandArgs = ["branch", "--show-current"]
         do {
             currentBranch = try await GitRunner.run(
-                args: ["branch", "--show-current"],
+                args: commandArgs,
                 at: repoPath,
+                timeout: .seconds(5),
                 using: executor
             )
             guard currentBranch.trimmingCharacters(in: .whitespacesAndNewlines) == branchName else {
@@ -32,8 +34,9 @@ public enum GitDefaultBranchPull {
                     stderr: "default checkout is no longer on \(branchName)"
                 )
             }
+            commandArgs = ["pull", "--ff-only", "origin", branchName]
             _ = try await GitRunner.run(
-                args: ["pull", "--ff-only", "origin", branchName],
+                args: commandArgs,
                 at: repoPath,
                 timeout: .seconds(20),
                 using: executor
@@ -44,13 +47,13 @@ public enum GitDefaultBranchPull {
             throw Error.gitFailed(
                 exitCode: exitCode,
                 stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? "git pull --ff-only origin \(branchName) failed"
+                    ? "git \(commandArgs.joined(separator: " ")) failed"
                     : stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             )
         } catch CLIError.timedOut(_, let seconds) {
             throw Error.gitFailed(
                 exitCode: 124,
-                stderr: "git pull --ff-only origin \(branchName) timed out after \(Int(seconds)) seconds"
+                stderr: "git \(commandArgs.joined(separator: " ")) timed out after \(Int(seconds)) seconds"
             )
         } catch let err as CLIError {
             throw Error.cliFailure(err)
