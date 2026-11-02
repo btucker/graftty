@@ -67,8 +67,8 @@ jobs:
           python3 -B scripts/ci/test_test_plan.py
 
   macos-build-and-test:
-    # Hosted Xcode 26 avoids the single-capacity self-hosted runner queue.
-    runs-on: macos-26
+    # Hosted Xcode 27 avoids the single-capacity self-hosted runner queue.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
