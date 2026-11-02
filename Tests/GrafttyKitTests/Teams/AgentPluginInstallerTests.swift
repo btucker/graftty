@@ -822,6 +822,17 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
+    @spec AGENT-6.146: When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to report again before each final response.
+    """)
+    func materializedRecapSkillRequestsAnEarlyFirstReport() throws {
+        for skill in try preparedSkillTexts(named: "graftty") {
+            let early = try #require(skill.range(of: "as soon as you understand the task"), "The recap skill does not ask for an early first report")
+            let turnEnd = try #require(skill.range(of: "before your final response"))
+            #expect(early.lowerBound < turnEnd.lowerBound, "The early report must come before the turn-end instruction")
+        }
+    }
+
+    @Test("""
     @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, optional history entries describing what changed and why without repeating current state, and task-related emoji choices, with a user question only when input is needed.
     """)
     func materializedRecapSkillRequestsTaskContext() throws {

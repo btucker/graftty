@@ -298,6 +298,7 @@ struct MainWindow: View {
                             PaneCommands.closePane(appState: $appState, terminalManager: terminalManager,
                                 targetID: slot, userInitiated: true)
                         },
+                        agentLiveness: claudeSessionRegistry,
                         onActivateTerminal: { terminalID in
                             makePaneFirstResponder(terminalID, when: { terminalManager.focusedTerminalID == terminalID })
                         },

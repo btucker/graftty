@@ -253,7 +253,8 @@ struct RemoteWorkspaceContentView: View {
                                         needsInput: (attentionContext ?? SidebarWorktreeContext(worktree: worktree)).needsInput(session: session),
                                         failure: agent.failure,
                                         disconnected: slot(session).map { terminalManager.attachmentFailures[$0] != nil } ?? false,
-                                        processObservation: agent.processObservation)
+                                        processObservation: agent.processObservation,
+                                        isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
                                 }
                             }.padding(.horizontal, 12).padding(.vertical, 9)
                                 .foregroundStyle(terminalManager.theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
