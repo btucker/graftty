@@ -161,7 +161,8 @@ struct GhosttyActionLifetimeTests {
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
         var factory = harness.factory
         let create = factory.create
-        factory.create = { app, config in
+        factory.create = { [weak manager] app, config in
+            guard let manager else { return nil }
             "startup".withCString { title in
                 var target = ghostty_target_s()
                 target.tag = GHOSTTY_TARGET_SURFACE
