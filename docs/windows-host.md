@@ -1,0 +1,390 @@
+# Windows headless host
+
+V1 targets the existing Linux headless host and Graftty-patched zmx inside
+WSL2 on Windows 11. Retain the same session ownership, detach and reattach,
+replay, history, and resize behavior as Mac and Linux. A separate Windows
+session broker is not the v1 approach. Native Windows remains follow-up work.
+
+The Windows machine initiates its connection to the parent Mac. Installation
+and enrollment run locally on Windows and do not require an SSH login into it.
+The current Linux setup wizard requires SSH and an inbound host connection,
+so WSL2 alone does not complete this setup or transport work.
+
+V1 targets background operation while the Windows user is signed in, including
+screen lock. Operation after logout or before sign-in is a v2 goal. The WSL
+lifecycle needs a Windows 11 test with terminal windows closed. Enabling
+systemd alone does not establish that the host and sessions remain available.
+
+The host, agent CLIs, shells, and repositories run in Linux for v1. Native
+PowerShell and Windows toolchain parity require separate integration work.
+
+## Local WSL2 installer
+
+The development entry point is `scripts/windows/Install-GrafttyWSL.ps1`.
+Run it locally from a checkout on Windows. It uses `wsl.exe`, not SSH.
+This implements local installation and resource inspection. Cloud enrollment
+and the outbound Mac connection are still unimplemented.
+
+Prepare Ubuntu 24.04 under WSL2 with a non-root default user, Python 3.12,
+Git, Bash, GNU tar, coreutils, flock, and a working systemd user manager.
+If WSL is missing, install it with `wsl --install -d Ubuntu-24.04` and finish
+the distribution's user setup. Enabling WSL can require a Windows restart.
+From that distribution, verify `systemctl --user show-environment` succeeds.
+
+Inspect resources from Windows PowerShell:
+
+```powershell
+.\scripts\windows\Install-GrafttyWSL.ps1 -Distribution Ubuntu-24.04
+```
+
+Install an architecture-matched Linux archive with a SHA-256 digest obtained
+from a trusted release source. Replace the placeholder digest below:
+
+```powershell
+.\scripts\windows\Install-GrafttyWSL.ps1 -Distribution Ubuntu-24.04 `
+    -ArchivePath C:\Downloads\graftty-linux-VERSION-x86_64.tar.gz `
+    -SHA256 EXPECTED_64_HEX_DIGEST -EnableStartup
+```
+
+The installer checks the digest on Windows and inside WSL. It validates archive
+paths, rejects special files and escaping links, checks the bundled host, CLI,
+and zmx, then runs the existing transactional Linux installer. Listeners bind
+to loopback. A successful result reports `localReady: true` and
+`remoteReady: false` until the connection work is implemented. It does not
+install or authenticate agent-provider CLIs.
+
+`-EnableStartup` enables Linux user-manager lingering without interactive
+elevation and registers a limited Windows task for the current user's sign-in.
+The task retains a foreground WSL process so a visible terminal is not needed.
+If Linux policy denies lingering, enable it locally as an administrator before
+retrying. Task registration passed in a Windows 11 ARM VirtualBox guest.
+Screen-lock survival with a real WSL2 host still needs validation. Windows
+sleep, logout, WSL termination, and reboot are outside v1 session-survival
+guarantees.
+
+The JSON result includes guest CPU availability, memory capacity and available
+RAM, cgroup v2 memory and CPU limits, Windows physical RAM, and a suggested
+memory ceiling. Swap is reported separately. An existing CPU override remains
+unchanged; compare the guest CPU count with `windowsLogicalCPUs` when tuning.
+
+To set a 56 GB ceiling on a 64 GB machine, add `-MemoryLimitGB 56` to either
+command. This preserves other WSL settings and creates a backup of an existing
+`.wslconfig`. It requires at least 2 GB of Windows headroom. The tool never
+stops running distributions. Restart WSL after saving your work, then inspect
+again to verify the effective limits. The recommended default headroom is
+8 GB, which needs adjustment for other Windows workloads.
+
+Portable Python and PowerShell checks cover archive verification, extraction,
+resource configuration, and startup task construction. The CI workflow includes
+these checks on Windows. They do not replace a Windows 11 installation test.
+
+## Local Windows VM validation
+
+[The Vagrant harness](../scripts/windows/vm/README.md) creates a dedicated
+Windows test VM with loopback management ports and no shared project folder.
+It uses an installed local box and WinRM for test control.
+
+The local Windows 11 ARM guest passed checks for configuration preservation,
+startup command construction, real current-user limited Task Scheduler
+registration, and rejection of WSL1 before setup. The guest ran Windows build
+26200 and Windows PowerShell 5.1.26100.7920.
+
+This M4 Pro's VirtualBox 7.2.16 reports no nested hardware virtualization.
+The guest also reports `VirtualizationFirmwareEnabled: false`. The
+[VirtualBox 7.2 manual](https://download.oracle.com/virtualbox/UserManual.pdf)
+documents that nested virtualization settings are unavailable for Arm guests.
+WSL2 runtime, zmx session lifetime, and remote access therefore remain untested
+in this VM.
+
+[AWS WSL2 validation on November 2, 2026](testing/wsl2-aws-2026-11-02.md)
+passed the local installer, shell input and output, and zmx session persistence
+across a host-service restart on Windows Server 2025. With a 12 GB WSL ceiling,
+the 16 GiB instance exposed all four CPUs and 11.68 GiB of guest RAM. A touched
+9 GiB allocation reported 9.01 GiB resident. The temporary AWS resources were
+removed after testing. Windows 11 screen-lock behavior and the outbound parent
+Mac connection remain unverified.
+
+## WSL2 resource policy
+
+Use the machine's available capacity rather than accepting a small VM budget.
+Microsoft documents a default WSL2 memory limit of 50% of Windows RAM and a
+default CPU count equal to all Windows logical processors. These limits are
+configured through WSL Settings or `%UserProfile%\.wslconfig` and apply across
+WSL2 distributions. See [Microsoft's configuration reference](https://learn.microsoft.com/en-us/windows/wsl/wsl-config).
+
+Recommend a memory ceiling close to physical RAM, with explicit headroom for
+Windows and any other Windows workloads. On a dedicated 64 GB machine,
+56–60 GB is an initial tuning range, not a measured guarantee. For example:
+
+```ini
+[wsl2]
+memory=56GB
+```
+
+Leave `processors` unset to retain the documented all-processor default.
+Inspect existing settings before proposing changes, and preserve unrelated
+settings. A WSL restart is required for changes to take effect. Do not restart
+active distributions during setup without accounting for their running work.
+
+Report effective CPU availability, guest memory capacity, available memory,
+and any tighter process or container limits. Verify these after a restart.
+Base work placement on available guest resources. Do not count swap as RAM or
+advertise the Windows physical total as available Linux capacity. Tune memory
+and concurrency under a representative build and multi-agent workload before
+claiming full-machine utilization.
+
+Keep repositories, worktrees, and build caches in the WSL Linux filesystem,
+such as `~/projects`, for the Linux workload.
+[Microsoft recommends this location for performance](https://learn.microsoft.com/en-us/windows/wsl/filesystems#file-storage-and-performance-across-file-systems).
+
+## Native Windows groundwork
+
+This branch starts the port with `GrafttyWindowsTerminal`, a Swift library
+backed by Win32 ConPTY. **There is no Windows `graftty-host.exe` yet.**
+The Windows package builds this library and its tests. Native Windows SSH is
+excluded until its dependency has a verified Windows cryptographic random
+source. The full host and CLI still require the platform work below.
+
+## What exists
+
+`WindowsTerminalSession` starts a native executable with a working directory,
+arguments, environment, and terminal size. It accepts terminal input, emits
+UTF-8 VT output on a dedicated reader thread, resizes the pseudoconsole, and
+closes the console process tree. Shutdown keeps draining output to avoid the
+ConPTY deadlock described in [Microsoft's session guide](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session).
+
+`WindowsTerminalLaunch` encodes Windows argument quoting and UTF-16 environment
+blocks. These tests run on Mac and Linux too. Shell command parsing remains
+the caller's responsibility. For example, passing a script to `cmd.exe /C`
+has different escaping rules from passing arguments to an ordinary executable.
+
+The native session tests exercise real ConPTY shells on Windows, including
+input, output, resize, repeated close, and failed launch. The new Windows CI
+workflow runs them on Windows Server 2025. A successful server run does not
+establish Windows 11 compatibility.
+
+`NativeSSHTransportTests` exercise a real TCP loopback connection, Ed25519
+authentication, host-key pinning, and Graftty's existing framing codecs with
+a message spanning multiple network reads. Negative cases reject unexpected
+host and client keys without accepting a timeout as success. The same tests
+run on Mac and Linux, including the WSL2 host's platform. Their delegates are fixtures, so this does not
+yet validate the host's production trust store or pairing path.
+
+The reverse-channel test creates a listener only on the parent side. After the
+headless client authenticates and announces readiness, the parent opens a new
+application channel back over the same connection. This proves the direction
+required by the Windows deployment without inbound access to the Windows PC.
+
+The library owns a shell for its lifetime. It does not provide persistent
+sessions, detach and reattach, replay, pairing, or remote access.
+
+## Shared host and connection design
+
+Keep the existing Swift state model, zmx integration, and Graftty wire
+protocols. WSL2 reuses the Linux implementation. A native port must retain zmx
+and its behavior rather than introduce a second session implementation.
+
+### Local setup and outbound connection
+
+The following is the proposed setup flow, not a shipped installer:
+
+1. The Mac's **Add Headless Host** flow creates a short-lived enrollment offer.
+2. The user runs a Windows installer locally and pastes the enrollment offer.
+3. Windows creates its device identity locally and connects to the parent.
+4. The Mac confirms the new host's identity and records its permissions.
+5. Windows retains the parent identity and reconnects after network loss or
+   restart, with bounded retries and backoff. Enrollment secrets expire and
+   are not reused as permanent credentials.
+
+Windows needs no SSH server, remote shell account, or inbound listening port.
+The current transport experiment uses Graftty's encrypted SSH library inside
+the outbound connection. This does not invoke `ssh.exe` or provision Windows
+through SSH. Both peers authenticate; the Mac can open terminal and control
+channels back over the established connection.
+
+An accepted connection must not give the Windows host permission to operate
+the Mac's local terminals. Register the remote host under its authenticated
+device ID and key, and keep host registration separate from client-control
+permissions. Revocation must close the active link and prevent reconnect.
+
+`graftty-server` is the selected public signaling service. Both devices make
+outbound authenticated requests to it. ICE tries direct connectivity with
+STUN, with TURN as the proposed fallback when the direct path fails. The
+direct LAN or VPN connection remains useful, but cloud-routed setup must not
+require a publicly reachable listener on either device.
+
+### Security boundary and cross-project work
+
+The server helps devices meet. Resource access remains authorized locally
+against paired device keys. A stolen account credential, altered room message,
+or compromised signaling service must not authorize a terminal attachment or
+silently replace either device's identity. The server and TURN can still deny
+service and observe connection metadata; end-to-end encryption does not hide
+every address, timing, or traffic-volume detail.
+
+The existing authenticated-signaling and pairing types are useful starting
+points. The May 21 SSH-over-WebRTC design supersedes the May 15 server design's
+custom Noise handshake. Retain the existing key-authenticated SSH protection
+inside the data channel. HTTPS protects the service connection but does not
+replace the paired-device authentication layer. WebRTC encryption by itself
+does not establish Graftty's local resource permissions.
+
+The Windows integration requirements are inventoried as `REMOTE-32.4` through
+`REMOTE-32.11`. They are disabled backlog specs, not implemented guarantees.
+They cover server-independent pairing, authenticated signaling transcripts,
+end-to-end protection, fresh authentication on reconnect, revocation, direction
+of authority, and Windows private-key protection.
+
+The graftty-server rendezvous owner confirmed the additive contract in
+[server PR 9](https://github.com/btucker/graftty-server/pull/9), at commit
+`f250b12d40cfff4fb7aa7dac70e63c35efadb367`. This contract is not deployed by
+this work. WSL registers as `kind: host`, `platform: linux`, with a display name
+such as `Windows host (WSL2)`. Server registration IDs remain separate from
+Graftty endpoint identities and keys.
+
+Either enrolled peer can create a room addressed to the other's server ID.
+The parent discovers requests through outbound `GET /v1/rtc/rooms/incoming`.
+Rooms expire after 60 seconds, and reads do not imply acceptance. Signaling
+transports opaque bytes, can lose buffers, and has no guaranteed delivery or
+acknowledgment. Treat it as untrusted discovery. It is not a terminal byte relay.
+
+The server owner and this implementation agreed a separate enrollment
+follow-up. An authorized existing device will issue a one-use, 600-second
+host invitation through `POST /v1/host-enrollment-invitations`. The WSL2 caller
+requests `platform: linux`. Redemption through
+`POST /v1/host-enrollment-invitations/redeem` will return a device bearer with
+`host_rendezvous` scope. These routes and scope are agreed design, not
+implemented or deployed by this work.
+
+The contract and initial HTTP tests are published separately from PR 9 at
+[server commit 11d1927](https://github.com/btucker/graftty-server/blob/11d192726eadb1ccb9919e00692587bd34c7797c/tests/host_enrollment_test.rs).
+The server owner reports eight expected test failures because the routes
+return 404. This establishes the missing-route baseline, not validation of
+the later security assertions. The server owner has been asked to implement
+the routes and promote the remaining security inventory to real tests.
+No server implementation, passing integration result, merge, or deployment
+is established by that preparation.
+
+The restricted bearer must not grant account deletion, changes to other
+devices, or invitation issuance. Scope is independent of self-declared
+platform and device kind. Inviter revocation invalidates unconsumed invitations.
+A host enrolled before that revocation has an independently revocable cloud
+credential. Endpoint-local revocation still controls paired terminal access.
+Claiming an invitation must atomically consume it and insert exactly one
+device. If a claim response is lost after commit, setup must obtain a fresh
+invitation rather than blindly retrying a consumed authorization.
+
+The full endpoint invitation and signed signaling encodings remain undecided.
+The parent must supply its pinned public key from local identity storage.
+Server routing IDs cannot supply that trust. Do not treat an invitation, a
+server bearer, and a pinned endpoint key as the same credential. Linux WebRTC
+support, STUN and TURN setup, and Mac adoption of the outbound link remain
+endpoint work. The existing WebRTC implementation is conditional on the Apple
+SDK and cannot simply be enabled by running the Linux host in WSL2.
+
+| Boundary | Owner | Acceptance evidence required |
+| --- | --- | --- |
+| Account and device authentication, room membership | graftty-server | Wrong-account, wrong-device, expired-room, and revoked-device requests fail |
+| Signaling delivery and TURN credentials | graftty-server | Bounded messages, queues, requests, and allocations; short-lived credentials; no secret or payload logs |
+| Pairing and pinned device identity | Mac and Windows | Account access cannot create trust; substituted or changed keys fail until explicitly verified |
+| Session and signaling authenticity | Mac and Windows | Tampered, expired, cross-session, and replayed messages fail before terminal access |
+| Terminal input, commands, and port forwarding | Resource-owning device | Current peer capabilities are checked locally; revocation stops live access |
+| Reconnect and room recreation | Both projects | Fresh authentication; no duplicate replay of terminal input or mutating commands |
+| Local keys and installation | Each platform | Windows user-bound cryptographic protection and file access; authenticated release artifacts |
+
+A release needs adversarial tests with a malicious signaling intermediary,
+not only a happy-path relay test. In particular, expiration of a server token
+or TURN credential is not evidence that an existing terminal connection has
+closed. Live revocation must be enforced by the resource-owning endpoint.
+
+This is a scoped design and source inspection. The deployed service and the
+native Windows cloud path have not been security-audited or validated here.
+
+V1 keeps terminal persistence in the existing zmx daemon. Verify that viewer
+disconnect, network loss, and Mac restart leave sessions intact. Use the pinned
+Graftty-patched build, including its history extensions, rather than an
+arbitrary upstream binary. These behaviors still need WSL2 integration tests.
+WSL termination or Windows reboot ends running Linux processes.
+
+Private-key protection also needs WSL2 validation. The native Windows
+cryptographic-storage requirement does not establish protection for a Linux
+process or its virtual disk. Verify the chosen WSL identity store, Linux file
+permissions, and Windows access to that storage before release.
+
+For a future native port, the current host's
+`HostTerminalDriver` takes `ZmxSpawnConfiguration`, and its SSH streams attach
+through `ZmxAttachEngine`. Merely implementing `HostTerminalDriver` would leave
+launch configuration, SSH attachment, replay, and shutdown coupled to zmx.
+
+Native Windows therefore needs a zmx port with Windows process, terminal,
+and local IPC support. ConPTY is groundwork for that terminal backend, not a
+replacement for zmx. If sessions must survive host upgrades, the zmx daemon
+must outlive the host process. Disconnecting a viewer must never close the
+session's pseudoconsole.
+
+The native SSH probe compiled with SwiftNIO 2.104.0 and NIOExtras 1.35.1,
+then failed during key exchange because NIOSSH 0.13.0 traps on Windows in its
+random-number generator. The same unsupported-platform guard exists in
+[NIOSSH 0.15.1](https://github.com/apple/swift-nio-ssh/blob/0.15.1/Sources/NIOSSH/CSPRNG/CSPRNG.swift).
+The Windows package therefore exposes the terminal library only. A native SSH
+port needs a reviewed Windows entropy provider before it can expose a working
+transport. `REMOTE-32.18` records this requirement. Mac and Linux retain their
+existing dependency lock and active SSH tests.
+Windows must retain Graftty's identity authentication and typed SSH channels.
+The parent must adopt the accepted connection as a remote host link rather
+than starting a second connection back to Windows.
+
+## Remaining work in dependency order
+
+1. Validate the existing Linux archive and patched zmx on Ubuntu 24.04 under
+   WSL2. Exercise session ownership, detach and reattach, history, replay,
+   resize, agent hooks, and both Mac and Mobile viewers.
+2. Validate the implemented local installer and sign-in task on Windows 11.
+   Complete local enrollment without SSH and prove WSL background lifetime.
+3. Agree the invitation and signed signaling encodings with graftty-server,
+   then implement Linux WebRTC, the authenticated outbound link, and Mac
+   transport adoption using the confirmed room-discovery contract.
+4. Validate pairing, tampered signaling, revocation, network loss, and Mac
+   restarts against real WSL2 sessions. Keep the existing security boundaries.
+5. Inspect and tune the machine's WSL resource configuration. Verify effective
+   resources and sustained build throughput without starving Windows.
+6. Run a clean Windows 11 installation and recovery test. Document that logout,
+   WSL termination, and reboot are outside v1 session persistence guarantees.
+
+## Native Windows follow-up
+
+1. Run the native terminal tests on Windows 11. Include PowerShell 7 and both
+   agent CLIs, Unicode repository paths, sustained output, concurrent shutdown,
+   Ctrl-C, interactive prompts, and terminal size changes.
+2. Add a verified Windows CSPRNG provider to the SSH dependency, including
+   failure-path tests, then enable the native Windows transport target. Run
+   real framed SSH exchanges and parent-originated reverse channels on Windows.
+3. Port the pinned Graftty-patched zmx to native Windows, including process
+   creation, ConPTY ownership, and local IPC. Test session survival on viewer
+   disconnect and reconnect, plus parity for replay and paged history.
+4. Port process execution and shell startup. Use native argument vectors and
+   environment blocks. PowerShell startup and agent hooks need Windows scripts.
+   Bash snippets and `/usr/bin/env` cannot be the Windows launch path.
+5. Port local control, state paths, locking, and private-file storage. Named
+   pipes need access control for the current user. Win32 file locks and ACLs
+   must replace `lockf`, Unix socket permissions, and secret-file mode bits.
+   Keep the current atomic publication and durability guarantees explicit.
+6. Port Git invocation and path comparison, worktree monitoring, process
+   identity, resource sampling, and listening-port discovery. Test drive paths,
+   UNC paths, case handling, and Git for Windows worktrees.
+7. Implement local enrollment and a reconnecting outbound host connection.
+   Let the Mac adopt that accepted transport for the shared headless runtime
+   and channels. Verify pairing,
+   repository registration, worktree creation, panes, agent hooks, Attention,
+   team messaging, and authenticated port forwarding from Mac and Mobile.
+8. Add a per-user installation and startup path, checksummed Windows archives,
+   upgrade rollback, and a clean Windows 11 smoke test. Operation after Windows
+   logout or before sign-in remains a v2 goal.
+
+## References
+
+- [Install Swift on Windows](https://www.swift.org/install/windows/)
+- [Microsoft pseudoconsoles](https://learn.microsoft.com/en-us/windows/console/pseudoconsoles)
+- [CreatePseudoConsole](https://learn.microsoft.com/en-us/windows/console/createpseudoconsole)
+- [SwiftNIO Windows selector](https://github.com/apple/swift-nio/blob/2.98.0/Sources/NIOPosix/SelectorWSAPoll.swift)
+- [zmx supported features](https://github.com/neurosnap/zmx#features)

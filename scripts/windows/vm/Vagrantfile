@@ -1,0 +1,48 @@
+# Use an already installed Windows box. Never download an arbitrary Windows
+# image or embed machine credentials in the repository.
+box = ENV.fetch("GRAFTTY_WINDOWS_BOX") do
+  abort "Set GRAFTTY_WINDOWS_BOX to an installed Windows 11 Vagrant box."
+end
+if ENV["GRAFTTY_VAGRANT_VERIFIED_PORT_PROBE"] == "1"
+  require_relative "verified-port-probe"
+end
+
+Vagrant.configure("2") do |config|
+  config.vm.box = box
+  config.vm.box_architecture = ENV.fetch("GRAFTTY_WINDOWS_ARCH", "arm64")
+  config.vm.box_check_update = false
+  config.vm.guest = :windows
+  config.vm.communicator = "winrm"
+  config.vm.boot_timeout = 300
+  config.vm.usable_port_range = (39000..39100)
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.network "forwarded_port", guest: 22, host: 2222, id: "ssh", disabled: true
+  config.vm.network "forwarded_port", guest: 5985, host: 55985,
+    host_ip: "127.0.0.1", id: "winrm", auto_correct: true
+  config.vm.network "forwarded_port", guest: 5986, host: 55986,
+    host_ip: "127.0.0.1", id: "winrm-ssl", auto_correct: true
+  config.winrm.username = ENV.fetch("GRAFTTY_WINDOWS_USER", "vagrant")
+  config.winrm.password = ENV.fetch("GRAFTTY_WINDOWS_PASSWORD", "vagrant")
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "Graftty-Windows-WSL-Setup-Test"
+    vb.gui = false
+    vb.memory = Integer(ENV.fetch("GRAFTTY_WINDOWS_MEMORY_MB", "4096"))
+    vb.cpus = 2
+    # Import from the box without altering any registered shared/base VM.
+    vb.linked_clone = false
+    vb.customize ["modifyvm", :id, "--clipboard-mode", "disabled"]
+  end
+
+  config.vm.provision "shell", privileged: false, inline: <<~POWERSHELL
+    $ErrorActionPreference = 'Stop'
+    New-Item -ItemType Directory -Force C:/graftty-tests | Out-Null
+  POWERSHELL
+
+  %w[WSLSetup.psm1 Install-GrafttyWSL.ps1 wsl-install.py test-wsl-setup.ps1].each do |name|
+    config.vm.provision "file", source: File.expand_path("../#{name}", __dir__),
+      destination: "C:/graftty-tests/#{name}"
+  end
+  config.vm.provision "shell", privileged: false,
+    path: File.join(__dir__, "Smoke-Windows.ps1")
+end

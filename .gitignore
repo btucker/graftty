@@ -15,6 +15,7 @@ Apps/*/build/
 **/*.xcuserstate
 .swiftpm/xcode/
 __pycache__/
+.vagrant/
 
 # iOS CI build/dependency cache dirs (see .github/workflows/ci.yml)
 .derivedData/

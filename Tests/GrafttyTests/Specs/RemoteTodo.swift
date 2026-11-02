@@ -8,6 +8,68 @@ import Testing
 
 @Suite("REMOTE — pending specs")
 struct RemoteTodo {
+    // MARK: - REMOTE-32.x — Windows host access and WSL2 deployment
+
+    @Test("""
+@spec REMOTE-32.18: When a native Windows host negotiates SSH, the application shall obtain cryptographic randomness from a verified Windows system provider and fail closed if entropy generation fails.
+""", .disabled("upstream NIOSSH lacks a supported Windows CSPRNG; native Windows SSH remains follow-up work"))
+    func remote_32_18() async throws { }
+
+    @Test("""
+@spec REMOTE-32.4: When a Windows headless host establishes cloud-routed access, the application shall use graftty-server for outbound authenticated signaling while retaining terminal authorization on the devices.
+""", .disabled("cloud-routed Windows host access is not yet implemented"))
+    func remote_32_4() async throws { }
+
+    @Test("""
+@spec REMOTE-32.5: When pairing a Windows headless host with its parent Mac, the application shall require user-confirmed device-key verification independent of graftty-server account membership and shall reject unconfirmed identity changes.
+""", .disabled("cloud-routed Windows pairing is not yet implemented"))
+    func remote_32_5() async throws { }
+
+    @Test("""
+@spec REMOTE-32.6: When processing cloud-routed signaling, the application shall authenticate both device identities and bind the session, roles, nonces, expiry, and offer or answer bytes before allocating terminal access.
+""", .disabled("cloud-routed Windows signaling is not yet implemented"))
+    func remote_32_6() async throws { }
+
+    @Test("""
+@spec REMOTE-32.7: While terminal or control traffic traverses graftty-server infrastructure or TURN, the application shall encrypt and authenticate that traffic end to end using the paired device identities without releasing session private keys to those services.
+""", .disabled("end-to-end Windows cloud transport is not yet implemented"))
+    func remote_32_7() async throws { }
+
+    @Test("""
+@spec REMOTE-32.8: When a cloud-routed Windows host connection reconnects or replaces its transport, the application shall perform fresh device authentication and reject stale or altered signaling without automatically replaying terminal input or mutating commands.
+""", .disabled("cloud-routed Windows reconnection is not yet implemented"))
+    func remote_32_8() async throws { }
+
+    @Test("""
+@spec REMOTE-32.9: When a device revokes a remote peer or its resource capabilities, the application shall stop affected active operations and reject reconnect attempts independently of signaling-server state or TURN credential lifetime.
+""", .disabled("Windows outbound resource revocation is not yet implemented"))
+    func remote_32_9() async throws { }
+
+    @Test("""
+@spec REMOTE-32.10: When the parent Mac registers an outbound Windows host connection, the application shall bind it to the authenticated device key and shall not grant Windows permission to control Mac resources from its signaling or transport role.
+""", .disabled("Mac adoption of outbound Windows host links is not yet implemented"))
+    func remote_32_10() async throws { }
+
+    @Test("""
+@spec REMOTE-32.11: While persisting a native Windows host identity, the application shall protect the private key using current-user Windows cryptographic protection and restrictive file access, and shall not fall back to plaintext private-key storage.
+""", .disabled("Windows identity persistence is not yet implemented"))
+    func remote_32_11() async throws { }
+
+    @Test("""
+@spec REMOTE-32.12: While running a headless host under WSL2, the application shall use the pinned Graftty-patched zmx session implementation and preserve the Mac and Linux ownership, detach, reattach, replay, history, and resize behavior.
+""", .disabled("WSL2 zmx parity is not yet validated"))
+    func remote_32_12() async throws { }
+
+    @Test("""
+@spec REMOTE-32.13: While the Windows user is signed in and the WSL2 host is enabled, the application shall support background host operation when terminal windows are closed or the screen is locked.
+""", .disabled("Windows sign-in startup and WSL2 background lifetime are not yet implemented"))
+    func remote_32_13() async throws { }
+
+    @Test("""
+@spec REMOTE-32.15: When preparing a WSL2 project without an explicit storage override, the application shall place repositories, worktrees, and build caches in the Linux filesystem.
+""", .disabled("WSL2 local setup is not yet implemented"))
+    func remote_32_15() async throws { }
+
     // MARK: - REMOTE-8.x — SSH session layer
 
     @Test("""

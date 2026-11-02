@@ -34,6 +34,20 @@ Run the headless Swift host on Ubuntu 24.04, then connect from the Mac app.
 Git bundles, including committed work that has not been pushed.
 See [Set up a Linux host from your Mac](docs/linux-host.md).
 
+## Windows hosts
+
+Windows 11 support is in progress. V1 targets the existing Linux host and
+Graftty-patched zmx under WSL2, with local installation and an outbound
+connection to the parent Mac. Setup will not require an SSH login into Windows.
+Planned cloud connections use graftty-server for signaling and paired device
+keys for terminal authorization.
+The local WSL installer and resource configuration tools are available under
+`scripts/windows`. Development groundwork includes a native Windows terminal
+and reverse-channel SSH tests on Mac and Linux. Native Windows SSH remains
+follow-up work. Cloud enrollment and the outbound host
+connection are not implemented yet.
+See [Windows headless host](docs/windows-host.md) for status and resource tuning.
+
 ## Remote Macs
 
 Graftty can connect two Macs so you can use one Mac's existing worktrees
