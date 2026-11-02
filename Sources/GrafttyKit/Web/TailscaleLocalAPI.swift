@@ -339,10 +339,8 @@ public struct TailscaleLocalAPI: Sendable {
                     .connectTimeout(.seconds(2))
                     .channelInitializer { channel in
                         return channel.pipeline.addHandler(handler).map {
-                            // The observer also lets tests cancel in the
-                            // initializer/install gap without blocking a loop.
-                            channelOpened?(channel)
                             requestState.install(channel)
+                            channelOpened?(channel)
                         }
                     }
                 let channel: Channel
@@ -407,7 +405,7 @@ public struct TailscaleLocalAPI: Sendable {
 
 /// Owns a request's channel across the cancellation/initializer race. The
 /// handler is event-loop confined; only channel installation needs a lock.
-private final class LocalAPIRequestState: @unchecked Sendable {
+final class LocalAPIRequestState: @unchecked Sendable {
     private let lock = NSLock()
     private var channel: Channel?
     private var cancelled = false

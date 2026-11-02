@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import NIOCore
 import NIOPosix
+import NIOEmbedded
 @testable import GrafttyKit
 
 /// A real local daemon that accepts a request but withholds its response.
@@ -18,23 +19,6 @@ private final class PendingLocalAPI: ChannelInboundHandler, @unchecked Sendable 
             received = true
             request.succeed(context.channel)
         }
-    }
-}
-
-private final class InitializingRequest: @unchecked Sendable {
-    private let lock = NSLock()
-    private var task: Task<Void, any Error>?
-    private var cancelled = false
-    var didCancel: Bool { lock.withLock { cancelled } }
-
-    func install(_ task: Task<Void, any Error>) { lock.withLock { self.task = task } }
-
-    func cancel() {
-        let task = lock.withLock {
-            cancelled = true
-            return self.task
-        }
-        task?.cancel()
     }
 }
 
@@ -102,16 +86,16 @@ struct TailscaleLocalAPICancellationTests {
         await #expect(throws: CancellationError.self) { _ = try await task.value }
     }
 
-    @Test @MainActor
-    func cancellationDuringChannelInitializationClosesTheLateInstalledChannel() async {
-        let initializing = InitializingRequest()
-        let api = TailscaleLocalAPI(
-            transport: .unixSocket(path: "/tmp/graftty-missing-\(UUID().uuidString.prefix(8)).sock"),
-            channelOpened: { _ in initializing.cancel() }
-        )
-        let task = Task { _ = try await api.status() }
-        initializing.install(task)
-        await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(initializing.didCancel)
+    @Test func cancellationBeforeInstallationClosesAnActiveLateChannel() throws {
+        let state = LocalAPIRequestState()
+        let channel = EmbeddedChannel()
+        try channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 1)).wait()
+        #expect(channel.isActive)
+        // Model cancellation winning the race before an active transport is
+        // handed to its owner. No connection failure can mask a missed close.
+        state.cancel()
+        state.install(channel)
+        #expect(!channel.isActive)
+        _ = try channel.finish(acceptAlreadyClosed: true)
     }
 }
