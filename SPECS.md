@@ -3262,6 +3262,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.30** When either native client orders signaling routes, the application shall prefer discovered URLs, the pin's last successful route, pin routes, and saved host routes in that order, deduplicate by URL, and use the saved base URL only if no candidates exist.
 
+**REMOTE-2.31** When mobile access is suspended during a dial, the application shall synchronously invalidate the old connection and reject every awaiting caller even if access resumes before store teardown completes.
+
+**REMOTE-2.32** When a mobile connection request spans an access suspension and resume before starting its dial, the application shall reject that stale request without evicting a newer connection and allow a fresh request to negotiate.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3445,6 +3449,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.23** If a pane-control or worktree-management RPC response does not arrive before its deadline, then the client shall fail that RPC with a timeout using elapsed time independently of the transport event-loop clock.
 
 **REMOTE-11.24** When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.
+
+**REMOTE-11.25** When a pane-control RPC times out, the client shall invalidate its channel before resuming the caller and send later mutations on a fresh channel so a late reply cannot answer another request.
+
+**REMOTE-11.26** When a pane-control caller is cancelled while awaiting a reply, the client shall consume that reply before sending a later mutation so cancellation cannot shift reply pairing.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 

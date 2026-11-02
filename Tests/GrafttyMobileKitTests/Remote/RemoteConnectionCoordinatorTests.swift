@@ -344,6 +344,171 @@ struct RemoteConnectionCoordinatorTests {
         )
     }
 
+    @Test("@spec REMOTE-2.31: When mobile access is suspended during a dial, the application shall synchronously invalidate the old connection and reject every awaiting caller even if access resumes before store teardown completes.", .timeLimit(.minutes(1)), arguments: [false, true], [false, true])
+    func suspensionRejectsReadyDialDuringStoreTeardown(resume: Bool, provisional: Bool) async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostA = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostB = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
+        let pins = PinnedHostStore(directory: dir)
+        let originalPin = try pins.get(id: #require(hostB.remoteDeviceID))
+        try await ConnectionBox.withFixture { box in
+            let dialGate = Gate()
+            let teardownGate = Gate()
+            let counter = CallCounter()
+            var registrations = 0
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: Self.successTransport(box: box, host: hostB, hostKey: hostKey)),
+                connectionFactory: { key, fingerprint in
+                    counter.increment()
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+                    box.set(connection)
+                    return connection
+                }
+            )
+            coordinator.registerPanesStoreForTesting(
+                WorktreePanesStore(driver: TeardownGatedDriver(gate: teardownGate)), hostID: hostA.id
+            )
+            coordinator.beforeRegistration = {
+                if !provisional { await dialGate.wait() }
+            }
+            coordinator.stateAfterRegistration = { connection in
+                registrations += 1
+                let state = await connection.state
+                if provisional { await dialGate.wait() }
+                return state
+            }
+            var usedOldConnection = false
+            let first = Task {
+                let connection = await coordinator.connection(for: hostB)
+                if let connection {
+                    usedOldConnection = true
+                    _ = await connection.state
+                }
+                return connection
+            }
+            var secondEntered = false
+            let second = Task {
+                secondEntered = true
+                return await coordinator.connection(for: hostB)
+            }
+            do {
+                try await dialGate.waitUntilEntered()
+                let callerClock = ContinuousClock()
+                let callerDeadline = callerClock.now.advanced(by: .seconds(10))
+                while !secondEntered, callerClock.now < callerDeadline { await Task.yield() }
+                #expect(secondEntered)
+                #expect(counter.count == 1, "concurrent callers must share the dial")
+                let oldConnection = try #require(box.get())
+                coordinator.setConnectionsAllowed(false)
+                if resume { coordinator.setConnectionsAllowed(true) }
+                #expect(coordinator.registeredConnectionForTesting(hostID: hostB.id) == nil,
+                        "suspension must remove provisional registrations synchronously")
+                try await teardownGate.waitUntilEntered()
+                await dialGate.open()
+                #expect(await first.value == nil)
+                #expect(await second.value == nil)
+                #expect(!usedOldConnection, "a consumer must not use an old dial during suspension")
+                #expect(registrations == (provisional ? 1 : 0), "a ready dial must not register after suspension")
+                #expect(coordinator.registeredConnectionForTesting(hostID: hostB.id) == nil)
+                #expect(await oldConnection.state == .closed)
+                let persisted = try pins.get(id: #require(hostB.remoteDeviceID))
+                #expect(persisted == originalPin)
+                if !resume { #expect(await coordinator.connection(for: hostB) == nil) }
+                coordinator.setConnectionsAllowed(true)
+                var freshEntered = false
+                let fresh = Task {
+                    freshEntered = true
+                    return await coordinator.connection(for: hostB)
+                }
+                let clock = ContinuousClock()
+                let deadline = clock.now.advanced(by: .seconds(10))
+                while !freshEntered, clock.now < deadline { await Task.yield() }
+                #expect(freshEntered)
+                #expect(counter.count == 1, "resume must wait for store teardown before dialing")
+                await teardownGate.open()
+                let newConnection = try #require(await fresh.value)
+                #expect(newConnection !== oldConnection)
+                #expect(counter.count == 2, "stale completion must not impose a cooldown")
+                #expect(coordinator.registeredConnectionForTesting(hostID: hostB.id) === newConnection)
+                await coordinator.invalidateAll()
+            } catch {
+                await dialGate.open()
+                await teardownGate.open()
+                _ = await first.value
+                _ = await second.value
+                await coordinator.invalidateAll()
+                throw error
+            }
+        }
+    }
+
+    @Test("@spec REMOTE-2.32: When a mobile connection request spans an access suspension and resume before starting its dial, the application shall reject that stale request without evicting a newer connection and allow a fresh request to negotiate.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func retryAwaitingStoreTeardownCannotCrossAccessGeneration(preserveNewerConnection: Bool) async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let hostA = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostB = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let retryGate = Gate()
+        let suspensionGate = Gate()
+        let counter = CallCounter()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, _ in
+                Self.httpResponse(for: request, statusCode: 503, body: "host is busy")
+            }),
+            connectionFactory: { key, fingerprint in
+                counter.increment()
+                return RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+            }
+        )
+        coordinator.registerPanesStoreForTesting(
+            WorktreePanesStore(driver: TeardownGatedDriver(gate: suspensionGate)), hostID: hostA.id
+        )
+        coordinator.registerPanesStoreForTesting(
+            WorktreePanesStore(driver: TeardownGatedDriver(gate: retryGate)), hostID: hostB.id
+        )
+        let stale = Task { await coordinator.connection(for: hostB, replacingExistingConnection: true) }
+        do {
+            try await retryGate.waitUntilEntered()
+            coordinator.setConnectionsAllowed(false)
+            coordinator.setConnectionsAllowed(true)
+            try await suspensionGate.waitUntilEntered()
+            await suspensionGate.open()
+            // Await the global teardown without creating a negotiation.
+            let unpaired = Host(label: "Unpaired", baseURL: hostA.baseURL, remoteDeviceID: nil)
+            #expect(await coordinator.connection(for: unpaired) == nil)
+            // Seed a known newer connection while the old per-host cleanup is
+            // still parked. Only that cleanup's original snapshot may close.
+            let key = Curve25519.Signing.PrivateKey()
+            let publicKey = try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
+            let newer = RemoteHostConnection(clientKey: key, expectedHostFingerprint: RemoteIdentityFingerprint(of: publicKey))
+            if preserveNewerConnection {
+                coordinator.registerLiveConnectionForTesting(newer, hostID: hostB.id)
+            }
+            await retryGate.open()
+            #expect(await stale.value == nil)
+            #expect(counter.count == 0, "the old request must not dial after access resumes")
+            if preserveNewerConnection {
+                #expect(coordinator.registeredConnectionForTesting(hostID: hostB.id) === newer)
+                #expect(await newer.state != .closed)
+                await coordinator.invalidate(host: hostB)
+            } else {
+                await newer.close()
+            }
+            #expect(await coordinator.connection(for: hostB) == nil)
+            #expect(counter.count == 1, "a new request must negotiate without a stale cooldown")
+        } catch {
+            await retryGate.open()
+            await suspensionGate.open()
+            _ = await stale.value
+            await coordinator.invalidateAll()
+            throw error
+        }
+    }
+
     @Test(.timeLimit(.minutes(2)))
     func invalidateClearsCooldownAllowingImmediateRetry() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
@@ -1360,6 +1525,13 @@ private final class ConnectionBox: @unchecked Sendable {
 /// returns immediately if already open). Used to hold a negotiation
 /// in-flight long enough for a concurrent caller to observe it and dedup,
 /// rather than racing on wall-clock timing.
+private struct TeardownGatedDriver: PanesStateChannelDriver {
+    let gate: Gate
+    func open() async throws {}
+    func close() {}
+    func shutdown() async { await gate.wait() }
+}
+
 private actor Gate {
     private var opened = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
