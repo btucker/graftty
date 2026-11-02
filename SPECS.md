@@ -672,6 +672,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.21** When a Mac pane resumes leading after applying an attachment grid, the application shall restore its full viewport before resizing the terminal, regardless of scrollbar style.
 
+**TERM-11.22** When an off-main Ghostty action reaches the main queue after its surface is closed or replaced, the application shall drop the action without reading C surface state or routing it to a replacement surface.
+
+**TERM-11.23** When a Ghostty action is deferred to the main queue, the application shall copy each consumed borrowed payload before the callback returns and preserve live-surface and app-scoped routing.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
