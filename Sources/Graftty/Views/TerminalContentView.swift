@@ -44,13 +44,13 @@ struct TerminalContentView: View {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: previewPane.flatMap { imagePreviews.previews[$0]?.id })
     }
 
-    private var previewNavigation: FilePreviewNavigation? {
+    var previewNavigation: FilePreviewNavigation? {
         guard let path = previewWorktreePath, let pane = previewPane,
               let preview = imagePreviews.previews[pane] else { return nil }
         let active = FilePreviewHistory.Entry(preview: preview, pane: pane, worktreePath: path)
         return FilePreviewNavigation(worktreePath: path,
             entries: previewHistory.entries(for: path, including: [active]),
-            onSelectEntry: { entry in imagePreviews.present(entry.preview, for: pane, worktreePath: path) })
+            onSelectEntry: { entry in FilePreviewWindows.shared.showInline(entry, pane: pane, worktreePath: path) })
     }
 
     private var popOutPreview: (() -> Void)? {

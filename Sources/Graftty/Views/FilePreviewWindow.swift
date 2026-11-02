@@ -10,6 +10,7 @@ final class FilePreviewWindows: ObservableObject {
     private let history: FilePreviewHistory
     private let inline: ImagePreviewStore
     @Published private(set) var theme: GhosttyTheme = .fallback
+    private var catalogRequests: [String: (RemoteOpenRequest) async throws -> RemoteOpenResponse] = [:]
     private var controllers: [String: FilePreviewWindowController] = [:]
     private struct HiddenPreview {
         let entry: FilePreviewHistory.Entry
@@ -84,6 +85,11 @@ final class FilePreviewWindows: ObservableObject {
               inlinePane: PaneSlotID? = nil, resolveInlineWorktree: ((PaneSlotID) -> String?)? = nil,
               catalogRequest: ((RemoteOpenRequest) async throws -> RemoteOpenResponse)? = nil) {
         objectWillChange.send()
+        // Reopening a hidden or closed window must keep its remote backend.
+        // Do not retain callbacks after their worktree has lost all history.
+        let retainedPaths = Set(worktreePaths + [entry.worktreePath])
+        catalogRequests = catalogRequests.filter { retainedPaths.contains($0.key) }
+        if let catalogRequest { catalogRequests[entry.worktreePath] = catalogRequest }
         hiddenPreviews.removeAll { $0.entry.worktreePath == entry.worktreePath }
         inline.dismiss(previewID: entry.id)
         let controller: FilePreviewWindowController
@@ -100,7 +106,7 @@ final class FilePreviewWindows: ObservableObject {
                 self?.controllers.removeValue(forKey: path)
             }
         }
-        controller.model.catalogRequest = catalogRequest
+        controller.model.catalogRequest = catalogRequests[entry.worktreePath]
         controller.model.configureInline(pane: inlinePane, resolveWorktree: resolveInlineWorktree) { [weak self] selected, target, path in
             self?.showInline(selected, pane: target, worktreePath: path)
         }
@@ -152,14 +158,14 @@ final class FilePreviewWindowModel: ObservableObject {
     }
 
     func open(_ collection: WorktreePreviewCollection, history: FilePreviewHistory,
-              request: (RemoteOpenRequest) async throws -> RemoteOpenResponse) async throws {
+              isCurrent: () -> Bool = { true }, request: (RemoteOpenRequest) async throws -> RemoteOpenResponse) async throws {
         let revision = selectionRevision
         let files = try await FilePreviewCollectionLoader.load(collection, request: request)
         try Task.checkCancellation()
         // A newer agent delivery or user selection wins over this download.
-        guard selectionRevision == revision else { return }
+        guard selectionRevision == revision, isCurrent() else { return }
         entry = history.record(files: files, pane: entry.pane, worktreePath: entry.worktreePath,
-            id: collection.id, createdAt: collection.createdAt ?? Date())
+            id: collection.id, createdAt: collection.createdAt)
     }
 
     func showInline() {
@@ -215,14 +221,18 @@ private struct FilePreviewWindowContent: View {
     @ObservedObject var windows: FilePreviewWindows
     let onClose: () -> Void
     @State private var catalog: [WorktreePreviewCollection] = []
-    @State private var pendingCollection: WorktreePreviewCollection?
+    private struct Download: Identifiable {
+        let id = UUID()
+        let collection: WorktreePreviewCollection
+    }
+    @State private var pendingDownload: Download?
     @State private var error: String?
 
     private var navigation: FilePreviewNavigation {
         FilePreviewNavigation(worktreePath: model.entry.worktreePath, worktreePaths: windows.worktreePaths,
             entries: history.entries(for: model.entry.worktreePath, including: [model.entry]), catalog: catalog,
             canShowInTerminal: model.canShowInline,
-            onSelectEntry: { pendingCollection = nil; model.entry = $0 }, onOpenCollection: { pendingCollection = $0 },
+            onSelectEntry: { pendingDownload = nil; model.entry = $0 }, onOpenCollection: { pendingDownload = Download(collection: $0) },
             onSelectWorktree: { windows.raise(worktreePath: $0) }, onShowInTerminal: { model.showInline() })
     }
 
@@ -241,14 +251,19 @@ private struct FilePreviewWindowContent: View {
                     do { try await Task.sleep(for: .seconds(5)) } catch { return }
                 }
             }
-            .task(id: pendingCollection?.id) {
-                guard let collection = pendingCollection else { return }
-                defer { if pendingCollection?.id == collection.id { pendingCollection = nil } }
+            .task(id: pendingDownload?.id) { [download = pendingDownload] in
+                guard let download else { return }
+                defer {
+                    if !Task.isCancelled, pendingDownload?.id == download.id { pendingDownload = nil }
+                }
                 do {
-                    try await model.open(collection, history: history, request: request)
-                } catch is CancellationError {} catch { self.error = error.localizedDescription }
+                    try await model.open(download.collection, history: history,
+                        isCurrent: { pendingDownload?.id == download.id }, request: request)
+                } catch is CancellationError {} catch {
+                    if !Task.isCancelled, pendingDownload?.id == download.id { self.error = error.localizedDescription }
+                }
             }
-            .onChange(of: model.entry.id) { _, _ in pendingCollection = nil }
+            .onChange(of: model.entry.id) { _, _ in pendingDownload = nil }
             .alert("Could not open preview", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
                 Button("OK") { error = nil }
             } message: { Text(error ?? "") }

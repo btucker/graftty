@@ -146,7 +146,7 @@ struct FilePreviewToolbarButton: View {
                 let files = try await FilePreviewCollectionLoader.load(collection) { try await request($0) }
                 try Task.checkCancellation()
                 let entry = history.record(files: files, pane: inlinePane ?? PaneSlotID(), worktreePath: worktreePath,
-                    id: collection.id, createdAt: collection.createdAt ?? Date())
+                    id: collection.id, createdAt: collection.createdAt)
                 show(entry)
             } catch is CancellationError {} catch { if downloadID == id { self.error = error.localizedDescription } }
         }

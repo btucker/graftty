@@ -4412,6 +4412,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.14** While a preview has earlier requests or multiple files, the application shall combine file selection and deduplicated worktree history in one menu, show collection navigation only for multiple files, and raise an existing worktree window without replacing its selection.
 
+**PREVIEW-1.15** When a remote preview window is hidden or closed and reopened, the application shall retain its remote catalog transport for browsing and downloading history.
+
+**PREVIEW-1.16** When a library download is superseded before task cancellation is observed, the application shall discard its result without changing the selected preview or appending discarded history.
+
 ### PREVIEW-2.x
 
 **PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.

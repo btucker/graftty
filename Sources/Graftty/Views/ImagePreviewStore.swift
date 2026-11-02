@@ -10,13 +10,13 @@ final class ImagePreviewStore: ObservableObject {
 
     struct Preview: Identifiable {
         let id: UUID
-        let createdAt: Date
+        let createdAt: Date?
         let createdInstant = ContinuousClock.now
         let files: [FilePreviewFile]
         var filename: String { files.first?.url.lastPathComponent ?? "Preview" }
         var sourceURL: URL? { files.first?.sourceURL }
 
-        init(files: [FilePreviewFile], id: UUID = UUID(), createdAt: Date = Date()) {
+        init(files: [FilePreviewFile], id: UUID = UUID(), createdAt: Date? = Date()) {
             self.createdAt = createdAt
             self.id = id
             precondition(!files.isEmpty)

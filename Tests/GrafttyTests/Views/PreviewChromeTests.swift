@@ -2,6 +2,7 @@ import AppKit
 import GrafttyKit
 import GrafttyProtocol
 import Testing
+import SwiftUI
 @testable import Graftty
 
 @MainActor
@@ -90,7 +91,7 @@ struct PreviewChromeTests {
         _ = NSApp.sendAction(try #require(tray.worktreePicker.action), to: tray.worktreePicker.target, from: tray.worktreePicker)
         #expect(raised == "/b")
         #expect(tray.worktreePicker.selectedItem?.representedObject as? String == "/a")
-        #expect(tray.picker.titleOfSelectedItem?.contains(older.createdAt.formatted(date: .omitted, time: .shortened)) == true)
+        #expect(tray.picker.titleOfSelectedItem?.contains(try #require(older.createdAt).formatted(date: .omitted, time: .shortened)) == true)
         let menu = try #require(tray.picker.menu)
         let index = try #require(menu.items.firstIndex { $0.title == newer.menuTitle })
         menu.performActionForItem(at: index)
@@ -120,6 +121,91 @@ struct PreviewChromeTests {
         }
         #expect(model.entry.id == replacement.id)
         #expect(history.entries.count == 2)
+    }
+
+    @Test("@spec PREVIEW-1.15: When a remote preview window is hidden or closed and reopened, the application shall retain its remote catalog transport for browsing and downloading history.")
+    func reopeningRemotePreviewRetainsCatalogTransport() async throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory()
+        let windows = FilePreviewWindows(history: history, inline: ImagePreviewStore())
+        defer { windows.closeAll() }
+        let path = "remote-preview:host:/repo"
+        let file = try FilePreviewFile(.init(filename: "current.html", bytes: Data()))
+        let entry = history.record(files: [file], pane: PaneSlotID(), worktreePath: path)
+        let offer = RemoteOpenOffer(id: UUID(), filename: "remote.html", byteCount: 1, previewKind: "file")
+        windows.show(entry, activate: false, catalogRequest: { _ in .offers([offer]) })
+        windows.hide(entry, inlinePane: nil)
+        #expect(windows.restoreHidden(for: path, inlinePane: nil, resolveWorktree: nil))
+        let restored = try #require(windows.model(for: path)?.catalogRequest)
+        #expect(try await restored(.list) == .offers([offer]))
+        windows.window(for: path)?.performClose(nil)
+        windows.raise(worktreePath: path)
+        let reopened = try #require(windows.model(for: path)?.catalogRequest)
+        #expect(try await reopened(.list) == .offers([offer]))
+    }
+
+    @Test("Downloading a legacy collection keeps its unknown creation time out of history labels and chronological ordering.")
+    func legacyDownloadDoesNotInventCreationTime() async throws {
+        let history = FilePreviewHistory()
+        let file = try FilePreviewFile(.init(filename: "known.html", bytes: Data()))
+        let known = history.record(files: [file], pane: PaneSlotID(), worktreePath: "/a")
+        let model = FilePreviewWindowModel(entry: known)
+        let offer = RemoteOpenOffer(id: UUID(), filename: "legacy.html", byteCount: 0, previewKind: "file")
+        let collection = try #require(RemoteOpenOffer.previewCollections(in: [offer]).first)
+        try await model.open(collection, history: history) { _ in .chunk(Data()) }
+        #expect(model.entry.menuTitle == "legacy.html")
+        let choices = FilePreviewNavigation(worktreePath: "/a", entries: history.entries(for: "/a")).choices
+        #expect(choices.first?.id == known.id)
+        #expect(choices.last?.createdAt == nil)
+    }
+
+    @Test("Selecting inline history transfers the snapshot from its window and other inline owners.")
+    func inlineHistoryUsesPresentationTransfer() throws {
+        _ = NSApplication.shared
+        let path = "/preview-inline-" + UUID().uuidString
+        let pane = PaneSlotID(), sibling = PaneSlotID()
+        let file = try FilePreviewFile(.init(filename: "report.html", bytes: Data()))
+        let history = FilePreviewHistory.shared
+        let windows = FilePreviewWindows.shared
+        let inline = ImagePreviewStore.shared
+        defer {
+            windows.window(for: path)?.performClose(nil)
+            inline.dismiss(pane)
+            inline.dismiss(sibling)
+        }
+        let first = history.record(files: [file], pane: pane, worktreePath: path)
+        let second = history.record(files: [file], pane: pane, worktreePath: path)
+        windows.show(first, activate: false)
+        inline.present(second.preview, for: pane, worktreePath: path)
+        inline.present(first.preview, for: sibling, worktreePath: path)
+        let manager = TerminalManager(socketPath: "/tmp/unused-inline-preview-test.sock")
+        let view = TerminalContentView(terminalManager: manager, splitTree: .constant(SplitTree(root: .leaf(pane))),
+            focusedPaneSlotID: pane, theme: .fallback, onFocusTerminal: { _ in }, previewWorktreePath: path)
+        let navigation = try #require(view.previewNavigation)
+        navigation.onSelectEntry(first)
+        #expect(windows.window(for: path) == nil)
+        #expect(inline.previews[pane]?.id == first.id)
+        #expect(inline.previews[sibling] == nil)
+        #expect(history.entries(for: path).count == 2)
+    }
+
+    @Test("@spec PREVIEW-1.16: When a library download is superseded before task cancellation is observed, the application shall discard its result without changing the selected preview or appending discarded history.")
+    func newDownloadSelectionWinsBeforeCancellation() async throws {
+        let history = FilePreviewHistory()
+        let file = try FilePreviewFile(.init(filename: "current.txt", bytes: Data()))
+        let entry = history.record(files: [file], pane: PaneSlotID(), worktreePath: "/a")
+        let model = FilePreviewWindowModel(entry: entry)
+        let offer = RemoteOpenOffer(id: UUID(), filename: "download.txt", byteCount: 1, previewKind: "file")
+        let collection = try #require(RemoteOpenOffer.previewCollections(in: [offer]).first)
+        let requestID = UUID()
+        var currentRequestID = requestID
+        try await model.open(collection, history: history, isCurrent: { currentRequestID == requestID }) { _ in
+            currentRequestID = UUID()
+            return .chunk(Data([1]))
+        }
+        #expect(!Task.isCancelled)
+        #expect(model.entry.id == entry.id)
+        #expect(history.entries.count == 1)
     }
 
     @Test("Capture native preview chrome for manual review when requested.")
