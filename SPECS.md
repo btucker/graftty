@@ -4098,6 +4098,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-30.24** When an upstream MCP transport ends after delivering complete messages, the application shall reject further sends, allow still-authorized receives to drain those messages once before reporting the terminal error, and discard them immediately on authority changes, teardown, or protocol-limit failures.
 
+**REMOTE-30.25** When launching MCP servers or provider proxies from a thread with blocked signals, the application shall give the child an empty signal mask and default signal dispositions, preserve the launching thread's mask, and allow the child to receive SIGTERM and SIGCHLD.
+
 ### REMOTE-31.x — Provider preferences and placement
 
 **REMOTE-31.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.
