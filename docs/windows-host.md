@@ -94,8 +94,15 @@ The guest also reports `VirtualizationFirmwareEnabled: false`. The
 [VirtualBox 7.2 manual](https://download.oracle.com/virtualbox/UserManual.pdf)
 documents that nested virtualization settings are unavailable for Arm guests.
 WSL2 runtime, zmx session lifetime, and remote access therefore remain untested
-in this VM. Use native Windows hardware or a compatible nested-virtualization
-host for those checks.
+in this VM.
+
+[AWS WSL2 validation on November 2, 2026](testing/wsl2-aws-2026-11-02.md)
+passed the local installer, shell input and output, and zmx session persistence
+across a host-service restart on Windows Server 2025. With a 12 GB WSL ceiling,
+the 16 GiB instance exposed all four CPUs and 11.68 GiB of guest RAM. A touched
+9 GiB allocation reported 9.01 GiB resident. The temporary AWS resources were
+removed after testing. Windows 11 screen-lock behavior and the outbound parent
+Mac connection remain unverified.
 
 ## WSL2 resource policy
 
