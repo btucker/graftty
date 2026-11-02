@@ -35,6 +35,8 @@ public extension HeadlessHostRuntime {
     func manage(_ request: WorktreeManagementRequest) async -> WorktreeManagementResponse {
         do {
             switch request {
+            case let .addAgent(path, provider, operationID):
+                return await ViewerAgentLaunch.add(path: path, provider: provider, operationID: operationID, platform: controlPlatform)
             case let .agentConversation(path, agentID, action):
                 return await AgentControl.conversation(path: path, agentID: agentID, action: action, platform: controlPlatform)
             case .agentCompletions, .worktreeAgentCompletions:
@@ -52,7 +54,11 @@ public extension HeadlessHostRuntime {
                 }
             case .listRepositories:
                 return .repositories(await repositoryInfo())
-            case .create(let repository, let name, let branch, let source):
+            case .create(let repository, let name, let branch, let source, let launchDefaultAgent):
+                if launchDefaultAgent {
+                    return await ViewerAgentLaunch.create(repository: repository, name: name, branch: branch,
+                        existingSource: source, platform: controlPlatform)
+                }
                 do {
                     let result = try await createWorktree(repository: repository, name: name, branch: branch,
                         existing: source != nil, remoteOnly: source == .remoteOnly)

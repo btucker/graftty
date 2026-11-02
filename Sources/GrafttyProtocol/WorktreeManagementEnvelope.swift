@@ -159,6 +159,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     case agentCompletions
     case worktreeAgentCompletions(worktreeID: String)
     case agentConversation(worktreeID: String, agentID: String, action: AgentConversationAction)
+    case addAgent(worktreeID: String, provider: String?, operationID: UUID)
     case openResource(worktreeID: String, request: RemoteOpenRequest)
     case hostPresentation
     case listRepositories
@@ -167,7 +168,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
         deviceID: RemoteDeviceID,
         fingerprint: RemoteIdentityFingerprint
     )
-    case create(repositoryID: String, worktreeName: String, branchName: String, existingSource: RemoteRepositoryInfo.Branch.Source?)
+    case create(repositoryID: String, worktreeName: String, branchName: String, existingSource: RemoteRepositoryInfo.Branch.Source?, launchDefaultAgent: Bool = false)
     case pullDefaultBranch(repositoryID: String)
     case open(worktreeID: String)
     case delete(worktreeID: String, force: Bool)
@@ -181,7 +182,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
 
 extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case openResource, placement, agentSkills, agentID, action, conversation
+        case openResource, placement, agentSkills, agentID, action, conversation, provider, operationID, launchDefaultAgent
         case type, repositoryID, worktreeID, worktreeName, branchName,
              existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode
     }
@@ -189,6 +190,11 @@ extension WorktreeManagementRequest: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case let .addAgent(worktreeID, provider, operationID):
+            try c.encode("add_agent", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
+            try c.encodeIfPresent(provider, forKey: .provider)
+            try c.encode(operationID, forKey: .operationID)
         case .agentSkills(let request):
             try c.encode("agent_skills", forKey: .type)
             try c.encode(request, forKey: .agentSkills)
@@ -243,12 +249,13 @@ extension WorktreeManagementRequest: Codable {
             try c.encode("connect_remote_mac", forKey: .type)
             try c.encode(deviceID, forKey: .deviceID)
             try c.encode(fingerprint, forKey: .fingerprint)
-        case let .create(repositoryID, worktreeName, branchName, existingSource):
+        case let .create(repositoryID, worktreeName, branchName, existingSource, launchDefaultAgent):
             try c.encode("create", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
             try c.encode(worktreeName, forKey: .worktreeName)
             try c.encode(branchName, forKey: .branchName)
             try c.encodeIfPresent(existingSource, forKey: .existingSource)
+            try c.encode(launchDefaultAgent, forKey: .launchDefaultAgent)
         case .pullDefaultBranch(let repositoryID):
             try c.encode("pull_default_branch", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
@@ -269,6 +276,10 @@ extension WorktreeManagementRequest: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "add_agent":
+            self = .addAgent(worktreeID: try c.decode(String.self, forKey: .worktreeID),
+                provider: try c.decodeIfPresent(String.self, forKey: .provider),
+                operationID: try c.decode(UUID.self, forKey: .operationID))
         case "agent_skills": self = .agentSkills(try c.decode(RemoteSkillTransferRequest.self, forKey: .agentSkills))
         case "placement": self = .placement(try c.decode(HostPlacementRequest.self, forKey: .placement))
         case "agent_conversation":
@@ -311,7 +322,8 @@ extension WorktreeManagementRequest: Codable {
                 existingSource: try c.decodeIfPresent(
                     RemoteRepositoryInfo.Branch.Source.self,
                     forKey: .existingSource
-                )
+                ),
+                launchDefaultAgent: try c.decodeIfPresent(Bool.self, forKey: .launchDefaultAgent) ?? false
             )
         case "pull_default_branch":
             self = .pullDefaultBranch(

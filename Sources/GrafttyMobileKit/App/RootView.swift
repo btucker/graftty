@@ -415,6 +415,8 @@ public struct RootView: View {
                         worktree: step.worktree,
                         sidebarNavigation: iPadAppState.sidebarNavigation
                     ) { sessionName in
+                        guard iPadAppState.selectedHostId == step.host.id,
+                              iPadAppState.selectedWorktreePath == step.worktree.path else { return }
                         let session = SessionStep(
                             host: step.host,
                             worktreePath: step.worktree.path,

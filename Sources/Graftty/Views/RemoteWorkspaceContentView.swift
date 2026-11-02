@@ -15,12 +15,16 @@ struct RemoteWorkspaceContentView: View {
     var attentionContext: SidebarWorktreeContext?
     var requestedAgent: String? = nil
     var consumeAgentRequest: () -> Void = {}
+    var launchAgent: @MainActor (String?, UUID) async throws -> String = { _, _ in
+        throw AgentLaunchError("The host connection is unavailable.")
+    }
     var conversationRequest: @MainActor (String, AgentConversationAction) async throws -> WorktreeManagementResponse = { _, _ in
         .error(code: "unavailable", message: "The host connection is unavailable.", forceAllowed: false, shortStatus: nil)
     }
     @State private var zoomed: PaneSlotID?
     @State private var workspace: WorkspaceLayout<String>?
     @State private var drawerResizeStart: Double?
+    @State private var pendingAgentSession: String?
 
     private var layout: WorkspaceLayout<String> { workspace ?? .initial(for: worktree) }
     private func slot(_ session: String) -> PaneSlotID? {
@@ -45,7 +49,10 @@ struct RemoteWorkspaceContentView: View {
                 if let visible = layout.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                     surface(visible, headers: true)
                 } else {
-                    Text("No active agents").frame(maxWidth: .infinity, maxHeight: .infinity)
+                    VStack(spacing: 12) {
+                        Text("No active agents").font(.headline)
+                        newAgentMenu.controlSize(.large)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if layout.drawerVisible {
                     HorizontalResizeDivider(label: "Terminal drawer height", onResize: { translation in
@@ -99,7 +106,7 @@ struct RemoteWorkspaceContentView: View {
             viewer.clearWorkspaceVisibility(identity: identity, worktreePath: worktree.path)
         }
         .onChange(of: requestedAgent) { _, _ in showRequestedAgent() }
-        .onChange(of: worktree) { _, _ in reconcile(); viewer.workspaceCommandHandler = handleCommand }
+        .onChange(of: worktree) { _, _ in reconcile(); showNewAgent(); viewer.workspaceCommandHandler = handleCommand }
         .onChange(of: focused) { _, id in
             revealFocused()
         }
@@ -109,6 +116,27 @@ struct RemoteWorkspaceContentView: View {
             if let value { viewer.saveWorkspaceLayout(value, identity: identity, worktreePath: worktree.path) }
         }
         .onChange(of: zoomed) { _, _ in publishVisibility() }
+    }
+
+    private var newAgentMenu: some View {
+        NewAgentMenu { provider, operationID in
+            let session = try await launchAgent(provider, operationID)
+            try Task.checkCancellation()
+            pendingAgentSession = session
+            showNewAgent()
+        }
+    }
+
+    private func showNewAgent() {
+        guard viewer.selectedRemoteIdentity == identity, viewer.selectedRemoteWorktreePath == worktree.path else {
+            pendingAgentSession = nil
+            return
+        }
+        guard let session = pendingAgentSession,
+              worktree.layout?.leaves.contains(where: { $0.sessionName == session }) == true else { return }
+        workspace?.addAgent(session)
+        select(session)
+        pendingAgentSession = nil
     }
 
     private func showRequestedAgent() {
@@ -287,6 +315,7 @@ struct RemoteWorkspaceContentView: View {
                                 }
                             }
                     }
+                    newAgentMenu.menuStyle(.borderlessButton)
                 }
             }.font(.system(size: 13))
                 .background { terminalManager.theme.background.worktreeHeaderWash() }

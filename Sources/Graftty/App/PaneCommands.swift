@@ -25,7 +25,9 @@ enum PaneCommands {
         path: String,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        startSurfacesInBackground: Bool = false
+        startSurfacesInBackground: Bool = false,
+        extraInitialInput: String? = nil,
+        initialAgent: ManagedAgent? = nil
     ) -> WorktreeStartResult {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
@@ -35,14 +37,19 @@ enum PaneCommands {
                 == path {
                 let state = appState.wrappedValue.repos[repoIdx]
                     .worktrees[wtIdx].state
-                guard state != .running else { return .alreadyRunning }
-                guard state == .closed else { return .unavailable }
+                let empty = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree.root == nil
+                let startingAgent = empty ? initialAgent : nil
+                guard state != .running || startingAgent != nil else { return .alreadyRunning }
+                guard state == .closed || state == .running else { return .unavailable }
 
                 if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     .splitTree.root == nil {
-                    let id = PaneSlotID()
+                    let id = startingAgent?.paneSlotID ?? PaneSlotID()
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                         .splitTree = SplitTree(root: .leaf(id))
+                    if let session = startingAgent?.paneSessionID {
+                        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].recordPaneSession(session, for: id)
+                    }
                 }
 
                 let splitTree = appState.wrappedValue.repos[repoIdx]
@@ -52,7 +59,7 @@ enum PaneCommands {
                     // Stop clears mappings. A retained mapping belongs to a
                     // previous launch and must not replay its default command.
                     // createSurfaces clears this marker if zmx confirms it gone.
-                    if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    if startingAgent == nil, appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                         .paneSessions[leafID] != nil {
                         terminalManager.markRehydrated(leafID)
                     }
@@ -73,7 +80,8 @@ enum PaneCommands {
                     for: splitTree,
                     paneSessions: appState.wrappedValue.repos[repoIdx]
                         .worktrees[wtIdx].paneSessions,
-                    worktreePath: path
+                    worktreePath: path,
+                    extraInitialInput: extraInitialInput
                 )
                 if startSurfacesInBackground,
                    !terminalManager.startSurfacesForBackgroundLaunch(

@@ -6,6 +6,25 @@ import Testing
 @MainActor
 @Suite("Compact terminal presentation")
 struct CompactTerminalPresentationTests {
+    @Test("@spec AGENT-6.153: When an iPhone agent launch reply arrives before its inventory snapshot, the application shall retain the new session selection until the snapshot arrives and discard it if the user leaves the originating route.", arguments: [true, false])
+    func agentLaunchSelectionHandlesEitherReplyOrder(replyFirst: Bool) {
+        var selection = CompactAgentLaunchSelection()
+        selection.activate()
+        let generation = selection.generation
+        let old = worktree(shells: [])
+        let ready = worktree(shells: ["created"])
+        let immediate = selection.created("created", generation: generation, in: replyFirst ? old : ready)
+        #expect(immediate == (replyFirst ? nil : "created"))
+        #expect(selection.takeReady(in: ready) == (replyFirst ? "created" : nil))
+        #expect(selection.takeReady(in: ready) == nil)
+
+        _ = selection.created("created", generation: generation, in: old)
+        selection.invalidate()
+        #expect(selection.takeReady(in: ready) == nil)
+        selection.activate()
+        #expect(selection.created("created", generation: generation, in: ready) == nil)
+    }
+
     @Test("@spec IPAD-2.22: When a compact workspace opens Terminal, the application shall present its shells separately from the selected agent, reuse the selected live shell, and create one shell only when none exists.")
     func opensExistingShellAndCreatesOnlyWhenEmpty() async {
         let presentation = CompactTerminalPresentation()

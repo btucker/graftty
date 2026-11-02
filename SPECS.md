@@ -2504,6 +2504,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.17** If the mobile Add Worktree sheet has no authenticated paired connection, then the application shall fail its repository list closed instead of reading repositories over unauthenticated HTTP.
 
+**IOS-9.18** When an iPhone or iPad creates a worktree, the application shall request its host's default agent as the first session while preserving shell-only creation for clients that do not request an agent.
+
+**IOS-9.19** When mobile worktree creation selects an existing branch, the application shall preserve its local or remote-only source and resolve an automatic source on the owning host before starting the default agent.
+
 ### IOS-10.x
 
 **IOS-10.1** While `scenePhase` is transiently `.inactive`, the application shall preserve active terminal channels so Control Center, app-switcher transitions, and system interruptions do not cause visible reconnect churn. When the scene enters `.background`, the application shall close terminal channels and suspend every paired host connection while keeping live `TerminalPaneView` instances mounted; when the scene becomes active and unlocked, it shall resume transport through the same `SessionClient` and `InMemoryTerminalSession` so foregrounding does not free and remount Ghostty renderers during a QuartzCore transaction.
@@ -2975,6 +2979,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-10.22** When Codex wrapper paths contain newlines or shell metacharacters, the application shall treat them as literal data in comments and missing-binary diagnostics without executing them.
 
 **TEAM-10.23** If lockf is unavailable, then the Codex wrapper shall use an exclusive flock to coordinate durable administration with managed-home rebuilds.
+
+**TEAM-10.24** When Graftty refreshes a managed Codex config, the application shall retain hook trust hashes and enablement saved in that managed home, refresh other settings from the durable config, and leave the durable config unchanged.
 
 ### TEAM-11.x — Idle Delivery
 
@@ -4887,6 +4893,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.146** When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to report again before each final response.
 
 **AGENT-6.147** While an agent is the primary agent of a worktree, the application shall keep it available for ongoing work and reserve task-completion instructions and parent cleanup obligations for additional agents.
+
+**AGENT-6.148** When a paired viewer adds an agent, the application shall round-trip the worktree identity, optional provider, and stable launch operation ID independently of any existing pane.
+
+**AGENT-6.149** When a paired viewer adds an agent to a worktree with no panes, the application shall launch the requested provider without changing host selection and reuse that launch when the operation is retried.
+
+**AGENT-6.150** When a managed agent starts in a worktree with no panes, the application shall use its reserved pane and session as the first pane without creating a shell first or changing the selected worktree.
+
+**AGENT-6.151** While a selected worktree has no tabs, the application shall offer an enabled New agent control with a minimum 44-point touch target on iPhone and iPad.
+
+**AGENT-6.152** If a managed agent's terminal backend fails to start, then the application shall reject the launch and remove its unusable pane instead of reporting an attachable session.
+
+**AGENT-6.153** When an iPhone agent launch reply arrives before its inventory snapshot, the application shall retain the new session selection until the snapshot arrives and discard it if the user leaves the originating route.
 
 ## CLI — CLI
 
