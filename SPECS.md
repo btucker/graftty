@@ -782,6 +782,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.53** When a mobile checkpoint arrives before its terminal surface mounts, the application shall install the checkpoint after the first mount and then parse live output at the checkpoint grid without requiring navigation.
 
+**TERM-12.54** If applying a terminal source grid stalls, then the application shall fail the attachment within its restore deadline and release the wait on disconnect or cancellation so recovery can replace the stalled renderer.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
@@ -2504,7 +2506,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
-**IOS-7.10** If a mobile checkpoint restore exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
+**IOS-7.10** If a mobile checkpoint restore or source-grid update exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 
@@ -3471,6 +3473,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-9.14** When an SSH terminal receiver cancels or disconnects, the application shall release its pending receive work and discarded output, reject output after closure, and preserve final output before a deliberate remote exit.
 
 **REMOTE-9.15** When an SSH terminal attachment closes or is canceled before shell acknowledgement, the application shall fail the pending connection and close its child channel without disconnecting the shared transport.
+
+**REMOTE-9.16** When consecutive small SSH terminal writes accumulate, the application shall coalesce them within bounded receive batches so packet fragmentation alone does not exhaust the frame budget and disconnect the pane.
 
 ### REMOTE-10.x
 

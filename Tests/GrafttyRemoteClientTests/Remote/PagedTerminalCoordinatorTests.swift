@@ -254,6 +254,45 @@ struct PagedTerminalCoordinatorTests {
         coordinator.disconnect()
     }
 
+    @Test("@spec TERM-12.54: If applying a terminal source grid stalls, then the application shall fail the attachment within its restore deadline and release the wait on disconnect or cancellation so recovery can replace the stalled renderer.", arguments: ["timeout", "disconnect", "cancel"])
+    func stalledGridReleasesWait(reason: String) async throws {
+        let surface = Surface()
+        surface.holdGrid = true
+        let coordinator = PagedTerminalCoordinator(renderer: surface, requestTimeout: .milliseconds(30)) { _ in }
+        let applying = Task { try await coordinator.handle(.grid(cols: 120, rows: 40)) }
+        while surface.gridContinuation == nil { await Task.yield() }
+        defer { surface.gridContinuation?.resume(); surface.gridContinuation = nil }
+        let deadline = try #require(coordinator.timeoutTaskForTesting)
+        if reason == "timeout" {
+            await deadline.value
+            await #expect(throws: PagedTerminalCoordinator.RestoreError.timedOut) { try await applying.value }
+        } else {
+            if reason == "disconnect" { coordinator.disconnect() } else { applying.cancel() }
+            await #expect(throws: CancellationError.self) { try await applying.value }
+        }
+        surface.holdGrid = false
+        #expect(try await coordinator.handle(.grid(cols: 80, rows: 24)) == DisplayGrid(cols: 80, rows: 24))
+        coordinator.disconnect()
+    }
+
+    @Test("A source-grid wait preserves the pending history request's deadline")
+    func gridWaitKeepsHistoryDeadline() async throws {
+        let surface = Surface()
+        surface.nearTop = true
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { _ in }
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        await coordinator.loadIfNeeded()
+        let historyDeadline = try #require(coordinator.timeoutTaskForTesting)
+        surface.holdGrid = true
+        let applying = Task { try await coordinator.handle(.grid(cols: 120, rows: 40)) }
+        while surface.gridContinuation == nil { await Task.yield() }
+        defer { surface.gridContinuation?.resume(); surface.gridContinuation = nil }
+        #expect(!historyDeadline.isCancelled)
+        coordinator.disconnect()
+        await #expect(throws: CancellationError.self) { try await applying.value }
+        #expect(historyDeadline.isCancelled)
+    }
+
     @Test("Cancellation releases a stalled checkpoint wait before its renderer completes")
     func cancelStalledInstall() async throws {
         let surface = Surface()
@@ -325,6 +364,11 @@ struct PagedTerminalCoordinatorTests {
         var installError: (any Error)?
         var holdInstall = false
         var installContinuation: CheckedContinuation<Void, Never>?
+        var holdGrid = false
+        var gridContinuation: CheckedContinuation<Void, Never>?
+        func setSourceGrid(cols: UInt16, rows: UInt16) async throws {
+            if holdGrid { await withCheckedContinuation { gridContinuation = $0 } }
+        }
         func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
             if let installError { throw installError }
             if holdInstall { await withCheckedContinuation { installContinuation = $0 } }

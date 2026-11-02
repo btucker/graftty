@@ -45,7 +45,14 @@ public final class PagedTerminalCoordinator {
     private var pending: PagedTerminalHistoryRequest?
     private var retryRequest: PagedTerminalHistoryRequest?
     private var timeout: Task<Void, Never>?
-    private var cancelInstallation: (() -> Void)?
+    private struct RendererOperation {
+        let id: UUID
+        let deadline: Task<Void, Never>
+        let cancel: () -> Void
+    }
+    // Renderer waits and network page requests can overlap. Keep their
+    // deadlines separate so a grid update cannot disable a page timeout.
+    private var rendererOperation: RendererOperation?
 
 #if DEBUG
     /// Read-only evidence for gesture-driven request/import correlation.
@@ -54,7 +61,7 @@ public final class PagedTerminalCoordinator {
     }
 
     /// Lets tests await timeout completion or cancellation without fixed sleeps.
-    var timeoutTaskForTesting: Task<Void, Never>? { timeout }
+    var timeoutTaskForTesting: Task<Void, Never>? { rendererOperation?.deadline ?? timeout }
 #endif
 
     public init(renderer: any PagedTerminalRenderer, requestTimeout: Duration = .seconds(15),
@@ -71,7 +78,9 @@ public final class PagedTerminalCoordinator {
         switch event {
         case .grid(let cols, let rows):
             let resizingGeneration = generation
-            try await renderer.setSourceGrid(cols: cols, rows: rows)
+            try await performRendererOperation { [renderer] in
+                try await renderer.setSourceGrid(cols: cols, rows: rows)
+            }
             guard resizingGeneration == generation else { return nil }
             return try DisplayGrid(cols: cols, rows: rows)
         case .checkpoint(let value):
@@ -86,7 +95,9 @@ public final class PagedTerminalCoordinator {
             let installingGeneration = generation
             status = .installing
             do {
-                try await install(value, generation: installingGeneration)
+                try await performRendererOperation { [renderer] in
+                    try await renderer.install(value, generation: installingGeneration)
+                }
             } catch {
                 // TERM-12.51: an unmounted or cancelled restore must not leave
                 // the banner spinning; offer recovery from the live screen.
@@ -219,6 +230,9 @@ public final class PagedTerminalCoordinator {
     public func disconnect() {
         generation &+= 1
         cancelPending()
+        rendererOperation?.cancel()
+        rendererOperation?.deadline.cancel()
+        rendererOperation = nil
         checkpoint = nil
         retryRequest = nil
         remaining = [false, false]
@@ -228,20 +242,21 @@ public final class PagedTerminalCoordinator {
     private func cancelPending() {
         timeout?.cancel()
         timeout = nil
-        cancelInstallation?()
-        cancelInstallation = nil
         pending = nil
     }
 
     /// Native output queues may park in a continuation that ignores Swift
     /// cancellation. Bound the caller's wait without joining that parked task;
     /// a failure reaches the attachment's existing close/reconnect path.
-    private func install(_ checkpoint: PagedTerminalCheckpoint, generation installingGeneration: UInt64) async throws {
+    private func performRendererOperation(_ operation: @escaping @MainActor () async throws -> Void) async throws {
+        rendererOperation?.cancel()
+        rendererOperation?.deadline.cancel()
+        let id = UUID()
         let result = AsyncStream<Result<Void, any Error>>.makeStream(bufferingPolicy: .bufferingOldest(1))
-        let installation = Task { [renderer] in
+        let work = Task {
             do {
                 try Task.checkCancellation()
-                try await renderer.install(checkpoint, generation: installingGeneration)
+                try await operation()
                 result.continuation.yield(.success(()))
             } catch {
                 result.continuation.yield(.failure(error))
@@ -253,16 +268,15 @@ public final class PagedTerminalCoordinator {
             result.continuation.yield(.failure(RestoreError.timedOut))
             result.continuation.finish()
         }
-        timeout = deadline
-        cancelInstallation = { installation.cancel(); result.continuation.finish() }
+        rendererOperation = RendererOperation(id: id, deadline: deadline, cancel: {
+            work.cancel()
+            result.continuation.finish()
+        })
         defer {
-            installation.cancel()
+            work.cancel()
             deadline.cancel()
             result.continuation.finish()
-            if generation == installingGeneration {
-                timeout = nil
-                cancelInstallation = nil
-            }
+            if rendererOperation?.id == id { rendererOperation = nil }
         }
         for await completion in result.stream {
             try Task.checkCancellation()

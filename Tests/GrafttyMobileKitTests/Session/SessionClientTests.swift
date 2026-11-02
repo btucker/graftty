@@ -950,13 +950,17 @@ struct SessionClientTests {
         #expect(first.closed)
     }
 
-    @Test("@spec IOS-7.10: If a mobile checkpoint restore exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.")
-    func restoreTimeoutReplacesNativeSession() async throws {
+    @Test("@spec IOS-7.10: If a mobile checkpoint restore or source-grid update exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.", arguments: ["checkpoint", "grid"])
+    func restoreTimeoutReplacesNativeSession(operation: String) async throws {
         let first = DelayedReceiveWS(paged: true)
         let second = DelayedReceiveWS(paged: true)
         let sequence = WebSocketSequence([first, second])
         let renderer = PagingRenderer()
-        renderer.installError = PagedTerminalCoordinator.RestoreError.timedOut
+        if operation == "checkpoint" {
+            renderer.installError = PagedTerminalCoordinator.RestoreError.timedOut
+        } else {
+            renderer.resizeError = PagedTerminalCoordinator.RestoreError.timedOut
+        }
         let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() },
                                    backoffSchedule: [0.01], pagedRenderer: renderer)
         let failedSession = client.session
@@ -969,7 +973,8 @@ struct SessionClientTests {
         try await waitUntil("first receive") { first.receiveCalls == 1 }
         let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 1, cols: 80, rows: 24,
             ready: Data([1]), hasPrimaryHistory: false, hasAlternateHistory: false)
-        first.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        let event: PagedTerminalEvent = operation == "checkpoint" ? .checkpoint(checkpoint) : .grid(cols: 80, rows: 24)
+        first.deliver(.text(try PagedTerminalEnvelope(event: event).encoded()))
         try await waitUntil("replacement receive") { second.receiveCalls == 1 }
         #expect(first.closed)
         #expect(client.session !== failedSession)
@@ -978,6 +983,7 @@ struct SessionClientTests {
             return mountedSession === client.session && container.scrollbackSession === client.session
         }
         renderer.installError = nil
+        renderer.resizeError = nil
         second.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
         try await waitUntil("replacement checkpoint") { second.receiveCalls == 2 }
         #expect(client.paging?.status == .complete)
@@ -1012,7 +1018,9 @@ struct SessionClientTests {
         var resizeContinuation: CheckedContinuation<Void, Never>?
         var resized: [SessionClient.GridSize] = []
         var installError: (any Error)?
+        var resizeError: (any Error)?
         func resize(cols: UInt16, rows: UInt16) async throws {
+            if let resizeError { throw resizeError }
             if holdResize { await withCheckedContinuation { resizeContinuation = $0 } }
             resized.append(.init(cols: cols, rows: rows))
         }

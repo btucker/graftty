@@ -4,6 +4,23 @@ import Testing
 @testable import GrafttyRemoteClient
 
 struct TerminalReceiveBufferTests {
+    @Test("@spec REMOTE-9.16: When consecutive small SSH terminal writes accumulate, the application shall coalesce them within bounded receive batches so packet fragmentation alone does not exhaust the frame budget and disconnect the pane.")
+    func fragmentedOutputDoesNotExhaustFrameBudget() {
+        var buffer = TerminalReceiveBuffer()
+        let chunk = Data(repeating: 0x61, count: 16)
+        let accepted = (0..<4096).reduce(0) { count, _ in
+            count + (buffer.append(.binary(chunk)) ? 1 : 0)
+        }
+        #expect(accepted == 4096)
+        let acceptedControl = buffer.append(.text("ownership"))
+        let acceptedTail = buffer.append(.binary(Data([0x62])))
+        #expect(acceptedControl && acceptedTail)
+        #expect(buffer.popFirst() == .binary(Data(repeating: 0x61, count: 65536)))
+        #expect(buffer.popFirst() == .text("ownership"))
+        #expect(buffer.popFirst() == .binary(Data([0x62])))
+        #expect(buffer.byteCount == 0)
+    }
+
     @Test("@spec REMOTE-9.13: If queued SSH terminal frames reach the receive budget, then the application shall reject further frames so the owning channel can disconnect explicitly instead of retaining output without limit.")
     func stalledReceiverDoesNotRetainBeyondBudget() {
         var buffer = TerminalReceiveBuffer()

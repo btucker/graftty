@@ -19,10 +19,28 @@ struct TerminalReceiveBuffer {
     @discardableResult
     mutating func append(_ frame: WebSocketFrame) -> Bool {
         let count = Self.size(of: frame)
-        guard frames.count < frameLimit, count <= byteLimit - byteCount else { return false }
+        guard count <= byteLimit - byteCount else { return false }
+        // SSH packet boundaries do not describe terminal records. Keep tiny
+        // writes from exhausting the metadata budget while a grid or snapshot
+        // operation briefly holds the receiver. Never cross a control frame.
+        if case .binary(let data) = frame, !data.isEmpty,
+           canExtendBinaryTail(by: count) {
+            // Remove before appending so Data can reuse its unique storage.
+            guard case .binary(var batch) = frames.removeLast() else { preconditionFailure() }
+            batch.append(data)
+            frames.append(.binary(batch))
+            byteCount += count
+            return true
+        }
+        guard frames.count < frameLimit else { return false }
         frames.append(frame)
         byteCount += count
         return true
+    }
+
+    private func canExtendBinaryTail(by count: Int) -> Bool {
+        guard case .binary(let tail)? = frames.last, !tail.isEmpty else { return false }
+        return tail.count <= Self.batchByteLimit - count
     }
 
     mutating func removeAll() {
