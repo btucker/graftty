@@ -3,46 +3,33 @@ import Testing
 import GrafttyKit
 @testable import Graftty
 
-/// Stands in for the Tailscale daemon: `fetch()` stays pending until the test
-/// calls `release()`. The wait is bounded so a regression that blocks the main
-/// actor on the fetch fails the test instead of deadlocking it.
+/// Holds a daemon response until explicitly released. Ignoring cancellation
+/// here models an obsolete dependency that can still produce a late result.
 private final class PendingTailscaleStatus: @unchecked Sendable {
     private let lock = NSLock()
-    private var released = false
+    private let response = WebLifecycleGate()
+    let started = WebLifecycleGate()
     private var finished = false
     private let error: any Error
 
-    init(throwing error: any Error) {
-        self.error = error
-    }
-
+    init(throwing error: any Error) { self.error = error }
     var hasFinished: Bool { lock.withLock { finished } }
-
-    func release() { lock.withLock { released = true } }
+    func release() { response.open() }
 
     func fetch() async throws -> (api: TailscaleLocalAPI, status: TailscaleLocalAPI.Status) {
-        // Detached so cancelling the reconcile neither cuts the wait short
-        // (the real LocalAPI `recv` ignores cancellation too) nor turns the
-        // sleep below into a busy spin.
-        await Task.detached { [self] in
-            let deadline = ContinuousClock.now + .seconds(2)
-            while !lock.withLock({ released }), ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(5))
-            }
-        }.value
+        started.open()
+        await response.wait()
         lock.withLock { finished = true }
         throw error
     }
 }
 
-/// Hands out one stand-in daemon per reconcile attempt, repeating the last.
 private final class DaemonSequence: @unchecked Sendable {
     private let lock = NSLock()
     private let daemons: [PendingTailscaleStatus]
     private var count = 0
 
     init(_ daemons: [PendingTailscaleStatus]) { self.daemons = daemons }
-
     var handedOut: Int { lock.withLock { count } }
 
     func next() -> PendingTailscaleStatus {
@@ -53,25 +40,12 @@ private final class DaemonSequence: @unchecked Sendable {
     }
 }
 
-/// Polls on the main actor until `condition` holds or two seconds pass.
-@MainActor
-private func waitUntil(_ condition: () -> Bool) async {
-    let deadline = ContinuousClock.now + .seconds(2)
-    while !condition(), ContinuousClock.now < deadline {
-        try? await Task.sleep(for: .milliseconds(5))
-    }
-}
-
 @Suite("@spec WEB-1.15: While web access is enabled, the application shall query the Tailscale daemon off the main actor, so constructing the web server controller or applying a Web Access settings change returns without waiting for the daemon to respond.")
 @MainActor
 final class WebServerControllerAsyncReconcileTests {
-    /// Each test gets a throwaway defaults suite so toggling Web Access never
-    /// leaks into the test runner's `UserDefaults.standard`.
     private let suiteName = "WebServerControllerAsyncReconcileTests-\(UUID().uuidString)"
 
-    deinit {
-        UserDefaults.standard.removePersistentDomain(forName: suiteName)
-    }
+    deinit { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
 
     private func makeSettings(enabled: Bool) -> WebAccessSettings {
         let settings = WebAccessSettings(store: UserDefaults(suiteName: suiteName)!)
@@ -87,37 +61,37 @@ final class WebServerControllerAsyncReconcileTests {
             settings: settings,
             zmxExecutable: URL(fileURLWithPath: "/dev/null"),
             zmxDir: URL(fileURLWithPath: "/tmp"),
-            fetchTailscaleStatus: { try await daemon.fetch() }
+            fetchTailscaleStatus: { try await daemon.fetch() },
+            retrySleep: { _ in throw CancellationError() }
         )
     }
 
     @Test func initReturnsWhileTailscaleStatusIsPending() async {
         let daemon = PendingTailscaleStatus(throwing: TailscaleLocalAPI.Error.socketUnreachable)
         let controller = makeController(makeSettings(enabled: true), daemon)
-        defer { controller.stop() }
-
+        defer { daemon.release(); controller.stop() }
         #expect(!daemon.hasFinished, "init waited for the Tailscale status response")
-
+        await daemon.started.wait()
         daemon.release()
-        await waitUntil { controller.status == .tailscaleUnavailable }
+        await controller.reconcileTaskForTests?.value
         #expect(controller.status == .tailscaleUnavailable)
+        controller.stop()
+        await controller.cleanupTaskForTests?.value
     }
 
     @Test func enablingWhileTailscaleStatusIsPendingReturnsImmediately() async {
         let daemon = PendingTailscaleStatus(throwing: TailscaleLocalAPI.Error.socketUnreachable)
         let settings = makeSettings(enabled: false)
         let controller = makeController(settings, daemon)
-        defer { controller.stop() }
-
+        defer { daemon.release(); controller.stop() }
         settings.isEnabled = true
-        // The settings sink hops through a main-actor Task before reconciling.
-        await waitUntil { controller.reconcileTaskForTests != nil }
-
+        await daemon.started.wait()
         #expect(!daemon.hasFinished, "the settings-change reconcile waited for the Tailscale status response")
-
         daemon.release()
-        await waitUntil { controller.status == .tailscaleUnavailable }
+        await controller.reconcileTaskForTests?.value
         #expect(controller.status == .tailscaleUnavailable)
+        controller.stop()
+        await controller.cleanupTaskForTests?.value
     }
 
     @Test func aRetryKeepsShowingTheTransientFailureWhileItsQueryIsPending() async {
@@ -130,33 +104,37 @@ final class WebServerControllerAsyncReconcileTests {
             settings: settings,
             zmxExecutable: URL(fileURLWithPath: "/dev/null"),
             zmxDir: URL(fileURLWithPath: "/tmp"),
-            fetchTailscaleStatus: { try await daemons.next().fetch() }
+            fetchTailscaleStatus: { try await daemons.next().fetch() },
+            retrySleep: { _ in throw CancellationError() }
         )
-        defer { controller.stop() }
-        await waitUntil { controller.status == .tailscaleUnavailable }
-
-        // Any re-reconcile (here a port change; WEB-1.14 retries take the same
-        // path) must not flash "Stopped" while Tailscale is re-queried.
+        defer { pending.release(); controller.stop() }
+        await controller.reconcileTaskForTests?.value
+        #expect(controller.status == .tailscaleUnavailable)
+        // A settings-triggered retry uses the same reconcile path as the
+        // injected-clock automatic retry covered by the recovery suite.
         settings.port += 1
-        await waitUntil { daemons.handedOut == 2 }
-
+        await pending.started.wait()
+        #expect(daemons.handedOut == 2)
         #expect(controller.status == .tailscaleUnavailable)
         pending.release()
+        await controller.reconcileTaskForTests?.value
+        controller.stop()
+        await controller.cleanupTaskForTests?.value
     }
 
     @Test func disablingWhileStatusIsPendingDiscardsTheStaleResult() async throws {
         let daemon = PendingTailscaleStatus(throwing: TailscaleLocalAPI.Error.httpError(500))
         let settings = makeSettings(enabled: true)
         let controller = makeController(settings, daemon)
-        defer { controller.stop() }
-
+        defer { daemon.release(); controller.stop() }
         let superseded = try #require(controller.reconcileTaskForTests)
+        await daemon.started.wait()
         settings.isEnabled = false
-        // The settings sink hops through a main-actor Task before reconciling.
-        await waitUntil { controller.reconcileTaskForTests == nil }
+        controller.reconcileForTests()
+        #expect(controller.reconcileTaskForTests == nil)
         daemon.release()
         await superseded.value
-
+        await controller.cleanupTaskForTests?.value
         #expect(controller.status == .stopped)
     }
 }

@@ -325,14 +325,21 @@ struct WorktreeAdd: ParsableCommand {
         send: (NotificationMessage) throws -> ResponseMessage = {
             try SocketClient.sendExpectingResponse($0)
         },
+        now: () -> Date = Date.init,
         sleep: (TimeInterval) -> Void = {
             Thread.sleep(forTimeInterval: $0)
         },
         writeError: (String) -> Void = CLIEnv.printError
     ) throws -> ResponseMessage {
+        let activity: String
+        if case .worktreeRemoveStatus = message {
+            activity = "removal"
+        } else {
+            activity = "creation"
+        }
         var operationMayExist: Bool
         switch message {
-        case .worktreeCreateStatus, .remoteWorktree(_, .status):
+        case .worktreeCreateStatus, .worktreeRemoveStatus, .remoteWorktree(_, .status):
             operationMayExist = true
         default:
             operationMayExist = false
@@ -357,29 +364,29 @@ struct WorktreeAdd: ParsableCommand {
                         writeError(error.description)
                         throw ExitCode(1)
                     }
-                    if Date() < deadline {
+                    if now() < deadline {
                         sleep(0.1)
                         continue
                     }
                     writeError(
-                        "timed out waiting for worktree creation; operation \(operationID) may still finish"
+                        "timed out waiting for worktree \(activity); operation \(operationID) may still finish"
                     )
                     throw ExitCode(1)
                 case .socketTimeout, .socketClosedWithoutResponse,
                      .socketError:
                     operationMayExist = true
-                    if Date() < deadline {
+                    if now() < deadline {
                         sleep(0.1)
                         continue
                     }
                     writeError(
-                        "timed out waiting for worktree creation; operation \(operationID) may still finish"
+                        "timed out waiting for worktree \(activity); operation \(operationID) may still finish"
                     )
                     throw ExitCode(1)
                 case .socketPermissionDenied:
                     writeError(error.description)
                     if operationMayExist {
-                        writeError("worktree creation operation \(operationID) may still finish")
+                        writeError("worktree \(activity) operation \(operationID) may still finish")
                     }
                     throw ExitCode(1)
                 case .notInsideWorktree, .appNotRunning, .staleControlSocket,
@@ -494,33 +501,50 @@ struct WorktreeRemove: ParsableCommand {
 
         try requirePinnedRemovalSupport()
 
-        var response = try CLIEnv.sendRequest(removalRequest(worktreePath: worktreePath))
+        let response = try CLIEnv.sendRequest(removalRequest(worktreePath: worktreePath))
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        try waitForRemoval(response: response, deadline: deadline)
+    }
 
+    func waitForRemoval(
+        response initialResponse: ResponseMessage,
+        deadline: Date,
+        send: (NotificationMessage) throws -> ResponseMessage = {
+            try SocketClient.sendExpectingResponse($0)
+        },
+        now: () -> Date = Date.init,
+        sleep: (TimeInterval) -> Void = Thread.sleep(forTimeInterval:),
+        writeLine: (String) -> Void = { print($0) },
+        writeError: (String) -> Void = CLIEnv.printError
+    ) throws {
+        var response = initialResponse
         while true {
-            let operation = try CLIEnv.expect(response, for: "worktree remove") {
+            let operation = try CLIEnv.expect(response, for: "worktree remove", writeError: writeError) {
                 if case .worktreeRemove(let operation) = $0 { operation } else { nil }
             }
             switch operation.state {
             case .pending:
-                guard Date() < deadline else {
-                    CLIEnv.printError(
+                guard now() < deadline else {
+                    writeError(
                         "timed out waiting for worktree removal; operation \(operation.operationID) may still finish"
                     )
                     throw ExitCode(1)
                 }
-                Thread.sleep(forTimeInterval: 0.1)
-                response = try CLIEnv.sendRequest(
-                    .worktreeRemoveStatus(operationID: operation.operationID)
+                sleep(0.1)
+                response = try WorktreeAdd.sendRequestRetryingTimeout(
+                    .worktreeRemoveStatus(operationID: operation.operationID),
+                    operationID: operation.operationID,
+                    deadline: deadline,
+                    send: send, now: now, sleep: sleep, writeError: writeError
                 )
             case .removed:
                 let path = WorktreeAgentLaunchCommand.shellLiteral(
                     operation.worktreePath
                 )
-                print("removed worktree=\(path)  branch-preserved=true")
+                writeLine("removed worktree=\(path)  branch-preserved=true")
                 return
             case .failed:
-                CLIEnv.printError(Self.failureMessage(operation))
+                writeError(Self.failureMessage(operation))
                 throw ExitCode(1)
             }
         }

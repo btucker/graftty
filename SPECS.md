@@ -972,6 +972,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.31** When worktree creation succeeds on Mac or mobile, the application shall hide the sidebar's Creation complete status one minute after completion while retaining creation diagnostics and keeping pending, failed, and interrupted statuses visible.
 
+**GIT-5.32** When pulling the default checkout before worktree creation, the application shall bound branch validation to five seconds and retain the fast-forward pull's twenty-second timeout.
+
+**GIT-5.33** If default-checkout branch validation times out, then the application shall report the failed lookup with exit code 124 and shall not run a pull.
+
 ### GIT-6.x — Auto-tracking Pinned Agents
 
 **GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.
@@ -1748,9 +1752,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-1.12** While the server is listening, the Settings pane shall render a **Base URL** row distinct from the diagnostic "Listening on" row. The Base URL is the HTTPS URL composed from the machine's MagicDNS FQDN (WEB-8.1) and the listening port — the URL a user copies to open the web client. It renders as a clickable `Link` opening the default browser, plus a copy button (`doc.on.doc`, accessible label "Copy URL") that writes to `NSPasteboard.general`. The "Listening on" row below is informational (which sockets are actually up) and must not be conflated with the Base URL. Plain selectable text is not sufficient for the Base URL — users were expected to triple-click, copy, then switch apps and paste (four steps for one ask).
 
-**WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
+**WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable or not answering status, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
 
 **WEB-1.15** While web access is enabled, the application shall query the Tailscale daemon off the main actor, so constructing the web server controller or applying a Web Access settings change returns without waiting for the daemon to respond.
+
+**WEB-1.16** When a LocalAPI request is cancelled, the application shall close its transport and finish with cancellation without waiting for the daemon's status, whois, or certificate receive timeout, while keeping socket I/O off the main actor and cooperative executor.
+
+**WEB-1.17** When a Tailscale status query fails with an unreachable socket, malformed response or invalid JSON, or HTTP 5xx, the application shall classify that attempt as transient; other HTTP errors and unrelated errors shall remain terminal.
+
+**WEB-1.18** When Web Access starts or stops a listener, the application shall await NIO lifecycle completion without blocking the main actor, close every partial bind on failure or cancellation, and allow the released port to be bound again.
+
+**WEB-1.19** When Web Access is disabled or reconfigured during bring-up or shutdown, the application shall cancel obsolete work, await its listener cleanup before replacement startup, and publish only the latest settings generation.
+
+**WEB-1.20** If a LocalAPI transport fails before its channel is initialized, then the application shall complete the request with a recoverable socket error and release all request resources.
+
+**WEB-1.21** While a LocalAPI request is pending, the application shall bound sending to two seconds and receive inactivity to two seconds for status and whois or ninety seconds for certificates, refreshing the receive deadline as bytes arrive.
+
+**WEB-1.22** When a LocalAPI request write completes, the application shall start the endpoint receive deadline on its event loop before resuming the caller's task, so executor delays cannot shorten certificate provisioning time.
 
 ### WEB-2.x — Authorization
 
@@ -1786,7 +1804,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-4.2** When the user disables web access, the application shall close all listening sockets and terminate all in-flight `zmx attach` children spawned for the web.
 
-**WEB-4.3** When the application quits, the application shall stop the server (same tear-down as 15.4.2) as part of normal shutdown.
+**WEB-4.3** When the application quits, the application shall await Web Access listener and session teardown before completing normal termination, while keeping the main actor responsive.
 
 **WEB-4.4** When a WebSocket connects, the application shall spawn one child `zmx attach --replay-grid <session>` whose PTY it owns, using the session naming and ZMX_DIR rules.
 
@@ -4572,6 +4590,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.29** When worktree rows or repositories move while terminal startup is pending, the application shall finalize only the requested worktree, preserve sibling states and pane mappings, and normalize focus on successful creation.
 
+**AGENT-5.30** When a worktree removal status poll has a transient transport failure, the CLI shall retry only status reads with the accepted operation ID and report success when removal completes.
+
+**AGENT-5.31** While removal status polling encounters retriable failures, the CLI shall retain the original absolute deadline and, on timeout, name the accepted operation ID and state that removal may still finish.
+
+**AGENT-5.32** If a removal status poll has a permanent transport failure, a rejected operation, or an unexpected response type, then the CLI shall fail without retrying or reporting success.
+
 ### AGENT-6.x
 
 **AGENT-6.1** When Graftty sends a prototype message to a Claude peer socket, the application shall write one newline-delimited protocol-v1 user envelope with a UUID message ID, next-turn priority, a native cross-session message frame, and any supplied local reply socket as the sender address.
@@ -5577,3 +5601,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.13** When a Quick Look integration run drives both provider TUIs, the test harness shall type unique prompts through the native keyboard, open and dismiss the production preview, capture every action, and fail unless all required retained and transient pane cases finish successfully.
 
 **TEST-1.14** If a loopback test peer's data channel does not open or arrive within its deadline, then the test fixture shall fail the wait with a data-channel-open timeout naming the channel label.
+
+**TEST-1.15** When the native Git relay fixture transfers objects, the test harness shall keep blocking subprocess I/O off cooperative workers and preserve the pushed objects and receiver result.
+
+**TEST-1.16** When a Git relay fixture command is cancelled, the test harness shall stop its subprocess and close its output before returning cancellation.
+
+**TEST-1.17** When a Git relay fixture transfer fails or is cancelled, the test harness shall close its channels and stop both subprocess groups before joining the sender, and reap both subprocesses before returning.
