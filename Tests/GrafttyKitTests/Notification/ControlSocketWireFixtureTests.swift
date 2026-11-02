@@ -69,6 +69,7 @@ struct ControlSocketWireFixtureTests {
 
     static func requests() throws -> [(NotificationMessage, String)] {
         [
+            (.agent(.init(action: .list, callerWorktree: "/r")), #"{"request":{"action":"list","callerWorktree":"/r"},"type":"agent"}"#),
             (.mcpBridge(.init(parent: try host(), request: .close(sessionID: operationID))),
              #"{"request":{"parent":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"request":{"close":{"sessionID":"00000000-0000-0000-0000-000000000001"}}},"type":"mcp_bridge"}"#),
             (.listRemoteHosts,
@@ -155,6 +156,7 @@ struct ControlSocketWireFixtureTests {
 
     static func responses() throws -> [(ResponseMessage, String)] {
         [
+            (.agents([]), #"{"agents":[],"type":"agents"}"#),
             (.mcpConnections([]), #"{"mcpConnections":[],"type":"mcp_connections"}"#),
             (.remoteHosts([]),
              #"{"hosts":[],"type":"remote_hosts"}"#),
@@ -201,11 +203,11 @@ struct ControlSocketWireFixtureTests {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability, .worktreeCreateStatus, .removeWorktree,
              .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability, .setWorktreePinned,
-             .worktreeRemoveStatus, .capabilities, .mcpConnection, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts: break
+             .worktreeRemoveStatus, .agent, .capabilities, .mcpConnection, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts: break
         }
         switch response {
         case .linuxSetupIdentity, .ok, .error, .serverBusy, .paneList, .paneShow, .teamList, .teamHookOutput,
-             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities, .mcpConnections, .mcpProxy, .agentSkills, .placement, .remoteHosts: break
+             .agents, .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities, .mcpConnections, .mcpProxy, .agentSkills, .placement, .remoteHosts: break
         }
     }
 
@@ -326,7 +328,7 @@ struct ControlSocketWireFixtureTests {
     @Test func enumWireValuesStayFrozen() {
         #expect(TeamHookRuntime.allCases.map(\.rawValue) == ["codex", "claude"])
         #expect(ControlCapability.allCases.map(\.rawValue) == [
-            "agent_prompt_staging", "pane_agent", "worktree_base", "worktree_create_idempotency", "remote_worktree",
+            "managed_agents", "agent_prompt_staging", "pane_agent", "worktree_base", "worktree_create_idempotency", "remote_worktree",
             "worktree_remove", "worktree_pinned_removal", "worktree_pin", "project_add",
         ])
         #expect(TeamHookEvent.allCases.map(\.rawValue) == [

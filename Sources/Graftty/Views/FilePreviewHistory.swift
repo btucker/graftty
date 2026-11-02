@@ -30,8 +30,9 @@ final class FilePreviewHistory: ObservableObject {
     }
 
     @discardableResult
-    func record(files: [FilePreviewFile], pane: PaneSlotID, worktreePath: String) -> Entry {
-        let entry = Entry(preview: .init(files: files), pane: pane, worktreePath: worktreePath)
+    func record(files: [FilePreviewFile], pane: PaneSlotID, worktreePath: String, id: UUID = UUID()) -> Entry {
+        let entry = Entry(preview: .init(files: files, id: id), pane: pane, worktreePath: worktreePath)
+        entries.removeAll { $0.id == id && $0.worktreePath == worktreePath }
         entries.insert(entry, at: 0)
         if entries.count > Self.maximumEntries { entries.removeLast(entries.count - Self.maximumEntries) }
         return entry

@@ -57,12 +57,12 @@ private struct RemoteScrollRegions: View {
 @Suite("Remote sidebar scroll regions", .serialized)
 @MainActor
 struct SidebarRemoteScrollTests {
-    @Test("@spec CONTEXT-8: While a local or remote Mac worktree has a retained brief, the application shall display its context or completed result beneath its sidebar name even after the request is acknowledged.", arguments: [false, true])
-    func remoteRowsDisplayRetainedBrief(hasContext: Bool) async throws {
+    @Test("@spec CONTEXT-8: While a local or remote Mac worktree has an acknowledged brief, the application shall retain its context and completed result without adding a description beneath its compact sidebar heading.", arguments: [false, true])
+    func retainedBriefKeepsSidebarHeadingCompact(hasContext: Bool) async throws {
         let harness = try RemoteScrollHarness(metadata: true)
         defer { try? FileManager.default.removeItem(at: harness.directory) }
         await harness.model.loadSavedRemotes()
-        let summary = "Retained description of the work being done here, with enough detail to wrap beneath the worktree name in a narrow sidebar."
+        let summary = "Retained description of the work being done here, with enough detail to wrap if rendered in a narrow sidebar."
         let recap = AttentionRecap(title: "Stable purpose", context: hasContext ? summary : nil,
                                    completed: hasContext ? "Current progress" : summary, next: "Review")
         let brief = WorktreeBrief(recap: recap, at: Date())
@@ -79,7 +79,11 @@ struct SidebarRemoteScrollTests {
                 showsMacHierarchy: false, showsRepositoryHeaders: false))
             return hosted.sizeThatFits(in: CGSize(width: 240, height: 1000)).height
         }
-        #expect(remoteHeight(brief: brief) > remoteHeight(brief: nil), "Retained context adds a description below the remote row name")
+        let remoteContext = SidebarWorktreeContext(worktree: row(brief: brief))
+        #expect(remoteContext.brief == brief)
+        #expect(remoteContext.pending.isEmpty)
+        #expect(remoteContext.matches(query: summary))
+        #expect(remoteHeight(brief: brief) == remoteHeight(brief: nil), "Retained context does not expand the remote heading")
         var local = WorktreeEntry(path: "/local/work", branch: "work")
         func localHeight(_ entry: WorktreeEntry) -> CGFloat {
             let hosted = NSHostingController(rootView: WorktreeRow(entry: entry, isActive: false, displayName: "work",
@@ -88,8 +92,12 @@ struct SidebarRemoteScrollTests {
         }
         let emptyHeight = localHeight(local)
         local.recordAgentStop(.init(agentName: "Codex", stoppedAt: Date(), recap: recap))
+        let savedBrief = try #require(local.brief)
         local.acknowledgeAttention()
-        #expect(localHeight(local) > emptyHeight, "Acknowledging a local request preserves its sidebar description")
+        #expect(local.brief == savedBrief)
+        #expect(local.brief?.context == recap.context)
+        #expect(local.brief?.completed == recap.completed)
+        #expect(localHeight(local) == emptyHeight, "Acknowledged context does not expand the local heading")
     }
 
     @Test(arguments: [false, true])

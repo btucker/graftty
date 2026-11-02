@@ -981,6 +981,10 @@ final class RemoteMacsModel: ObservableObject {
     ) async -> WorktreeManagementResponse? {
         switch request {
         case .agentSkills, .placement: return nil // Admission belongs to the directly authenticated parent.
+        case let .agentConversation(worktreeID, agentID, action):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
+            return await forwardManagement(identity: route.identity,
+                request: .agentConversation(worktreeID: route.path, agentID: agentID, action: action))
         case .worktreeAgentCompletions(let worktreeID):
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
             let response = await forwardManagement(identity: route.identity,

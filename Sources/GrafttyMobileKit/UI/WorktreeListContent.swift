@@ -856,7 +856,10 @@ public struct WorktreeListContent: View {
                                                 selectionIntentGeneration &+= 1
                                                 onSelectPane(wt, leaf)
                                             },
-                                            onReport: { showReport(wt) }
+                                            onReport: { showReport(wt) },
+                                            onRemove: {
+                                                pendingDelete = PendingDelete(worktree: wt, action: .delete)
+                                            }
                                         )
                                         .popover(isPresented: Binding(
                                             get: { reportWorktreeID == wt.path },

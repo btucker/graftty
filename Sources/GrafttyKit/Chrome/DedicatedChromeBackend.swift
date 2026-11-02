@@ -9,6 +9,7 @@ import ImageIO
 public actor DedicatedChromeBackend: ChromeTabBackend {
     public enum Failure: Error { case unavailable, launchFailed, disconnected, busy, timeout, invalidTab, tooManyTabs, protocolError(String) }
     private let profile: URL
+    private let executable: URL
     private let portOwner = UUID()
     private var process: Process?
     private var socket: URLSessionWebSocketTask?
@@ -38,14 +39,18 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
     private var authorization: (@Sendable () async -> Bool)?
 
     public init(worktreePath: String) {
+        executable = Self.chromeExecutable
         let hash = SHA256.hash(data: Data(worktreePath.utf8)).map { String(format: "%02x", $0) }.joined()
         profile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Graftty/ChromeMux/\(hash)", isDirectory: true)
         offerLaunches = ChromeOfferLaunchLedger(storageURL: profile.appendingPathComponent("GrafttyOfferLaunches.json"))
     }
 
-    init(testProfile: URL) {
+    private static let chromeExecutable = URL(fileURLWithPath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+
+    init(testProfile: URL, executable: URL = DedicatedChromeBackend.chromeExecutable) {
         profile = testProfile
+        self.executable = executable
         offerLaunches = ChromeOfferLaunchLedger(storageURL: profile.appendingPathComponent("GrafttyOfferLaunches.json"))
     }
 
@@ -257,7 +262,7 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
 
     private func connect() async throws {
         if socket != nil { return }
-        let binary = URL(fileURLWithPath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        let binary = executable
         guard FileManager.default.isExecutableFile(atPath: binary.path) else { throw Failure.unavailable }
         try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let activePort = profile.appendingPathComponent("DevToolsActivePort")
@@ -273,7 +278,10 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         guard let authorization, await authorization(), !Task.isCancelled else { throw Failure.protocolError("Pane ownership changed.") }
         try chrome.run()
         process = chrome
-        for _ in 0..<100 {
+        // Cold launches can take longer than five seconds on a busy host.
+        // Bound elapsed time rather than the number of scheduled polls.
+        let deadline = ContinuousClock.now + .seconds(15)
+        while ContinuousClock.now < deadline {
             try Task.checkCancellation()
             if let endpoint = endpoint(from: activePort) {
                 guard await openSocket(endpoint) else { throw Failure.disconnected }

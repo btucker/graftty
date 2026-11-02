@@ -209,6 +209,23 @@ struct PagedTerminalCoordinatorTests {
         .init(incarnation: 7, id: id, cols: 80, rows: 24, ready: Data([1]),
               hasPrimaryHistory: true, hasAlternateHistory: false)
     }
+    @Test("@spec TERM-12.51: If restoring a terminal checkpoint fails, then the application shall leave the restoring state, offer recovery from the live screen, and accept the same checkpoint when it arrives again.")
+    func failedInstallLeavesRestoringState() async throws {
+        struct Unmounted: Error {}
+        let surface = Surface()
+        surface.installError = Unmounted()
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { _ in }
+        let value = PagedTerminalCheckpoint(incarnation: 1, id: 7, cols: 80, rows: 24, ready: Data([1]),
+                                            hasPrimaryHistory: true, hasAlternateHistory: false)
+        await #expect(throws: Unmounted.self) { try await coordinator.handle(.checkpoint(value)) }
+        #expect(coordinator.status == .requiresRecovery)
+
+        surface.installError = nil
+        try await coordinator.handle(.checkpoint(value))
+        #expect(surface.installed == [7])
+        #expect(coordinator.status == .available)
+    }
+
     private func page(_ request: PagedTerminalHistoryRequest) -> PagedTerminalPage {
         .init(incarnation: request.incarnation, checkpointID: request.checkpointID,
               requestID: request.requestID, ordinal: request.ordinal, screen: request.screen,
@@ -221,7 +238,9 @@ struct PagedTerminalCoordinatorTests {
         var pages: [UInt16] = []
         var nearTop = false
         var result: PagedTerminalPageResult = .applied
+        var installError: (any Error)?
         func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
+            if let installError { throw installError }
             installed.append(checkpoint.id)
         }
         func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult {

@@ -1,10 +1,12 @@
 import SwiftUI
 import AppKit
 import GrafttyKit
+import GrafttyCommandUI
 
 /// Settings pane for provider integration, team event routing, and the
 /// per-event prompt.
 struct AgentTeamsSettingsPane: View {
+    @AppStorage private var defaultAgentProvider: String
     @AppStorage private var teamPrompt: String
     /// Mirrors `SettingsKeys.agentPluginInstalledRevision` so the missing-plugin
     /// warning updates as soon as an installation records its revision.
@@ -22,6 +24,8 @@ struct AgentTeamsSettingsPane: View {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        AgentPreference.migrate(in: defaults)
+        _defaultAgentProvider = AppStorage(wrappedValue: "", AgentPreference.key, store: defaults)
         _installedPluginRevision = AppStorage(
             wrappedValue: 0,
             SettingsKeys.agentPluginInstalledRevision,
@@ -36,6 +40,27 @@ struct AgentTeamsSettingsPane: View {
 
     var body: some View {
         Form {
+            Section {
+                Picker("Default agent", selection: $defaultAgentProvider) {
+                    Text("Choose an agent…").tag("")
+                    ForEach(TeamHookRuntime.allCases, id: \.rawValue) { provider in
+                        Label { Text(provider.displayName) } icon: {
+                            AgentProviderIcon(provider: provider.rawValue)
+                        }.tag(provider.rawValue)
+                    }
+                }
+                if AgentPreference.needsMigrationChoice(in: defaults) {
+                    Text("Your previous startup command includes custom options. Choose a default agent; the original command is retained for reference.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(defaults.string(forKey: "defaultCommand") ?? "")
+                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                }
+            } header: {
+                Text("New agents")
+            } footer: {
+                Text("Used for new agents on this host unless you choose a provider when launching. Existing agents keep their provider.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section {
                 if let pluginsWarning {
                     Label(pluginsWarning, systemImage: "exclamationmark.triangle")

@@ -27,6 +27,7 @@ struct TerminalPaneActionsTests {
         worktree.splitTree = SplitTree(root: .split(.init(
             direction: .horizontal, ratio: ratio, left: .leaf(left), right: .leaf(right)
         )))
+        worktree.workspaceLayout = .preserving(worktree.splitTree)
         worktree.paneSessions = [left: PaneSessionID(), right: PaneSessionID()]
         worktree.focusedPaneSlotID = left
         return StateBox(AppState(
@@ -89,8 +90,10 @@ struct TerminalPaneActionsTests {
 
         manager.dispatchPaneCommand(.toggleZoom, for: left)
         #expect(try worktree(box).splitTree.zoomed == left)
+        #expect(try worktree(box).canvasTree.zoomed == left)
         manager.dispatchPaneCommand(.toggleZoom, for: left)
         #expect(try worktree(box).splitTree.zoomed == nil)
+        #expect(try worktree(box).canvasTree.zoomed == nil)
 
         manager.dispatchPaneCommand(.equalize, for: left)
         guard case .split(let split) = try worktree(box).splitTree.root else {
@@ -98,6 +101,7 @@ struct TerminalPaneActionsTests {
             return
         }
         #expect(split.ratio == 0.5)
+        #expect(try worktree(box).workspaceLayout?.visibleSplitTree == worktree(box).splitTree)
     }
 
     @Test("a user close removes a pane with no surface, but a surface-closed event leaves it")

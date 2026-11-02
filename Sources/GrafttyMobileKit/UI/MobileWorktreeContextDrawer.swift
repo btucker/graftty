@@ -19,6 +19,7 @@ struct MobileWorktreeContextDrawer: ViewModifier {
     let context: SidebarWorktreeContext?
     var theme: GhosttyThemeColors = .fallback
     var showsStandaloneControl = false
+    var onShowAgent: ((String) -> Void)? = nil
     @Environment(\.biometricGate) private var gate
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -62,7 +63,9 @@ struct MobileWorktreeContextDrawer: ViewModifier {
                                 .onTapGesture { close() }
                                 .accessibilityLabel("Close context")
                                 .accessibilityAddTraits(.isButton)
-                            WorktreeContextPanel(context: context, theme: theme, collapsesBrief: true, onClose: close)
+                            WorktreeContextPanel(context: context, theme: theme, collapsesBrief: true, showAgent: onShowAgent.map { action in
+                                { id in action(id); close() }
+                            }, onClose: close)
                                 .environment(\.worktreeContextActions, navigationActions)
                                 .accessibilityAddTraits(.isModal)
                                 .frame(width: min(420, max(0, geometry.size.width - 20)))
