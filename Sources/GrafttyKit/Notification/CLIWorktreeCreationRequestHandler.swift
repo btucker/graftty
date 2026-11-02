@@ -24,6 +24,7 @@ public protocol CLIWorktreeCreationPlatform: AnyObject {
     var worktreeCreations: CLIWorktreeCreationStore { get }
     /// Where staged agent prompts wait for their launch command.
     var agentPromptDirectory: URL { get }
+    var defaultAgentProvider: TeamHookRuntime? { get }
     /// Records a change; no window may be observing state.
     func stateDidChange() throws
     /// Writes state now. Agent hooks read the launch expectation from disk.
@@ -31,6 +32,8 @@ public protocol CLIWorktreeCreationPlatform: AnyObject {
     /// A host-specific reason the destination cannot be used, checked
     /// before the placeholder is inserted.
     func creationDestinationError(worktreePath: String, repo: RepoEntry) -> String?
+    /// Captures host lifecycle provenance before phase two can start.
+    func creationDidBegin(repoPath: String, worktreePath: String, operationID: String)
     /// Runs Git and starts the first pane. Returns the failure message, or
     /// nil once the pane accepted its launch command. A Git failure removes
     /// the placeholder.
@@ -38,7 +41,12 @@ public protocol CLIWorktreeCreationPlatform: AnyObject {
 }
 
 public extension CLIWorktreeCreationPlatform {
+    var defaultAgentProvider: TeamHookRuntime? {
+        AgentPreference.migrate()
+        return AgentPreference.provider()
+    }
     func creationDestinationError(worktreePath: String, repo: RepoEntry) -> String? { nil }
+    func creationDidBegin(repoPath: String, worktreePath: String, operationID: String) {}
 
     /// Live launch status and persisted diagnostics share the same lookup for
     /// local and paired CLI callers. A restart never resumes the launch task.
@@ -68,6 +76,7 @@ public enum CLIWorktreeCreationRequestHandler {
         creationOrigin: WorktreeHistory.Origin? = nil,
         platform: any CLIWorktreeCreationPlatform
     ) async -> ResponseMessage {
+        var request = request
         let worktreeCreations = platform.worktreeCreations
         let callerPath = request.callerWorktree
         let operationID = request.operationID ?? UUID().uuidString.lowercased()
@@ -101,6 +110,12 @@ public enum CLIWorktreeCreationRequestHandler {
             return .worktreeCreate(retained)
         }
 
+        if request.command == nil, request.agentRuntime == nil, request.managedAgent == nil {
+            let provider: TeamHookRuntime
+            do { provider = try AgentPreference.resolve(explicit: request.agentRuntime, configured: platform.defaultAgentProvider) }
+            catch { return .error(error.localizedDescription) }
+            request = request.withPrimaryAgent(provider: provider, operationID: operationID)
+        }
         let agentRuntime = request.agentRuntime
         let agentPrompt = request.agentPrompt
         if agentPrompt != nil, agentRuntime == nil {
@@ -210,6 +225,7 @@ public enum CLIWorktreeCreationRequestHandler {
                 return .error("could not save initial agent task: \(error.localizedDescription)")
             }
         }
+        platform.creationDidBegin(repoPath: repo.path, worktreePath: worktreePath, operationID: operationID)
         let plan = CLIWorktreeCreationPlan(
             repoPath: repo.path,
             worktreePath: worktreePath,

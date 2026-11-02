@@ -36,6 +36,19 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
         self.existingBranchSource = existingBranchSource
     }
 
+    public func withPrimaryAgent(provider: TeamHookRuntime, operationID: String) -> Self {
+        var request = self
+        var agent = ManagedAgent(name: worktreeName, provider: provider, parent: nil, status: .starting)
+        agent.isPrimary = true
+        agent.paneSlotID = PaneSlotID()
+        agent.paneSessionID = PaneSessionID()
+        agent.initialPrompt = agentPrompt
+        agent.launchOperationID = operationID
+        request.agentRuntime = provider
+        request.managedAgent = agent
+        return request
+    }
+
     enum CodingKeys: String, CodingKey {
         case callerWorktree = "caller_worktree"
         case worktreeName = "worktree_name"

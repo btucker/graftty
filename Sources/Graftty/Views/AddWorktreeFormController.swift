@@ -17,6 +17,7 @@ public final class AddWorktreeFormController {
     public var branchMode: BranchMode = .newBranch
     public var newBranchName: String
     public var existingSelection: BranchPickerEntry?
+    public var agent = WorktreeAgentConfiguration()
 
     /// Tracks whether the branch field is still mirroring the worktree
     /// name. Once the user types something different in the branch field

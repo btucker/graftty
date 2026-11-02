@@ -202,6 +202,8 @@ final class RemoteTeamRouter {
         do {
             switch request {
             case .create(let creation): outgoing = .create(try await creation.resolvingSourceProject(in: repos, readOrigin: readOrigin))
+            case .createDefaultAgent(let creation):
+                outgoing = .createDefaultAgent(try await creation.resolvingSourceProject(in: repos, readOrigin: readOrigin))
             case .status: outgoing = request
             }
         } catch { return .error(String(describing: error)) }

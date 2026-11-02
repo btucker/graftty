@@ -778,6 +778,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.51** If restoring a terminal checkpoint fails, then the application shall leave the restoring state, offer recovery from the live screen, and accept the same checkpoint when it arrives again.
 
+**TERM-12.52** If a terminal checkpoint installation stalls, then the application shall fail the attachment within its restore deadline, leave the restoring state, and reject late completion from the stalled installation.
+
+**TERM-12.53** When a mobile checkpoint arrives before its terminal surface mounts, the application shall install the checkpoint after the first mount and then parse live output at the checkpoint grid without requiring navigation.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
@@ -968,7 +972,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.20** While the user is in existing-branch mode, the BranchPicker's branch list shall reserve a fixed vertical height regardless of the parent view's proposed height, so the list never collapses to zero when nested inside a `Grid` cell whose row height is driven by sibling cells' intrinsic content.
 
-**GIT-5.21** CLI worktree creation shall start the first terminal backend before reporting success because no terminal view is guaranteed to mount. Native sidebar creation shall select the completed worktree and defer its first zmx attach until the terminal view has a nonzero AppKit layout, with a bounded focus retry as a fallback if the normal layout callback is missed. Web creation shall leave the hidden Mac surface deferred because the web client attaches to the returned zmx session itself.
+**GIT-5.21** When worktree creation launches an agent or originates from the CLI, the application shall start the first terminal backend before reporting success. When native sidebar or web creation explicitly requests only a shell, the application shall defer the first Mac attach until the terminal view has a nonzero layout or the web client attaches.
 
 **GIT-5.22** Worktrees created through GitWorktreeAdd shall allow Git's installed post-checkout hook to complete before the creation call returns, matching a direct `git worktree add`.
 
@@ -993,6 +997,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-5.32** When pulling the default checkout before worktree creation, the application shall bound branch validation to five seconds and retain the fast-forward pull's twenty-second timeout.
 
 **GIT-5.33** If default-checkout branch validation times out, then the application shall report the failed lookup with exit code 124 and shall not run a pull.
+
+**GIT-5.34** When a worktree is created without an explicit shell command, the application shall launch exactly one primary agent using the selected provider or the owning host's default, with the optional description as its initial message.
+
+**GIT-5.35** When a client creates a worktree with an agent choice and optional task description, the application shall preserve the provider and exact multiline description across transport and use the destination's default agent when the provider is omitted.
+
+**GIT-5.36** When a user creates a worktree with an agent from the Add worktree form, the application shall retain user-origin creation history rather than recording the repository as its creating agent.
+
+**GIT-5.37** When a worktree creation request specifies an agent or task, the application shall use a distinct request type so older hosts reject the request rather than silently discard its configuration.
+
+**GIT-5.38** When Git worktree creation fails after leaving its directory on disk, the application shall preserve the Git failure for native alerts and web responses.
+
+**GIT-5.39** When a remote CLI requests worktree creation with the destination's default agent, the application shall use a distinct request type so older hosts reject the request rather than create a shell-only worktree.
 
 ### GIT-6.x — Auto-tracking Pinned Agents
 
@@ -1906,6 +1922,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-7.16** If a web or paired-device client asks to delete a worktree whose creation or removal is still in progress, then the application shall refuse it as a failure that a forced retry cannot resolve, without running Git or changing the worktree's row.
 
+**WEB-7.17** When the Add worktree form is displayed, the application shall select the default agent, allow another provider and an optional multiline task description, and submit both without treating Return in the description as creation.
+
 ### WEB-8.x — Web TLS (HTTPS)
 
 **WEB-8.1** When binding the HTTPS server, the application shall read `Self.DNSName` from Tailscale LocalAPI `/status`, strip the trailing dot, and use the resulting FQDN as the TLS SNI name and as the hostname in every composed Base URL / session URL. If `DNSName` is absent or empty, the application shall enter `.magicDNSDisabled` status and not bind. Settings shall render a "MagicDNS must be enabled on your tailnet" message plus a link to `https://login.tailscale.com/admin/dns`.
@@ -2480,6 +2498,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
+**IOS-7.10** If a mobile checkpoint restore exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
+
 ### IOS-8.x — Non-goals (recorded for future specs)
 
 **IOS-8.1** The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.
@@ -2508,7 +2528,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.9** While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the authenticated panes-state snapshot rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
 
-**IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
+**IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return in a single-line field shall submit Create; Return in the optional task description shall insert a newline, and invalid or already-submitting forms shall ignore submission.
 
 **IOS-9.11** While the mobile worktree list is not searching, the application shall display pinned agents across projects before temporary worktrees, preserving host order within each region and retaining a flat list for hosts without pin metadata.
 
@@ -2524,7 +2544,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.17** If the mobile Add Worktree sheet has no authenticated paired connection, then the application shall fail its repository list closed instead of reading repositories over unauthenticated HTTP.
 
-**IOS-9.18** When an iPhone or iPad creates a worktree, the application shall request its host's default agent as the first session while preserving shell-only creation for clients that do not request an agent.
+**IOS-9.18** When a paired client creates a worktree, the application shall request its host's default agent as the first session unless the request explicitly selects shell-only creation.
 
 **IOS-9.19** When mobile worktree creation selects an existing branch, the application shall preserve its local or remote-only source and resolve an automatic source on the owning host before starting the default agent.
 
@@ -4339,6 +4359,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CHROME-4.6** When an established Local browser backgrounds or waits for foreground transport reconnection, the application shall retain the same Safari presentation and callback listener, resume callbacks through the current host connection when ready, and cancel unfinished Local preparation.
 
 **CHROME-4.7** While multiple Local browsers share a Mac callback endpoint, the application shall skip a suspended browser's retained connector and forward through an active browser before writing socket data.
+
+**CHROME-4.8** When Local browser preparation finishes before its presenting view has appeared, the application shall defer Safari presentation until that view has appeared.
 
 ### CHROME-5.x
 

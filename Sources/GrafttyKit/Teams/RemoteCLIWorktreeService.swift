@@ -14,7 +14,10 @@ public enum RemoteCLIWorktreeService {
         platform: any CLIWorktreeCreationPlatform
     ) async -> RemoteTeamResponse {
         let origin: WorktreeHistory.Origin?
-        if case .create(let creation) = request { origin = creation.historyOrigin() } else { origin = nil }
+        switch request {
+        case .create(let creation), .createDefaultAgent(let creation): origin = creation.historyOrigin()
+        case .status: origin = nil
+        }
         return await handle(request, from: device, repos: repos,
             status: { platform.worktreeCreationStatus(operationID: $0) },
             create: { message in
@@ -45,7 +48,7 @@ public enum RemoteCLIWorktreeService {
             switch request {
             case .status:
                 return .error("Unknown or expired remote worktree operation")
-            case .create(let options):
+            case .create(let options), .createDefaultAgent(let options):
                 do {
                     let repo = try await options.destinationRepository(in: repos, readOrigin: readOrigin)
                     // Another request can finish origin resolution while this

@@ -7,10 +7,11 @@ import Testing
 @Suite("Remote CLI worktree creation")
 @MainActor
 struct RemoteCLIWorktreeTests {
-    private func creation(project: String? = nil) -> RemoteWorktreeCreation {
+    private func creation(project: String? = nil, defaultAgent: Bool = false) -> RemoteWorktreeCreation {
         RemoteWorktreeCreation(callerWorktree: "/local/.worktrees/task", project: project,
             worktreeName: "fix", branchName: "fix", existing: false, base: "HEAD",
-            command: "codex", agentRuntime: .codex, agentPrompt: "fix tests", operationID: "op-1")
+            command: defaultAgent ? nil : "codex", agentRuntime: defaultAgent ? nil : .codex,
+            agentPrompt: "fix tests", operationID: "op-1")
     }
 
     @Test("@spec AGENT-5.11: When remote worktree creation omits a project, the application shall match the caller's Git origin on the destination regardless of project names or checkout paths, treating equivalent GitHub and GitLab SSH and HTTPS origins as the same repository; an explicit project shall match an exact destination name or absolute repository path, and missing or ambiguous matches shall fail before mutation.")
@@ -58,11 +59,11 @@ struct RemoteCLIWorktreeTests {
         #expect(resolved.origin == GitRepositoryOrigin.parse("https://github.com/fork/app.git"))
     }
 
-    @Test("@spec AGENT-5.12: When a CLI requests a worktree on a connected Mac, the application shall route creation and status over either an outgoing or incoming authenticated connection, preserve the operation ID across retries, and return a device-qualified message address.", arguments: [false, true])
-    func routesBothDirections(viewer: Bool) async throws {
+    @Test("@spec AGENT-5.12: When a CLI requests a worktree on a connected Mac, the application shall route creation and status over either an outgoing or incoming authenticated connection, preserve the operation ID across retries, and return a device-qualified message address.", arguments: [false, true], [false, true])
+    func routesBothDirections(viewer: Bool, defaultAgent: Bool) async throws {
         let router = RemoteTeamRouter()
         let device = RemoteDeviceID(value: "destination")
-        let request = creation(project: "app")
+        let request = creation(project: "app", defaultAgent: defaultAgent)
         var progress = WorktreeCreationProgress(operationID: request.operationID)
         progress.output = "hook waiting"
         progress.transition(to: .ready)
@@ -73,16 +74,21 @@ struct RemoteCLIWorktreeTests {
                 Issue.record("Expected worktree request")
                 return try JSONEncoder().encode(RemoteTeamResponse.error("wrong request"))
             }
-            if case .create(let options) = request {
+            switch request {
+            case .create(let options), .createDefaultAgent(let options):
                 #expect(options.project == "app")
                 #expect(options.agentPrompt == "fix tests")
                 #expect(options.base == "HEAD")
+                #expect(options.agentRuntime == (defaultAgent ? nil : .codex))
+                #expect(request == (defaultAgent ? .createDefaultAgent(options) : .create(options)))
+            case .status: break
             }
             return try JSONEncoder().encode(RemoteTeamResponse.worktreeCreate(.init(
                 operationID: request.operationID, state: .ready,
                 worktreePath: "/remote/.worktrees/fix", messageAddress: "/remote/.worktrees/fix", progress: expectedProgress)))
         }
-        for operation in [RemoteWorktreeRequest.create(request), .status(operationID: request.operationID)] {
+        let create = defaultAgent ? RemoteWorktreeRequest.createDefaultAgent(request) : .create(request)
+        for operation in [create, .status(operationID: request.operationID)] {
             let response = await router.worktree(target: viewer ? device.value : "Other Mac", request: operation, repos: [])
             guard case .worktreeCreate(let status) = response else { Issue.record("Expected creation status"); return }
             #expect(status.operationID == "op-1")
@@ -92,10 +98,10 @@ struct RemoteCLIWorktreeTests {
         }
     }
 
-    @Test("@spec AGENT-5.14: When an authenticated peer creates or polls a worktree, the destination shall scope its operation ID to that peer, stage launch inputs through local creation, and return retained pending, ready, or failed results without repeating the mutation.")
-    func destinationDeduplicatesAndScopesOperations() async throws {
+    @Test("@spec AGENT-5.14: When an authenticated peer creates or polls a worktree, the destination shall scope its operation ID to that peer, stage launch inputs through local creation, and return retained pending, ready, or failed results without repeating the mutation.", arguments: [false, true])
+    func destinationDeduplicatesAndScopesOperations(defaultAgent: Bool) async throws {
         let store = CLIWorktreeCreationStore()
-        let options = creation(project: "app")
+        let options = creation(project: "app", defaultAgent: defaultAgent)
         let peer = RemoteDeviceID(value: "source")
         let repos = [RepoEntry(path: "/destination", displayName: "app")]
         var creations = 0
@@ -108,13 +114,14 @@ struct RemoteCLIWorktreeTests {
             scopedID = id
             #expect(creation == CreateWorktreeRequest(
                 callerWorktree: "/destination", worktreeName: "fix", branchName: "fix", existing: false, base: "HEAD",
-                command: "codex", agentRuntime: .codex, agentPrompt: "fix tests", operationID: id))
+                command: options.command, agentRuntime: options.agentRuntime, agentPrompt: "fix tests", operationID: id))
             return .worktreeCreate(store.begin(worktreePath: "/destination/.worktrees/fix",
                 messageAddress: "/destination/.worktrees/fix", operationID: id))
         }
         let lookup: (String) -> WorktreeCreateStatus? = { store.status(operationID: $0) }
+        let request = defaultAgent ? RemoteWorktreeRequest.createDefaultAgent(options) : .create(options)
         for _ in 0..<2 {
-            let result = await RemoteCLIWorktreeService.handle(.create(options), from: peer, repos: repos, status: lookup, create: create)
+            let result = await RemoteCLIWorktreeService.handle(request, from: peer, repos: repos, status: lookup, create: create)
             guard case .worktreeCreate(let status) = result else { Issue.record("Expected pending result"); return }
             #expect(status.operationID == options.operationID && status.state == .pending)
         }
@@ -128,7 +135,7 @@ struct RemoteCLIWorktreeTests {
             from: RemoteDeviceID(value: "other"), repos: repos, status: lookup, create: create)
         guard case .error = stranger else { Issue.record("Another peer accessed operation"); return }
         store.markFailed(operationID: scopedID, error: "shell failed")
-        let failed = await RemoteCLIWorktreeService.handle(.create(options), from: peer, repos: [], status: lookup, create: create)
+        let failed = await RemoteCLIWorktreeService.handle(request, from: peer, repos: [], status: lookup, create: create)
         guard case .worktreeCreate(let status) = failed else { Issue.record("Expected retained failure"); return }
         #expect(status.state == .failed && status.error == "shell failed")
         #expect(creations == 1)

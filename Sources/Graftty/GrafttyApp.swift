@@ -254,6 +254,7 @@ struct GrafttyApp: App {
             MainWindow(
                 appState: $appState,
                 terminalManager: terminalManager,
+                worktreeManagement: WorktreeManagement(appState: $appState, terminalManager: terminalManager, services: services),
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
                 claudeSessionRegistry: services.claudeSessionRegistry,
@@ -1085,7 +1086,7 @@ struct GrafttyApp: App {
                 ? .useExisting(name: req.branchName, source: .local)
                 : .createNew(name: req.branchName)
             return await .init(worktreeManagement.create(
-                repoPath: req.repoPath, worktreeName: req.worktreeName, branch: branch, entryPoint: .web
+                repoPath: req.repoPath, worktreeName: req.worktreeName, branch: branch, entryPoint: .web, agent: req.agent
             ))
         }
 

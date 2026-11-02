@@ -3,11 +3,13 @@ import GrafttyProtocol
 
 public enum RemoteWorktreeRequest: Codable, Sendable, Equatable {
     case create(RemoteWorktreeCreation)
+    /// Older hosts reject this case instead of creating a shell-only worktree.
+    case createDefaultAgent(RemoteWorktreeCreation)
     case status(operationID: String)
 
     public var operationID: String {
         switch self {
-        case .create(let request): request.operationID
+        case .create(let request), .createDefaultAgent(let request): request.operationID
         case .status(let operationID): operationID
         }
     }

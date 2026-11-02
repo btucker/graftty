@@ -77,7 +77,7 @@ struct SidebarView: View {
     /// Called when the user submits the add-worktree sheet. Returns nil
     /// on success, or a user-visible error string (typically git's
     /// stderr) on failure so the sheet can display it inline.
-    let onAddWorktree: (RepoEntry, String, BranchSelection) async -> String?
+    let onAddWorktree: (RepoEntry, String, BranchSelection, WorktreeAgentConfiguration) async -> String?
 
     /// Injected by GrafttyApp so the pane-row context menu can gate the
     /// "Copy web URL" item on `controller.status == .listening` and read
@@ -478,8 +478,8 @@ struct SidebarView: View {
                 onPullDefaultBranch: {
                     await pullDefaultBranch(for: request.repo)
                 },
-                onSubmit: { worktreeName, branch in
-                    let err = await onAddWorktree(request.repo, worktreeName, branch)
+                onSubmit: { worktreeName, branch, agent in
+                    let err = await onAddWorktree(request.repo, worktreeName, branch, agent)
                     if err == nil { pendingAddWorktree = nil }
                     return err
                 },
