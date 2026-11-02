@@ -96,14 +96,17 @@ struct WindowsTerminalSessionTests {
         let powershell = ProcessInfo.processInfo.environment["SystemRoot"]! + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
         let output = TerminalOutput()
         let ready = DispatchSemaphore(value: 0)
+        let program = "Write-Output 'graftty-ready'; Start-Sleep -Seconds 30"
+        let encoded = program.data(using: .utf16LittleEndian)!.base64EncodedString()
         let terminal = try WindowsTerminalSession(executable: powershell,
-            arguments: ["-NoProfile", "-Command", "Write-Output 'graftty-ready'; Start-Sleep -Seconds 30"], directory: directory,
+            arguments: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], directory: directory,
             onOutput: {
                 output.append($0)
                 if output.text.contains("graftty-ready") { ready.signal() }
             })
         defer { try? terminal.close() }
-        try #require(ready.wait(timeout: .now() + 10) == .success)
+        try #require(ready.wait(timeout: .now() + 10) == .success,
+                     "Captured terminal output: \(output.text.debugDescription)")
         let writers = DispatchGroup()
         writers.enter()
         DispatchQueue.global().async {
