@@ -4,7 +4,7 @@ import Foundation
 
 @Suite("CodexHomeMirror — symlink farm and hooks merge")
 struct CodexHomeMirrorTests {
-    @Test("Symlinks durable source entries while generating managed hooks and config snapshots.")
+    @Test("Symlinks durable source entries and config while generating managed hooks.")
     func symlinkFarmExcludesGeneratedFiles() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
@@ -28,14 +28,14 @@ struct CodexHomeMirrorTests {
         let sessionsTarget = try? fm.destinationOfSymbolicLink(atPath: sessionsLink.path)
         #expect(sessionsTarget?.hasSuffix("sessions") == true)
 
-        // Real files (not symlinks) for generated files.
+        // Hook definitions remain generated, but native config writes persist.
         let hooks = dst.appendingPathComponent("hooks.json")
         let hooksTarget = try? fm.destinationOfSymbolicLink(atPath: hooks.path)
         #expect(hooksTarget == nil)  // Not a symlink.
 
         let config = dst.appendingPathComponent("config.toml")
         let configTarget = try? fm.destinationOfSymbolicLink(atPath: config.path)
-        #expect(configTarget == nil)
+        #expect(configTarget == src.appendingPathComponent("config.toml").path)
     }
 
     @Test("@spec TEAM-IDLE-1.1: When Graftty synthesizes a managed CODEX_HOME, the application shall preserve user Codex hooks, strip every Graftty hook command, including groups an earlier Graftty wrote into the managed home, and add none of its own, leaving Graftty lifecycle hooks to the Codex provider plugin.")
@@ -91,7 +91,7 @@ struct CodexHomeMirrorTests {
         }
     }
 
-    @Test("Durable Codex configuration changes appear in the next managed snapshot.")
+    @Test("Durable Codex configuration changes appear through the managed link.")
     func durableConfigMutationsAppearInRebuiltMirror() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
@@ -119,7 +119,7 @@ struct CodexHomeMirrorTests {
         let rebuilt = try String(contentsOf: mirrorConfig)
         #expect(durable.contains("[mcp_servers.runpod]"))
         #expect(rebuilt == durable)
-        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: mirrorConfig.path)) == nil)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: mirrorConfig.path) == durableConfig.path)
     }
 
     @Test("Dangling symlinks (entries the user deleted) are pruned on rebuild.")
@@ -140,8 +140,8 @@ struct CodexHomeMirrorTests {
         #expect(resourceValues?.isSymbolicLink != true)
     }
 
-    @Test("A missing durable config produces an empty managed snapshot.")
-    func missingConfigProducesEmptySnapshot() throws {
+    @Test("A missing durable config produces an empty durable config and managed link.")
+    func missingConfigProducesDurableConfigLink() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         // No config.toml in src.
@@ -150,7 +150,7 @@ struct CodexHomeMirrorTests {
 
         let dstConfig = dst.appendingPathComponent("config.toml")
         #expect(try Data(contentsOf: dstConfig).isEmpty)
-        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: dstConfig.path)) == nil)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: dstConfig.path) == src.appendingPathComponent("config.toml").path)
     }
 
     @Test(

@@ -2976,6 +2976,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.23** If lockf is unavailable, then the Codex wrapper shall use an exclusive flock to coordinate durable administration with managed-home rebuilds.
 
+**TEAM-10.24** When Codex saves hook trust or enablement through the managed home, the application shall retain those native choices in the durable config across subsequent launches without bypassing hook review.
+
+**TEAM-10.25** When Graftty replaces a divergent managed Codex config snapshot with the durable config link, the application shall preserve the snapshot in a recovery file and keep durable hook choices authoritative.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
