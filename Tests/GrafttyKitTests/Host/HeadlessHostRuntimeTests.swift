@@ -86,6 +86,36 @@ private actor HostDevContainerFake: CLIExecutor {
 
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
+    @Test("Paired creation starts the selected primary provider with its exact initial task", arguments: [TeamHookRuntime.codex, .claude])
+    func pairedCreationPreservesSelectedAgentTask(provider: TeamHookRuntime) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let installer = AgentPluginInstaller(grafttyCLIPath: "/test/graftty",
+            codexConfigurationURL: root.appendingPathComponent("codex-config.toml"),
+            claudeSettingsURL: root.appendingPathComponent("claude-settings.json"))
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state,
+            agentSetup: HostAgentSetup(configuration: config, executor: HostPluginExecutor(), installer: installer))
+        let prompt = "Fix the tests.\nKeep $(literal syntax).\n"
+        let request = WorktreeManagementRequest.create(repositoryID: root.path, worktreeName: "feature",
+            branchName: "feature", existingSource: nil, agent: .init(provider: provider.rawValue, taskDescription: prompt))
+        let wireRequest = try JSONDecoder().decode(WorktreeManagementRequest.self, from: JSONEncoder().encode(request))
+        guard case .created(let path, let session) = await runtime.manage(wireRequest) else {
+            Issue.record("Expected managed worktree creation"); return
+        }
+        let worktree = try #require(runtime.state.worktree(forPath: path))
+        let agent = try #require(worktree.agents.first)
+        #expect(agent.provider == provider)
+        #expect(agent.initialPrompt == prompt)
+        #expect(agent.isPrimary == true)
+        #expect(worktree.agents.count == 1)
+        #expect(terminals.starts.count == 1)
+        #expect(terminals.starts.first?.sessionName == session)
+    }
+
     @Test("@spec AGENT-6.155: When a mobile client creates a pane and a provider starts there, the host shall treat the observed additional session as ongoing without bounded finish instructions or parent cleanup eligibility.")
     func mobileCreatedPaneDoesNotBecomeABoundedAssignment() async throws {
         let (root, config, state) = try fixture()

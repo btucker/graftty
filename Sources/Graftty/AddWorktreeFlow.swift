@@ -57,7 +57,7 @@ enum AddWorktreeFlow {
     }
 
     /// CLI creation has no mounted view and must start the backend as part of
-    /// creation. Native creation deliberately waits for the selected view's
+    /// creation. Shell-only native creation waits for the selected view's
     /// first nonzero layout so zmx replay is parsed at the settled grid size.
     /// The web client attaches to the returned zmx session itself, so its
     /// hidden Mac surface stays deferred too. Paired clients need only the
@@ -114,18 +114,25 @@ enum AddWorktreeFlow {
         )
         guard case .success(let path) = result else { return result }
         guard let repo = before.repos.first(where: { $0.path == repoPath }) else { return .failure(.repoNotFound) }
-        if GrafttyApp.isRelocatingRepo(repo.id),
-           FileManager.default.fileExists(atPath: path + "/.git") {
-            // The model can still hold the occupied checkout's old path.
-            // Reject before publishing a diagnostic placeholder at its destination.
-            return .failure(.pathCollision)
-        }
-        discardFinishedCreationBaselines(in: repo)
+        if let error = creationDestinationError(worktreePath: path, repo: repo) { return .failure(error) }
         if let operationID = candidate.worktree(forPath: path)?.creationProgress?.operationID {
-            creationRelocationBaselines[operationID] = (repo.id, GrafttyApp.repoRelocationRevision(repo.id))
+            recordCreationBaseline(repo: repo, operationID: operationID)
         }
         appState.wrappedValue = candidate
         return result
+    }
+
+    static func creationDestinationError(worktreePath: String, repo: RepoEntry) -> FlowError? {
+        // During relocation the model can still hold an occupied checkout's
+        // old path. Reject before publishing a placeholder at its destination.
+        if GrafttyApp.isRelocatingRepo(repo.id),
+           FileManager.default.fileExists(atPath: worktreePath + "/.git") { return .pathCollision }
+        return nil
+    }
+
+    static func recordCreationBaseline(repo: RepoEntry, operationID: String) {
+        discardFinishedCreationBaselines(in: repo)
+        creationRelocationBaselines[operationID] = (repo.id, GrafttyApp.repoRelocationRevision(repo.id))
     }
 
     /// Phase two: run `git worktree add`, discover the result, arm

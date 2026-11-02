@@ -24,6 +24,7 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
     let remoteBranchStore: RemoteBranchStore
     let worktreeCreations: CLIWorktreeCreationStore
     let worktreeRemovals: CLIWorktreeRemovalStore
+    private let promptDirectory: URL?
     /// This Mac, as the owner of the repositories it lists. Resolved on
     /// first use, so a transport that never lists repositories (the control
     /// socket) does not read the device-ID store or the host name.
@@ -33,7 +34,7 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
          teamEventDispatcher: TeamEventDispatcher, worktreeMonitor: WorktreeMonitor,
          statsStore: WorktreeStatsStore, prStatusStore: PRStatusStore, remoteBranchStore: RemoteBranchStore,
          worktreeCreations: CLIWorktreeCreationStore, worktreeRemovals: CLIWorktreeRemovalStore,
-         localOrigin: WorktreeOrigin? = nil) {
+         localOrigin: WorktreeOrigin? = nil, agentPromptDirectory: URL? = nil) {
         self.appState = appState
         self.terminalManager = terminalManager
         self.teamInbox = teamInbox
@@ -44,6 +45,7 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
         self.remoteBranchStore = remoteBranchStore
         self.worktreeCreations = worktreeCreations
         self.worktreeRemovals = worktreeRemovals
+        self.promptDirectory = agentPromptDirectory
         if let localOrigin { self.localOrigin = localOrigin }
     }
 
@@ -60,15 +62,23 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
     }
 
     /// Creates a worktree and its first pane, returning once the session a
-    /// client attaches to exists. `entryPoint` chooses when the terminal
-    /// backend starts (`AddWorktreeFlow.terminalStartTiming`).
+    /// client attaches to exists. Agent creation starts its backend before
+    /// returning; `entryPoint` controls shell-only terminal startup.
     func create(
         repoPath: String,
         worktreeName: String,
         branch: BranchSelection,
-        entryPoint: AddWorktreeFlow.CreationEntryPoint
+        entryPoint: AddWorktreeFlow.CreationEntryPoint,
+        agent: WorktreeAgentConfiguration = .init(),
+        launchAgent: Bool = true
     ) async -> Result<AddWorktreeFlow.Result, WorktreeCreationError> {
-        await AddWorktreeFlow.add(
+        if launchAgent {
+            switch await beginCreation(repoPath: repoPath, worktreeName: worktreeName, branch: branch, agent: agent) {
+            case .failure(let error): return .failure(error)
+            case .success(let status): return await waitForCreation(status)
+            }
+        }
+        return await AddWorktreeFlow.add(
             repoPath: repoPath,
             worktreeName: worktreeName,
             branch: branch,
@@ -79,6 +89,59 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
             teamEventDispatcher: teamEventDispatcher,
             entryPoint: entryPoint
         )
+    }
+
+    /// Admission is quick; Git and agent startup belong to the shared host
+    /// operation, so dismissing a sheet cannot cancel creation.
+    func beginCreation(repoPath: String, worktreeName: String, branch: BranchSelection,
+                       agent: WorktreeAgentConfiguration) async -> Result<WorktreeCreateStatus, WorktreeCreationError> {
+        var candidate = state
+        if case .failure(let error) = candidate.insertCreatingWorktree(repoPath: repoPath, worktreeName: worktreeName, branch: branch) {
+            return .failure(error)
+        }
+        let explicit = agent.provider.flatMap(TeamHookRuntime.init(rawValue:))
+        if agent.provider != nil, explicit == nil { return .failure(.invalidInput("Unknown agent provider.")) }
+        let provider: TeamHookRuntime
+        do { provider = try AgentPreference.resolve(explicit: explicit, configured: defaultAgentProvider) }
+        catch { return .failure(.invalidInput(error.localizedDescription)) }
+        let source: BranchSelection.ExistingSource?
+        if case .useExisting(_, let existing) = branch { source = existing } else { source = nil }
+        let operationID = UUID().uuidString
+        let request = CreateWorktreeRequest(callerWorktree: repoPath,
+            worktreeName: worktreeName, branchName: branch.branchName, existing: source != nil, base: nil,
+            command: nil, agentRuntime: explicit, agentPrompt: agent.initialPrompt,
+            operationID: operationID, selectTab: false, existingBranchSource: source)
+            .withPrimaryAgent(provider: provider, operationID: operationID)
+        let response = await CLIWorktreeCreationRequestHandler.begin(request,
+            creationOrigin: .init(date: Date(), source: .user), platform: self)
+        switch response {
+        case .worktreeCreate(let status): return .success(status)
+        case .error(let message): return .failure(.invalidInput(message))
+        default: return .failure(.discoveryFailed("Unexpected worktree creation response."))
+        }
+    }
+
+    func waitForCreation(_ accepted: WorktreeCreateStatus) async -> Result<AddWorktreeFlow.Result, WorktreeCreationError> {
+        while let current = worktreeCreationStatus(operationID: accepted.operationID) {
+            switch current.state {
+            case .pending:
+                do { try await Task.sleep(for: .milliseconds(50)) }
+                catch { return .failure(.discoveryFailed("Creation continues on the host.")) }
+            case .failed:
+                if let error = worktreeCreations.failure(operationID: accepted.operationID) {
+                    return .failure(error)
+                }
+                let message = current.error ?? "Could not create worktree."
+                return .failure(.gitFailed(message))
+            case .ready:
+                guard let worktree = state.worktree(forPath: current.worktreePath),
+                      let session = worktree.agents.first?.paneSessionID else {
+                    return .failure(.discoveryFailed("The agent did not return a session."))
+                }
+                return .success(.init(sessionName: ZmxLauncher.sessionName(for: session), worktreePath: current.worktreePath))
+            }
+        }
+        return .failure(.discoveryFailed("The creation operation is no longer available."))
     }
 
     /// Removes a linked worktree (`DeleteWorktreeFlow`, which refuses a row
@@ -185,15 +248,25 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
     }
 
     var agentPromptDirectory: URL {
-        AppState.defaultDirectory.appendingPathComponent("agent-launch-prompts", isDirectory: true)
+        promptDirectory ?? AppState.defaultDirectory.appendingPathComponent("agent-launch-prompts", isDirectory: true)
     }
 
     func stateDidChange() { GrafttyApp.persistAppState(appState.wrappedValue) }
 
     func saveStateNow() throws { try GrafttyApp.persistAppStateSynchronously(appState.wrappedValue) }
 
+    func creationDestinationError(worktreePath: String, repo: RepoEntry) -> String? {
+        AddWorktreeFlow.creationDestinationError(worktreePath: worktreePath, repo: repo)?.userMessage
+    }
+
+    func creationDidBegin(repoPath: String, worktreePath: String, operationID: String) {
+        guard let repo = state.repos.first(where: { $0.path == repoPath }) else { return }
+        AddWorktreeFlow.recordCreationBaseline(repo: repo, operationID: operationID)
+    }
+
     /// Phase two of a CLI creation: the backend starts with no view mounted.
     func finishWorktreeCreation(_ plan: CLIWorktreeCreationPlan) async -> String? {
+        let operationID = state.worktree(forPath: plan.worktreePath)?.creationProgress?.operationID
         let result = await AddWorktreeFlow.finishCreate(
             repoPath: plan.repoPath,
             worktreePath: plan.worktreePath,
@@ -216,7 +289,9 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
                     sessionID: "", paneSessionName: ZmxLauncher.sessionName(for: session), attentionTimestamp: Date()))
             }
             return nil
-        case .failure(let error): return error.operationFailureMessage
+        case .failure(let error):
+            if let operationID { worktreeCreations.recordFailure(operationID: operationID, error: error) }
+            return error.operationFailureMessage
         }
     }
 

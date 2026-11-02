@@ -3,6 +3,21 @@
 import PackageDescription
 import Foundation
 
+#if os(Windows)
+// Bootstrap the native terminal without the Apple renderer or POSIX host.
+// Native SSH is pending: upstream NIOSSH has no supported Windows CSPRNG.
+let package = Package(
+    name: "Graftty",
+    products: [
+        .library(name: "GrafttyWindowsTerminal", targets: ["GrafttyWindowsTerminal"]),
+    ],
+    targets: [
+        .target(name: "CGrafttyConPTY", linkerSettings: [.linkedLibrary("kernel32")]),
+        .target(name: "GrafttyWindowsTerminal", dependencies: ["CGrafttyConPTY"]),
+        .testTarget(name: "GrafttyWindowsTerminalTests", dependencies: ["GrafttyWindowsTerminal"]),
+    ]
+)
+#else
 // The same selection policy applies to SwiftPM, bundle.sh, and Xcode's local
 // package reference. Local packages are opt-in: manifest evaluation is cached,
 // so filesystem auto-discovery cannot reliably follow dependency changes.
@@ -185,6 +200,7 @@ let package = Package(
         .executable(name: "graftty-host", targets: ["GrafttyHost"]),
         .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
+        .library(name: "GrafttyWindowsTerminal", targets: ["GrafttyWindowsTerminal"]),
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
@@ -204,6 +220,24 @@ let package = Package(
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "72a09adb79e0b7112df92949612533c013c6c664"),
     ] + appleDependencies,
     targets: ([
+        .target(name: "CGrafttyConPTY"),
+        .target(
+            name: "GrafttyWindowsTerminal",
+            dependencies: [.target(name: "CGrafttyConPTY", condition: .when(platforms: [.windows]))],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
+            name: "GrafttyWindowsTerminalTests",
+            dependencies: ["GrafttyWindowsTerminal"],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(name: "GrafttyWindowsTransportTests", dependencies: [
+            "GrafttyTunnel",
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOSSH", package: "swift-nio-ssh"),
+            .product(name: "Crypto", package: "swift-crypto"),
+        ], swiftSettings: strictWarnings),
         .target(
             name: "GrafttyProtocol",
             dependencies: cryptoDependencies,
@@ -435,3 +469,4 @@ let package = Package(
         ),
     ] : [])
 )
+#endif

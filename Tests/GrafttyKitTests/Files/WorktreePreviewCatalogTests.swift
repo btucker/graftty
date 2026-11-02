@@ -34,4 +34,18 @@ struct WorktreePreviewCatalogTests {
             worktree: "/a", paneSessionName: "agent", ownerDeviceID: .init(value: "phone"))
         #expect(await store.list(worktree: "/a", now: .distantFuture).allSatisfy { $0.previewOwnerDeviceID == nil })
     }
+    @Test("Preview creation times survive delivery, withdrawal and catalog reload.")
+    func timestampsSurviveCatalogReload() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = RemoteOpenStore(previewDirectory: root)
+        let now = Date()
+        let offers = try await store.publishPreviews([.init(filename: "plan.html", bytes: Data())],
+            worktree: "/a", paneSessionName: "pane", ownerDeviceID: .init(value: "phone"), now: now)
+        #expect(offers.first?.createdAt == now)
+        await store.withdraw(id: try #require(offers.first?.id), worktree: "/a")
+        let restored = RemoteOpenStore(previewDirectory: root)
+        #expect(await restored.list(worktree: "/a").first?.createdAt == now)
+    }
+
 }

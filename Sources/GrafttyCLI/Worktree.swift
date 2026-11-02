@@ -13,7 +13,7 @@ struct Worktree: ParsableCommand {
 struct WorktreeAdd: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "add",
-        abstract: "Create a worktree, open its first pane, and optionally launch an agent",
+        abstract: "Create a worktree and launch the selected or default agent",
         discussion: """
         Examples:
           graftty worktree add fix-auth
@@ -69,10 +69,10 @@ struct WorktreeAdd: ParsableCommand {
     @Flag(name: .long, help: "Check out an existing local branch instead of creating a new branch")
     var existing: Bool = false
 
-    @Option(name: .long, help: "Agent runtime to launch: codex or claude")
+    @Option(name: .long, help: "Agent runtime to launch: codex or claude (default: the destination host's default agent)")
     var agent: String?
 
-    @Option(name: .long, help: "Initial prompt passed to --agent")
+    @Option(name: .long, help: "Initial task for the selected or default agent")
     var prompt: String?
 
     @Flag(name: .long, help: "Read the initial agent prompt from standard input")
@@ -102,7 +102,8 @@ struct WorktreeAdd: ParsableCommand {
                 throw ValidationError("\(flag) must not be empty")
             }
         }
-        try AgentLaunchFlags.validate(agent: agent, prompt: prompt, promptStdin: promptStdin, command: command)
+        try AgentLaunchFlags.validate(agent: agent, prompt: prompt, promptStdin: promptStdin, command: command,
+                                      usesDefaultAgent: command == nil)
         if base != nil && existing {
             throw ValidationError("--base cannot be used with --existing")
         }
@@ -130,10 +131,10 @@ struct WorktreeAdd: ParsableCommand {
             throw ValidationError(error)
         }
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
-        if remote == nil, let provider = agent.flatMap(TeamHookRuntime.init(rawValue:)) {
+        if remote == nil, command == nil {
             var operation = try AgentCLI.request(.add)
             operation.name = name
-            operation.provider = provider
+            operation.provider = agent.flatMap(TeamHookRuntime.init(rawValue:))
             operation.prompt = resolvedPrompt
             operation.operationID = UUID().uuidString.lowercased()
             operation.base = base
@@ -235,7 +236,7 @@ struct WorktreeAdd: ParsableCommand {
     var requiredCapabilities: [ControlCapability] {
         var needed: [ControlCapability] = remote == nil ? [] : [.remoteWorktree]
         needed.append(.worktreeCreateIdempotency)
-        if agent != nil { needed.append(.agentPromptStaging) }
+        if agent != nil || command == nil { needed.append(.agentPromptStaging) }
         if base != nil { needed.append(.worktreeBase) }
         return needed
     }
@@ -288,13 +289,15 @@ struct WorktreeAdd: ParsableCommand {
         operationID: String? = nil
     ) -> NotificationMessage {
         if let remote {
-            return .remoteWorktree(target: remote, request: .create(RemoteWorktreeCreation(
+            let creation = RemoteWorktreeCreation(
                 callerWorktree: callerWorktree, project: project,
                 worktreeName: names.worktree, branchName: names.branch, existing: existing,
                 base: base, command: command ?? agentRuntime?.rawValue,
                 agentRuntime: agentRuntime, agentPrompt: resolvedPrompt,
                 operationID: operationID ?? UUID().uuidString.lowercased()
-            )))
+            )
+            return .remoteWorktree(target: remote, request: command == nil && agentRuntime == nil
+                ? .createDefaultAgent(creation) : .create(creation))
         }
         return .createWorktree(
             callerWorktree: callerWorktree,
@@ -613,14 +616,14 @@ enum WorktreeRemoveTargetResolution: Equatable {
 /// `--agent`, `--prompt`, and `--prompt-stdin` rules shared by
 /// `worktree add` and `pane add`.
 enum AgentLaunchFlags {
-    static func validate(agent: String?, prompt: String?, promptStdin: Bool, command: String?) throws {
+    static func validate(agent: String?, prompt: String?, promptStdin: Bool, command: String?, usesDefaultAgent: Bool = false) throws {
         if agent != nil && command != nil {
             throw ValidationError("--agent and --command are mutually exclusive")
         }
         if prompt != nil && promptStdin {
             throw ValidationError("--prompt and --prompt-stdin are mutually exclusive")
         }
-        if (prompt != nil || promptStdin) && agent == nil {
+        if (prompt != nil || promptStdin) && agent == nil && !usesDefaultAgent {
             throw ValidationError("--prompt and --prompt-stdin require --agent")
         }
         if let agent, TeamHookRuntime(rawValue: agent) == nil {

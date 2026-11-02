@@ -7,6 +7,15 @@ import Testing
 
 @Suite("CLI worktree creation and agent launch")
 struct CLIWorktreeCreationTests {
+    @Test("A task can target the host default agent without an explicit provider")
+    func taskUsesDefaultAgent() throws {
+        let command = try WorktreeAdd.parse(["feature", "--prompt", "Fix the tests.\nKeep this line."])
+        #expect(command.agent == nil)
+        #expect(command.prompt == "Fix the tests.\nKeep this line.")
+        #expect(throws: (any Error).self) {
+            _ = try WorktreeAdd.parse(["feature", "--command", "echo task", "--prompt", "conflicting task"])
+        }
+    }
     @Test("@spec AGENT-5.17: When `graftty worktree add` is accepted, the CLI shall default to asynchronous creation and return the pending operation ID and stable worktree address without waiting for Git or agent launch, for local and remote creation; `--wait` shall retain blocking completion and `--async` shall explicitly select the default.")
     func asyncCreationReturnsBeforePolling() throws {
         for args in [["fix", "--agent", "codex"], ["fix", "--async", "--agent", "codex"],
@@ -251,6 +260,19 @@ struct CLIWorktreeCreationTests {
             }, sleep: { _ in })
         #expect(attempts == 1)
         #expect(result == mismatch)
+    }
+
+    @Test("Remote creation explicitly requests the destination default agent")
+    func remoteCreationRequestsDefaultAgent() throws {
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other"])
+        let request = command.creationRequest(callerWorktree: "", names: ("fix", "fix"),
+            agentRuntime: nil, resolvedPrompt: "task\nnext line", operationID: "op-123")
+        guard case .remoteWorktree(let target, .createDefaultAgent(let options)) = request else {
+            Issue.record("Expected explicit default-agent creation"); return
+        }
+        #expect(target == "Studio" && options.project == "other")
+        #expect(options.agentPrompt == "task\nnext line" && options.operationID == "op-123")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(request)) == request)
     }
 
     @Test("Remote create and polling requests preserve CLI options through socket serialization")
@@ -868,15 +890,18 @@ struct CLIWorktreeCreationTests {
             now: Date(timeIntervalSince1970: 1_000)
         )?.state == .pending)
 
+        store.recordFailure(operationID: started.operationID, error: .gitFailed("git failed"))
         store.markFailed(
             operationID: started.operationID,
             error: "git failed",
             now: Date(timeIntervalSince1970: 1_001)
         )
+        #expect(store.failure(operationID: started.operationID, now: Date(timeIntervalSince1970: 1_002)) == .gitFailed("git failed"))
         #expect(store.status(
             operationID: started.operationID,
             now: Date(timeIntervalSince1970: 1_007)
         ) == nil)
+        #expect(store.failure(operationID: started.operationID, now: Date(timeIntervalSince1970: 1_007)) == nil)
     }
 
     @Test("The Graftty Team skill avoids persona language and documents shell-safe prompting")

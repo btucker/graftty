@@ -5,6 +5,30 @@ import GrafttyProtocol
 
 @MainActor
 struct ViewerAgentLaunchTests {
+    @Test("@spec GIT-5.34: When a worktree is created without an explicit shell command, the application shall launch exactly one primary agent using the selected provider or the owning host's default, with the optional description as its initial message.", arguments: [TeamHookRuntime.codex, .claude], [nil, "Fix the tests.\nKeep $(literal syntax).\n"] as [String?])
+    func creationStartsOnePrimaryAgent(provider: TeamHookRuntime, prompt: String?) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.defaultAgentProvider = provider
+        var plans: [CLIWorktreeCreationPlan] = []
+        platform.finishCreation = { plan in plans.append(plan); return nil }
+        let request = CreateWorktreeRequest(callerWorktree: "/repo", worktreeName: "feature", branchName: "feature",
+            existing: false, base: nil, command: nil, agentRuntime: nil, agentPrompt: prompt, operationID: "create-feature")
+        let response = await CLIWorktreeCreationRequestHandler.begin(request, platform: platform)
+        guard case .worktreeCreate(let status) = response else { Issue.record("Expected creation: \(response)"); return }
+        #expect(platform.creationAdmissions == [status.operationID])
+        while platform.worktreeCreations.status(operationID: status.operationID)?.state == .pending { await Task.yield() }
+        _ = await CLIWorktreeCreationRequestHandler.begin(request, platform: platform)
+        let worktree = try #require(platform.state.worktree(forPath: status.worktreePath))
+        let agent = try #require(worktree.agents.first)
+        #expect(worktree.agents.count == 1)
+        #expect(agent.provider == provider)
+        #expect(agent.isPrimary == true)
+        #expect(agent.initialPrompt == prompt)
+        #expect(plans.count == 1)
+        #expect(plans.first?.agentRuntime == provider)
+        #expect(plans.first?.initialCommand?.contains(agent.id) == true)
+    }
+
     @Test("@spec AGENT-6.149: When a paired viewer adds an agent to a worktree with no panes, the application shall launch the requested provider without changing host selection and reuse that launch when the operation is retried.", arguments: [WorktreeState.closed, .running])
     func emptyWorktreeLaunchIsIdempotent(state: WorktreeState) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()

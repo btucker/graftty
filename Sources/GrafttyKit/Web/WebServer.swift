@@ -38,17 +38,20 @@ public final class WebServer {
         /// `.createNew`. Omitting the field on the wire is treated as `false`
         /// so existing clients don't break.
         public let existing: Bool
+        public let agent: WorktreeAgentConfiguration
 
         public init(
             repoPath: String,
             worktreeName: String,
             branchName: String,
-            existing: Bool = false
+            existing: Bool = false,
+            agent: WorktreeAgentConfiguration = .init()
         ) {
             self.repoPath = repoPath
             self.worktreeName = worktreeName
             self.branchName = branchName
             self.existing = existing
+            self.agent = agent
         }
 
         // Custom decoder so `existing` defaults to false when absent on
@@ -59,10 +62,11 @@ public final class WebServer {
             self.worktreeName = try container.decode(String.self, forKey: .worktreeName)
             self.branchName = try container.decode(String.self, forKey: .branchName)
             self.existing = try container.decodeIfPresent(Bool.self, forKey: .existing) ?? false
+            self.agent = try container.decodeIfPresent(WorktreeAgentConfiguration.self, forKey: .agent) ?? .init()
         }
 
         private enum CodingKeys: String, CodingKey {
-            case repoPath, worktreeName, branchName, existing
+            case repoPath, worktreeName, branchName, existing, agent
         }
     }
 

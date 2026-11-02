@@ -950,6 +950,52 @@ struct SessionClientTests {
         #expect(first.closed)
     }
 
+    @Test("@spec IOS-7.10: If a mobile checkpoint restore exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.")
+    func restoreTimeoutReplacesNativeSession() async throws {
+        let first = DelayedReceiveWS(paged: true)
+        let second = DelayedReceiveWS(paged: true)
+        let sequence = WebSocketSequence([first, second])
+        let renderer = PagingRenderer()
+        renderer.installError = PagedTerminalCoordinator.RestoreError.timedOut
+        let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() },
+                                   backoffSchedule: [0.01], pagedRenderer: renderer)
+        let failedSession = client.session
+        let retained = RetainedMobilePane(client: client)
+        let container = TerminalInputContainerView(frame: .zero)
+        container.terminalView.configuration = .init(backend: .inMemory(failedSession))
+        retained.container = container
+        client.start()
+        defer { client.stop(); first.fail(CancellationError()); second.fail(CancellationError()) }
+        try await waitUntil("first receive") { first.receiveCalls == 1 }
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 1, cols: 80, rows: 24,
+            ready: Data([1]), hasPrimaryHistory: false, hasAlternateHistory: false)
+        first.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        try await waitUntil("replacement receive") { second.receiveCalls == 1 }
+        #expect(first.closed)
+        #expect(client.session !== failedSession)
+        try await waitUntil("retained surface rebound") {
+            guard case .inMemory(let mountedSession) = container.terminalView.configuration.backend else { return false }
+            return mountedSession === client.session && container.scrollbackSession === client.session
+        }
+        renderer.installError = nil
+        second.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        try await waitUntil("replacement checkpoint") { second.receiveCalls == 2 }
+        #expect(client.paging?.status == .complete)
+        let hello = try #require(second.sent.compactMap { frame -> WebControlEnvelope? in
+            guard case .text(let text) = frame else { return nil }
+            return try? WebControlEnvelope.parse(Data(text.utf8))
+        }.first)
+        guard case .hello(let clientID, _, _, _, _, _) = hello else { Issue.record("Expected hello"); return }
+        client.handleTextFrame(WebControlEnvelope.ownership(try ownershipSnapshot(
+            ownerClientID: clientID, ownerKind: .ios, cols: 80, rows: 24)).encoded())
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 80, rows: 24,
+            widthPixels: 800, heightPixels: 480, cellWidthPixels: 10, cellHeightPixels: 20))
+        failedSession.sendInput(Data("stale".utf8))
+        client.session.sendInput(Data("current".utf8))
+        try await waitUntil("replacement input") { second.sent.contains(.binary(Data("current".utf8))) }
+        #expect(!second.sent.contains(.binary(Data("stale".utf8))))
+    }
+
     final class PagingRenderer: PagedTerminalRenderer {
         var installed: [UInt64] = []
         var generations: [UInt64] = []
@@ -965,11 +1011,13 @@ struct SessionClientTests {
         }
         var resizeContinuation: CheckedContinuation<Void, Never>?
         var resized: [SessionClient.GridSize] = []
+        var installError: (any Error)?
         func resize(cols: UInt16, rows: UInt16) async throws {
             if holdResize { await withCheckedContinuation { resizeContinuation = $0 } }
             resized.append(.init(cols: cols, rows: rows))
         }
         func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
+            if let installError { throw installError }
             installed.append(checkpoint.id)
             generations.append(generation)
         }

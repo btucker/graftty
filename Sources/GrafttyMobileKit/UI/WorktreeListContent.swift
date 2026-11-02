@@ -1338,7 +1338,8 @@ public struct WorktreeListContent: View {
                             worktreeName: request.worktreeName,
                             branchName: request.branchName,
                             existingSource: submission.existingSource,
-                            launchDefaultAgent: true),
+                            launchDefaultAgent: true,
+                            agent: request.agent),
                     using: provider
                 )
                 switch result {

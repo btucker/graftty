@@ -54,10 +54,10 @@ public extension HeadlessHostRuntime {
                 }
             case .listRepositories:
                 return .repositories(await repositoryInfo())
-            case .create(let repository, let name, let branch, let source, let launchDefaultAgent):
+            case .create(let repository, let name, let branch, let source, let launchDefaultAgent, let agent):
                 if launchDefaultAgent {
                     return await ViewerAgentLaunch.create(repository: repository, name: name, branch: branch,
-                        existingSource: source, platform: controlPlatform)
+                        existingSource: source, agent: agent, platform: controlPlatform)
                 }
                 do {
                     let result = try await createWorktree(repository: repository, name: name, branch: branch,

@@ -38,6 +38,8 @@ export function NewWorktreePage() {
   const [worktreeName, setWorktreeName] = useState<string>('');
   const [branchName, setBranchName] = useState<string>('');
   const [branchMirrors, setBranchMirrors] = useState<boolean>(true);
+  const [agentProvider, setAgentProvider] = useState('');
+  const [taskDescription, setTaskDescription] = useState('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [pullingDefaultBranch, setPullingDefaultBranch] = useState<boolean>(false);
   const [pullOfferVisible, setPullOfferVisible] = useState<boolean>(false);
@@ -105,6 +107,7 @@ export function NewWorktreePage() {
         repoPath: selectedRepo,
         worktreeName: trimForSubmit(worktreeName),
         branchName: trimForSubmit(branchName),
+        agent: { ...(agentProvider ? { provider: agentProvider } : {}), taskDescription },
       };
       const res = await fetch('/worktrees', {
         method: 'POST',
@@ -254,6 +257,19 @@ export function NewWorktreePage() {
             onChange={(e) => handleBranchNameChange(e.target.value)}
           />
         </label>
+        <label className="new-worktree-field">
+          <span>Agent</span>
+          <select value={agentProvider} onChange={(e) => setAgentProvider(e.target.value)} disabled={submitting}>
+            <option value="">Default agent</option>
+            <option value="codex">Codex</option>
+            <option value="claude">Claude</option>
+          </select>
+        </label>
+        <label className="new-worktree-field">
+          <span>What do you want to do?</span>
+          <textarea rows={4} value={taskDescription} onChange={(e) => setTaskDescription(e.target.value)} disabled={submitting} />
+        </label>
+        <small>Optional. Sent as the agent's first message.</small>
         {pullOfferVisible && shouldOfferDefaultBranchPull && selectedRepoInfo?.defaultBranchStatus && (
           <div className="new-worktree-warning">
             <div>

@@ -81,7 +81,7 @@ struct WorktreePreviewMenu: View {
         Group {
             if collections.isEmpty { Text("No previews in this worktree") }
             ForEach(collections) { collection in
-                Button(collection.title) { open(collection.offers) }
+                Button(collection.menuTitle) { open(collection.offers) }
             }
         }
     }

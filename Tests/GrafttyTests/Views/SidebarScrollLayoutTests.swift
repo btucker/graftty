@@ -53,7 +53,7 @@ private struct HostedSidebarScrollView: View {
                 onSelectRemotePane: { _, _, _ in }, onAddRemoteWorktree: { _, _ in }, onDeleteRemoteWorktree: { _, _ in },
                 onAddRemoteMac: {}, onAddRepo: {}, onAddPath: { _ in }, onRemoveRepo: { _ in }, onInitializeGit: { _ in },
                 onStopWorktree: { _ in }, onDeleteWorktree: { harness.deleteRequests.append(($0, $1)) }, onMovePane: { _, _ in },
-                onAddWorktree: { _, _, _ in nil }, pendingAddWorktree: .constant(nil))
+                onAddWorktree: { _, _, _, _ in nil }, pendingAddWorktree: .constant(nil))
                 .environmentObject(harness.web)
                 .environmentObject(PortBindingsModel())
                 .onChange(of: harness.state) { _, _ in harness.changes.publish() }

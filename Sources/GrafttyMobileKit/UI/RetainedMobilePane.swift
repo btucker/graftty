@@ -73,6 +73,8 @@ final class RetainedMobilePane: PanePreviewClienting {
         // A hidden pane can become a follower when the Mac takes control.
         // Keep its renderer on the authoritative grid while output continues.
         withObservationTracking {
+            container.terminalView.configuration = .init(backend: .inMemory(client.session))
+            container.scrollbackSession = client.session
             container.authoritativeGrid = client.snapshotCanvasGrid
             container.terminalView.renderPace = client.renderPace
             container.layoutIfNeeded()

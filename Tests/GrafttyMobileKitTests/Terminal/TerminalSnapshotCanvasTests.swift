@@ -92,6 +92,7 @@ struct TerminalSnapshotCanvasTests {
 #if canImport(UIKit)
 import GhosttyTerminal
 import GrafttyProtocol
+import GrafttyRemoteClient
 import UIKit
 
 #if GRAFTTY_PAGED_HISTORY
@@ -144,6 +145,43 @@ struct MountedTerminalSnapshotCanvasTests {
     }
 
     #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.53: When a mobile checkpoint arrives before its terminal surface mounts, the application shall install the checkpoint after the first mount and then parse live output at the checkpoint grid without requiring navigation.")
+    func checkpointBeforeFirstMount() async throws {
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        var container: TerminalInputContainerView?
+        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+            container?.authoritativeGrid = .init(cols: cols, rows: rows)
+            container?.layoutIfNeeded()
+        }
+        let coordinator = PagedTerminalCoordinator(renderer: renderer) { _ in }
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 1, cols: 80, rows: 24,
+            ready: try #require(Data(base64Encoded: Self.ready)),
+            hasPrimaryHistory: true, hasAlternateHistory: false)
+        let restore = Task { try await coordinator.handle(.checkpoint(checkpoint)) }
+        defer { restore.cancel(); coordinator.disconnect() }
+        while coordinator.status == .inactive { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(coordinator.status == .installing)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let mounted = TerminalInputContainerView(frame: window.bounds)
+        container = mounted
+        mounted.terminalView.configuration = .init(backend: .inMemory(session))
+        mounted.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        host.view.addSubview(mounted)
+        mounted.layoutIfNeeded()
+        defer { mounted.removeFromSuperview(); window.isHidden = true }
+        #expect(try await restore.value == DisplayGrid(cols: 80, rows: 24))
+        #expect(coordinator.status == .available)
+        #expect(session.readViewportText()?.contains("row-099999") == true)
+        session.receive("\u{1b}[1;1HLIVE-AFTER-RESTORE")
+        #expect(await session.flushOutput())
+        #expect(session.gridMatches(columns: 80, rows: 24))
+        #expect(session.readViewportText()?.contains("LIVE-AFTER-RESTORE") == true)
+    }
+
     @Test("@spec TERM-12.34: While a mobile follower displays full-width scrollback rows, the application shall preserve each row's columns and order across repeated history refreshes.", arguments: [false, true])
     func fullWidthHistoryPreservesRows(softWrapped: Bool) async throws {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))

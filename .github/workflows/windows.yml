@@ -1,0 +1,67 @@
+name: Windows host groundwork and WSL setup
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - Package.swift
+      - Sources/CGrafttyConPTY/**
+      - Sources/GrafttyWindowsTerminal/**
+      - Sources/GrafttyTunnel/**
+      - Tests/GrafttyWindowsTerminalTests/**
+      - Tests/GrafttyWindowsTransportTests/**
+      - scripts/windows/**
+      - Tests/GrafttyKitTests/HostSetup/WSLHostSetupTests.swift
+      - .github/workflows/windows.yml
+
+permissions:
+  contents: read
+
+jobs:
+  wsl-setup:
+    name: WSL setup checks (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify installer and configuration behavior
+        shell: pwsh
+        run: |
+          python scripts/windows/test-wsl-install.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/windows/test-wsl-setup.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/windows/test-wsl-setup.ps1 -StartupOnly
+          exit $LASTEXITCODE
+      - name: Verify Windows PowerShell compatibility
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./scripts/windows/test-wsl-setup.ps1
+          ./scripts/windows/test-wsl-setup.ps1 -StartupOnly
+          exit $LASTEXITCODE
+
+  terminal:
+    # Hosted Windows Server exercises Win32/ConPTY. Windows 11 validation is
+    # still required before distributing a headless host.
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: compnerd/gha-setup-swift@57fe462cd3c7b05ae8fcff79b00719312e305257
+        with:
+          swift-version: swift-6.4.1-release
+          swift-build: 6.4.1-RELEASE
+      - name: Build and exercise the native terminal backend
+        shell: pwsh
+        run: |
+          swift --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift test --no-parallel --filter WindowsTerminal -Xswiftc -warnings-as-errors -Xcc -Wall -Xcc -Wextra -Xcc -Werror
+          exit $LASTEXITCODE

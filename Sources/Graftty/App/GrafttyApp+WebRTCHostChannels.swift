@@ -27,7 +27,7 @@ import GrafttyRemoteClient
         case .agentSkills, .placement, .agentCompletions, .hostPresentation, .listRepositories, .moveProject,
              .listRemoteMacConnections, .connectRemoteMac:
             return false
-        case .create(let repositoryID, _, _, _, _),
+        case .create(let repositoryID, _, _, _, _, _),
              .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
              .moveWorktree(let repositoryID, _, _, _), .setWorktreeOrder(let repositoryID, _):
             return repositoryID.hasPrefix("relay-repository-")
@@ -425,12 +425,13 @@ extension GrafttyApp {
                 worktreeName,
                 branchName,
                 existingSource,
-                launchDefaultAgent
+                launchDefaultAgent,
+                agent
             ):
                 if launchDefaultAgent {
                     let router = await MainActor.run { SocketRequestRouter(appState: appStateBinding, terminalManager: terminalManager, services: services) }
                     return await ViewerAgentLaunch.create(repository: repositoryID, name: worktreeName, branch: branchName,
-                        existingSource: existingSource, platform: router)
+                        existingSource: existingSource, agent: agent, platform: router)
                 }
                 let branch: BranchSelection
                 if let existingSource {
@@ -466,7 +467,7 @@ extension GrafttyApp {
                     branch = .createNew(name: branchName)
                 }
                 return await WorktreeManagementResponse(creation: worktreeManagement.create(
-                    repoPath: repositoryID, worktreeName: worktreeName, branch: branch, entryPoint: .pairedClient
+                    repoPath: repositoryID, worktreeName: worktreeName, branch: branch, entryPoint: .pairedClient, launchAgent: false
                 ))
 
             case .pullDefaultBranch(let repositoryID):

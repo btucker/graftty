@@ -157,6 +157,7 @@ html, body, #root, #app {
   color: #aaa;
 }
 .new-worktree-field input,
+.new-worktree-field textarea,
 .new-worktree-field select {
   font: 14px Menlo, monospace;
   padding: 8px 10px;
@@ -166,12 +167,14 @@ html, body, #root, #app {
   color: var(--term-foreground);
 }
 .new-worktree-field input:focus,
+.new-worktree-field textarea:focus,
 .new-worktree-field select:focus {
   outline: none;
   border-color: rgba(120, 170, 255, 0.6);
   background: rgba(255, 255, 255, 0.06);
 }
 .new-worktree-field input:disabled,
+.new-worktree-field textarea:disabled,
 .new-worktree-field select:disabled {
   opacity: 0.5;
 }

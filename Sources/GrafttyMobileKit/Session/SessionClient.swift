@@ -69,7 +69,13 @@ public final class SessionClient {
     internal var imagePasteboard: UIPasteboard = .general
 
     public let sessionName: String
-    public let session: InMemoryTerminalSession
+    public private(set) var session: InMemoryTerminalSession
+    private final class NativeCallbacks {
+        var onBytes: (@Sendable (Data) -> Void)?
+        var onResize: (@Sendable (InMemoryTerminalViewport) -> Void)?
+    }
+    @ObservationIgnored private var nativeCallbacks: NativeCallbacks
+    private let rendererOverride: (any PagedTerminalRenderer)?
     public private(set) var paging: PagedTerminalCoordinator?
     @ObservationIgnored
     internal var additionalHistoryRowCapacity: (() -> UInt32)?
@@ -375,25 +381,30 @@ public final class SessionClient {
         self.backoffSchedule = backoffSchedule
         self.role = role
         self.lastActivityAt = clock.now
+        self.rendererOverride = pagedRenderer
+        let box = NativeCallbacks()
+        self.nativeCallbacks = box
+        self.session = Self.makeSession(callbacks: box)
+        bindNativeCallbacks(box)
+        configureTerminalRenderer()
+    }
 
-        final class Box {
-            var onBytes: (@Sendable (Data) -> Void)?
-            var onResize: (@Sendable (InMemoryTerminalViewport) -> Void)?
-        }
-        let box = Box()
-        self.session = InMemoryTerminalSession(
+    private static func makeSession(callbacks box: NativeCallbacks) -> InMemoryTerminalSession {
+        InMemoryTerminalSession(
             write: { data in box.onBytes?(data) },
             resize: { viewport in box.onResize?(viewport) }
         )
+    }
+
+    private func bindNativeCallbacks(_ box: NativeCallbacks) {
         // Keystroke path: owner-typed bytes go straight onto the WS.
         // Follower keystrokes request ownership and queue until confirmed;
         // previews still block PTY-bound input locally. Raw terminal bytes
         // remain exact here, including Ctrl+J's LF. IOS-6.3 maps software
         // Return to CR earlier, at the committed-text API boundary.
-        box.onBytes = { [weak self] data in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
+        box.onBytes = { [weak self, weak box] data in
+            Task { @MainActor [weak self, weak box] in
+                guard let self, self.nativeCallbacks === box else { return }
                 #if DEBUG
                 self.diagnosticNativeInputFrames &+= 1
                 self.diagnosticNativeMouseReports &+= Self.mouseWheelReports(in: data)
@@ -413,12 +424,16 @@ public final class SessionClient {
         // We memoize, but send owner resize only while this display is
         // the confirmed owner. Followers use the authoritative grid for
         // local canvas scaling without resizing the PTY.
-        box.onResize = { [weak self] viewport in
-            Task { @MainActor [weak self] in
-                self?.handleViewport(viewport)
+        box.onResize = { [weak self, weak box] viewport in
+            Task { @MainActor [weak self, weak box] in
+                guard let self, self.nativeCallbacks === box else { return }
+                self.handleViewport(viewport)
             }
         }
-        let renderer = pagedRenderer ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
+    }
+
+    private func configureTerminalRenderer() {
+        let renderer = rendererOverride ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
             self?.additionalHistoryRowCapacity?() ?? 0
         }, gridMatches: { [weak self] cols, rows in
             self?.nativeGrid == GridSize(cols: cols, rows: rows)
@@ -435,6 +450,20 @@ public final class SessionClient {
                 try await ws.send(.text(PagedTerminalEnvelope(request: request).encoded()))
             }
         )
+    }
+
+    /// A transport retry cannot unblock a native operation parked on the old
+    /// session's output queue. Replacing the observable session also makes the
+    /// mounted or retained view tear down that surface before using the new one.
+    private func replaceTimedOutTerminal() {
+        let box = NativeCallbacks()
+        nativeCallbacks = box
+        session = Self.makeSession(callbacks: box)
+        nativeGrid = nil
+        snapshotGrid = nil
+        terminalReplay = RetainedTerminalReplay()
+        bindNativeCallbacks(box)
+        configureTerminalRenderer()
     }
 
     @MainActor
@@ -611,6 +640,9 @@ public final class SessionClient {
                     self.setWSReadyTask(nil)
                     self.ownershipSnapshot = nil
                     self.clearPendingInput()
+                    if error as? PagedTerminalCoordinator.RestoreError == .timedOut {
+                        self.replaceTimedOutTerminal()
+                    }
                     if Self.isTerminalSessionEnded(error) {
                         // Process EOF is final for this pane. Retrying an SSH
                         // `zmx attach` here can recreate the exited session

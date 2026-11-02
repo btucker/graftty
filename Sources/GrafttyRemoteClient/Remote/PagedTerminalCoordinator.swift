@@ -29,6 +29,7 @@ public extension PagedTerminalRenderer {
 @Observable
 @MainActor
 public final class PagedTerminalCoordinator {
+    public enum RestoreError: Error, Equatable, Sendable { case timedOut }
     public enum Status: Equatable, Sendable {
         case inactive, installing, available, loading, complete, requiresRecovery, unavailable, limit, pageTooLarge
     }
@@ -44,6 +45,7 @@ public final class PagedTerminalCoordinator {
     private var pending: PagedTerminalHistoryRequest?
     private var retryRequest: PagedTerminalHistoryRequest?
     private var timeout: Task<Void, Never>?
+    private var cancelInstallation: (() -> Void)?
 
 #if DEBUG
     /// Read-only evidence for gesture-driven request/import correlation.
@@ -84,7 +86,7 @@ public final class PagedTerminalCoordinator {
             let installingGeneration = generation
             status = .installing
             do {
-                try await renderer.install(value, generation: installingGeneration)
+                try await install(value, generation: installingGeneration)
             } catch {
                 // TERM-12.51: an unmounted or cancelled restore must not leave
                 // the banner spinning; offer recovery from the live screen.
@@ -195,8 +197,11 @@ public final class PagedTerminalCoordinator {
     /// A replacement changes the reading position, so the UI calls this only
     /// after an explicit recovery action. Loaded content remains until READY.
     public func recover() async {
-        guard checkpoint != nil, status != .installing else { return }
+        guard status != .installing, checkpoint != nil || status == .requiresRecovery else { return }
         cancelPending()
+        // Explicit recovery must accept READY even when the host returns the
+        // same identity. The renderer retains loaded content until it arrives.
+        checkpoint = nil
         status = .installing
         let recoveringGeneration = generation
         timeout = Task { [weak self] in
@@ -223,6 +228,47 @@ public final class PagedTerminalCoordinator {
     private func cancelPending() {
         timeout?.cancel()
         timeout = nil
+        cancelInstallation?()
+        cancelInstallation = nil
         pending = nil
+    }
+
+    /// Native output queues may park in a continuation that ignores Swift
+    /// cancellation. Bound the caller's wait without joining that parked task;
+    /// a failure reaches the attachment's existing close/reconnect path.
+    private func install(_ checkpoint: PagedTerminalCheckpoint, generation installingGeneration: UInt64) async throws {
+        let result = AsyncStream<Result<Void, any Error>>.makeStream(bufferingPolicy: .bufferingOldest(1))
+        let installation = Task { [renderer] in
+            do {
+                try Task.checkCancellation()
+                try await renderer.install(checkpoint, generation: installingGeneration)
+                result.continuation.yield(.success(()))
+            } catch {
+                result.continuation.yield(.failure(error))
+            }
+            result.continuation.finish()
+        }
+        let deadline = Task { [requestTimeout] in
+            do { try await Task.sleep(for: requestTimeout) } catch { return }
+            result.continuation.yield(.failure(RestoreError.timedOut))
+            result.continuation.finish()
+        }
+        timeout = deadline
+        cancelInstallation = { installation.cancel(); result.continuation.finish() }
+        defer {
+            installation.cancel()
+            deadline.cancel()
+            result.continuation.finish()
+            if generation == installingGeneration {
+                timeout = nil
+                cancelInstallation = nil
+            }
+        }
+        for await completion in result.stream {
+            try Task.checkCancellation()
+            try completion.get()
+            return
+        }
+        throw CancellationError()
     }
 }

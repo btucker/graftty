@@ -778,6 +778,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.51** If restoring a terminal checkpoint fails, then the application shall leave the restoring state, offer recovery from the live screen, and accept the same checkpoint when it arrives again.
 
+**TERM-12.52** If a terminal checkpoint installation stalls, then the application shall fail the attachment within its restore deadline, leave the restoring state, and reject late completion from the stalled installation.
+
+**TERM-12.53** When a mobile checkpoint arrives before its terminal surface mounts, the application shall install the checkpoint after the first mount and then parse live output at the checkpoint grid without requiring navigation.
+
+### TERM-13.x — Native Windows terminal backend
+
+**TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
+
+**TERM-13.2** When a native Windows terminal receives an environment, the application shall encode a sorted double-null-terminated UTF-16 block and reject case-insensitive duplicate names or embedded nulls.
+
+**TERM-13.3** If a native Windows terminal launch exceeds the Win32 command-line limit, then the application shall reject the launch before creating a process.
+
+**TERM-13.4** When a native Windows terminal runs a shell, the application shall deliver its UTF-8 output through ConPTY and drain final output before close returns.
+
+**TERM-13.5** When a native Windows terminal receives input or a size change, the application shall forward it to the pseudoconsole and reject operations after close.
+
+**TERM-13.6** If a native Windows terminal cannot create its child process, then the application shall return a launch error and release the pseudoconsole and pipe handles.
+
+**TERM-13.7** When a native Windows terminal uses a Unicode working directory and environment, the application shall pass both to the child without loss.
+
+**TERM-13.8** If terminal input is blocked while a native Windows terminal closes, then the application shall interrupt the writer and finish shutdown without waiting for the child to read input.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -950,7 +972,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.20** While the user is in existing-branch mode, the BranchPicker's branch list shall reserve a fixed vertical height regardless of the parent view's proposed height, so the list never collapses to zero when nested inside a `Grid` cell whose row height is driven by sibling cells' intrinsic content.
 
-**GIT-5.21** CLI worktree creation shall start the first terminal backend before reporting success because no terminal view is guaranteed to mount. Native sidebar creation shall select the completed worktree and defer its first zmx attach until the terminal view has a nonzero AppKit layout, with a bounded focus retry as a fallback if the normal layout callback is missed. Web creation shall leave the hidden Mac surface deferred because the web client attaches to the returned zmx session itself.
+**GIT-5.21** When worktree creation launches an agent or originates from the CLI, the application shall start the first terminal backend before reporting success. When native sidebar or web creation explicitly requests only a shell, the application shall defer the first Mac attach until the terminal view has a nonzero layout or the web client attaches.
 
 **GIT-5.22** Worktrees created through GitWorktreeAdd shall allow Git's installed post-checkout hook to complete before the creation call returns, matching a direct `git worktree add`.
 
@@ -975,6 +997,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-5.32** When pulling the default checkout before worktree creation, the application shall bound branch validation to five seconds and retain the fast-forward pull's twenty-second timeout.
 
 **GIT-5.33** If default-checkout branch validation times out, then the application shall report the failed lookup with exit code 124 and shall not run a pull.
+
+**GIT-5.34** When a worktree is created without an explicit shell command, the application shall launch exactly one primary agent using the selected provider or the owning host's default, with the optional description as its initial message.
+
+**GIT-5.35** When a client creates a worktree with an agent choice and optional task description, the application shall preserve the provider and exact multiline description across transport and use the destination's default agent when the provider is omitted.
+
+**GIT-5.36** When a user creates a worktree with an agent from the Add worktree form, the application shall retain user-origin creation history rather than recording the repository as its creating agent.
+
+**GIT-5.37** When a worktree creation request specifies an agent or task, the application shall use a distinct request type so older hosts reject the request rather than silently discard its configuration.
+
+**GIT-5.38** When Git worktree creation fails after leaving its directory on disk, the application shall preserve the Git failure for native alerts and web responses.
+
+**GIT-5.39** When a remote CLI requests worktree creation with the destination's default agent, the application shall use a distinct request type so older hosts reject the request rather than create a shell-only worktree.
 
 ### GIT-6.x — Auto-tracking Pinned Agents
 
@@ -1888,6 +1922,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-7.16** If a web or paired-device client asks to delete a worktree whose creation or removal is still in progress, then the application shall refuse it as a failure that a forced retry cannot resolve, without running Git or changing the worktree's row.
 
+**WEB-7.17** When the Add worktree form is displayed, the application shall select the default agent, allow another provider and an optional multiline task description, and submit both without treating Return in the description as creation.
+
 ### WEB-8.x — Web TLS (HTTPS)
 
 **WEB-8.1** When binding the HTTPS server, the application shall read `Self.DNSName` from Tailscale LocalAPI `/status`, strip the trailing dot, and use the resulting FQDN as the TLS SNI name and as the hostname in every composed Base URL / session URL. If `DNSName` is absent or empty, the application shall enter `.magicDNSDisabled` status and not bind. Settings shall render a "MagicDNS must be enabled on your tailnet" message plus a link to `https://login.tailscale.com/admin/dns`.
@@ -2468,6 +2504,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
+**IOS-7.10** If a mobile checkpoint restore exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
+
 ### IOS-8.x — Non-goals (recorded for future specs)
 
 **IOS-8.1** The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.
@@ -2496,7 +2534,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.9** While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the authenticated panes-state snapshot rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
 
-**IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
+**IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return in a single-line field shall submit Create; Return in the optional task description shall insert a newline, and invalid or already-submitting forms shall ignore submission.
 
 **IOS-9.11** While the mobile worktree list is not searching, the application shall display pinned agents across projects before temporary worktrees, preserving host order within each region and retaining a flat list for hosts without pin metadata.
 
@@ -2512,7 +2550,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.17** If the mobile Add Worktree sheet has no authenticated paired connection, then the application shall fail its repository list closed instead of reading repositories over unauthenticated HTTP.
 
-**IOS-9.18** When an iPhone or iPad creates a worktree, the application shall request its host's default agent as the first session while preserving shell-only creation for clients that do not request an agent.
+**IOS-9.18** When a paired client creates a worktree, the application shall request its host's default agent as the first session unless the request explicitly selects shell-only creation.
 
 **IOS-9.19** When mobile worktree creation selects an existing branch, the application shall preserve its local or remote-only source and resolve an automatic source on the owning host before starting the default agent.
 
@@ -4156,6 +4194,44 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-31.20** When connecting through a registered compute provider, the application shall select the adapter by provider identifier, preserve the enrollment operation and pinned host identity, and recheck adapter authorization without requiring AWS-specific identifiers in shared connection code.
 
+### REMOTE-32.x — Windows host transport and WSL2 deployment
+
+**REMOTE-32.1** When a headless host uses native TCP SSH transport, the application shall carry framed messages bidirectionally with pinned Ed25519 host keys and public-key client authentication.
+
+**REMOTE-32.2** If a native TCP SSH connection presents an unexpected host or client key, then the application shall reject the connection before delivering framed application data.
+
+**REMOTE-32.3** When a headless machine initiates its authenticated connection to the parent Mac, the application shall carry parent-originated control channels on that connection without opening a listener on the headless machine.
+
+**REMOTE-32.4** When a Windows headless host establishes cloud-routed access, the application shall use graftty-server for outbound authenticated signaling while retaining terminal authorization on the devices.
+
+**REMOTE-32.5** When pairing a Windows headless host with its parent Mac, the application shall require user-confirmed device-key verification independent of graftty-server account membership and shall reject unconfirmed identity changes.
+
+**REMOTE-32.6** When processing cloud-routed signaling, the application shall authenticate both device identities and bind the session, roles, nonces, expiry, and offer or answer bytes before allocating terminal access.
+
+**REMOTE-32.7** While terminal or control traffic traverses graftty-server infrastructure or TURN, the application shall encrypt and authenticate that traffic end to end using the paired device identities without releasing session private keys to those services.
+
+**REMOTE-32.8** When a cloud-routed Windows host connection reconnects or replaces its transport, the application shall perform fresh device authentication and reject stale or altered signaling without automatically replaying terminal input or mutating commands.
+
+**REMOTE-32.9** When a device revokes a remote peer or its resource capabilities, the application shall stop affected active operations and reject reconnect attempts independently of signaling-server state or TURN credential lifetime.
+
+**REMOTE-32.10** When the parent Mac registers an outbound Windows host connection, the application shall bind it to the authenticated device key and shall not grant Windows permission to control Mac resources from its signaling or transport role.
+
+**REMOTE-32.11** While persisting a native Windows host identity, the application shall protect the private key using current-user Windows cryptographic protection and restrictive file access, and shall not fall back to plaintext private-key storage.
+
+**REMOTE-32.12** While running a headless host under WSL2, the application shall use the pinned Graftty-patched zmx session implementation and preserve the Mac and Linux ownership, detach, reattach, replay, history, and resize behavior.
+
+**REMOTE-32.13** While the Windows user is signed in and the WSL2 host is enabled, the application shall support background host operation when terminal windows are closed or the screen is locked.
+
+**REMOTE-32.14** When preparing a WSL2 host, the application shall report effective CPU and memory limits and propose resource settings with explicit Windows memory headroom while preserving unrelated existing WSL configuration.
+
+**REMOTE-32.15** When preparing a WSL2 project without an explicit storage override, the application shall place repositories, worktrees, and build caches in the Linux filesystem.
+
+**REMOTE-32.16** When locally installing a WSL2 host, the application shall verify the supplied archive digest, reject unsafe archive entries, reuse the Linux installer with loopback listeners, and allow a bounded rollback grace period on timeout without reporting remote readiness before enrollment and connection.
+
+**REMOTE-32.17** When enabling Windows sign-in startup for a WSL2 host, the installer shall scope the startup task to the current interactive user without elevation and retain a foreground Linux process without requiring an open terminal window.
+
+**REMOTE-32.18** When a native Windows host negotiates SSH, the application shall obtain cryptographic randomness from a verified Windows system provider and fail closed if entropy generation fails.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership
@@ -4290,6 +4366,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-4.7** While multiple Local browsers share a Mac callback endpoint, the application shall skip a suspended browser's retained connector and forward through an active browser before writing socket data.
 
+**CHROME-4.8** When Local browser preparation finishes before its presenting view has appeared, the application shall defer Safari presentation until that view has appeared.
+
 ### CHROME-5.x
 
 **CHROME-5.1** When the iOS project is regenerated, the application shall place Chrome rendering tests only in the foreground browser test host and retain ordinary session tests in the unhosted unit bundle.
@@ -4346,9 +4424,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit file preview intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, retain previews without an available leader for manual worktree browsing, and reject unmappable recipients and invalid origins before publication.
 
-**IMAGE-1.14** While the native preview tray toolbar is visible, the application shall keep collection navigation, file selection, Open… and Close controls legible and reachable in both wide and narrow panes.
+**IMAGE-1.14** While the native preview tray toolbar is visible, the application shall hide single-file navigation and keep available file selection, Open and Close controls legible and reachable in both wide and narrow panes.
 
-**IMAGE-1.15** When the user selects Open… from a native preview tray, the application shall open the selected original file in its default application and display launch errors without dismissing the collection.
+**IMAGE-1.15** When the user selects Open from a native preview tray, the application shall open the selected original file in its default application and display launch errors without dismissing the collection.
 
 **IMAGE-1.16** When the user drags the image tray header, corner grip, or bottom edge, the application shall move or resize the tray within the terminal content bounds while retaining usable controls and an unobscured terminal region, without resizing the terminal grid.
 
@@ -4412,6 +4490,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.11** When a pane with a preview moves to another worktree, the application shall resolve active preview controls and return navigation against its current worktree while retaining the original request's history grouping.
 
+**PREVIEW-1.12** While a Mac preview window is open, the application shall use one path bar for worktree, files and history, and disallow automatic system tabs.
+
+**PREVIEW-1.13** While preview chrome follows the Ghostty theme, the application shall update its window and tray colors without changing Quick Look's system document appearance.
+
+**PREVIEW-1.14** While a preview has earlier requests or multiple files, the application shall combine file selection and deduplicated worktree history in one menu, show collection navigation only for multiple files, and raise an existing worktree window without replacing its selection.
+
+**PREVIEW-1.15** When a remote preview window is hidden or closed and reopened, the application shall retain its remote catalog transport for browsing and downloading history.
+
+**PREVIEW-1.16** When a library download is superseded before task cancellation is observed, the application shall discard its result without changing the selected preview or appending discarded history.
+
 ### PREVIEW-2.x
 
 **PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.
@@ -4433,6 +4521,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PREVIEW-2.9** When a downloaded mobile preview is dismissed, the application shall retain session-scoped access to its snapshots after host offers expire and pane views are recreated, without downloading again or automatically reopening it.
 
 **PREVIEW-2.10** While a native preview covers a mobile terminal, the application shall preserve its live terminal channel and mounted session through presentation and dismissal, and perform normal pane cleanup only when the pane is actually removed.
+
+**PREVIEW-2.11** When clients browse preview history, the application shall use the first filename and remaining file count as the collection title, preserve optional creation times across connections, and omit unknown times from legacy offers.
 
 ### PREVIEW-3.x
 

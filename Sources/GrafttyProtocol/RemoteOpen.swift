@@ -17,10 +17,11 @@ public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
     public let previewGroupID: UUID?
     public let previewKind: String?
     public let previewOwnerDeviceID: RemoteDeviceID?
+    public let createdAt: Date?
 
     public init(id: UUID, filename: String, byteCount: Int, url: URL? = nil,
                 paneSessionName: String? = nil, browserOwnerDeviceID: RemoteDeviceID? = nil,
-                previewKind: String? = nil, previewOwnerDeviceID: RemoteDeviceID? = nil, previewGroupID: UUID? = nil) {
+                previewKind: String? = nil, previewOwnerDeviceID: RemoteDeviceID? = nil, previewGroupID: UUID? = nil, createdAt: Date? = nil) {
         self.id = id
         self.filename = filename
         self.byteCount = byteCount
@@ -30,6 +31,7 @@ public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
         self.previewGroupID = previewGroupID
         self.previewKind = previewKind
         self.previewOwnerDeviceID = previewOwnerDeviceID
+        self.createdAt = createdAt
     }
 }
 
@@ -51,7 +53,18 @@ public enum RemoteOpenResponse: Codable, Sendable, Equatable {
 public struct WorktreePreviewCollection: Identifiable, Sendable, Equatable {
     public let id: UUID
     public let offers: [RemoteOpenOffer]
-    public var title: String { offers.map(\.filename).joined(separator: ", ") }
+    public var title: String {
+        let first = offers.first?.filename ?? "Preview"
+        return offers.count > 1 ? "\(first) + \(offers.count - 1) more" : first
+    }
+    public var createdAt: Date? { offers.first?.createdAt }
+    public var menuTitle: String { Self.menuTitle(title, createdAt: createdAt) }
+
+    public static func menuTitle(_ title: String, createdAt: Date?) -> String {
+        guard let createdAt else { return title }
+        let date: Date.FormatStyle.DateStyle = Calendar.current.isDateInToday(createdAt) ? .omitted : .abbreviated
+        return title + " · " + createdAt.formatted(date: date, time: .shortened)
+    }
 }
 
 public extension RemoteOpenOffer {

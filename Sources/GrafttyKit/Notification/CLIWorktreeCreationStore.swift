@@ -60,6 +60,7 @@ public final class CLIWorktreeCreationStore {
         var status: WorktreeCreateStatus
         var updatedAt: Date
         var stagedPromptFile: URL?
+        var creationError: WorktreeCreationError? = nil
     }
 
     private var records: [String: Record] = [:]
@@ -149,7 +150,19 @@ public final class CLIWorktreeCreationStore {
     public func markReady(operationID: String, now: Date = Date()) {
         // The backend accepted the loader bytes; its shell now owns removal.
         records[operationID]?.stagedPromptFile = nil
+        records[operationID]?.creationError = nil
         transition(operationID: operationID, state: .ready, error: nil, now: now)
+    }
+
+    /// Native and web callers need the original failure kind for their error
+    /// presentation. Keep it with the operation's bounded retained record.
+    public func recordFailure(operationID: String, error: WorktreeCreationError) {
+        records[operationID]?.creationError = error
+    }
+
+    public func failure(operationID: String, now: Date = Date()) -> WorktreeCreationError? {
+        prune(now: now)
+        return records[operationID]?.creationError
     }
 
     public func markFailed(operationID: String, error: String, now: Date = Date()) {
@@ -182,7 +195,8 @@ public final class CLIWorktreeCreationStore {
                 error: error
             ),
             updatedAt: now,
-            stagedPromptFile: record.stagedPromptFile
+            stagedPromptFile: record.stagedPromptFile,
+            creationError: record.creationError
         )
     }
 

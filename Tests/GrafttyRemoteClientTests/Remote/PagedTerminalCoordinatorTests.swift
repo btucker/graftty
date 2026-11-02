@@ -226,6 +226,90 @@ struct PagedTerminalCoordinatorTests {
         #expect(coordinator.status == .available)
     }
 
+    @Test("@spec TERM-12.52: If a terminal checkpoint installation stalls, then the application shall fail the attachment within its restore deadline, leave the restoring state, and reject late completion from the stalled installation.")
+    func stalledInstallFailsWithoutWaitingForRendererCancellation() async throws {
+        let surface = Surface()
+        surface.holdInstall = true
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: surface, requestTimeout: .milliseconds(30)) { requests.append($0) }
+        let installation = Task { try await coordinator.handle(.checkpoint(checkpoint(1))) }
+        while surface.installContinuation == nil { await Task.yield() }
+        defer { surface.installContinuation?.resume(); surface.installContinuation = nil }
+        // The renderer deliberately ignores cancellation. A task-group race
+        // would hang waiting for this operation even after the deadline fires.
+        let deadline = try #require(coordinator.timeoutTaskForTesting)
+        await deadline.value
+        await #expect(throws: PagedTerminalCoordinator.RestoreError.timedOut) { try await installation.value }
+        #expect(coordinator.status == .requiresRecovery)
+        surface.holdInstall = false
+        try await coordinator.handle(.checkpoint(checkpoint(2)))
+        surface.installContinuation?.resume()
+        surface.installContinuation = nil
+        while !surface.installed.contains(1) { await Task.yield() }
+        #expect(coordinator.status == .available)
+        surface.nearTop = true
+        await coordinator.loadIfNeeded()
+        guard case .history(let request) = try #require(requests.last) else { return }
+        #expect(request.checkpointID == 2)
+        coordinator.disconnect()
+    }
+
+    @Test("Cancellation releases a stalled checkpoint wait before its renderer completes")
+    func cancelStalledInstall() async throws {
+        let surface = Surface()
+        surface.holdInstall = true
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { _ in }
+        let installation = Task { try await coordinator.handle(.checkpoint(checkpoint(1))) }
+        while surface.installContinuation == nil { await Task.yield() }
+        defer { surface.installContinuation?.resume(); surface.installContinuation = nil }
+        installation.cancel()
+        await #expect(throws: CancellationError.self) { try await installation.value }
+        #expect(coordinator.status == .requiresRecovery)
+        coordinator.disconnect()
+        #expect(coordinator.status == .inactive)
+    }
+
+    @Test("Disconnect releases a stalled checkpoint wait and preserves inactive status")
+    func disconnectStalledInstall() async throws {
+        let surface = Surface()
+        surface.holdInstall = true
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { _ in }
+        let installation = Task { try await coordinator.handle(.checkpoint(checkpoint(1))) }
+        while surface.installContinuation == nil { await Task.yield() }
+        defer { surface.installContinuation?.resume(); surface.installContinuation = nil }
+        coordinator.disconnect()
+        await #expect(throws: CancellationError.self) { try await installation.value }
+        #expect(coordinator.status == .inactive)
+    }
+
+    @Test("Recovery can request a snapshot after the first installation fails")
+    func recoverAfterFirstInstallFailure() async throws {
+        struct Unmounted: Error {}
+        let surface = Surface()
+        surface.installError = Unmounted()
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { requests.append($0) }
+        await #expect(throws: Unmounted.self) { try await coordinator.handle(.checkpoint(checkpoint(1))) }
+        await coordinator.recover()
+        #expect(requests == [.checkpoint])
+        surface.installError = nil
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        #expect(coordinator.status == .available)
+        coordinator.disconnect()
+    }
+
+    @Test("Explicit recovery accepts a checkpoint with the same identity")
+    func recoverWithSameCheckpoint() async throws {
+        let surface = Surface()
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { _ in }
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        await coordinator.recover()
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        #expect(surface.installed == [1, 1])
+        #expect(coordinator.status == .available)
+        coordinator.disconnect()
+    }
+
     private func page(_ request: PagedTerminalHistoryRequest) -> PagedTerminalPage {
         .init(incarnation: request.incarnation, checkpointID: request.checkpointID,
               requestID: request.requestID, ordinal: request.ordinal, screen: request.screen,
@@ -239,8 +323,11 @@ struct PagedTerminalCoordinatorTests {
         var nearTop = false
         var result: PagedTerminalPageResult = .applied
         var installError: (any Error)?
+        var holdInstall = false
+        var installContinuation: CheckedContinuation<Void, Never>?
         func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
             if let installError { throw installError }
+            if holdInstall { await withCheckedContinuation { installContinuation = $0 } }
             installed.append(checkpoint.id)
         }
         func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult {

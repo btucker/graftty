@@ -24,13 +24,13 @@ public actor RemoteOpenStore {
             && ($0.previewRevision ?? 0) > previewRevision }) else { throw Failure.superseded }
         // Stored offers have no automatic recipient. Only the live, expiring
         // delivery overlay below can ask a device to open a preview.
-        let published = try catalog.publish(snapshots, worktree: worktree, paneSessionName: paneSessionName)
+        let published = try catalog.publish(snapshots, worktree: worktree, paneSessionName: paneSessionName, now: now)
         entries.removeAll { $0.worktree == worktree && $0.offer.paneSessionName == paneSessionName && $0.previewRevision != nil }
         guard let ownerDeviceID else { return published }
         let deliveries = published.map { offer in
             RemoteOpenOffer(id: offer.id, filename: offer.filename, byteCount: offer.byteCount,
                 paneSessionName: offer.paneSessionName, previewKind: offer.previewKind,
-                previewOwnerDeviceID: ownerDeviceID, previewGroupID: offer.previewGroupID)
+                previewOwnerDeviceID: ownerDeviceID, previewGroupID: offer.previewGroupID, createdAt: offer.createdAt)
         }
         for offer in deliveries {
             entries.append(Entry(offer: offer, worktree: worktree, bytes: Data(),
@@ -107,7 +107,7 @@ public actor RemoteOpenStore {
         return snapshots.map { snapshot in
             let offer = RemoteOpenOffer(id: UUID(), filename: snapshot.filename, byteCount: snapshot.bytes.count,
                                        paneSessionName: paneSessionName, previewKind: "file",
-                                       previewOwnerDeviceID: ownerDeviceID, previewGroupID: group)
+                                       previewOwnerDeviceID: ownerDeviceID, previewGroupID: group, createdAt: now)
             entries.append(Entry(offer: offer, worktree: worktree, bytes: snapshot.bytes,
                                  expires: now.addingTimeInterval(900), previewRevision: previewRevision))
             return offer
@@ -135,7 +135,7 @@ public actor RemoteOpenStore {
             evictOldest()
         }
         let offer = RemoteOpenOffer(id: UUID(), filename: filename, byteCount: bytes.count, paneSessionName: paneSessionName,
-                                    previewKind: previewKind, previewOwnerDeviceID: previewOwnerDeviceID)
+                                    previewKind: previewKind, previewOwnerDeviceID: previewOwnerDeviceID, createdAt: now)
         entries.append(Entry(offer: offer, worktree: worktree, bytes: bytes, expires: now.addingTimeInterval(900),
                              previewRevision: previewRevision))
         return offer
