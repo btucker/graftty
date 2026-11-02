@@ -220,13 +220,30 @@ Rooms expire after 60 seconds, and reads do not imply acceptance. Signaling
 transports opaque bytes, can lose buffers, and has no guaranteed delivery or
 acknowledgment. Treat it as untrusted discovery. It is not a terminal byte relay.
 
-Cloud invitation encoding and its enrollment-authorization exchange remain
-undecided. Existing registration needs an account enrollment JWT from OAuth.
-Do not treat an invitation, a server bearer, and a pinned endpoint key as the
-same credential. Signed signaling, Linux WebRTC support, STUN and TURN setup,
-and Mac adoption of the outbound link remain endpoint work. The existing
-WebRTC implementation is conditional on the Apple SDK and cannot simply be
-enabled by running the Linux host in WSL2.
+The server owner and this implementation agreed a separate enrollment
+follow-up. An authorized existing device will issue a one-use, 600-second
+host invitation through `POST /v1/host-enrollment-invitations`. The WSL2 caller
+requests `platform: linux`. Redemption through
+`POST /v1/host-enrollment-invitations/redeem` will return a device bearer with
+`host_rendezvous` scope. These routes and scope are agreed design, not
+implemented or deployed by this work.
+
+The restricted bearer must not grant account deletion, changes to other
+devices, or invitation issuance. Scope is independent of self-declared
+platform and device kind. Inviter revocation invalidates unconsumed invitations.
+A host enrolled before that revocation has an independently revocable cloud
+credential. Endpoint-local revocation still controls paired terminal access.
+Claiming an invitation must atomically consume it and insert exactly one
+device. If a claim response is lost after commit, setup must obtain a fresh
+invitation rather than blindly retrying a consumed authorization.
+
+The full endpoint invitation and signed signaling encodings remain undecided.
+The parent must supply its pinned public key from local identity storage.
+Server routing IDs cannot supply that trust. Do not treat an invitation, a
+server bearer, and a pinned endpoint key as the same credential. Linux WebRTC
+support, STUN and TURN setup, and Mac adoption of the outbound link remain
+endpoint work. The existing WebRTC implementation is conditional on the Apple
+SDK and cannot simply be enabled by running the Linux host in WSL2.
 
 | Boundary | Owner | Acceptance evidence required |
 | --- | --- | --- |
