@@ -227,8 +227,12 @@ enum AddWorktreeFlow {
         // the window-focus side effects (first responder, PR refresh)
         // that only make sense when a user clicked the sidebar locally.
         if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree.root == nil {
-            let id = PaneSlotID()
+            let managed = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].agents.first { $0.status == .starting }
+            let id = managed?.paneSlotID ?? PaneSlotID()
             appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
+            if let session = managed?.paneSessionID {
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].recordPaneSession(session, for: id)
+            }
         }
 
         let splitTree = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree

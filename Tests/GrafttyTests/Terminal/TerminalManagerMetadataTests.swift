@@ -348,8 +348,8 @@ struct TerminalManagerMetadataTests {
         ))
     }
 
-    @Test("@spec GIT-5.24: When a paired client first attaches to a newly created worktree's zsh or bash terminal, the application shall supply the host's default command to shell startup, honor the first-pane-only preference, and suppress a second default-command launch when a Mac renderer later attaches.")
-    func remoteAttachmentCarriesDefaultCommand() throws {
+    @Test("@spec GIT-5.24: When a local or paired client opens an ordinary terminal, the application shall start a shell without executing a legacy default command or launching the default agent.")
+    func ordinaryTerminalDoesNotLaunchLegacyCommand() throws {
         let defaults = try #require(UserDefaults(suiteName: "graftty-startup-\(UUID().uuidString)"))
         defaults.set("printf mobile", forKey: "defaultCommand")
         defaults.set(true, forKey: "defaultCommandFirstPaneOnly")
@@ -370,12 +370,12 @@ struct TerminalManagerMetadataTests {
         let configuration = try #require(manager.remoteSpawnConfiguration(
             forSessionName: ZmxLauncher.sessionName(for: firstSession), defaults: defaults
         ))
-        #expect(configuration.env["GRAFTTY_INITIAL_COMMAND"] == "printf mobile")
+        #expect(configuration.env["GRAFTTY_INITIAL_COMMAND"] == nil)
         #expect(macConfiguration.env["GRAFTTY_INITIAL_COMMAND"] == configuration.env["GRAFTTY_INITIAL_COMMAND"])
         #expect(manager.remoteSpawnConfiguration(
             forSessionName: ZmxLauncher.sessionName(for: secondSession), defaults: defaults
         )?.runsInitialCommand == false)
-        #expect(manager.consumeExplicitInitialInputMarker(primary))
+        #expect(!manager.consumeExplicitInitialInputMarker(primary))
         manager.markRehydrated(secondary)
         defaults.set(false, forKey: "defaultCommandFirstPaneOnly")
         #expect(manager.remoteSpawnConfiguration(

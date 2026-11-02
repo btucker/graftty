@@ -130,6 +130,22 @@ struct WorktreeAdd: ParsableCommand {
             throw ValidationError(error)
         }
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        if remote == nil, let provider = agent.flatMap(TeamHookRuntime.init(rawValue:)) {
+            var operation = try AgentCLI.request(.add)
+            operation.name = name
+            operation.provider = provider
+            operation.prompt = resolvedPrompt
+            operation.operationID = UUID().uuidString.lowercased()
+            operation.base = base
+            operation.branch = branch
+            operation.existing = existing
+            let records = try AgentCLI.exchange(operation, deadline: deadline)
+            try AgentCLI.printRecords(records, json: false)
+            if wait, let id = records.first?.operationID {
+                try waitForCreation(response: CLIEnv.sendRequest(.worktreeCreateStatus(operationID: id)), deadline: deadline)
+            }
+            return
+        }
         // Capability probes use the same two-second request transport as the
         // mutation. Give transient app stalls a short bounded retry window,
         // while preserving most of the caller's timeout for the real work.
@@ -679,6 +695,8 @@ enum CapabilityProbe {
 extension ControlCapability {
     var unsupportedMessage: String {
         switch self {
+        case .managedAgents:
+            "the running Graftty app does not support agent lifecycle commands; relaunch the updated app, then retry"
         case .agentPromptStaging:
             "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry"
         case .paneAgent:
@@ -702,6 +720,8 @@ extension ControlCapability {
 
     var verificationMessage: String {
         switch self {
+        case .managedAgents:
+            "could not verify agent lifecycle support; relaunch Graftty, then retry"
         case .agentPromptStaging:
             "could not verify agent prompt staging support; quit and relaunch Graftty, then retry"
         case .paneAgent:
@@ -721,17 +741,5 @@ extension ControlCapability {
         case .worktreePin:
             "could not verify worktree pinning support; relaunch the updated Graftty app, then retry"
         }
-    }
-}
-
-enum WorktreeRequestNames {
-    static func resolve(name: String, branch: String?, existing: Bool) -> (worktree: String, branch: String) {
-        let worktree = normalize(name)
-        let requestedBranch = branch ?? (existing ? name : worktree)
-        return (worktree, existing ? requestedBranch : normalize(requestedBranch))
-    }
-
-    private static func normalize(_ value: String) -> String {
-        WorktreeNameSanitizer.trimForSubmit(WorktreeNameSanitizer.sanitize(value))
     }
 }

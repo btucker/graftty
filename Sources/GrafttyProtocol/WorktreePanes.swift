@@ -166,6 +166,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// snapshots send it only for `.running` rows; the Mac sidebar's own
     /// local rows keep a stopped worktree's saved layout.
     public let layout: PaneLayoutNode?
+    public let agents: [AgentSessionInfo]?
     /// nil for legacy snapshots. New origin-aware snapshots identify their
     /// owning Mac explicitly, including local rows (`relayDepth == 0`).
     public let origin: WorktreeOrigin?
@@ -195,8 +196,10 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         sidebar: SidebarWorktreeMetadata? = nil,
         ports: [WorktreePort] = [],
         portBindings: [String: [PortBinding]]? = nil,
-        creationProgress: WorktreeCreationProgress? = nil
+        creationProgress: WorktreeCreationProgress? = nil,
+        agents: [AgentSessionInfo]? = nil
     ) {
+        self.agents = agents
         self.creationProgress = creationProgress
         self.path = path
         self.displayName = displayName
@@ -228,7 +231,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         origin: WorktreeOrigin? = nil,
         route: WorktreeRoute? = nil,
         sidebar: SidebarWorktreeMetadata? = nil,
-        creationProgress: WorktreeCreationProgress? = nil
+        creationProgress: WorktreeCreationProgress? = nil,
+        agents: [AgentSessionInfo]? = nil
     ) -> WorktreePanes {
         WorktreePanes(
             path: path ?? self.path, displayName: displayName, repoDisplayName: repoDisplayName,
@@ -236,7 +240,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
             isMainCheckout: isMainCheckout, prBadge: prBadge, stats: stats,
             attentionText: attentionText, attentionSource: attentionSource, attentionTimestamp: attentionTimestamp,
             layout: layout ?? self.layout, origin: origin ?? self.origin, route: route ?? self.route,
-            sidebar: sidebar ?? self.sidebar, ports: ports, portBindings: portBindings, creationProgress: creationProgress ?? self.creationProgress)
+            sidebar: sidebar ?? self.sidebar, ports: ports, portBindings: portBindings, creationProgress: creationProgress ?? self.creationProgress, agents: agents ?? self.agents)
     }
 
     /// Custom decode preserves readability when an older server
@@ -248,11 +252,12 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey, CaseIterable {
         case path, displayName, repoDisplayName, repositoryID, displayBranch, state, creationProgress,
              isMainCheckout, prBadge, stats, attentionText, attentionSource,
-             attentionTimestamp, layout, origin, route, sidebar, ports, portBindings
+             attentionTimestamp, layout, origin, route, sidebar, ports, portBindings, agents
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.agents = try c.decodeIfPresent([AgentSessionInfo].self, forKey: .agents)
         self.creationProgress = try c.decodeIfPresent(WorktreeCreationProgress.self, forKey: .creationProgress)
         self.portBindings = try c.decodeIfPresent([String: [PortBinding]].self, forKey: .portBindings)
         self.sidebar = try c.decodeIfPresent(SidebarWorktreeMetadata.self, forKey: .sidebar)
@@ -282,6 +287,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(agents, forKey: .agents)
         try c.encodeIfPresent(creationProgress, forKey: .creationProgress)
         try c.encode(path, forKey: .path)
         try c.encode(displayName, forKey: .displayName)

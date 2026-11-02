@@ -102,7 +102,9 @@ enum PaneCommands {
         split: PaneSplit,
         extraInitialInput: String? = nil,
         activateNewPane: Bool = true,
-        preserveZoom: Bool = false
+        preserveZoom: Bool = false,
+        reservedSlot: PaneSlotID? = nil,
+        reservedSession: PaneSessionID? = nil
     ) -> PaneSlotID? {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
@@ -125,7 +127,7 @@ enum PaneCommands {
                 }
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
-                let newID = PaneSlotID()
+                let newID = reservedSlot ?? PaneSlotID()
                 var newTree: SplitTree
                 switch split {
                 case .right, .down:
@@ -137,6 +139,9 @@ enum PaneCommands {
                     newTree = newTree.withZoom(zoomed)
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+                if let reservedSession {
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].recordPaneSession(reservedSession, for: newID)
+                }
                 let paneSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     .ensurePaneSession(for: newID)
                 // TERM-5.5: createSurface can now fail gracefully
@@ -233,6 +238,9 @@ enum PaneCommands {
             }
         }
         guard let currentRepoIdx, let currentWorktreeIdx else { return }
+        // Directory changes do not transfer an assignment or its parent binding.
+        guard !appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
+            .ownsManagedAgent(in: terminalID) else { return }
 
         // Longest-prefix match across every repo (handles nested worktrees:
         // a linked worktree at `/r/wt/feature` beats the main checkout at
@@ -393,8 +401,8 @@ enum PaneCommands {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                guard wt.splitTree.containsLeaf(terminalID) else { continue }
-                guard let nextID = wt.splitTree.spatialNeighbor(
+                guard wt.navigationTree.containsLeaf(terminalID) else { continue }
+                guard let nextID = wt.navigationTree.spatialNeighbor(
                     of: terminalID,
                     direction: direction.asSpatial
                 ) else {
@@ -409,7 +417,9 @@ enum PaneCommands {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
-                terminalManager.setFocus(nextID)
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].workspaceLayout?.select(nextID)
+                if wt.hasCompletedContent(in: nextID) { terminalManager.clearFocus() }
+                else { terminalManager.setFocus(nextID) }
                 return
             }
         }
@@ -431,7 +441,7 @@ enum PaneCommands {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                let leaves = wt.splitTree.allLeaves
+                let leaves = wt.navigationTree.allLeaves
                 guard let currentIdx = leaves.firstIndex(of: terminalID) else { continue }
                 guard leaves.count > 1 else { return }
                 let nextIdx = forward
@@ -445,7 +455,9 @@ enum PaneCommands {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
-                terminalManager.setFocus(nextID)
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].workspaceLayout?.select(nextID)
+                if wt.hasCompletedContent(in: nextID) { terminalManager.clearFocus() }
+                else { terminalManager.setFocus(nextID) }
                 return
             }
         }
@@ -455,6 +467,10 @@ enum PaneCommands {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
+            guard (wt.workspaceLayout?.visibleSplitTree ?? wt.splitTree).containsLeaf(terminalID) else {
+                wt.splitTree = wt.splitTree.withZoom(nil)
+                return
+            }
             wt.splitTree = wt.splitTree.togglingZoom(at: terminalID)
         }
     }
@@ -469,6 +485,7 @@ enum PaneCommands {
         appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
             let zoomed = wt.splitTree.zoomed
             wt.splitTree = wt.splitTree.equalizing()
+            if let layout = wt.workspaceLayout { wt.workspaceLayout?.updateGeometry(from: layout.visibleSplitTree.equalizing()) }
             if preserveZoom, let zoomed {
                 wt.splitTree = wt.splitTree.withZoom(zoomed)
             }
@@ -498,6 +515,13 @@ enum PaneCommands {
         appState.wrappedValue.mutateWorktree(containing: target) { wt in
             do {
                 let zoomed = wt.splitTree.zoomed
+                if let layout = wt.workspaceLayout, layout.group(containing: target) != nil {
+                    let resized = try layout.visibleSplitTree.resizing(target: target, direction: direction, pixels: pixels, ancestorBounds: bounds)
+                    wt.workspaceLayout?.updateGeometry(from: resized)
+                    wt.splitTree = wt.splitTree.withZoom(preserveZoom ? zoomed : nil)
+                    didResize = true
+                    return
+                }
                 wt.splitTree = try wt.splitTree.resizing(
                     target: target,
                     direction: direction,
@@ -527,6 +551,25 @@ enum PaneCommands {
     /// user-initiated closes clean up phantom leaves (surface creation
     /// failed, `TERM-5.8`) while keeping the `TERM-5.7` Stop-cascade guard
     /// for libghostty-initiated callbacks.
+    @discardableResult
+    static func dismissCompletedTab(appState: Binding<AppState>, terminalManager: TerminalManager,
+                                    targetID: PaneSlotID) -> Bool {
+        let before = appState.wrappedValue
+        for ri in appState.wrappedValue.repos.indices {
+            for wi in appState.wrappedValue.repos[ri].worktrees.indices {
+                guard appState.wrappedValue.repos[ri].worktrees[wi].dismissCompletedTab(targetID) else { continue }
+                let worktree = appState.wrappedValue.repos[ri].worktrees[wi]
+                if let next = worktree.presentationPane, !worktree.hasCompletedContent(in: next), worktree.splitTree.containsLeaf(next) {
+                    appState.wrappedValue.repos[ri].worktrees[wi].focusedPaneSlotID = next
+                    terminalManager.setFocus(next)
+                } else { terminalManager.clearFocus() }
+                GrafttyApp.persistAppStateIfChanged(appState, from: before)
+                return true
+            }
+        }
+        return false
+    }
+
     static func closePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -534,6 +577,14 @@ enum PaneCommands {
         userInitiated: Bool = false,
         activateReplacement: Bool = true
     ) {
+        if terminalManager.managedPaneClose?(targetID, userInitiated) == true { return }
+        removeEndedPane(appState: appState, terminalManager: terminalManager, targetID: targetID,
+            userInitiated: userInitiated, activateReplacement: activateReplacement)
+    }
+
+    static func removeEndedPane(appState: Binding<AppState>, terminalManager: TerminalManager,
+                                targetID: PaneSlotID, userInitiated: Bool = true,
+                                activateReplacement: Bool = true) {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -558,6 +609,8 @@ enum PaneCommands {
                 _ = appState.wrappedValue.repos[repoIdx]
                     .worktrees[wtIdx].ensurePrimaryPane()
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .recordManagedSessionEnd(slot: targetID, reason: "Terminal session ended")
                 terminalManager.destroySurface(terminalID: targetID)
                 let newTree = wt.splitTree.removing(targetID)
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
@@ -605,38 +658,4 @@ enum PaneCommands {
         }
     }
 
-    /// Called on the first `onShellReady` signal for a pane. Reads the
-    /// user's default-command preferences from UserDefaults, consults the
-    /// pure decision function in GrafttyKit, and — if the decision is
-    /// `.type(command)` — types the command into the pane via
-    /// `SurfaceHandle.typeText` followed by `\r` to trigger execution.
-    static func maybeRunDefaultCommand(
-        terminalManager: TerminalManager,
-        terminalID: PaneSlotID
-    ) {
-        let defaults = UserDefaults.standard
-        let command = defaults.string(forKey: SettingsKeys.defaultCommand) ?? ""
-        // `@AppStorage` defaults apply only in the SwiftUI view; when
-        // read directly from UserDefaults the key returns nil on
-        // first run. Treat nil as `true` to match the SettingsView default.
-        let firstPaneOnly = defaults.object(forKey: "defaultCommandFirstPaneOnly") as? Bool ?? true
-
-        let decision = defaultCommandDecision(
-            defaultCommand: command,
-            firstPaneOnly: firstPaneOnly,
-            isFirstPane: terminalManager.isFirstPane(terminalID),
-            wasRehydrated: terminalManager.wasRehydrated(terminalID),
-            hasExplicitInitialInput: terminalManager.consumeExplicitInitialInputMarker(terminalID)
-        )
-
-        switch decision {
-        case .skip:
-            return
-        case .type(let trimmedCommand):
-            // The default-command auto-injection runs once when a fresh
-            // pane's shell becomes ready — programmatic input, not a
-            // user keystroke. IOS-12.1's silent gate stays closed.
-            terminalManager.handle(for: terminalID)?.typeText(trimmedCommand + "\r", claimEngagement: false)
-        }
-    }
 }

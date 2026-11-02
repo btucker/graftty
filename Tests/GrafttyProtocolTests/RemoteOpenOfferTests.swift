@@ -41,4 +41,17 @@ struct RemoteOpenOfferTests {
         #expect(legacy.url == url)
         #expect(legacy.id == offer.id)
     }
+    @Test("@spec IMAGE-2.14: When a client browses worktree previews, the application shall show the newest collection first, preserve file order within each collection, and include previews from other panes and devices without including ordinary browser offers.")
+    func sharedPreviewCollectionOrder() {
+        let group = UUID()
+        let a = RemoteOpenOffer(id: UUID(), filename: "a.html", byteCount: 1, paneSessionName: "a", previewKind: "file", previewGroupID: group)
+        let b = RemoteOpenOffer(id: UUID(), filename: "b.png", byteCount: 1, paneSessionName: "a", previewKind: "file", previewGroupID: group)
+        let c = RemoteOpenOffer(id: UUID(), filename: "c.html", byteCount: 1, paneSessionName: "b", previewKind: "file", previewOwnerDeviceID: .init(value: "another-phone"))
+        let browser = RemoteOpenOffer(id: UUID(), filename: "url", byteCount: 0, url: URL(string: "https://example.com"))
+        let collections = RemoteOpenOffer.previewCollections(in: [a, b, browser, c])
+        #expect(collections.map(\.id) == [c.id, group])
+        #expect(collections.last?.offers == [a, b])
+        #expect(collections.last?.title == "a.html, b.png")
+    }
+
 }

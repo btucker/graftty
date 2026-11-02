@@ -8,6 +8,7 @@ struct PRButton: View {
     let info: PRInfo
     let theme: GhosttyTheme
     let onRefresh: () -> Void
+    var compact = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -20,11 +21,12 @@ struct PRButton: View {
                 )
                 .modifier(PulseIfPending(isPending: info.checks == .pending))
 
-            Text("#\(info.number)\(terminalSuffix)")
+            Text("#\(info.number)\(compact ? "" : terminalSuffix)")
                 .font(.caption)
                 .fontWeight(.medium)
                 .foregroundColor(info.state.isTerminal ? info.state.statusColor : theme.foreground)
 
+            if !compact {
             Text(info.title)
                 .font(.caption)
                 .foregroundColor(theme.foreground.opacity(0.55))
@@ -32,7 +34,12 @@ struct PRButton: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: 260, alignment: .leading)
 
-            if info.state == .open && info.mergeable == .conflicting {
+            }
+            if compact && hasConflict {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2).foregroundStyle(PRInfo.Mergeable.conflicting.statusColor)
+            }
+            if !compact && hasConflict {
                 Text("merge conflict")
                     .font(.caption2)
                     .fontWeight(.medium)
@@ -44,17 +51,17 @@ struct PRButton: View {
                     )
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, compact ? 2 : 8)
         .padding(.vertical, 2)
-        .background(background)
+        .background(compact ? .clear : background)
         .overlay(
             RoundedRectangle(cornerRadius: 4)
-                .stroke(theme.foreground.opacity(0.12), lineWidth: 1)
+                .stroke(theme.foreground.opacity(0.12), lineWidth: compact ? 0 : 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .help("Open #\(info.number) on \(info.url.host ?? "")")
+        .help("#\(info.number) · \(info.title)\n\(accessibilityChecks)\(terminalSuffix)\(conflictDescription)")
         .accessibilityLabel(
-            "Pull request \(info.number), \(accessibilityChecks), \(info.title). Click to open in browser."
+            "Pull request \(info.number), \(accessibilityChecks)\(terminalSuffix)\(conflictDescription), \(info.title). Click to open in browser."
         )
         .contentShape(Rectangle())
         .onTapGesture { NSWorkspace.shared.open(info.url) }
@@ -79,6 +86,9 @@ struct PRButton: View {
         case .open:   return ""
         }
     }
+
+    var hasConflict: Bool { info.state == .open && info.mergeable == .conflicting }
+    private var conflictDescription: String { hasConflict ? ", merge conflict" : "" }
 
     private var dotColor: Color { info.checks.statusColor }
 

@@ -47,6 +47,7 @@ public struct SidebarPaneTitleText: View {
     let isActiveWorktree: Bool
     let isBusy: Bool
     let attentionStyle: AttentionCapsuleStyle?
+    var isAgent = false
     let theme: GhosttyThemeColors?
 
     public var body: some View {
@@ -58,7 +59,7 @@ public struct SidebarPaneTitleText: View {
         // drops it, so the slant only showed on non-focused (regular) rows.
         // Busy style applies only when no capsule is shown (ping supersedes).
         let base = Text(title.isEmpty ? "shell" : title)
-            .font(.caption)
+            .font(isAgent ? .system(size: 13) : .caption)
             .fontWeight(isFocusedPane ? .semibold : .regular)
         (PaneTitleBusyStyle.applies(isBusy: isBusy, hasAttentionCapsule: attentionStyle != nil) ? base.italic() : base)
             .lineLimit(1)
@@ -89,6 +90,8 @@ public struct SidebarPaneTitleText: View {
 public struct SidebarPaneTitleRow<TitleLayout: View>: View {
     let title: SidebarPaneTitleText
     let attentionCount: Int
+    let needsInput: Bool
+    let agent: AgentSessionInfo?
     let alignment: VerticalAlignment
     /// Built once at init rather than stored as a closure, so SwiftUI can
     /// still diff the row by value.
@@ -109,28 +112,32 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
         attentionStyle: AttentionCapsuleStyle?,
         attentionCount: Int,
         theme: GhosttyThemeColors?,
+        needsInput: Bool = false,
+        agent: AgentSessionInfo? = nil,
         alignment: VerticalAlignment = .center,
         @ViewBuilder titleLayout: (SidebarPaneTitleText) -> TitleLayout
     ) {
         let titleText = SidebarPaneTitleText(title: title, isFocusedPane: isFocusedPane,
                                              isActiveWorktree: isActiveWorktree, isBusy: isBusy,
-                                             attentionStyle: attentionStyle, theme: theme)
+                                             attentionStyle: attentionStyle, isAgent: agent != nil, theme: theme)
         self.title = titleText
         self.attentionCount = attentionCount
+        self.needsInput = needsInput
+        self.agent = agent
         self.alignment = alignment
         self.titleLayout = titleLayout(titleText)
     }
 
     public var body: some View {
         HStack(alignment: alignment, spacing: SidebarPaneLayout.markerSpacing) {
-            SidebarPaneMarker(
-                attentionCount: attentionCount,
-                isFocused: title.isFocusedPane,
-                arrowColor: title.theme?.paneArrow(
-                    isFocusedPane: title.isFocusedPane,
-                    isActiveWorktree: title.isActiveWorktree
-                ) ?? .secondary
-            )
+            if let agent {
+                AgentStatusBadge(status: agent.status, needsInput: needsInput,
+                    failure: agent.failure, processObservation: agent.processObservation)
+                    .font(.system(size: 12)).frame(width: 18)
+            } else if attentionCount > 0 {
+                SidebarPaneMarker(attentionCount: attentionCount, isFocused: false,
+                    arrowColor: title.theme?.foreground ?? .secondary)
+            }
             if let attentionStyle = title.attentionStyle {
                 // A plain HStack — not the caller's layout — so the title
                 // truncates instead of the pill wrapping below it.
@@ -143,6 +150,7 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
             }
             Spacer(minLength: 0)
         }
+        .opacity(agent?.completionID != nil || agent?.status == "closed" ? 0.5 : 1)
     }
 }
 
@@ -154,10 +162,12 @@ public extension SidebarPaneTitleRow where TitleLayout == SidebarPaneTitleText {
         isBusy: Bool,
         attentionStyle: AttentionCapsuleStyle?,
         attentionCount: Int,
-        theme: GhosttyThemeColors?
+        theme: GhosttyThemeColors?,
+        needsInput: Bool = false,
+        agent: AgentSessionInfo? = nil
     ) {
         self.init(title: title, isFocusedPane: isFocusedPane, isActiveWorktree: isActiveWorktree,
                   isBusy: isBusy, attentionStyle: attentionStyle, attentionCount: attentionCount,
-                  theme: theme) { $0 }
+                  theme: theme, needsInput: needsInput, agent: agent) { $0 }
     }
 }

@@ -103,6 +103,7 @@ struct SidebarAttentionWorktreeTests {
     func runningDurationSurvivesSnapshots() throws {
         let navigation = try navigation()
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    recap: .init(title: "Review changes", completed: "Checked changes", next: "Apply fixes", need: "Approve the fixes?"),
                                     providerSessionKey: "codex:one")
         let stopped = SidebarActivityItem(id: "stable:stop", projectID: "p", worktreeID: "/wt", paneID: nil,
             projectName: "Project", worktreeName: "Task", title: stop.title,
@@ -125,6 +126,7 @@ struct SidebarAttentionWorktreeTests {
         #expect(restored.runningSince == card.runningSince)
         var fresh = stopped
         fresh.agentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 600),
+                                          recap: .init(title: "Review changes", completed: "Applied fixes", next: "Verify the result", need: "Approve the result?"),
                                           providerSessionKey: "codex:one")
         fresh.occurrence = fresh.agentStop?.occurrence
         navigation.updateAttentionItems([fresh])

@@ -30,9 +30,13 @@ struct SidebarReportPreviewTests {
             reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
             onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
         ) {
+            HStack {
             WorktreeRow(entry: worktree, isActive: false, displayName: "Worktree",
-                        isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil,
-                        reportButton: SidebarReportButton(controller: controller, context: context, theme: .fallback))
+                        isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+            SidebarReportButton(controller: controller, context: context, theme: .fallback)
+                .frame(width: 20, height: 20)
+                .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.reportButton: $0] }
+            }
         } panes: {
             SidebarWorktreeQuestion(context: context).padding(.leading, 33)
         }.frame(width: 380).background(GhosttyTheme.fallback.sidebarBackground).foregroundStyle(GhosttyTheme.fallback.foreground))

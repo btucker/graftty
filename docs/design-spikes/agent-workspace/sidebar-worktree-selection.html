@@ -1,0 +1,213 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sidebar worktree selection</title><style>
+:root{
+  --bg:#25282e; --panel:#373c44; --selected:#4b515a;
+  --text:#e7e9ed; --muted:#b3b7bf; --quiet:#989fa9; --faint:#6f7680;
+  --amber:#ddb475; --red:#e49a9f;
+  --page:#1b1d21; --hair:rgba(255,255,255,.07); --term:#0b0c0f;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+  --mono:"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--text);font:13px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+main{max-width:1180px;margin:0 auto;padding:32px 24px 56px}
+h1{font-size:22px;font-weight:600;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:15px;font-weight:600;margin:0 0 4px}
+p{margin:0;color:var(--muted);max-width:68ch}
+.lede{margin-bottom:28px}
+.note{font-size:12px;color:var(--quiet);margin-top:10px}
+section{margin-top:40px}
+.stage{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;margin-top:16px}
+.cap{font-size:12px;color:var(--quiet);margin-top:8px}
+
+/* ---------- window chrome ---------- */
+.win{display:flex;border-radius:10px;overflow:hidden;background:var(--term);
+  box-shadow:0 0 0 .5px rgba(255,255,255,.12),0 20px 50px rgba(0,0,0,.45)}
+.sb{width:260px;background:var(--bg);display:flex;flex-direction:column;padding-bottom:10px;flex:none}
+.sb.narrow{width:196px}
+.titlebar{height:38px;display:flex;align-items:center;gap:8px;padding:0 12px}
+.lights{display:flex;gap:8px}
+.lights i{width:12px;height:12px;border-radius:50%;background:#4a4e55;display:block}
+.repo{display:flex;align-items:center;justify-content:space-between;padding:4px 12px 6px 14px}
+.repo b{font-size:13px;font-weight:600}
+.repo span{color:var(--quiet);font-size:14px;letter-spacing:6px}
+.sect{font-size:11px;font-weight:600;color:var(--quiet);padding:8px 14px 4px;display:flex;justify-content:space-between}
+.sect em{font-style:normal;font-weight:500;color:var(--faint);font-variant-numeric:tabular-nums}
+
+/* ---------- worktree group ---------- */
+.wt{padding:5px 6px 4px;}
+.wt + .wt{margin-top:3px}
+/* worktree line: identity left, PR + Git right, one smaller line */
+.loc{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;
+  height:18px;padding:0 8px 0 6px;font-size:11px;color:var(--quiet)}
+.loc .emo{font-size:11px;line-height:1;text-align:center}
+.loc .name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding-left:4px}
+.meta{display:flex;gap:8px;padding-left:8px;font-variant-numeric:tabular-nums;color:var(--quiet);white-space:nowrap}
+.meta .pr{color:var(--muted)}
+.meta .z{color:var(--faint)}
+.git{display:flex;gap:5px}
+/* agent task lines */
+.task{display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;height:24px;
+  padding:0 8px 0 6px;border-radius:6px;color:var(--text);font-size:13px}
+.task .t{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding-left:4px}
+.task.sel{background:var(--selected)}
+.task.more{color:var(--quiet);font-size:12px;height:20px}
+.ind{width:20px;height:14px;display:grid;place-items:center;color:var(--quiet)}
+.ind svg{width:13px;height:13px;overflow:visible}
+.ind.warn{color:var(--amber)}
+/* worktree without agents: one quiet line, no task row */
+.wt.empty .loc .name{color:var(--faint)}
+/* group hover/selection never paints the location line; only the agent line */
+
+/* activity arc animation: proposed, for observed terminal output only */
+@media (prefers-reduced-motion:no-preference){
+  .spin{transform-origin:50% 50%;animation:spin 1.4s linear infinite}
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---------- tab strip for comparison ---------- */
+.content{display:flex;flex-direction:column;min-width:0;flex:1}
+.tabs{height:38px;display:flex;align-items:stretch;background:#15161a;border-bottom:1px solid #000}
+.tab{display:flex;align-items:center;gap:8px;padding:0 12px;color:var(--muted);font-size:13px;white-space:nowrap}
+.tab.on{background:#23252b;color:var(--text)}
+.tab .ind{width:14px}
+.termbody{flex:1;min-height:200px;padding:14px 16px;font:12px/1.6 var(--mono);color:#8b929c}
+
+/* ---------- anatomy / legend ---------- */
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;margin-top:16px}
+.card{background:#202227;border-radius:10px;padding:18px 20px;box-shadow:0 0 0 .5px rgba(255,255,255,.08)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+td,th{text-align:left;padding:7px 8px;vertical-align:top}
+th{font-weight:600;color:var(--quiet);font-size:11px}
+tr+tr td{border-top:.5px solid var(--hair)}
+td .ind{display:inline-grid}
+.tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:4px;background:rgba(221,180,117,.14);color:var(--amber);margin-left:4px}
+.tag.now{background:rgba(255,255,255,.07);color:var(--quiet)}
+.zoom{transform:scale(1.6);transform-origin:top left;width:260px;margin-bottom:100px}
+.anno{list-style:none;padding:0;margin:0;font-size:12.5px;color:var(--muted)}
+.anno li{display:grid;grid-template-columns:22px 1fr;gap:6px;margin-bottom:9px}
+.anno b{color:var(--text);font-weight:600}
+.num{width:18px;height:18px;border-radius:50%;background:var(--panel);color:var(--text);font-size:11px;display:grid;place-items:center;font-weight:600}
+ol.dec{padding-left:18px;margin:12px 0 0;max-width:80ch;color:var(--muted)}
+ol.dec li{margin-bottom:12px}
+ol.dec b{color:var(--text)}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}.zoom{transform:none;margin-bottom:0}}
+
+main{max-width:920px;padding:32px 24px}.examples{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap;margin-top:26px}figure{margin:0;max-width:100%}figcaption{font-size:12px;color:var(--muted);margin-bottom:12px}.win{box-shadow:0 0 0 .5px #ffffff26;border-radius:8px}.sb{width:320px;max-width:100%;padding:0 6px 10px}.narrow .sb{width:260px}.wt{border-radius:6px;padding:6px 0;margin:2px 0}.wt + .wt{margin-top:4px}.wt.selected{background:#434952}.loc .name{text-transform:uppercase;font-size:10.5px;letter-spacing:.35px;font-weight:600;color:var(--muted)}.task{margin-left:18px;background:transparent}.task.sel{background:transparent}.spin{animation:none}.notes{margin-top:26px;max-width:750px}.notes p{margin:10px 0}.footer{border-top:1px solid var(--hair);padding-top:16px;margin-top:24px;font-size:12px;color:var(--quiet)}@media(max-width:440px){main{padding:24px 16px}.examples{gap:26px}.sb{width:min(320px,calc(100vw - 32px))}}
+</style></head><body><svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- Approximations of the SF Symbols the tabs already use. -->
+    <symbol id="i-ring" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.3" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="i-out" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.3" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".35"/><g class="spin"><path d="M7 1.7a5.3 5.3 0 0 1 5.3 5.3" fill="none" stroke="#e7e9ed" stroke-width="1.5" stroke-linecap="round"/></g></symbol>
+    <symbol id="i-clock" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M7 4v3.2l2.1 1.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 14 14"><path d="M4.2 8.6V5.1a.8.8 0 0 1 1.6 0v2V3a.8.8 0 0 1 1.6 0v3.9V3.5a.8.8 0 0 1 1.6 0v3.6V4.6a.8.8 0 0 1 1.6 0v4.5c0 2.3-1.4 3.9-3.5 3.9-1.4 0-2.3-.6-3-1.7L2.6 9a.8.8 0 0 1 1.3-.9z" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.6 7.2l1.7 1.7 3.2-3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 14 14"><path d="M7 1.8l5.6 9.8H1.4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M7 5.6v2.7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="7" cy="9.9" r=".75" fill="currentColor"/></symbol>
+    <symbol id="i-disc" viewBox="0 0 14 14"><path d="M2 5.6a7 7 0 0 1 10 0M4 7.8a4.2 4.2 0 0 1 6 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="7" cy="10.4" r="1" fill="currentColor"/></symbol>
+  </defs>
+</svg><main><h1>One worktree, one selection</h1><p>Uppercase worktree headings, agents indented 18 points, and one continuous selection highlight. PR and Git counts stay on the heading line.</p><div class="examples"><figure class=""><figcaption>320-point sidebar</figcaption><div class="win"><nav class="sb" aria-label="Worktrees">
+          <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div></div>
+          <div class="repo"><b>graftty</b><span aria-hidden="true">⌕+</span></div>
+          <div class="sect">Worktrees <em>8</em></div>
+
+          <div class="wt selected">
+            <div class="loc"><span class="emo">🧭</span><span class="name" title="reconsider-pans-tabs-sidebar">reconsider-pans-tabs-sidebar</span>
+              <span class="meta"><span class="pr">#806</span><span class="git"><span>↑0+</span><span>↓1</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-out"/></svg></span><span class="t">Refine the agent workspace</span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-ring"/></svg></span><span class="t">Explore an independent sidebar</span></div>
+            <div class="task"><span class="ind warn"><svg><use href="#i-hand"/></svg></span><span class="t">Review agent lifecycle</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🧵</span><span class="name" title="reduce-needing-fresh-snapshot">reduce-needing-fresh-snapshot</span>
+              <span class="meta"><span class="pr">#807</span><span class="git"><span class="z">↑0</span><span>↓1</span></span></span></div>
+            <div class="task"><span class="ind warn"><svg><use href="#i-hand"/></svg></span><span class="t">Preserve scrollback on resize</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🎨</span><span class="name" title="context-sidebar-design">context-sidebar-design</span>
+              <span class="meta"><span class="pr">#804</span><span class="git"><span class="z">↑0</span><span class="z">↓0</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-check"/></svg></span><span class="t">Design the context panel</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🪟</span><span class="name" title="fix-terminal-constraint-loop">fix-terminal-constraint-loop</span>
+              <span class="meta"><span class="git"><span class="z">↑0</span><span>↓9</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-out"/></svg></span><span class="t">Fix terminal layout crashes</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🖥️</span><span class="name" title="headless-graftty-windows11">headless-graftty-windows11</span>
+              <span class="meta"><span class="git"><span>↑0+</span><span>↓8</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-ring"/></svg></span><span class="t">Build the Windows host</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">📲</span><span class="name" title="claude-code-review-codex">claude-code-review-codex</span>
+              <span class="meta"><span class="git"><span class="z">↑0</span><span class="z">↓0</span></span></span></div>
+            <div class="task"><span class="ind warn"><svg><use href="#i-warn"/></svg></span><span class="t">Review the handoff patch</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🔑</span><span class="name" title="auto-sleep-provider">auto-sleep-provider</span>
+              <span class="meta"><span class="git"><span>↑4</span><span>↓236</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-clock"/></svg></span><span class="t">Verify sleep and recovery</span></div>
+          </div>
+
+          <div class="wt empty">
+            <div class="loc"><span class="emo">🧹</span><span class="name" title="refactoring-simplification">refactoring-simplification</span>
+              <span class="meta"><span class="git"><span class="z">↑0</span><span>↓27</span></span></span></div>
+          </div>
+        </nav></div></figure><figure class="narrow"><figcaption>260-point sidebar</figcaption><div class="win"><nav class="sb" aria-label="Worktrees">
+          <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div></div>
+          <div class="repo"><b>graftty</b><span aria-hidden="true">⌕+</span></div>
+          <div class="sect">Worktrees <em>8</em></div>
+
+          <div class="wt selected">
+            <div class="loc"><span class="emo">🧭</span><span class="name" title="reconsider-pans-tabs-sidebar">reconsider-pans-tabs-sidebar</span>
+              <span class="meta"><span class="pr">#806</span><span class="git"><span>↑0+</span><span>↓1</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-out"/></svg></span><span class="t">Refine the agent workspace</span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-ring"/></svg></span><span class="t">Explore an independent sidebar</span></div>
+            <div class="task"><span class="ind warn"><svg><use href="#i-hand"/></svg></span><span class="t">Review agent lifecycle</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🧵</span><span class="name" title="reduce-needing-fresh-snapshot">reduce-needing-fresh-snapshot</span>
+              <span class="meta"><span class="pr">#807</span><span class="git"><span class="z">↑0</span><span>↓1</span></span></span></div>
+            <div class="task"><span class="ind warn"><svg><use href="#i-hand"/></svg></span><span class="t">Preserve scrollback on resize</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🎨</span><span class="name" title="context-sidebar-design">context-sidebar-design</span>
+              <span class="meta"><span class="pr">#804</span><span class="git"><span class="z">↑0</span><span class="z">↓0</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-check"/></svg></span><span class="t">Design the context panel</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🪟</span><span class="name" title="fix-terminal-constraint-loop">fix-terminal-constraint-loop</span>
+              <span class="meta"><span class="git"><span class="z">↑0</span><span>↓9</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-out"/></svg></span><span class="t">Fix terminal layout crashes</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🖥️</span><span class="name" title="headless-graftty-windows11">headless-graftty-windows11</span>
+              <span class="meta"><span class="git"><span>↑0+</span><span>↓8</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-ring"/></svg></span><span class="t">Build the Windows host</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">📲</span><span class="name" title="claude-code-review-codex">claude-code-review-codex</span>
+              <span class="meta"><span class="git"><span class="z">↑0</span><span class="z">↓0</span></span></span></div>
+            <div class="task"><span class="ind warn"><svg><use href="#i-warn"/></svg></span><span class="t">Review the handoff patch</span></div>
+          </div>
+
+          <div class="wt">
+            <div class="loc"><span class="emo">🔑</span><span class="name" title="auto-sleep-provider">auto-sleep-provider</span>
+              <span class="meta"><span class="git"><span>↑4</span><span>↓236</span></span></span></div>
+            <div class="task"><span class="ind"><svg><use href="#i-clock"/></svg></span><span class="t">Verify sleep and recovery</span></div>
+          </div>
+
+          <div class="wt empty">
+            <div class="loc"><span class="emo">🧹</span><span class="name" title="refactoring-simplification">refactoring-simplification</span>
+              <span class="meta"><span class="git"><span class="z">↑0</span><span>↓27</span></span></span></div>
+          </div>
+        </nav></div></figure></div><div class="notes"><p><strong>The whole worktree is the navigation target.</strong> Clicking its heading, an agent line, or the space within the group opens that worktree. Returning preserves its tabs, split layout, and previous focus. Clicking an agent line does not change the selected agent tab.</p><p>The indented lines show which agents belong to the worktree and their shared status glyphs. Agent selection happens in the workspace tabs and panes. The sidebar has no separate agent highlight or agent-level keyboard selection.</p><p>The 18-point indent is slightly deeper than the previous 12-point study. Uppercase headings and indentation establish the hierarchy; the background identifies the selected worktree as one unit.</p></div><p class="footer">Updated design study. Task labels and states are illustrative; production UI has not changed. PR/MR links and explicit action controls keep their own actions. This supersedes the agent-selection behavior proposed in earlier studies.</p></main></body></html>
