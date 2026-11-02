@@ -14,7 +14,9 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.98.0"),
+        // 2.104 includes the upstream Winsock/Sendable fixes needed on Windows.
+        // Keep the Mac/Linux pin below independent of this bootstrap package.
+        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.104.0"),
         .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.13.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", exact: "1.34.1"),
     ],

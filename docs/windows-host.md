@@ -321,9 +321,12 @@ replacement for zmx. If sessions must survive host upgrades, the zmx daemon
 must outlive the host process. Disconnecting a viewer must never close the
 session's pseudoconsole.
 
-The pinned SwiftNIO 2.98 checkout contains a Windows `WSAPoll` backend.
-That is a reason to test the existing SSH stack on Windows before choosing a
-replacement, not proof that Graftty's networking dependency graph builds there.
+The Windows bootstrap pins SwiftNIO 2.104.0, which includes the upstream
+[Winsock and thread-handle fixes](https://github.com/apple/swift-nio/pull/3433).
+Version 2.98.0 failed Windows compilation on its `IPPROTO_UDP` conversion and
+thread-handle `Sendable` conformance. The Mac and Linux pin remains 2.98.0.
+The Windows CI tests must still validate the complete networking dependency
+graph and real SSH exchanges.
 Windows must retain Graftty's identity authentication and typed SSH channels.
 The parent must adopt the accepted connection as a remote host link rather
 than starting a second connection back to Windows.
