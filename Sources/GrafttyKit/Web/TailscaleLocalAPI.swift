@@ -355,10 +355,7 @@ public struct TailscaleLocalAPI: Sendable {
                     ).get()
                 }
                 try Task.checkCancellation()
-                var bytes = channel.allocator.buffer(capacity: request.utf8.count)
-                bytes.writeString(request)
-                try await channel.writeAndFlush(bytes).get()
-                channel.pipeline.fireUserInboundEventTriggered(LocalAPIRequestSent())
+                try await Self.writeRequest(request, on: channel).get()
                 return try await response.futureResult.get()
             } onCancel: {
                 requestState.cancel()
@@ -390,6 +387,18 @@ public struct TailscaleLocalAPI: Sendable {
             throw Error.malformedResponse
         }
         return (code, Data(body))
+    }
+
+    static func writeRequest(_ request: String, on channel: Channel) -> EventLoopFuture<Void> {
+        var bytes = channel.allocator.buffer(capacity: request.utf8.count)
+        bytes.writeString(request)
+        let write = channel.writeAndFlush(bytes)
+        // Advance the timeout on the I/O loop. A caller waiting to resume on
+        // its executor must not leave the shorter send deadline armed.
+        write.whenSuccess {
+            channel.pipeline.fireUserInboundEventTriggered(LocalAPIRequestSent())
+        }
+        return write
     }
 
     private static func findDoubleCRLF(in data: Data) -> Int? {

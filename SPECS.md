@@ -1748,6 +1748,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-1.21** While a LocalAPI request is pending, the application shall bound sending to two seconds and receive inactivity to two seconds for status and whois or ninety seconds for certificates, refreshing the receive deadline as bytes arrive.
 
+**WEB-1.22** When a LocalAPI request write completes, the application shall start the endpoint receive deadline on its event loop before resuming the caller's task, so executor delays cannot shorten certificate provisioning time.
+
 ### WEB-2.x — Authorization
 
 **WEB-2.1** The application shall resolve each incoming peer IP via Tailscale LocalAPI `whois` before serving any content at any path.
