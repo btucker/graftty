@@ -228,6 +228,15 @@ requests `platform: linux`. Redemption through
 `host_rendezvous` scope. These routes and scope are agreed design, not
 implemented or deployed by this work.
 
+The contract and initial HTTP tests are published separately from PR 9 at
+[server commit 11d1927](https://github.com/btucker/graftty-server/blob/11d192726eadb1ccb9919e00692587bd34c7797c/tests/host_enrollment_test.rs).
+The server owner reports eight expected test failures because the routes
+return 404. This establishes the missing-route baseline, not validation of
+the later security assertions. The server owner has been asked to implement
+the routes and promote the remaining security inventory to real tests.
+No server implementation, passing integration result, merge, or deployment
+is established by that preparation.
+
 The restricted bearer must not grant account deletion, changes to other
 devices, or invitation issuance. Scope is independent of self-declared
 platform and device kind. Inviter revocation invalidates unconsumed invitations.
