@@ -11,6 +11,82 @@ import Testing
 @Suite("Remote worktree viewer mutation queue")
 @MainActor
 struct RemoteWorktreeViewerControllerTests {
+    @Test func sidebarReadDoesNotSuppressPersistingNewlyDiscoveredTabs() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let defaults = try #require(UserDefaults(suiteName: "RemoteWorkspaceReadSave-\(UUID())"))
+        let original = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        let row = original.with(agents: [
+            .init(id: "a", name: "A", provider: "codex", status: "running", sessionName: "a"),
+            .init(id: "b", name: "B", provider: "codex", status: "running", sessionName: "b")
+        ])
+        let controller = RemoteWorktreeViewerController(model: viewer.model, surfaces: viewer.surfaces,
+            workspaceDefaults: defaults)
+        let onlyA = row.with(layout: .leaf(sessionName: "a", title: "A", attentionText: nil, isBusy: false, attentionSource: nil),
+            agents: Array(row.agents!.prefix(1)))
+        controller.saveWorkspaceLayout(controller.workspaceLayout(identity: viewer.identity, worktree: onlyA),
+            identity: viewer.identity, worktreePath: row.path)
+        let discovered = controller.workspaceLayout(identity: viewer.identity, worktree: row)
+        controller.saveWorkspaceLayout(discovered, identity: viewer.identity, worktreePath: row.path)
+        let completed = onlyA.with(agents: [
+            row.agents![0],
+            .init(id: "b", name: "B", provider: "codex", status: "closed", sessionName: nil, retainedSessionName: "b")
+        ])
+        let restored = RemoteWorktreeViewerController(model: viewer.model, surfaces: viewer.surfaces,
+            workspaceDefaults: defaults)
+        #expect(restored.workspaceLayout(identity: viewer.identity, worktree: completed).canvasSessions == ["a", "b"])
+    }
+
+    @Test func legacyWorkspaceOrderMigratesWithoutSharingAnotherFingerprint() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let defaults = try #require(UserDefaults(suiteName: "RemoteWorkspaceMigration-\(UUID())"))
+        let original = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        let row = original.with(agents: [
+            .init(id: "a", name: "A", provider: "codex", status: "running", sessionName: "a"),
+            .init(id: "b", name: "B", provider: "codex", status: "running", sessionName: "b")
+        ])
+        var legacy = WorkspaceLayout<String>.initial(for: row)
+        legacy.moveTab("b", relativeTo: "a", after: false)
+        let oldKey = "remote.workspace.\(viewer.identity).\(row.path)"
+        defaults.set(try JSONEncoder().encode(legacy), forKey: oldKey)
+        let controller = RemoteWorktreeViewerController(model: viewer.model, surfaces: viewer.surfaces,
+            workspaceDefaults: defaults)
+        #expect(controller.workspaceLayout(identity: viewer.identity, worktree: row) == legacy)
+        #expect(defaults.data(forKey: oldKey) == nil)
+        let other = RemoteMacIdentity(id: viewer.identity.id,
+            fingerprint: try .init(rawBytes: Data(repeating: 0x44, count: 32)))
+        #expect(controller.workspaceLayout(identity: other, worktree: row).groups.first?.sessions == ["a", "b"])
+    }
+
+    @Test func sidebarOrderPublishesLocallyAndRestoresPerHost() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let defaults = try #require(UserDefaults(suiteName: "RemoteWorkspaceOrder-\(UUID())"))
+        let original = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        let row = original.with(agents: [
+            .init(id: "a", name: "A", provider: "codex", status: "running", sessionName: "a"),
+            .init(id: "b", name: "B", provider: "claude", status: "running", sessionName: "b")
+        ])
+        let controller = RemoteWorktreeViewerController(model: viewer.model, surfaces: viewer.surfaces,
+            workspaceDefaults: defaults)
+        var workspace = controller.workspaceLayout(identity: viewer.identity, worktree: row)
+        let moved = workspace.moveTab("b", relativeTo: "a", after: false)
+        #expect(moved)
+        var changes = 0
+        let subscription = controller.objectWillChange.sink { changes += 1 }
+        defer { subscription.cancel() }
+        controller.saveWorkspaceLayout(workspace, identity: viewer.identity, worktreePath: row.path)
+        #expect(changes == 1)
+        #expect(row.sidebarAgentLeaves(in: controller.workspaceLayout(identity: viewer.identity, worktree: row))
+            .map(\.sessionName) == ["b", "a"])
+        controller.saveWorkspaceLayout(workspace, identity: viewer.identity, worktreePath: row.path)
+        #expect(changes == 1)
+        let restored = RemoteWorktreeViewerController(model: viewer.model, surfaces: viewer.surfaces,
+            workspaceDefaults: defaults)
+        #expect(restored.workspaceLayout(identity: viewer.identity, worktree: row) == workspace)
+        let otherHost = RemoteMacIdentity(id: viewer.identity.id,
+            fingerprint: try .init(rawBytes: Data(repeating: 0x44, count: 32)))
+        #expect(restored.workspaceLayout(identity: otherHost, worktree: row).groups.first?.sessions == ["a", "b"])
+    }
+
     @Test("@spec LAYOUT-2.183: When a remote worktree is selected again from its sidebar rows, the application shall preserve its current agent tab.")
     func sidebarReselectionKeepsCurrentAgent() async throws {
         let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))

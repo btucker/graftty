@@ -58,6 +58,7 @@ final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
     private var ghosttyConfig: GhosttyConfig?
     private var surfaces: [PaneSlotID: SurfaceHandle] = [:]
+    nonisolated let ghosttyActions = GhosttyActionBridge()
     @Published private(set) var attachmentFailures: [PaneSlotID: String] = [:]
     private var evictedGridSizes: [PaneSlotID: GridSize] = [:]
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
@@ -479,16 +480,7 @@ final class TerminalManager: ObservableObject {
         self.ghosttyConfig = config
 
         let app = GhosttyApp(config: config) { [weak self] target, action in
-            // action_cb may fire from any thread; hop to main before touching state.
-            if Thread.isMainThread {
-                MainActor.assumeIsolated {
-                    self?.handleAction(target: target, action: action)
-                }
-            } else {
-                DispatchQueue.main.async {
-                    self?.handleAction(target: target, action: action)
-                }
-            }
+            self?.receiveGhosttyAction(target: target, action: action)
             return true
         }
         self.ghosttyApp = app
@@ -1680,166 +1672,59 @@ final class TerminalManager: ObservableObject {
         rememberedPositions.removeValue(forKey: PaneHistoryKey(terminalID: terminalID, worktreePath: worktreePath))
     }
 
-    /// Resolve a libghostty `ghostty_target_s` back to an Graftty `PaneSlotID`
-    /// via the surface's userdata box. Returns nil for app-scoped targets or
-    /// when the surface pointer has no box attached (shouldn't happen for
-    /// surfaces we created).
-    private func terminalID(from target: ghostty_target_s) -> PaneSlotID? {
-        guard target.tag == GHOSTTY_TARGET_SURFACE else { return nil }
-        guard let userdata = ghostty_surface_userdata(target.target.surface) else { return nil }
-        let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
-        return box.terminalID
+    nonisolated func receiveGhosttyAction(target: ghostty_target_s, action: ghostty_action_s) {
+        ghosttyActions.receive(target: target, action: action) { [weak self] target, action in
+            self?.handleAction(target: target, action: action)
+        }
     }
 
-    /// Handles libghostty actions. We dispatch only the tags Graftty
-    /// currently cares about; unknown tags are a silent no-op so libghostty
-    /// upgrades don't force immediate handling of new actions.
-    private func handleAction(target: ghostty_target_s, action: ghostty_action_s) {
-        switch action.tag {
-        case GHOSTTY_ACTION_SCROLLBAR:
-            guard let id = terminalID(from: target) else { return }
-            surfaces[id]?.updateFollowerScrollbar(action.action.scrollbar)
+    /// Only stable Swift identities and owned payloads reach this handler.
+    /// An evicted handle may still be retained elsewhere; require the exact
+    /// current generation, not just a live allocation or a matching pane ID.
+    private func handleAction(target: GhosttyActionBridge.Target, action: GhosttyOwnedAction) {
+        let terminalID: PaneSlotID?
+        switch target {
+        case .app:
+            terminalID = nil
+        case .surface(let identity):
+            guard surfaces[identity.terminalID]?.actionIdentity == identity
+                    || ghosttyActions.isCreating(identity) else { return }
+            terminalID = identity.terminalID
+        }
 
-        case GHOSTTY_ACTION_SET_TITLE:
-            guard let id = terminalID(from: target) else { return }
-            let title = action.action.set_title.title.flatMap { String(cString: $0) } ?? ""
-            // Drop the env-assignment leak from ghostty's outer-shell
-            // preexec hook AND any payload that would bloat the titles
-            // dict past `maxStoredLength`. A legitimate title pushed
-            // by the inner shell later still wins because we write the
-            // filtered value back. See `PaneTitle.sanitize`.
-            recordTitle(title, for: id)
-
-        case GHOSTTY_ACTION_PWD:
-            guard let id = terminalID(from: target) else { return }
-            guard let pwdPtr = action.action.pwd.pwd else { return }
-            let pwd = String(cString: pwdPtr)
-            // Feeds `displayTitle(for:)`'s PWD-basename fallback.
-            recordPWD(pwd, for: id)
-            shellBecameReady(for: id)
-
-        case GHOSTTY_ACTION_RING_BELL:
-            // Default system alert sound. Visual bell (a brief flash) is a
-            // nice follow-up but not essential for parity with Ghostty's
-            // default behavior.
+        switch action {
+        case .scrollbar(let scrollbar):
+            guard let terminalID else { return }
+            surfaces[terminalID]?.updateFollowerScrollbar(scrollbar)
+        case .setTitle(let title):
+            guard let terminalID else { return }
+            recordTitle(title, for: terminalID)
+        case .pwd(let pwd):
+            guard let terminalID else { return }
+            recordPWD(pwd, for: terminalID)
+            shellBecameReady(for: terminalID)
+        case .ringBell:
             NSSound.beep()
-
-        case GHOSTTY_ACTION_OPEN_URL:
-            let url = action.action.open_url
-            guard let urlPtr = url.url else { return }
-            let bytes = UnsafeBufferPointer(start: urlPtr, count: Int(url.len))
-            guard let urlString = String(
-                bytes: bytes.map { UInt8(bitPattern: $0) },
-                encoding: .utf8
-            ) else { return }
-
-            openURL(urlString, from: terminalID(from: target))
-
-        case GHOSTTY_ACTION_MOUSE_SHAPE:
-            guard let view = surfaceView(from: target) else { return }
-            view.applyCursor(Self.nsCursor(for: action.action.mouse_shape))
-
-        case GHOSTTY_ACTION_MOUSE_VISIBILITY:
-            guard let view = surfaceView(from: target) else { return }
-            view.setCursorHidden(action.action.mouse_visibility == GHOSTTY_MOUSE_HIDDEN)
-
-        case GHOSTTY_ACTION_MOUSE_OVER_LINK:
-            // Informational: libghostty tells us the mouse is now over a
-            // detected URL. We rely on MOUSE_SHAPE=POINTER for the visual
-            // indication, so there's nothing extra to do here. Left
-            // explicit (rather than falling into `default`) so future UI
-            // (status bar link preview, etc.) has an obvious hook.
-            break
-
-        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
-            let note = action.action.desktop_notification
-            let title = note.title.flatMap { String(cString: $0) } ?? "Terminal"
-            let body = note.body.flatMap { String(cString: $0) } ?? ""
+        case .openURL(let url):
+            openURL(url, from: terminalID)
+        case .mouseShape(let shape):
+            guard let terminalID, let view = surfaces[terminalID]?.view as? SurfaceNSView else { return }
+            view.applyCursor(Self.nsCursor(for: shape))
+        case .mouseHidden(let hidden):
+            guard let terminalID, let view = surfaces[terminalID]?.view as? SurfaceNSView else { return }
+            view.setCursorHidden(hidden)
+        case let .desktopNotification(title, body):
             Self.postDesktopNotification(title: title, body: body)
-
-        case GHOSTTY_ACTION_COMMAND_FINISHED:
-            guard let id = terminalID(from: target) else { return }
-            let finished = action.action.command_finished
-            onCommandFinished?(id, finished.exit_code, finished.duration)
-
-        case GHOSTTY_ACTION_NEW_SPLIT:
-            guard let id = terminalID(from: target) else { return }
-            let split: PaneSplit
-            switch action.action.new_split {
-            case GHOSTTY_SPLIT_DIRECTION_RIGHT: split = .right
-            case GHOSTTY_SPLIT_DIRECTION_LEFT:  split = .left
-            case GHOSTTY_SPLIT_DIRECTION_UP:    split = .up
-            case GHOSTTY_SPLIT_DIRECTION_DOWN:  split = .down
-            default: return
-            }
-            dispatchPaneCommand(.split(split), for: id)
-
-        case GHOSTTY_ACTION_CLOSE_TAB:
-            // Ghostty reuses close_tab for close_surface in single-pane
-            // contexts; Graftty treats pane close the same way.
-            guard let id = terminalID(from: target) else { return }
-            dispatchPaneCommand(.close, for: id)
-
-        case GHOSTTY_ACTION_GOTO_SPLIT:
-            guard let id = terminalID(from: target) else { return }
-            let gotoDir = action.action.goto_split
-            switch gotoDir {
-            case GHOSTTY_GOTO_SPLIT_LEFT:   dispatchPaneCommand(.focus(.left), for: id)
-            case GHOSTTY_GOTO_SPLIT_RIGHT:  dispatchPaneCommand(.focus(.right), for: id)
-            case GHOSTTY_GOTO_SPLIT_UP:     dispatchPaneCommand(.focus(.up), for: id)
-            case GHOSTTY_GOTO_SPLIT_DOWN:   dispatchPaneCommand(.focus(.down), for: id)
-            case GHOSTTY_GOTO_SPLIT_NEXT:     dispatchPaneCommand(.focusOrder(forward: true), for: id)
-            case GHOSTTY_GOTO_SPLIT_PREVIOUS: dispatchPaneCommand(.focusOrder(forward: false), for: id)
-            default: return
-            }
-
-        case GHOSTTY_ACTION_TOGGLE_SPLIT_ZOOM:
-            guard let id = terminalID(from: target) else { return }
-            dispatchPaneCommand(.toggleZoom, for: id)
-
-        case GHOSTTY_ACTION_RESIZE_SPLIT:
-            guard let id = terminalID(from: target) else { return }
-            let r = action.action.resize_split
-            let direction: ResizeDirection
-            switch r.direction {
-            case GHOSTTY_RESIZE_SPLIT_UP:    direction = .up
-            case GHOSTTY_RESIZE_SPLIT_DOWN:  direction = .down
-            case GHOSTTY_RESIZE_SPLIT_LEFT:  direction = .left
-            case GHOSTTY_RESIZE_SPLIT_RIGHT: direction = .right
-            default: return
-            }
-            dispatchPaneCommand(.resize(direction: direction, amount: r.amount), for: id)
-
-        case GHOSTTY_ACTION_EQUALIZE_SPLITS:
-            guard let id = terminalID(from: target) else { return }
-            dispatchPaneCommand(.equalize, for: id)
-
-        case GHOSTTY_ACTION_RELOAD_CONFIG:
+        case .commandFinished(let finished):
+            guard let terminalID else { return }
+            onCommandFinished?(terminalID, finished.exit_code, finished.duration)
+        case .paneCommand(let command):
+            guard let terminalID else { return }
+            dispatchPaneCommand(command, for: terminalID)
+        case .reloadConfig:
             onReloadConfig?()
-
-        case GHOSTTY_ACTION_OPEN_CONFIG:
+        case .openConfig:
             onOpenConfig?()
-
-        // Silent no-ops for Ghostty concepts Graftty doesn't model. Listed
-        // explicitly (rather than falling into default) so future maintainers
-        // know we considered them.
-        case GHOSTTY_ACTION_NEW_TAB,
-             GHOSTTY_ACTION_MOVE_TAB,
-             GHOSTTY_ACTION_GOTO_TAB,
-             GHOSTTY_ACTION_NEW_WINDOW,
-             GHOSTTY_ACTION_CLOSE_ALL_WINDOWS,
-             GHOSTTY_ACTION_TOGGLE_QUICK_TERMINAL,
-             GHOSTTY_ACTION_TOGGLE_COMMAND_PALETTE,
-             GHOSTTY_ACTION_TOGGLE_TAB_OVERVIEW,
-             GHOSTTY_ACTION_TOGGLE_FULLSCREEN,
-             GHOSTTY_ACTION_TOGGLE_MAXIMIZE,
-             GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS,
-             GHOSTTY_ACTION_CHECK_FOR_UPDATES,
-             GHOSTTY_ACTION_PROGRESS_REPORT:
-            break
-
-        default:
-            break
         }
     }
 
@@ -1869,11 +1754,6 @@ final class TerminalManager: ObservableObject {
         case GHOSTTY_MOUSE_SHAPE_CELL:            return .iBeam
         default:                                  return .iBeam
         }
-    }
-
-    private func surfaceView(from target: ghostty_target_s) -> SurfaceNSView? {
-        guard let id = terminalID(from: target) else { return nil }
-        return surfaces[id]?.view as? SurfaceNSView
     }
 
     /// Post a libghostty-initiated desktop notification through

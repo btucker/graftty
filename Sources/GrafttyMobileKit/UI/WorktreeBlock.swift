@@ -21,6 +21,7 @@ struct WorktreeBlock: View {
     let focusedPaneId: String?
     var projectColumn: Bool = false
     let context: SidebarWorktreeContext
+    var workspace: WorkspaceLayout<String>? = nil
     let onSelect: () -> Void
     let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     let onReport: () -> Void
@@ -114,14 +115,14 @@ struct WorktreeBlock: View {
     private var rowIdentity: some View {
         WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
             theme: theme, isActive: isActive, isOpening: isOpening,
-            attentionCount: MobileWorktreeRowPresentation(context: context).worktreeAttentionCount)
+            attentionCount: MobileWorktreeRowPresentation(context: context, workspace: workspace).worktreeAttentionCount)
             .frame(minHeight: 24)
             .contentShape(Rectangle())
     }
 
     @ViewBuilder
     private var paneRows: some View {
-        let presentation = MobileWorktreeRowPresentation(context: context)
+        let presentation = MobileWorktreeRowPresentation(context: context, workspace: workspace)
         ForEach(presentation.leaves, id: \.sessionName) { leaf in
             let isQuestionPane = presentation.questionPaneID == leaf.sessionName
             let effective = leaf.attentionText
@@ -130,11 +131,11 @@ struct WorktreeBlock: View {
             }
             MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
                 VStack(alignment: .leading, spacing: 4) {
-                    SidebarPaneTitleRow(title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name),
+                    SidebarPaneTitleRow(title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.presentationSessionName == leaf.sessionName }?.name),
                         isFocusedPane: false, isActiveWorktree: isActive,
                         isBusy: leaf.isBusy, attentionStyle: style,
                         attentionCount: context.pending.filter { $0.paneID == leaf.sessionName }.count,
-                        theme: theme, needsInput: leaf.attentionSource == .agentStop || isQuestionPane, agent: worktree.agents?.first { $0.sessionName == leaf.sessionName })
+                        theme: theme, needsInput: leaf.attentionSource == .agentStop || isQuestionPane, agent: worktree.agents?.first { $0.presentationSessionName == leaf.sessionName })
                         .padding(.leading, 18)
                     if isQuestionPane {
                         SidebarWorktreeQuestion(context: context)

@@ -362,7 +362,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.177** While a terminal attachment is loading or unavailable, the application shall keep its tab header mounted so users can select another session.
 
-**LAYOUT-2.178** While a worktree is shown in the sidebar, the application shall list only its live agent sessions with provider identity and retain ordinary terminals in the complete workspace inventory.
+**LAYOUT-2.178** While a worktree displays agent tabs, the application shall list only those tabs in its sidebar in canvas group and tab order, exclude terminal drawer sessions, and retain completed tabs until dismissed.
 
 **LAYOUT-2.179** When the user opens an empty terminal drawer, the application shall request its first terminal automatically; reopening a populated drawer shall reuse its selected terminal.
 
@@ -397,6 +397,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.195** While a workspace shows agent tabs, the application shall draw each tab row flush with its pane's leading edge and inset only leading-edge pane content from the sidebar divider.
 
 **LAYOUT-2.196** While an agent has a live input request, the application shall show the request directly under the tabs of the asking agent's pane, or of the focused pane when the request belongs to no pane, rather than above every pane's tabs.
+
+**LAYOUT-2.197** When the user drags an agent tab on Mac, the application shall start a native in-app tab drag after the drag threshold, preserve contextual menus, and select a tab on click without selecting it on drag.
+
+**LAYOUT-2.198** When the user expands the terminal drawer, the application shall give its selected terminal keyboard focus, including a first terminal created by that action.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -667,6 +671,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-11.20** When libghostty reports a viewport resize whose cell grid equals the bound live window size, the application shall forward the live window's pixel dimensions instead of the callback's, so every forward of one grid carries identical pixel fields and a same-grid forward never raises a spurious SIGWINCH.
 
 **TERM-11.21** When a Mac pane resumes leading after applying an attachment grid, the application shall restore its full viewport before resizing the terminal, regardless of scrollbar style.
+
+**TERM-11.22** When an off-main Ghostty action reaches the main queue after its surface is closed or replaced, the application shall drop the action without reading C surface state or routing it to a replacement surface.
+
+**TERM-11.23** When a Ghostty action is deferred to the main queue, the application shall copy each consumed borrowed payload before the callback returns and preserve live-surface and app-scoped routing.
 
 ### TERM-12.x — Paged History on Mac and Mobile
 
@@ -3276,6 +3284,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.30** When either native client orders signaling routes, the application shall prefer discovered URLs, the pin's last successful route, pin routes, and saved host routes in that order, deduplicate by URL, and use the saved base URL only if no candidates exist.
 
+**REMOTE-2.31** When mobile access is suspended during a dial, the application shall synchronously invalidate the old connection and reject every awaiting caller even if access resumes before store teardown completes.
+
+**REMOTE-2.32** When a mobile connection request spans an access suspension and resume before starting its dial, the application shall reject that stale request without evicting a newer connection and allow a fresh request to negotiate.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3459,6 +3471,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.23** If a pane-control or worktree-management RPC response does not arrive before its deadline, then the client shall fail that RPC with a timeout using elapsed time independently of the transport event-loop clock.
 
 **REMOTE-11.24** When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.
+
+**REMOTE-11.25** When a pane-control RPC times out, the client shall invalidate its channel before resuming the caller and send later mutations on a fresh channel so a late reply cannot answer another request.
+
+**REMOTE-11.26** When a pane-control caller is cancelled while awaiting a reply, the client shall consume that reply before sending a later mutation so cancellation cannot shift reply pairing.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -4430,6 +4446,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.6** The application shall bound each `claude agents --json` and `ps` liveness-poll subprocess with a 5-second timeout, and if that timeout expires, then the application shall produce an empty Claude polling result so the next tick can poll again.
 
+**AGENT-2.7** While a running agent's pane has a liveness registry, the application shall spin only for observed busy turns and treat missing entries as idle; without a registry it shall preserve the working spinner for unknown activity.
+
+**AGENT-2.8** While an agent's turn is busy, the application shall show no spinner on its sidebar row, because the agent's terminal title carries its own activity indicator, while agent tabs keep the spinner.
+
 ### AGENT-3.x
 
 **AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.
@@ -4851,6 +4871,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.144** When a user changes completed tabs while a read is pending, the application shall clear the previous tab's content and ignore its late response.
 
 **AGENT-6.145** When a mobile conversation restarts with the same terminal name, the application shall discard the retained previous-assignment client before attaching even if its process-end event has not arrived.
+
+**AGENT-6.146** When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to report again before each final response.
+
+**AGENT-6.147** While an agent is the primary agent of a worktree, the application shall keep it available for ongoing work and reserve task-completion instructions and parent cleanup obligations for additional agents.
 
 ## CLI — CLI
 

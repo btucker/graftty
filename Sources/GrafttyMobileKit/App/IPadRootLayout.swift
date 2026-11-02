@@ -131,7 +131,10 @@ public struct IPadRootLayout: View {
                                 selectPane(leaf)
                             },
                             navigation: appState.sidebarNavigation,
-                            navigationWindowWidth: appState.navigationWindowWidth
+                            navigationWindowWidth: appState.navigationWindowWidth,
+                            workspaceLayout: { hostID, worktree in
+                                appState.workspaceStore.sidebarLayout(hostID: hostID, worktree: worktree)
+                            }
                         )
                     } else {
                         Spacer()

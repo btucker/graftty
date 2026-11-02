@@ -2,6 +2,14 @@ import Foundation
 import GrafttyProtocol
 
 public extension WorktreeEntry {
+    var sidebarAgentSlots: [PaneSlotID] {
+        guard state == .running || state == .closed else { return [] }
+        let agentSlots = Set(agents.filter { state == .running || $0.completion != nil || $0.status == .closed }
+            .compactMap(\.presentationSlotID))
+        let layout = workspaceLayout ?? .preserving(splitTree)
+        return layout.canvasSessions.filter(agentSlots.contains)
+    }
+
     /// Canvas zoom must never mount a drawer or a hidden tab a second time.
     var canvasTree: SplitTree {
         guard let layout = workspaceLayout else { return splitTree }

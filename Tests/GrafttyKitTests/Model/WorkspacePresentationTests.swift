@@ -3,6 +3,47 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 struct WorkspacePresentationTests {
+    @Test func completedSidebarTabSurvivesFinalSessionCleanup() throws {
+        let slot = PaneSlotID()
+        var agent = ManagedAgent(name: "Finished", provider: .codex, parent: nil)
+        agent.paneSlotID = slot
+        let completion = try agent.finish(assignment: agent.assignmentID, result: "Done")
+        try agent.beginClose(completion: completion.id)
+        agent.didClose()
+        var entry = WorktreeEntry(path: "/repo", branch: "main", state: .closed)
+        entry.agents = [agent]
+        var layout = WorkspaceLayout<PaneSlotID>()
+        layout.addAgent(slot)
+        entry.workspaceLayout = layout
+        #expect(entry.sidebarAgentSlots == [slot])
+        entry.workspaceLayout?.remove(slot)
+        #expect(entry.sidebarAgentSlots.isEmpty)
+    }
+
+    @Test func sidebarUsesAgentTabOrderAndExcludesDrawerBindings() {
+        let a = PaneSlotID(), b = PaneSlotID(), shell = PaneSlotID(), drawer = PaneSlotID()
+        let slots = [shell, a, b, drawer]
+        let tree = slots.dropFirst().reduce(SplitTree(root: .leaf(shell))) {
+            $0.inserting($1, at: shell, direction: .horizontal)
+        }
+        var entry = WorktreeEntry(path: "/repo", branch: "main", state: .running, splitTree: tree)
+        entry.agents = [a, b, drawer].map { slot in
+            var agent = ManagedAgent(name: "Agent", provider: .codex, parent: nil)
+            agent.paneSlotID = slot
+            return agent
+        }
+        let group = WorkspaceLayout<PaneSlotID>.Group(sessions: [b, shell, a], selected: b)
+        var workspace = WorkspaceLayout<PaneSlotID>(root: .group(group.id), groups: [group])
+        workspace.addTerminal(drawer)
+        entry.workspaceLayout = workspace
+        #expect(entry.sidebarAgentSlots == [b, a])
+        let moved = workspace.moveTab(a, relativeTo: b, after: false)
+        #expect(moved)
+        entry.workspaceLayout = workspace
+        #expect(entry.sidebarAgentSlots == [a, b])
+        #expect(Set(entry.splitTree.allLeaves) == Set(slots))
+    }
+
     @Test("@spec LAYOUT-2.173: When focus moves to a different canvas group while another pane is zoomed, the application shall reveal the focused pane and retain zoom only when it is explicitly rebound to that pane.")
     func externalFocusRevealsAnotherGroup() {
         let a = PaneSlotID(), b = PaneSlotID()

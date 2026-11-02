@@ -20,6 +20,8 @@ struct WorkspaceContentView: View {
     let onFocusTerminal: (PaneSlotID) -> Void
     let onNewTerminal: () -> Void
     let onCloseTerminal: (PaneSlotID) -> Void
+    /// AGENT-2.7: hook-reported turn activity, so stopped turns stop spinning.
+    var agentLiveness: ClaudeSessionRegistry? = nil
     /// LAYOUT-2.190: explicit tab selection hands keyboard focus to the
     /// terminal. Clicks inside a terminal already make it first responder.
     var onActivateTerminal: (PaneSlotID) -> Void = { _ in }
@@ -111,15 +113,17 @@ struct WorkspaceContentView: View {
                         ForEach(group?.sessions ?? [], id: \.self) { tab in
                             Button { selectTab(tab) } label: {
                                 HStack(spacing: 6) {
-                                    AgentProviderIcon(provider: agent(tab)?.provider.rawValue)
-                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, fallback: agent(tab)?.name ?? "Terminal").lineLimit(1)
-                                        .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if let agent = agent(tab) {
                                         AgentStatusBadge(status: agent.status.rawValue,
                                             needsInput: needsInput(tab),
                                             failure: agent.failure, disconnected: terminalManager.attachmentFailures[tab] != nil,
-                                            processObservation: agent.processObservation)
-                                    } else if worktree.paneAttention[tab] != nil {
+                                            processObservation: agent.processObservation, isBusy: isBusy(tab))
+                                    } else {
+                                        Image(systemName: "terminal")
+                                    }
+                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, fallback: agent(tab)?.name ?? "Terminal").lineLimit(1)
+                                        .fontWeight(group?.selected == tab ? .medium : .regular)
+                                    if agent(tab) == nil, worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
                                     }
                                 }.padding(.horizontal, 12).padding(.vertical, 9)
@@ -130,7 +134,7 @@ struct WorkspaceContentView: View {
                                     }
                             }.buttonStyle(.plain)
                                 .accessibilityAddTraits(group?.selected == tab ? .isSelected : [])
-                                .draggable(WorkspaceTabDrag(tab.id.uuidString))
+                                .workspaceTabDragSource(tab.id.uuidString, onSelect: { selectTab(tab) })
                                 .modifier(WorkspaceTabDropTarget { value, after in
                                     guard let id = UUID(uuidString: value) else { return }
                                     let source = PaneSlotID(id: id)
@@ -280,7 +284,7 @@ struct WorkspaceContentView: View {
             .terminalDrawerHitArea(onToggle: toggleDrawer)
     }
 
-    private func toggleDrawer() {
+    func toggleDrawer() {
         var next = layout
         if next.drawerVisible {
             let previous = next.hideDrawer()
@@ -290,7 +294,7 @@ struct WorkspaceContentView: View {
             let needsTerminal = next.openDrawer()
             worktree.workspaceLayout = next
             if needsTerminal { onNewTerminal() }
-            else if let slot = next.selectedTerminal { focus(slot) }
+            if let slot = layout.selectedTerminal { selectTerminalTab(slot) }
         }
     }
 
@@ -329,6 +333,11 @@ struct WorkspaceContentView: View {
     private func needsInput(_ slot: PaneSlotID) -> Bool {
         if let attentionContext, let session = worktree.paneSessions[slot] { return attentionContext.needsInput(session: ZmxLauncher.sessionName(for: session)) }
         return worktree.paneAttention[slot]?.source == .agentStop
+    }
+    func isBusy(_ slot: PaneSlotID) -> Bool? {
+        guard let agentLiveness, let session = worktree.paneSessions[slot] else { return nil }
+        return AgentLivenessMerge.isPaneBusy(sessionName: ZmxLauncher.sessionName(for: session),
+            liveness: agentLiveness.livenessBySession)
     }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
     private func title(_ slot: PaneSlotID) -> String {
