@@ -51,7 +51,27 @@ struct RemoteOpenOfferTests {
         let collections = RemoteOpenOffer.previewCollections(in: [a, b, browser, c])
         #expect(collections.map(\.id) == [c.id, group])
         #expect(collections.last?.offers == [a, b])
-        #expect(collections.last?.title == "a.html, b.png")
+        #expect(collections.last?.title == "a.html + 1 more")
+    }
+
+    @Test("@spec PREVIEW-2.11: When clients browse preview history, the application shall use the first filename and remaining file count as the collection title, preserve optional creation times across connections, and omit unknown times from legacy offers.")
+    func collectionLabelsAndTimesRemainCompatible() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let group = UUID()
+        let first = RemoteOpenOffer(id: UUID(), filename: "report.html", byteCount: 1,
+            previewKind: "file", previewGroupID: group, createdAt: now)
+        let second = RemoteOpenOffer(id: UUID(), filename: "chart.png", byteCount: 1,
+            previewKind: "file", previewGroupID: group, createdAt: now)
+        let collection = try #require(RemoteOpenOffer.previewCollections(in: [first, second]).first)
+        #expect(collection.title == "report.html + 1 more")
+        #expect(collection.createdAt == now)
+        #expect(collection.menuTitle.contains(now.formatted(date: .omitted, time: .shortened)))
+        #expect(try JSONDecoder().decode(RemoteOpenOffer.self, from: JSONEncoder().encode(first)) == first)
+        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(first)) as? [String: Any])
+        legacy.removeValue(forKey: "createdAt")
+        let decoded = try JSONDecoder().decode(RemoteOpenOffer.self, from: JSONSerialization.data(withJSONObject: legacy))
+        #expect(decoded.createdAt == nil)
+        #expect(RemoteOpenOffer.previewCollections(in: [decoded]).first?.menuTitle == "report.html")
     }
 
 }

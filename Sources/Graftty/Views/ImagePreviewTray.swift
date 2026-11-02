@@ -7,12 +7,14 @@ struct ImagePreviewOverlay: View {
     let preview: ImagePreviewStore.Preview?
     let onDismiss: () -> Void
     var onPopOut: (() -> Void)? = nil
+    var theme: GhosttyTheme = .fallback
+    var navigation: FilePreviewNavigation? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in
             if let pane, let preview {
-                PositionedImagePreview(preview: preview, viewport: geometry.size, onDismiss: onDismiss, onPopOut: onPopOut)
+                PositionedImagePreview(preview: preview, viewport: geometry.size, onDismiss: onDismiss, onPopOut: onPopOut, theme: theme, navigation: navigation)
                     .id(pane)
                     .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
@@ -25,6 +27,8 @@ private struct PositionedImagePreview: View {
     let viewport: CGSize
     let onDismiss: () -> Void
     let onPopOut: (() -> Void)?
+    let theme: GhosttyTheme
+    let navigation: FilePreviewNavigation?
     @State private var requestedFrame: CGRect?
     @State private var interactionStart: CGRect?
 
@@ -34,7 +38,7 @@ private struct PositionedImagePreview: View {
     }
 
     var body: some View {
-        FilePreviewTray(preview: preview, onDismiss: onDismiss, onInteraction: interact, onPopOut: onPopOut)
+        FilePreviewTray(preview: preview, onDismiss: onDismiss, onInteraction: interact, onPopOut: onPopOut, theme: theme, navigation: navigation)
             .frame(width: frame.width, height: frame.height)
             .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
             .position(x: frame.midX, y: frame.midY)
@@ -60,6 +64,10 @@ private struct PositionedImagePreview: View {
 final class ImagePreviewGestureHandle: NSView {
     let kind: ImagePreviewInteraction.Kind
     var isEnabled = true
+    var movesWindow = false
+    var backgroundColor: NSColor = .windowBackgroundColor
+    var foregroundColor: NSColor = .tertiaryLabelColor
+    var separatorColor: NSColor = .separatorColor
     var onInteraction: (ImagePreviewInteraction) -> Void = { _ in }
     private var startLocation: NSPoint?
 
@@ -78,6 +86,7 @@ final class ImagePreviewGestureHandle: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard isEnabled else { return }
+        if movesWindow { window?.performDrag(with: event); return }
         startLocation = event.locationInWindow
         onInteraction(.began(kind))
     }
@@ -94,19 +103,21 @@ final class ImagePreviewGestureHandle: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         if kind == .move {
-            NSColor.windowBackgroundColor.setFill()
+            backgroundColor.setFill()
             bounds.fill()
+            separatorColor.setFill()
+            NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
             return
         }
         if kind == .resizeHeight {
-            NSColor.windowBackgroundColor.setFill()
+            backgroundColor.setFill()
             bounds.fill()
-            NSColor.tertiaryLabelColor.setFill()
+            foregroundColor.setFill()
             NSBezierPath(roundedRect: NSRect(x: bounds.midX - 16, y: bounds.midY - 1,
                                             width: 32, height: 2), xRadius: 1, yRadius: 1).fill()
             return
         }
-        NSColor.tertiaryLabelColor.setStroke()
+        foregroundColor.setStroke()
         let path = NSBezierPath()
         for inset in [5.0, 9, 13] {
             path.move(to: NSPoint(x: bounds.maxX - inset, y: 4))

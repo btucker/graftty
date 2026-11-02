@@ -61,7 +61,7 @@ struct ImagePreviewTests {
         tray.claimFocus()
         #expect(tray.ownsFocus)
         #expect(tray.quickLook.previewItem?.previewItemURL == tray.previewURL)
-        #expect(tray.quickLook.frame.height == 216)
+        #expect(tray.quickLook.frame.height == 224)
         tray.update(try .init(image: try fixture(width: 30, height: 40), filename: "second.png"))
         #expect(tray.ownsFocus)
         tray.cancelOperation(nil)
