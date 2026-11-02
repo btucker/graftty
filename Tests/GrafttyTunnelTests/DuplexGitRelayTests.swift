@@ -15,23 +15,29 @@ struct DuplexGitRelayTests {
         try await nativeGitFixture()
     }
 
-    @Test("@spec TEST-1.17: When a Git relay fixture transfer fails or is cancelled, the test harness shall close its channels and stop both subprocess groups before joining the sender, and reap both subprocesses before returning.", .timeLimit(.minutes(1)), arguments: [Interruption.authorization, .cancellation, .deadline, .senderFailure])
+    @Test("@spec TEST-1.17: When a Git relay fixture transfer fails or is cancelled, the test harness shall close its channels and stop both subprocess groups before joining the sender, and reap both subprocesses before returning.", .timeLimit(.minutes(1)), arguments: [Interruption.authorization, .cancellation, .deadline, .senderFailure, .bootstrapFailure, .pipeSetupFailure])
     func interruptedTransferCleansUp(_ interruption: Interruption) async throws {
         // Cancellation belongs to this child task, not the Swift Testing caller.
         let pending = Task { try await nativeGitFixture(interruption: interruption) }
-        switch interruption {
-        case .cancellation:
-            await #expect(throws: CancellationError.self) { try await pending.value }
-        case .deadline:
-            await #expect(throws: DuplexByteRelay.Failure.deadlineExceeded) { try await pending.value }
-        case .authorization:
-            await #expect(throws: GitFailure.rejected) { try await pending.value }
-        case .senderFailure:
-            await #expect(throws: GitRelayFixtureFailure.exit(1, "git")) { try await pending.value }
+        await withTaskCancellationHandler {
+            switch interruption {
+            case .cancellation:
+                await #expect(throws: CancellationError.self) { try await pending.value }
+            case .deadline:
+                await #expect(throws: DuplexByteRelay.Failure.deadlineExceeded) { try await pending.value }
+            case .authorization, .pipeSetupFailure:
+                await #expect(throws: GitFailure.rejected) { try await pending.value }
+            case .senderFailure:
+                await #expect(throws: GitRelayFixtureFailure.exit(1, "git")) { try await pending.value }
+            case .bootstrapFailure:
+                await #expect(throws: ChannelError.operationUnsupported) { try await pending.value }
+            }
+        } onCancel: {
+            pending.cancel()
         }
     }
 
-    enum Interruption: Sendable { case authorization, cancellation, deadline, senderFailure }
+    enum Interruption: Sendable { case authorization, cancellation, deadline, senderFailure, bootstrapFailure, pipeSetupFailure }
 
     private func nativeGitFixture(interruption: Interruption? = nil) async throws {
         let root = URL(fileURLWithPath: "/tmp/graftty-git-relay-\(UUID().uuidString)")
@@ -91,8 +97,8 @@ struct DuplexGitRelayTests {
         _ = try await git(["--git-dir", replica.path, "fsck", "--strict"], root: root)
     }
 
-    @Test("@spec TEST-1.16: When a Git relay fixture command is cancelled, the test harness shall stop its subprocess and close its output before returning cancellation.", .timeLimit(.minutes(1)))
-    func cancellationStopsBlockedCommand() async throws {
+    @Test("@spec TEST-1.16: When a Git relay fixture command is cancelled, the test harness shall stop its subprocess and close its output before returning cancellation.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func cancellationStopsBlockedCommand(beforeLaunch: Bool) async throws {
         let root = URL(fileURLWithPath: "/tmp/graftty-git-cancel-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -100,14 +106,23 @@ struct DuplexGitRelayTests {
         #expect(mkfifo(ready.path, 0o600) == 0)
         let blocked = root.appendingPathComponent("blocked")
         #expect(mkfifo(blocked.path, 0o600) == 0)
-        let gate = open(blocked.path, O_RDWR | O_NONBLOCK)
-        defer { close(gate) }
+        let gate = try FixtureFIFORelease(path: blocked.path)
+        defer { gate.close() }
         let process = GitRelayFixtureProcess(["sh", "-c",
             "trap '' TERM; sh -c 'echo $$ > \"$1\"; read line < \"$2\"' child \"$1\" \"$2\" & wait",
-            "fixture", ready.path, blocked.path], root: root)
-        let outputDescriptor = process.output.fileHandleForReading.fileDescriptor
-        let watchdogFired = DispatchSemaphore(value: 0)
-        let watchdog = DispatchWorkItem { watchdogFired.signal(); process.stop() }
+            "fixture", ready.path, blocked.path], root: root, duplex: true)
+        // If launch is rejected, an unclosed output read returns this byte rather
+        // than blocking the regression itself on a pipe with both ends open.
+        try process.output.fileHandleForWriting.write(contentsOf: Data([1]))
+        if beforeLaunch {
+            process.stop()
+            await #expect(throws: CancellationError.self) { _ = try await process.result() }
+            #expect(process.processID == nil)
+            #expect(throws: (any Error).self) { _ = try process.output.fileHandleForReading.read(upToCount: 1) }
+            #expect(throws: (any Error).self) { try process.output.fileHandleForWriting.write(contentsOf: Data([1])) }
+            return
+        }
+        let watchdog = DispatchWorkItem { gate.release() }
         DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: watchdog)
         let pending = Task { try await process.result() }
         defer {
@@ -115,24 +130,33 @@ struct DuplexGitRelayTests {
             pending.cancel()
             process.stop()
         }
-        let pid: Int32 = try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
-                let fd = open(ready.path, O_RDONLY | O_NONBLOCK)
-                defer { close(fd) }
-                var event = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-                guard poll(&event, 1, 3000) > 0 else {
-                    continuation.resume(throwing: GitFailure.connectionTimedOut)
-                    return
+        let pid: Int32
+        do {
+            pid = try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global().async {
+                    let fd = open(ready.path, O_RDONLY | O_NONBLOCK)
+                    defer { close(fd) }
+                    var event = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                    guard poll(&event, 1, 3000) > 0 else {
+                        continuation.resume(throwing: GitFailure.connectionTimedOut)
+                        return
+                    }
+                    var bytes = [UInt8](repeating: 0, count: 64)
+                    let count = read(fd, &bytes, bytes.count)
+                    let text = String(decoding: bytes.prefix(max(0, count)), as: UTF8.self)
+                    guard let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                        continuation.resume(throwing: GitFailure.connectionTimedOut)
+                        return
+                    }
+                    continuation.resume(returning: pid)
                 }
-                var bytes = [UInt8](repeating: 0, count: 64)
-                let count = read(fd, &bytes, bytes.count)
-                let text = String(decoding: bytes.prefix(max(0, count)), as: UTF8.self)
-                guard let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                    continuation.resume(throwing: GitFailure.connectionTimedOut)
-                    return
-                }
-                continuation.resume(returning: pid)
             }
+        } catch {
+            pending.cancel()
+            process.stop()
+            gate.release()
+            _ = await pending.result
+            throw error
         }
         let leader = try #require(process.processID)
         #expect(pid != leader)
@@ -140,9 +164,9 @@ struct DuplexGitRelayTests {
         pending.cancel()
         await #expect(throws: CancellationError.self) { _ = try await pending.value }
         // A surviving descendant would keep stdout open and require the watchdog.
-        #expect(watchdogFired.wait(timeout: .now()) == .timedOut)
+        #expect(!gate.wasReleased)
         #expect(kill(leader, 0) == -1 && errno == ESRCH)
-        #expect(fcntl(outputDescriptor, F_GETFD) == -1 && errno == EBADF)
+        #expect(throws: (any Error).self) { _ = try process.output.fileHandleForReading.read(upToCount: 1) }
     }
 
     private func transfer(group: MultiThreadedEventLoopGroup, root: URL, source: URL, replica: URL, helper: URL,
@@ -165,22 +189,36 @@ struct DuplexGitRelayTests {
         let sender = GitRelayFixtureProcess(interruption == .senderFailure ? ["git", "invalid-fixture-command"] :
             ["git", "-C", source.path, "-c", "protocol.ext.allow=always", "push", "--porcelain",
              "ext::python3 \(helper.path) \(socket)", "HEAD:refs/heads/main"], root: root)
-        var pipe: Channel?
+        var pipeOwner: RelayPipeOwnership?
         var sending: Task<Data, any Error>?
         let result: Result<Void, any Error>
         do {
             try await withTaskCancellationHandler {
                 try await relayFixtureIO { try receiver.start() }
-                let (reader, writer) = try await relayFixtureIO { try receiver.relayDescriptors() }
-                let prepared = group.next().makePromise(of: DuplexByteRelay.Endpoint.self)
-                pipe = try await NIOPipeBootstrap(group: group)
-                    .channelOption(ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 32 * 1024))
-                    .channelInitializer { channel in
-                        let ready = DuplexByteRelay.prepare(channel)
-                        ready.cascade(to: prepared)
-                        return ready.map { _ in }
-                    }.takingOwnershipOfDescriptors(input: reader, output: writer).get()
-                let parent = try await prepared.futureResult.get()
+                let (reader, writer) = try await relayFixtureIO {
+                    let (reader, writer) = try receiver.relayDescriptors()
+                    guard interruption == .bootstrapFailure else { return (reader, writer) }
+                    // A regular file makes NIO reject the bootstrap before it
+                    // accepts either descriptor, exercising caller-owned cleanup.
+                    let replacement = open(helper.path, O_RDONLY | O_CLOEXEC)
+                    guard replacement >= 0 else { close(reader); close(writer); throw POSIXError(.EIO) }
+                    close(reader)
+                    return (replacement, writer)
+                }
+                let owner = RelayPipeOwnership(reader: reader, writer: writer)
+                pipeOwner = owner
+                let parent: DuplexByteRelay.Endpoint = try await NIOPipeBootstrap(group: group)
+                    .takingOwnershipOfDescriptors(input: reader, output: writer) { channel in
+                        // With no bootstrap options, this is the first fallible
+                        // setup step after NIO accepts descriptor ownership.
+                        owner.claim(channel)
+                        if interruption == .pipeSetupFailure {
+                            return channel.eventLoop.makeFailedFuture(GitFailure.rejected)
+                        }
+                        return channel.setOption(ChannelOptions.recvAllocator,
+                            value: FixedSizeRecvByteBufferAllocator(capacity: 32 * 1024))
+                            .flatMap { DuplexByteRelay.prepare(channel) }
+                    }
                 let task = Task {
                     do { return try await sender.result() }
                     catch {
@@ -213,11 +251,14 @@ struct DuplexGitRelayTests {
         // Stop producers and close NIO's duplicate descriptors before joining.
         // This also covers failures before connection establishment or pipe setup.
         connected.stop()
+        let pipe = pipeOwner?.channel
         pipe?.close(promise: nil)
         listener.close(promise: nil)
+        let ownedPipe = pipeOwner
         try await relayFixtureIO {
             receiver.stop()
             sender.stop()
+            ownedPipe?.closeUnclaimedDescriptors()
         }
         if let pipe { try? await pipe.closeFuture.get() }
         try? await listener.closeFuture.get()
@@ -261,4 +302,61 @@ private final class PendingConnection: @unchecked Sendable {
         if accepted { promise.completeWith(result) }
         else if case .success(let endpoint) = result { endpoint.channel.close(promise: nil) }
     }
+}
+
+// NIO returns raw descriptors on early bootstrap failure, but closes them itself
+// after channel creation. Track the handoff so cleanup cannot close a reused fd.
+private final class RelayPipeOwnership: @unchecked Sendable {
+    private enum Owner { case fixture(Int32, Int32), channel(Channel), closed }
+    private let lock = NSLock()
+    private var owner: Owner
+    init(reader: Int32, writer: Int32) { owner = .fixture(reader, writer) }
+    var channel: Channel? {
+        lock.withLock { if case .channel(let channel) = owner { return channel }; return nil }
+    }
+    func claim(_ channel: Channel) { lock.withLock { owner = .channel(channel) } }
+    func closeUnclaimedDescriptors() {
+        lock.withLock {
+            guard case .fixture(let reader, let writer) = owner else { return }
+            owner = .closed
+            _ = close(reader)
+            _ = close(writer)
+        }
+    }
+    deinit { closeUnclaimedDescriptors() }
+}
+
+// Keep the independent watchdog from writing a descriptor after test teardown.
+private final class FixtureFIFORelease: @unchecked Sendable {
+    private let lock = NSLock()
+    private var descriptor: Int32?
+    private var released = false
+    var wasReleased: Bool { lock.withLock { released } }
+    init(path: String) throws {
+        let descriptor = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { throw POSIXError(.EIO) }
+        self.descriptor = descriptor
+    }
+    func release() {
+        lock.withLock {
+            guard let descriptor else { return }
+            released = true
+            var newline: UInt8 = 10
+            _ = write(descriptor, &newline, 1)
+        }
+    }
+    func close() {
+        lock.withLock {
+            if let descriptor { _ = systemClose(descriptor) }
+            descriptor = nil
+        }
+    }
+}
+
+private func systemClose(_ descriptor: Int32) -> Int32 {
+    #if canImport(Darwin)
+    Darwin.close(descriptor)
+    #else
+    Glibc.close(descriptor)
+    #endif
 }

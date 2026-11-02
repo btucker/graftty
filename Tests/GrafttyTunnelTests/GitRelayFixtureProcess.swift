@@ -104,7 +104,12 @@ final class GitRelayFixtureProcess: @unchecked Sendable {
     // Call after closing NIO's duplicate descriptors, and on a dispatch worker.
     @discardableResult
     func wait() throws -> Int32 {
-        guard let pid = processID else { return 0 }
+        let state = lock.withLock { (child, status) }
+        if let status = state.1 { return status }
+        guard let pid = state.0 else {
+            lock.withLock { closeHandles() }
+            return 0
+        }
         var information = siginfo_t()
         var result: Int32
         repeat { result = waitid(P_PID, id_t(pid), &information, WEXITED | WNOWAIT) } while result < 0 && errno == EINTR
@@ -113,8 +118,7 @@ final class GitRelayFixtureProcess: @unchecked Sendable {
             guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             // The leader is still ours. Stop descendants before releasing it.
             _ = killpg(pid, SIGKILL)
-            try? input?.fileHandleForWriting.close()
-            try? output.fileHandleForReading.close()
+            closeHandles()
             var raw: Int32 = 0
             var reaped: pid_t
             repeat { reaped = waitpid(pid, &raw, 0) } while reaped < 0 && errno == EINTR
@@ -140,8 +144,8 @@ final class GitRelayFixtureProcess: @unchecked Sendable {
         do {
             let data = try await withTaskCancellationHandler {
                 try await relayFixtureIO { [self] in
-                    try start()
                     do {
+                        try start()
                         let data = try output.fileHandleForReading.readToEnd() ?? Data()
                         let status = try wait()
                         guard status == 0 else { throw GitRelayFixtureFailure.exit(status, arguments.first ?? "fixture") }
@@ -161,6 +165,13 @@ final class GitRelayFixtureProcess: @unchecked Sendable {
             try Task.checkCancellation()
             throw error
         }
+    }
+
+    private func closeHandles() {
+        try? input?.fileHandleForReading.close()
+        try? input?.fileHandleForWriting.close()
+        try? output.fileHandleForReading.close()
+        try? output.fileHandleForWriting.close()
     }
 
     private func checked(_ result: Int32) throws {
