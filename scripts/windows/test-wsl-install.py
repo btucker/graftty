@@ -3,7 +3,10 @@
 import hashlib
 import importlib.util
 import io
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -101,6 +104,27 @@ class WSLInstallTests(unittest.TestCase):
         with patch.object(setup, 'run', side_effect=RuntimeError('startup failed')):
             with self.assertRaisesRegex(RuntimeError, 'startup failed'):
                 setup.install_archive(self.archive, digest)
+
+    @unittest.skipIf(setup.platform.system() == 'Windows', 'Linux installer process groups')
+    def test_installer_timeout_allows_rollback_and_stops_its_child(self):
+        rollback = self.root / 'rollback'
+        child_finished = self.root / 'child-finished'
+        child_pid = self.root / 'child-pid'
+        child = self.root / 'child.py'
+        child.write_text('import os,sys,time\nfrom pathlib import Path\n'
+                         'Path(sys.argv[2]).write_text(str(os.getpid()))\n'
+                         'time.sleep(1.5)\nPath(sys.argv[1]).write_text("leaked")\n')
+        installer = self.root / 'install.sh'
+        installer.write_text('trap \'printf restored > "$1"\' EXIT\n'
+                             'trap \'exit 130\' TERM\n'
+                             '"$3" "$4" "$2" "$5"\n')
+        with self.assertRaises(subprocess.TimeoutExpired):
+            setup.run(['/bin/bash', str(installer), str(rollback), str(child_finished),
+                       sys.executable, str(child), str(child_pid)], timeout=0.5, cleanup_timeout=1)
+        self.assertEqual(rollback.read_text(), 'restored')
+        self.assertFalse(child_finished.exists())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(child_pid.read_text()), 0)
 
     def test_reports_guest_resources_and_tighter_ancestor_cgroup_limits(self):
         proc = self.root / 'proc'

@@ -9,15 +9,39 @@ import platform
 import posixpath
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
 
 
-def run(arguments, timeout=120):
-    result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True,
-                            text=True, timeout=timeout, check=False)
+def run(arguments, timeout=120, cleanup_timeout=None):
+    if cleanup_timeout is None:
+        result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, timeout=timeout, check=False)
+    else:
+        # The transactional installer needs its EXIT trap, including while
+        # waiting on a child. Cancel the whole group and allow bounded rollback.
+        with subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.communicate(timeout=cleanup_timeout)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.communicate()
+                raise
+            result = subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
     if result.returncode:
         raise RuntimeError(f'{Path(arguments[0]).name} failed ({result.returncode}): '
                            f'{result.stderr[-8192:]}{result.stdout[-8192:]}')
@@ -154,7 +178,8 @@ def install_archive(archive, expected_sha256):
         # Reuse the transactional Linux installer and its readiness check.
         # Loopback is intentional until endpoint-authenticated outbound access
         # exists. This installer never exposes a public pairing listener.
-        run(['/bin/bash', str(unpacked / 'install.sh'), '--bind-address', '127.0.0.1'])
+        run(['/bin/bash', str(unpacked / 'install.sh'), '--bind-address', '127.0.0.1'],
+            cleanup_timeout=30)
     return {'localReady': True, 'remoteReady': False, 'version': version,
             'connectionStatus': 'Cloud enrollment and the outbound Mac connection are not implemented yet.'}
 

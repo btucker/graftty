@@ -4200,7 +4200,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-32.15** When preparing a WSL2 project without an explicit storage override, the application shall place repositories, worktrees, and build caches in the Linux filesystem.
 
-**REMOTE-32.16** When locally installing a WSL2 host, the application shall verify the supplied archive digest, reject unsafe archive entries, and reuse the Linux installer with loopback listeners without reporting remote readiness before enrollment and connection.
+**REMOTE-32.16** When locally installing a WSL2 host, the application shall verify the supplied archive digest, reject unsafe archive entries, reuse the Linux installer with loopback listeners, and allow a bounded rollback grace period on timeout without reporting remote readiness before enrollment and connection.
 
 **REMOTE-32.17** When enabling Windows sign-in startup for a WSL2 host, the installer shall scope the startup task to the current interactive user without elevation and retain a foreground Linux process without requiring an open terminal window.
 
