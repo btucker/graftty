@@ -57,9 +57,10 @@ install or authenticate agent-provider CLIs.
 elevation and registers a limited Windows task for the current user's sign-in.
 The task retains a foreground WSL process so a visible terminal is not needed.
 If Linux policy denies lingering, enable it locally as an administrator before
-retrying. Task registration and screen-lock survival still need a real Windows
-11 test. Windows sleep, logout, WSL termination, and reboot are outside v1
-session-survival guarantees.
+retrying. Task registration passed in a Windows 11 ARM VirtualBox guest.
+Screen-lock survival with a real WSL2 host still needs validation. Windows
+sleep, logout, WSL termination, and reboot are outside v1 session-survival
+guarantees.
 
 The JSON result includes guest CPU availability, memory capacity and available
 RAM, cgroup v2 memory and CPU limits, Windows physical RAM, and a suggested
@@ -76,6 +77,25 @@ again to verify the effective limits. The recommended default headroom is
 Portable Python and PowerShell checks cover archive verification, extraction,
 resource configuration, and startup task construction. The CI workflow includes
 these checks on Windows. They do not replace a Windows 11 installation test.
+
+## Local Windows VM validation
+
+[The Vagrant harness](../scripts/windows/vm/README.md) creates a dedicated
+Windows test VM with loopback management ports and no shared project folder.
+It uses an installed local box and WinRM for test control.
+
+The local Windows 11 ARM guest passed checks for configuration preservation,
+startup command construction, real current-user limited Task Scheduler
+registration, and rejection of WSL1 before setup. The guest ran Windows build
+26200 and Windows PowerShell 5.1.26100.7920.
+
+This M4 Pro's VirtualBox 7.2.16 reports no nested hardware virtualization.
+The guest also reports `VirtualizationFirmwareEnabled: false`. The
+[VirtualBox 7.2 manual](https://download.oracle.com/virtualbox/UserManual.pdf)
+documents that nested virtualization settings are unavailable for Arm guests.
+WSL2 runtime, zmx session lifetime, and remote access therefore remain untested
+in this VM. Use native Windows hardware or a compatible nested-virtualization
+host for those checks.
 
 ## WSL2 resource policy
 
