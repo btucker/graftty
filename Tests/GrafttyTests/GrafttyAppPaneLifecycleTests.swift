@@ -1,5 +1,6 @@
 import AppKit
 import GhosttyKit
+import GrafttyProtocol
 import SwiftUI
 import Testing
 @testable import Graftty
@@ -117,7 +118,7 @@ struct GrafttyAppPaneLifecycleTests {
     @Test("""
     @spec TERM-1.4: When the application reopens a closed worktree with a \
     saved multi-pane split tree, it shall designate exactly one pane for \
-    first-pane-only default-command eligibility: the remembered primary pane \
+    worktree-level startup-command eligibility: the remembered primary pane \
     when it is still present in the split tree. Focus changes shall not \
     change the primary pane. State saved before primary-pane persistence \
     shall migrate once from a valid retained focus, then tree order.
@@ -215,7 +216,7 @@ struct GrafttyAppPaneLifecycleTests {
     multi-pane worktree for restoration, it shall mark every leaf as \
     rehydrated and its remembered primary leaf as the sole first-pane-eligible \
     pane, independent of the retained focus, so later missing-session recovery \
-    can restart one default command without touching surviving sessions.
+    can recreate missing shells without touching surviving sessions.
     """)
     func runningRestoreRetainsOnePrimaryMarkerForSessionLoss() {
         let left = PaneSlotID()
@@ -415,6 +416,61 @@ struct GrafttyAppPaneLifecycleTests {
 
         #expect(routed == [.split(.right), .surfaceClosed])
         #expect(localCalls == 0)
+    }
+
+    @Test("@spec AGENT-6.82: When a managed terminal changes directory into another registered worktree, the application shall preserve its owning worktree, session binding, and assignment.")
+    func managedPaneStaysWithItsAssignment() {
+        let slot = PaneSlotID(), session = PaneSessionID()
+        var source = WorktreeEntry(path: "/repo/source", branch: "source", state: .running,
+            splitTree: SplitTree(root: .leaf(slot)))
+        source.paneSessions[slot] = session
+        var agent = ManagedAgent(name: "Review", provider: .codex, parent: nil)
+        agent.paneSlotID = slot
+        source.agents = [agent]
+        let target = WorktreeEntry(path: "/repo/target", branch: "target")
+        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "repo", worktrees: [source, target])])
+        let binding = Binding(get: { state }, set: { state = $0 })
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        manager.recordPaneSession(session, for: slot, worktreePath: source.path)
+        PaneCommands.reassignPaneByPWD(appState: binding, terminalManager: manager,
+            terminalID: slot, newPWD: "/repo/target/subdir")
+        #expect(state.repos[0].worktrees[0].paneSessions[slot] == session)
+        #expect(state.repos[0].worktrees[0].agents == [agent])
+        #expect(state.repos[0].worktrees[1].splitTree.root == nil)
+    }
+
+    @Test("@spec LAYOUT-2.174: When keyboard resizing changes a workspace split, the application shall clear zoom unless the caller explicitly requests preserving it.")
+    func workspaceResizeClearsZoom() {
+        for preserve in [false, true] {
+            let a = PaneSlotID(), b = PaneSlotID()
+            let tree = SplitTree(root: .leaf(a)).inserting(b, at: a, direction: .horizontal)
+            var worktree = WorktreeEntry(path: "/repo", branch: "main", state: .running, splitTree: tree.withZoom(a))
+            worktree.workspaceLayout = .preserving(tree)
+            var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [worktree])])
+            let binding = Binding(get: { state }, set: { state = $0 })
+            #expect(PaneCommands.resizeSplit(appState: binding, target: a, direction: .right, pixels: 40,
+                ancestorBounds: CGRect(x: 0, y: 0, width: 1000, height: 600), preserveZoom: preserve))
+            #expect(state.repos[0].worktrees[0].workspaceLayout?.visibleSplitTree != tree)
+            #expect(state.repos[0].worktrees[0].splitTree.zoomed == (preserve ? a : nil))
+        }
+    }
+
+    @Test("@spec LAYOUT-2.168: When the user zooms a workspace pane, the application shall zoom only a selected canvas tab and shall exclude drawer terminals and hidden tabs from canvas zoom.")
+    func drawerCannotBecomeCanvasZoom() {
+        let a = PaneSlotID(), b = PaneSlotID(), shell = PaneSlotID()
+        var worktree = WorktreeEntry(path: "/repo", branch: "main", state: .running,
+            splitTree: SplitTree(root: .leaf(a)).inserting(b, at: a, direction: .horizontal).inserting(shell, at: b, direction: .vertical))
+        var layout = WorkspaceLayout<PaneSlotID>()
+        layout.addAgent(a); layout.addAgent(b); layout.addTerminal(shell)
+        worktree.workspaceLayout = layout
+        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])])
+        let binding = Binding(get: { state }, set: { state = $0 })
+        PaneCommands.toggleZoom(appState: binding, on: shell)
+        #expect(state.repos[0].worktrees[0].splitTree.zoomed == nil)
+        PaneCommands.toggleZoom(appState: binding, on: a)
+        #expect(state.repos[0].worktrees[0].splitTree.zoomed == nil)
+        PaneCommands.toggleZoom(appState: binding, on: b)
+        #expect(state.repos[0].worktrees[0].splitTree.zoomed == b)
     }
 
     @Test func reassignPaneByPWDMovesPaneSessionToTargetWorktree() {

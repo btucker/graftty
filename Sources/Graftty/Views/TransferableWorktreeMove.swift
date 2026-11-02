@@ -163,7 +163,7 @@ private struct WorktreeRowDropDelegate: DropDelegate {
 /// Bounds of independently clickable controls inside a worktree block.
 /// The native selection target lets pane, badge, and report clicks through.
 struct WorktreeControlAnchors: PreferenceKey {
-    enum Region: Hashable { case prBadge, reportButton, question, pane(PaneSlotID) }
+    enum Region: Hashable { case prBadge, reportButton, removeWorktree, question, pane(PaneSlotID) }
     static let defaultValue: [Region: Anchor<CGRect>] = [:]
     static func reduce(value: inout [Region: Anchor<CGRect>], nextValue: () -> [Region: Anchor<CGRect>]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })

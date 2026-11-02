@@ -213,6 +213,7 @@ let package = Package(
         .target(
             name: "GrafttyCommandUI",
             dependencies: ["GrafttyProtocol"],
+            resources: [.process("Resources")],
             swiftSettings: strictWarnings
         ),
         .target(

@@ -13,14 +13,15 @@ extension GrafttyApp {
     private var focusedPaneSlotID: PaneSlotID? {
         guard let path = appState.selectedWorktreePath else { return nil }
         for repo in appState.repos {
-            for wt in repo.worktrees where wt.path == path && wt.state == .running {
-                return wt.firstPane
+            for wt in repo.worktrees where wt.path == path && (wt.state == .running || wt.workspaceLayout?.root != nil) {
+                return wt.presentationPane
             }
         }
         return nil
     }
 
     private func handleSplit(_ split: PaneSplit) {
+        if focusedPresentationIsCompleted { return }
         if routeFocusedHostManagedPaneCommand(.split(split)) { return }
         guard let id = focusedPaneSlotID else { return }
         _ = PaneCommands.splitPane(appState: $appState, terminalManager: terminalManager, targetID: id, split: split)
@@ -43,6 +44,7 @@ extension GrafttyApp {
     }
 
     private func handleToggleZoom() {
+        if focusedPresentationIsCompleted { return }
         if routeFocusedHostManagedPaneCommand(.toggleZoom) { return }
         guard let id = focusedPaneSlotID else { return }
         PaneCommands.toggleZoom(appState: $appState, on: id)
@@ -55,6 +57,8 @@ extension GrafttyApp {
     }
 
     private func handleClosePane() {
+        if let id = focusedPaneSlotID,
+           PaneCommands.dismissCompletedTab(appState: $appState, terminalManager: terminalManager, targetID: id) { return }
         if routeFocusedHostManagedPaneCommand(.close) { return }
         guard let id = focusedPaneSlotID else { return }
         PaneCommands.closePane(
@@ -65,10 +69,15 @@ extension GrafttyApp {
         )
     }
 
+    private var focusedPresentationIsCompleted: Bool {
+        guard let path = appState.selectedWorktreePath, let id = focusedPaneSlotID else { return false }
+        return appState.worktree(forPath: path)?.hasCompletedContent(in: id) == true
+    }
+
     private func routeFocusedHostManagedPaneCommand(
         _ command: HostManagedPaneCommand
     ) -> Bool {
-        guard let terminalID = terminalManager.focusedTerminalID else {
+        guard !focusedPresentationIsCompleted, let terminalID = terminalManager.focusedTerminalID else {
             return false
         }
         return terminalManager.routeHostManagedPaneCommand(

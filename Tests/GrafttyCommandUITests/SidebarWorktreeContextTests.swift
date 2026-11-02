@@ -20,7 +20,22 @@ struct SidebarWorktreeContextTests {
                                          lastAgentStop: last, brief: brief, agentProgressTimes: progress))
     }
 
-    @Test("@spec LAYOUT-2.125: When a worktree has a pending agent question, the application shall keep the full question inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.")
+    @Test("@spec LAYOUT-2.191: When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.")
+    func routineStopsAreUpdatesNotRequests() {
+        for need: String? in [nil, "", " \n"] {
+            let report = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(),
+                recap: .init(title: "Workspace design", completed: "Installed on phone", next: "Check layout", need: need))
+            let context = SidebarWorktreeContext(worktree: worktree(unseen: report, last: report))
+            #expect(context.pending.isEmpty)
+            #expect(context.question == nil)
+            #expect(context.brief?.completed == "Installed on phone")
+        }
+        let unknown = SidebarAgentStop(agentName: "Codex", stoppedAt: Date())
+        #expect(SidebarWorktreeContext(worktree: worktree(unseen: unknown)).pending.isEmpty)
+        #expect(SidebarWorktreeContext(worktree: worktree(unseen: stop())).question == "Retry silently?")
+    }
+
+    @Test("@spec LAYOUT-2.125: When a worktree has a pending agent question, the application shall keep a two-line question preview inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.")
     func questionFollowsPendingOccurrence() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "context", defaults: defaults)
@@ -78,7 +93,7 @@ struct SidebarWorktreeContextTests {
             for query in ["Reconnect", "Sleeping", "recovery", "devices", "mounted"] {
                 #expect(context.matches(query: query))
             }
-            #expect(context.pending.count == 1)
+            #expect(context.pending.isEmpty)
             #expect(!context.matches(query: "unrelated"))
         }
     }
@@ -174,7 +189,7 @@ struct SidebarWorktreeContextTests {
         #expect(context.pending.isEmpty)
     }
 
-    @Test("@spec LAYOUT-2.150: While a stopped agent request remains pending, the application shall display its inline question and attention count even in the selected worktree when pane liveness still reports busy, until the request is dismissed or its provider reports progress.")
+    @Test("@spec LAYOUT-2.150: While a stopped agent request remains pending, the application shall display its inline question and waiting glyph even in the selected worktree when pane liveness still reports busy, until the request is dismissed or its provider reports progress.")
     func pendingStopOverridesStaleBusyLiveness() {
         func row(progress: [String: Double] = [:]) -> WorktreePanes {
             .init(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
@@ -219,6 +234,25 @@ struct SidebarWorktreeContextTests {
         another.updateAttentionItems(SidebarProjection.activity([incoming]))
         another.dismissRequest(in: captured)
         #expect(another.worktreeContext(incoming).pending.contains { $0.agentStop?.timestamp == 140 })
+    }
+
+    @Test("@spec LAYOUT-2.193: While an agent has a live input request, the application shall use the same waiting state in its sidebar and tab, retain the question when its worktree opens, and clear that state when the request is dismissed or its provider resumes.")
+    func sharedInputStateTracksTheRequestingSession() {
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        func row(progress: [String: Double] = [:]) -> WorktreePanes {
+            .init(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+                layout: .leaf(sessionName: "pane", title: "Question", attentionText: nil, isBusy: true, attentionSource: nil),
+                sidebar: .init(id: "/wt", projectID: "p", unseenAgentStop: stop(), lastAgentStop: stop(), agentProgressTimes: progress))
+        }
+        let context = navigation.worktreeContext(row())
+        #expect(context.needsInput(session: "pane"))
+        #expect(!context.needsInput(session: "other"))
+        navigation.opened(context.item)
+        #expect(navigation.worktreeContext(row()).needsInput(session: "pane"))
+        #expect(!navigation.worktreeContext(row(progress: ["agent": 110])).needsInput(session: "pane"))
+        navigation.dismissRequest(in: context)
+        #expect(!navigation.worktreeContext(row()).needsInput(session: "pane"))
     }
 
 }

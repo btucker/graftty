@@ -9,12 +9,13 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarNavigationStateTests {
-    @Test("@spec LAYOUT-2.84: When an agent resumes, the application shall retain its latest report as previous context and replace it when a newer stopped report arrives.")
+    @Test("@spec LAYOUT-2.84: When an agent resumes after requesting user input, the application shall retain its latest request report as previous context and replace it when a newer request arrives.")
     func resumedStopStaysInNeedsYou() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
         let project = SidebarProject(id: "project", repositoryID: "repo", name: "Project")
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    recap: .init(title: "Review changes", completed: "Checked changes", next: "Apply fixes", need: "Approve the fixes?"),
                                     providerSessionKey: "codex:session:one")
         let stopped = WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Project",
             displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,
@@ -45,7 +46,7 @@ struct SidebarNavigationStateTests {
         #expect(navigation.attentionItems(live: [item], projects: [project]).first?.isBusy == true)
         var fresh = item
         fresh.agentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 300),
-            recap: .init(title: "Ready to review", completed: "Finished the change.", next: "Review it."),
+            recap: .init(title: "Ready to review", completed: "Finished the change.", next: "Review it.", need: "Approve the result?"),
             providerSessionKey: "codex:session:one")
         fresh.occurrence = fresh.agentStop?.occurrence
         navigation.updateAttentionItems([fresh])
@@ -62,6 +63,7 @@ struct SidebarNavigationStateTests {
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
         let project = SidebarProject(id: "p", repositoryID: "r", name: "Project")
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    recap: .init(title: "Review changes", completed: "Checked changes", next: "Apply fixes", need: "Approve the fixes?"),
                                     providerSessionKey: "codex:one")
         let worktree = WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Project",
             displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,

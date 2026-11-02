@@ -17,6 +17,21 @@ struct IOSTestShardRunnerTests {
         }
     }
 
+    @Test("@spec TECH-6.8: When an iOS CI shard runs in a results directory containing earlier bundles, the workflow shall use distinct result paths for the new invocation, execute every selected batch, and preserve the earlier evidence.")
+    func preservesEarlierResultsWithoutBlockingNewBatches() throws {
+        let result = try runFixture(
+            firstExitCode: 0,
+            removeSimulator: false,
+            existingResults: true,
+            testArguments: "-skip-testing:IntegrationTests\n-only-testing:FirstTests\n-only-testing:SecondTests\n-only-testing:ThirdTests"
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.xcodebuildAttempts == 4)
+        #expect(result.resultBundles == (1...4).map { "batch-\($0)-attempt-1.xcresult" })
+        #expect(result.earlierEvidence == "earlier test results")
+    }
+
     @Test("@spec TECH-6.2: While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.")
     func allowsColdDestinationDiscovery() throws {
         for retry in [false, true] {
@@ -112,6 +127,7 @@ struct IOSTestShardRunnerTests {
         availableTrailingLines: Int = 0,
         minimumDestinationTimeout: Int = 0,
         secondExitCode: Int32 = 0,
+        existingResults: Bool = false,
         testArguments: String = "-only-testing:FixtureTests"
     ) throws -> FixtureResult {
         let fileManager = FileManager.default
@@ -124,6 +140,13 @@ struct IOSTestShardRunnerTests {
         try fileManager.createDirectory(at: state, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: products, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: root) }
+
+        let earlierBundle = root.appendingPathComponent(".ci-results/ios/batch-3-attempt-1.xcresult")
+        let earlierEvidence = earlierBundle.appendingPathComponent("evidence.txt")
+        if existingResults {
+            try fileManager.createDirectory(at: earlierBundle, withIntermediateDirectories: true)
+            try "earlier test results".write(to: earlierEvidence, atomically: true, encoding: .utf8)
+        }
 
         try Data().write(to: products.appendingPathComponent("Fixture.xctestrun"))
         try "sim-1\n".write(
@@ -184,7 +207,9 @@ struct IOSTestShardRunnerTests {
             simulatorsRemaining: try fileManager.contentsOfDirectory(
                 atPath: state.path
             ).count { $0.hasPrefix("device-") },
-            resultBundles: try fileManager.contentsOfDirectory(atPath: root.appendingPathComponent(".ci-results/ios").path).sorted()
+            resultBundles: try String(contentsOf: state.appendingPathComponent("result-bundles"), encoding: .utf8)
+                .split(separator: "\n").map { URL(fileURLWithPath: String($0)).lastPathComponent },
+            earlierEvidence: try? String(contentsOf: earlierEvidence, encoding: .utf8)
         )
     }
 
@@ -276,7 +301,8 @@ struct IOSTestShardRunnerTests {
     done
     # Xcode refuses to overwrite a result bundle, including after a failed
     # destination attempt. Verify both attempts retain distinct evidence.
-    [[ "$result_bundle" == .ci-results/ios/batch-*-attempt-*.xcresult ]] || exit 71
+    [[ "$result_bundle" == .ci-results/ios/* && "${result_bundle##*/}" == batch-*-attempt-*.xcresult ]] || exit 71
+    printf '%s\n' "$result_bundle" >> "$FAKE_STATE/result-bundles"
     mkdir "$result_bundle" || exit 72
     if [[ "$destination_timeout" -lt "$FAKE_MINIMUM_DESTINATION_TIMEOUT" ]]; then
       echo "xcodebuild: error: Unable to find a device matching the provided destination specifier:" >&2
@@ -306,4 +332,5 @@ private struct FixtureResult {
     let simulatorsCreated: Int
     let simulatorsRemaining: Int
     let resultBundles: [String]
+    let earlierEvidence: String?
 }

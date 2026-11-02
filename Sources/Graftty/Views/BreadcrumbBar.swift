@@ -28,7 +28,9 @@ struct BreadcrumbBar: View {
     var previewWorktreePath: String? = nil
     var previewInlinePane: PaneSlotID? = nil
     var previewWorktreeForPane: ((PaneSlotID) -> String?)? = nil
+    var previewCatalogRequest: ((RemoteOpenRequest) async throws -> RemoteOpenResponse)? = nil
     var onToggleContext: (() -> Void)? = nil
+    var showsContext = false
     @State private var showsHistory = false
 
     /// Leading inset wide enough to clear the three traffic-light buttons
@@ -47,6 +49,8 @@ struct BreadcrumbBar: View {
                 navigationButton("chevron.left", title: "Back", enabled: canGoBack, action: onGoBack)
                 navigationButton("chevron.right", title: "Forward", enabled: canGoForward, action: onGoForward)
             }
+            .padding(2)
+            .modifier(WorkspaceControlGlass())
 
             Button {
                 showsHistory.toggle()
@@ -68,30 +72,45 @@ struct BreadcrumbBar: View {
                 historyDropdown
             }
 
-            Spacer(minLength: 8)
-
-            if let onToggleContext {
-                Button(action: onToggleContext) {
-                    Label("Context", systemImage: "sidebar.right")
-                }
-                .buttonStyle(.plain)
-                .help("Worktree context")
-                .accessibilityIdentifier("worktree.context.open")
-            }
             if let prInfo {
-                PRButton(info: prInfo, theme: theme, onRefresh: onRefreshPR)
+                PRButton(info: prInfo, theme: theme, onRefresh: onRefreshPR, compact: true)
+                    .fixedSize()
             }
-            if let previewWorktreePath {
-                FilePreviewToolbarButton(worktreePath: previewWorktreePath, inlinePane: previewInlinePane,
-                                         resolveInlineWorktree: previewWorktreeForPane)
-                    .foregroundColor(theme.foreground.opacity(0.8))
+            Spacer(minLength: 4)
+            if onToggleContext != nil || previewWorktreePath != nil {
+                HStack(spacing: 2) {
+                    if let previewWorktreePath {
+                        FilePreviewToolbarButton(worktreePath: previewWorktreePath, inlinePane: previewInlinePane,
+                                                 resolveInlineWorktree: previewWorktreeForPane, catalogRequest: previewCatalogRequest)
+                    }
+                    if let onToggleContext {
+                        Button(action: onToggleContext) {
+                            ViewThatFits(in: .horizontal) {
+                                Label("Context", systemImage: "sidebar.right")
+                                Image(systemName: "sidebar.right")
+                            }
+                            .padding(.horizontal, 9).frame(height: 28)
+                            .background(showsContext ? theme.foreground.opacity(0.12) : .clear, in: Capsule())
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Worktree context")
+                        .accessibilityLabel("Context")
+                        .accessibilityValue(showsContext ? "Open" : "Closed")
+                        .accessibilityIdentifier("worktree.context.open")
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: true)
+                .foregroundColor(theme.foreground)
+                .padding(2)
+                .modifier(WorkspaceControlGlass())
             }
         }
-        .font(.callout)
+        .font(.system(size: 12))
         .padding(.leading, sidebarHidden ? Self.collapsedInset : Self.expandedInset)
         .padding(.trailing, 12)
-        .padding(.vertical, 8)
-        .background(theme.background)
+        .padding(.vertical, 6)
+        .background { theme.background.worktreeHeaderWash() }
         // Follow NavigationSplitView's column slide.
         .animation(.easeInOut(duration: 0.25), value: sidebarHidden)
     }
@@ -148,7 +167,7 @@ struct BreadcrumbBar: View {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.foreground.opacity(enabled ? 0.8 : 0.25))
-                .frame(width: 24, height: 22)
+                .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -157,7 +176,7 @@ struct BreadcrumbBar: View {
         .accessibilityLabel(title)
     }
 
-    private var breadcrumbLabel: some View {
+    var breadcrumbLabel: some View {
         HStack(spacing: 4) {
             if let repoName {
                 Text(repoName)
@@ -170,12 +189,6 @@ struct BreadcrumbBar: View {
             if let worktreeDisplayName {
                 identityView
                 worktreeLabel(worktreeDisplayName)
-            }
-            if let branchName {
-                Text("(\(branchName))")
-                    .font(.caption)
-                    .foregroundColor(theme.foreground.opacity(0.55))
-                    .padding(.leading, 2)
             }
 
             if repoName == nil && worktreeDisplayName == nil {
@@ -190,7 +203,7 @@ struct BreadcrumbBar: View {
     var identityView: WorktreeIdentityView {
         WorktreeIdentityView(identity: iconIdentity,
             project: project ?? SidebarProject(id: worktreePath ?? "", repositoryID: worktreePath ?? "", name: repoName ?? ""),
-            imageData: projectIconData, size: 18)
+            imageData: projectIconData, size: 14)
     }
 
     var iconIdentity: WorktreeIconIdentity {
@@ -205,16 +218,12 @@ struct BreadcrumbBar: View {
     private func worktreeLabel(_ name: String) -> some View {
         Text(name)
             .italic(isHomeCheckout)
-            .fontWeight(isHomeCheckout ? .regular : .medium)
-            .foregroundColor(theme.foreground)
-            .help(worktreePath ?? "")
-            .overlay(underline, alignment: .bottom)
+            .fontWeight(.regular)
+            .foregroundColor(theme.foreground.opacity(0.8))
+            .help(currentLocationHelp)
     }
 
-    private var underline: some View {
-        Rectangle()
-            .fill(theme.foreground.opacity(0.3))
-            .frame(height: 0.5)
-            .offset(y: 1)
+    var currentLocationHelp: String {
+        [worktreePath, branchName.map { "Branch \($0)" }].compactMap { $0 }.joined(separator: "\n")
     }
 }

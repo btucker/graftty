@@ -22,7 +22,8 @@ extension TerminalInputContainerView {
     /// accept indirect pointer scroll input while selection gestures remain
     /// owned by `selectionPanRecognizer`.
     var terminalPanRecognizersAllowIndirectScrollingForTesting: Bool {
-        let pans = terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer } ?? []
+        let pans = terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }
+            .filter { !Self.isPointerDragSelection($0) } ?? []
         return !pans.isEmpty && pans.allSatisfy {
             $0.allowedScrollTypesMask.contains(.continuous)
                 && $0.allowedScrollTypesMask.contains(.discrete)

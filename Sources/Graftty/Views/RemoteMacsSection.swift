@@ -200,10 +200,11 @@ enum RemoteMacSidebarSelectionReducer {
         worktreePath: String,
         state: inout RemoteMacSidebarSelectionState
     ) {
+        let sameWorktree = state.selectedRemoteIdentity == identity && state.selectedRemoteWorktreePath == worktreePath
         state.selectedWorktreePath = nil
         state.selectedRemoteIdentity = identity
         state.selectedRemoteWorktreePath = worktreePath
-        state.selectedRemotePaneSessionName = nil
+        if !sameWorktree { state.selectedRemotePaneSessionName = nil }
     }
 
     static func selectRemotePane(
@@ -498,10 +499,13 @@ struct RemoteMacsSection: View {
         let identity = RemoteMacIdentity(remoteMac)
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
-        let groupsPanes = !showsMacHierarchy && worktree.layout?.leaves.isEmpty == false
+        let agentLeaves = worktree.sidebarAgentLeaves
+        let groupsPanes = !showsMacHierarchy && !agentLeaves.isEmpty
         let context = contextForWorktree(worktree)
         let reportPane = SidebarProjection.attentionPaneRoute(for: context.item, in: worktree)
-        let questionPane = context.question == nil ? nil : reportPane
+        let questionPane = context.question == nil ? nil : reportPane.flatMap { route in
+            agentLeaves.contains { $0.sessionName == route } ? route : nil
+        }
         let pending = context.pending
         let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]).filter { raw in
             pending.contains { item in
@@ -529,28 +533,24 @@ struct RemoteMacsSection: View {
                     source: worktree.attentionSource
                 )
             },
-            attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0],
+            attentionCount: max(0, counts.attentionByWorktree[worktree.path, default: 0]
+                - agentLeaves.reduce(0) { $0 + counts.attentionByPane[$1.sessionName, default: 0] }),
             project: project, projectIconData: projectIcons[projectID],
-            reportButton: reportController.map { SidebarReportButton(controller: $0, context: context, theme: theme) },
-            brief: context.brief
+            brief: context.brief,
+            onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) }
         )
-        .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
+        .frame(minHeight: 24)
         .contentShape(Rectangle())
         let panes = Group {
-            if let layout = worktree.layout {
-                ForEach(layout.leaves, id: \.sessionName) { leaf in
+            if !agentLeaves.isEmpty {
+                ForEach(agentLeaves, id: \.sessionName) { leaf in
                     Button {
-                        onSelectRemotePane(
-                            remoteMac,
-                            worktree.path,
-                            leaf.sessionName
-                        )
+                        onSelectRemoteWorktree(remoteMac, worktree.path)
                     } label: {
                         PaneTitleRow(
-                            title: leaf.title,
+                            title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name),
                             isActiveWorktree: isActive,
-                            isFocusedPane: isActive
-                                && selectedRemotePaneSessionName == leaf.sessionName,
+                            isFocusedPane: false,
                             isBusy: leaf.isBusy,
                             theme: theme,
                             attentionStyle: questionPane == leaf.sessionName ? nil : leaf.attentionText.map {
@@ -560,8 +560,9 @@ struct RemoteMacsSection: View {
                                 )
                             },
                             portBindings: (worktree.origin?.relayDepth ?? 0) == 0 ? worktree.portBindings?[leaf.sessionName] ?? [] : [],
-                            attentionCount: counts.attentionByPane[leaf.sessionName, default: 0]
-                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
+                            needsInput: leaf.attentionSource == .agentStop || questionPane == leaf.sessionName,
+                            agent: worktree.agents?.first { $0.sessionName == leaf.sessionName },
+                            attentionCount: counts.attentionByPane[leaf.sessionName, default: 0],
                             onOpenPort: { binding in
                                 Task {
                                     do {

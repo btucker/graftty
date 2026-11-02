@@ -83,7 +83,14 @@ public final class PagedTerminalCoordinator {
             generation &+= 1
             let installingGeneration = generation
             status = .installing
-            try await renderer.install(value, generation: installingGeneration)
+            do {
+                try await renderer.install(value, generation: installingGeneration)
+            } catch {
+                // TERM-12.51: an unmounted or cancelled restore must not leave
+                // the banner spinning; offer recovery from the live screen.
+                if generation == installingGeneration { status = .requiresRecovery }
+                throw error
+            }
             guard generation == installingGeneration else { return nil }
             // Do not retain the READY bytes after the renderer has imported them.
             checkpoint = .init(incarnation: value.incarnation, id: value.id, codec: value.codec,
