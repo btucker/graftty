@@ -75,23 +75,24 @@ struct PrimaryAgentLifecycleTests {
         #expect(platform.state.repos[0].worktrees[0].agents.map(\.isPrimary) == [true, false])
     }
 
-    @Test func ordinaryTurnRefreshesPrimaryGuidanceWithoutRestart() async throws {
+    @Test(arguments: [TeamHookRuntime.codex, .claude])
+    func ordinaryTurnRefreshesPrimaryGuidanceWithoutRestart(provider: TeamHookRuntime) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
-        var primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil)
+        var primary = ManagedAgent(name: "Primary", provider: provider, parent: nil)
         primary.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
-        primary.nativeAgentID = "codex-123456789abc"
+        primary.nativeAgentID = "\(provider.rawValue)-123456789abc"
         primary.providerSessionID = "native"
         platform.state.repos[0].worktrees[0].agents = [primary]
         let response = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo",
-            callerAgentID: primary.nativeAgentID, runtime: .codex, event: .userPromptSubmit,
+            callerAgentID: primary.nativeAgentID, runtime: provider, event: .userPromptSubmit,
             sessionID: "native", paneSessionName: platform.paneSession), platform: platform)
         guard case .teamHookOutput(let json) = response else { Issue.record("Expected hook output"); return }
         #expect(json.contains("primary agent"))
         #expect(!json.contains("graftty agent finish"))
     }
 
-    @Test(arguments: [false, true])
-    func primaryWorktreeOutlivesItsCreatorButPendingCreationStillBlocksCleanup(creationPending: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func primaryWorktreeOutlivesItsCreatorButPendingCreationStillBlocksCleanup(creationPending: Bool, interrupted: Bool) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         var parent = ManagedAgent(name: "Creator", provider: .codex, parent: nil)
         parent.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
@@ -102,6 +103,7 @@ struct PrimaryAgentLifecycleTests {
         primary.parentManagedAgentID = parent.id
         primary.isPrimary = true
         primary.launchTargetWorktree = "/repo/child"
+        if interrupted { primary.sessionEnded(reason: "Provider exited") }
         platform.state.repos[0].worktrees[0].agents = [parent]
         if creationPending {
             platform.state.repos[0].worktrees[0].agents.append(primary)
@@ -113,7 +115,7 @@ struct PrimaryAgentLifecycleTests {
         }
         let response = await AgentControl.handle(.init(action: .close, callerWorktree: "/repo",
             agentID: parent.id, completionID: completion.id), platform: platform)
-        if creationPending {
+        if creationPending || interrupted {
             #expect(response == .error(AgentControlError.activeChildren.localizedDescription))
             #expect(platform.closedAgentSlots.isEmpty)
         } else {
@@ -121,5 +123,59 @@ struct PrimaryAgentLifecycleTests {
             #expect(platform.state.worktree(forPath: "/repo/child")?.agents.first?.status == .running)
             #expect(platform.state.worktree(forPath: "/repo/child")?.agents.first?.completion == nil)
         }
+    }
+
+    @Test func closingLegacyPrimaryDoesNotPromoteAnAdditionalAgentOrReleaseItsCreator() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        var original = ManagedAgent(name: "Original primary", provider: .codex, parent: nil)
+        original.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
+        var creator = ManagedAgent(name: "Creator", provider: .codex, parent: nil)
+        creator.nativeAgentID = "codex-123456789abc"
+        let creatorCompletion = try creator.finish(assignment: creator.assignmentID, result: "Done")
+        var additional = ManagedAgent(name: "Additional", provider: .codex,
+            parent: .init(member: "creator", worktree: "/repo/creator", runtime: "codex", agentID: creator.nativeAgentID))
+        additional.parentManagedAgentID = creator.id
+        additional.paneSlotID = PaneSlotID()
+        platform.state.repos[0].worktrees[0].agents = [original, additional]
+        #expect(!platform.state.repos[0].worktrees[0].isPrimaryAgent(additional))
+        let originalCompletion = try original.finish(assignment: original.assignmentID, result: "User ended primary")
+        try original.beginClose(completion: originalCompletion.id)
+        original.didClose()
+        platform.state.repos[0].worktrees[0].agents[0] = original
+        #expect(!platform.state.repos[0].worktrees[0].isPrimaryAgent(additional))
+        var creatorTree = WorktreeEntry(path: "/repo/creator", branch: "creator", state: .running)
+        creator.paneSlotID = creatorTree.splitTree.allLeaves.first
+        creatorTree.agents = [creator]
+        platform.state.repos[0].worktrees.append(creatorTree)
+        let response = await AgentControl.handle(.init(action: .close, callerWorktree: creatorTree.path,
+            agentID: creator.id, completionID: creatorCompletion.id), platform: platform)
+        #expect(response == .error(AgentControlError.activeChildren.localizedDescription))
+    }
+
+    @Test func turnGuidanceRejectsOtherNativeAgentsAndProviders() throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        var primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil)
+        primary.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
+        primary.nativeAgentID = "codex-123456789abc"
+        platform.state.repos[0].worktrees[0].agents = [primary]
+        #expect(AgentControl.currentSessionInstructions(path: "/repo", agentID: "codex-abcdef123456",
+            paneSessionName: platform.paneSession, provider: .codex, platform: platform).isEmpty)
+        #expect(AgentControl.currentSessionInstructions(path: "/repo", agentID: primary.nativeAgentID,
+            paneSessionName: platform.paneSession, provider: .claude, platform: platform).isEmpty)
+        #expect(AgentControl.currentSessionInstructions(path: "/repo", agentID: nil,
+            paneSessionName: platform.paneSession, provider: .codex, platform: platform).contains("primary agent"))
+    }
+
+    @Test(arguments: [false, true])
+    func restartingTheProviderPreservesItsRole(primary: Bool) throws {
+        var agent = ManagedAgent(name: "Resume", provider: .codex, parent: nil)
+        agent.isPrimary = primary
+        agent.providerSessionID = "saved-conversation"
+        let completion = try agent.finish(assignment: agent.assignmentID, result: "User finished")
+        try agent.beginClose(completion: completion.id)
+        agent.didClose()
+        try agent.restartConversation()
+        #expect(agent.isPrimary == primary)
+        #expect(agent.launchPrompt(nil).contains("graftty agent finish") == !primary)
     }
 }

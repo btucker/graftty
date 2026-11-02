@@ -147,7 +147,7 @@ After a parent restart, recover obligations with `graftty agent list --parent <n
 
 Agent commands resolve the terminal's assigned worktree before the current directory. Changing directory does not transfer an assignment or its cleanup ownership.
 
-Before closing your own assignment, handle outstanding children. An unavailable parent leaves results and cleanup pending for recovery or user action. Do not send routine acknowledgements or repeatedly poll an active child.
+Before closing your own assignment, handle outstanding additional agents and completion acknowledgments. An ongoing primary in its own worktree stays open and does not block its creator's cleanup. An unavailable parent leaves results and cleanup pending for recovery or user action. Do not send routine acknowledgements or repeatedly poll an active child.
 
 Read only the reference relevant to the operation:
 

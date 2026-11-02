@@ -9,9 +9,11 @@ public extension WorktreeEntry {
     func isPrimaryAgent(_ agent: ManagedAgent) -> Bool {
         guard agent.launchTargetWorktree == nil || agent.launchTargetWorktree == path else { return false }
         if let primary = agent.isPrimary { return primary }
-        let local = agents.filter { $0.launchTargetWorktree == nil || $0.launchTargetWorktree == path }
-        let first = agent.status == .closed ? local.first : local.first { $0.status != .closed }
-        return first?.id == agent.id
+        // Durable record order preserves the original role after a legacy
+        // primary closes. Tab order and current liveness must not promote a child.
+        return agents.first {
+            $0.launchTargetWorktree == nil || $0.launchTargetWorktree == path
+        }?.id == agent.id
     }
 
     /// Mutate the outcome and binding in the same transaction that removes a
