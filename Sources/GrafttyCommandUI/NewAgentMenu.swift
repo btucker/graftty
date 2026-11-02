@@ -22,7 +22,8 @@ public struct NewAgentMenu: View {
         } label: {
             Label(launching ? "Starting agent…" : "New agent", systemImage: "plus")
                 #if os(iOS)
-                .frame(minWidth: 44, minHeight: 44)
+                // Native menu styling can inset the accessible bounds by a device pixel.
+                .frame(minWidth: 48, minHeight: 48)
                 #endif
         }
         .disabled(launching)
