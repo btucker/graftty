@@ -221,16 +221,24 @@ extension GrafttyApp {
 
         guard let repoIdx = currentIndex() else { return }
 
-        // (h) Preserve saved order and state across relocated and stale entries,
-        // then append newly discovered worktrees as Tasks.
+        // (h) Merge the snapshot's path decisions into live worktrees by ID.
+        // Discovery and repair may have suspended while panes, order, or
+        // membership changed; copying `pre` here would undo those edits.
+        let currentRepo = appState.wrappedValue.repos[repoIdx]
+        let selectedID = currentRepo.worktrees.first {
+            $0.path == appState.wrappedValue.selectedWorktreePath
+        }?.id
         appState.wrappedValue.repos[repoIdx].worktrees = RepoRelocator.relocatedWorktrees(
-            repo: pre, decision: finalDecision, discovered: discovered
+            repo: currentRepo, decision: finalDecision, discovered: discovered
         )
 
-        // (i) Update selection to the relocated path (decision already
-        // mapped old→new or nil'd it when the selected worktree went
-        // stale).
-        appState.wrappedValue.selectedWorktreePath = finalDecision.newSelectedWorktreePath
+        // (i) Resolve the latest selection by its current identity. A new row
+        // can reuse a removed row's path without inheriting its stale decision.
+        if let carried = finalDecision.carriedForward.first(where: { $0.existingID == selectedID }) {
+            appState.wrappedValue.selectedWorktreePath = carried.newPath
+        } else if finalDecision.goneStale.contains(where: { $0.existingID == selectedID }) {
+            appState.wrappedValue.selectedWorktreePath = nil
+        }
 
         // (j) Install fresh watchers at the new paths. Matches
         // `startup()`'s initial watcher-install loop exactly so the

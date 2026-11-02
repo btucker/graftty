@@ -38,12 +38,15 @@ public enum RepoRelocator {
         public let newSelectedWorktreePath: String?
     }
 
-    /// Applies a final relocation decision, preserving saved order and each existing entry's state.
+    /// Merges a final decision into the current repo, which may have changed since discovery began.
+    /// Only relocation fields change on surviving identities. Concurrent additions are retained
+    /// unless they duplicate a surviving relocation destination.
     public static func relocatedWorktrees(
         repo: RepoEntry, decision: Decision, discovered: [DiscoveredWorktree], now: Date = Date()
     ) -> [WorktreeEntry] {
         let carriedByID = Dictionary(uniqueKeysWithValues: decision.carriedForward.map { ($0.existingID, $0) })
         let staleIDs = Set(decision.goneStale.map(\.existingID))
+        let survivingDestinations = Set(repo.worktrees.compactMap { carriedByID[$0.id]?.newPath })
         var worktrees: [WorktreeEntry] = []
         for var existing in repo.worktrees {
             if let carried = carriedByID[existing.id] {
@@ -51,13 +54,18 @@ public enum RepoRelocator {
                 existing.branch = carried.branch
             } else if staleIDs.contains(existing.id) {
                 existing.markStale(at: now)
-            } else {
+            } else if survivingDestinations.contains(existing.path) {
+                // Concurrent discovery may have adopted this moved worktree
+                // under a fresh ID. Its surviving original owns the destination.
                 continue
             }
             worktrees.append(existing)
         }
-        let carriedPaths = Set(decision.carriedForward.map(\.newPath))
-        for entry in discovered where !carriedPaths.contains(entry.path) {
+        // Reserve even removed identities' destinations so discovery cannot resurrect them.
+        // Current additions also reserve their paths, preserving their identity and state.
+        var representedPaths = Set(decision.carriedForward.map(\.newPath))
+        representedPaths.formUnion(worktrees.map(\.path))
+        for entry in discovered where representedPaths.insert(entry.path).inserted {
             worktrees.append(WorktreeEntry(path: entry.path, branch: entry.branch))
         }
         return WorktreeOrdering.staleLast(worktrees)
