@@ -1006,7 +1006,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.24** While admitted control-socket request handlers are suspended, the application shall start each additional admitted client's receive and handler deadline independently of those blocked workers so a fast request cannot expire while waiting to begin processing.
 
-**ATTN-2.25** The control-socket protocol shall keep every request and response type tag and field key stable across releases, and shall keep decoding the optional fields that older peers omit, so an older running application keeps serving a newer CLI.
+**ATTN-2.25** When control-socket peers run different releases, the protocol shall preserve every request and response type tag and field key, decode omitted optional fields with historical defaults, and treat unknown team-hook attention and sleep-activity strings as absent.
 
 **ATTN-2.26** When the application receives a legacy `team_message` request, it shall handle it as a normal-priority `team_send` with no caller agent ID.
 

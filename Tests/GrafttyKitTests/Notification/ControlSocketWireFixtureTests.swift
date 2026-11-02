@@ -8,7 +8,7 @@ import GrafttyProtocol
 /// below is a contract with released builds. A failure here means a wire
 /// change, not a stale fixture: keep the old spelling decodable instead of
 /// editing the expected JSON.
-@Suite("@spec ATTN-2.25: The control-socket protocol shall keep every request and response type tag and field key stable across releases, and shall keep decoding the optional fields that older peers omit, so an older running application keeps serving a newer CLI.")
+@Suite("@spec ATTN-2.25: When control-socket peers run different releases, the protocol shall preserve every request and response type tag and field key, decode omitted optional fields with historical defaults, and treat unknown team-hook attention and sleep-activity strings as absent.")
 struct ControlSocketWireFixtureTests {
     // Nested payloads mostly use synthesized Codable, so a Swift rename alone
     // changes their keys; they are frozen in full rather than spliced in.
@@ -60,6 +60,13 @@ struct ControlSocketWireFixtureTests {
                                                    messageAddress: "/r/wt", error: "boom")
     static let removeStatus = WorktreeRemoveStatus(operationID: "op", state: .failed, worktreePath: "/r/wt",
                                                    error: "dirty", forceAllowed: true, shortStatus: "M a")
+    static let hookWithRecap = TeamHookRequest(
+        callerWorktree: "/r", callerAgentID: "claude-1", runtime: .claude, event: .stop,
+        sessionID: "sess", paneSessionName: "s", attentionReason: .planReview, stopHookActive: true,
+        providerSleepActivity: .busy, turnID: "turn-1",
+        fallbackReport: AttentionFileRecapEvent(
+            worktree: "/r", agentID: "claude-1", recap: recap, reportedAt: Date(timeIntervalSinceReferenceDate: 0)))
+    static let frozenHookWithRecap = #"{"attention_reason":"plan_review","caller_agent_id":"claude-1","caller_worktree":"/r","event":"stop","fallback_report":{"agentID":"claude-1","recap":{"checkpoint":"Green","completed":"Tests pass","context":"Login","decisions":["JWT"],"emoji":"e1","emojiAlternatives":["e2"],"need":"Review","next":"Open PR","purposeChanged":true,"title":"Fix auth"},"reportedAt":0,"worktree":"/r"},"pane_session_name":"s","provider_sleep_activity":"busy","runtime":"claude","session_id":"sess","stop_hook_active":true,"turn_id":"turn-1","type":"team_hook"}"#
 
     static func json<T: Encodable>(_ value: T) throws -> String {
         let encoder = JSONEncoder()
@@ -119,6 +126,7 @@ struct ControlSocketWireFixtureTests {
                        sessionID: "sess", paneSessionName: "s", attentionReason: .planReview, stopHookActive: true,
                        providerSleepActivity: .busy),
              #"{"attention_reason":"plan_review","caller_agent_id":"claude-1","caller_worktree":"/r","event":"permission-request","pane_session_name":"s","provider_sleep_activity":"busy","runtime":"claude","session_id":"sess","stop_hook_active":true,"type":"team_hook"}"#),
+            (.teamHook(hookWithRecap), frozenHookWithRecap),
             (.providerActivity(callerWorktree: "/r", runtime: .codex, sessionID: "sess", paneSessionName: "s", activity: .idle),
              #"{"caller_worktree":"/r","pane_session_name":"s","provider_sleep_activity":"idle","runtime":"codex","session_id":"sess","type":"provider_activity"}"#),
             (.attentionReport(callerWorktree: "/r", callerAgentID: "codex-1", recap: recap),
@@ -218,6 +226,72 @@ struct ControlSocketWireFixtureTests {
     @Test func frozenRequestJSONDecodes() throws {
         for (message, frozen) in try Self.requests() {
             #expect(try JSONDecoder().decode(NotificationMessage.self, from: Data(frozen.utf8)) == message)
+        }
+    }
+
+    @Test(arguments: ["attention_reason", "provider_sleep_activity", "both"])
+    func unknownHookEnumStringsPreserveRequest(field: String) throws {
+        var fields = try #require(JSONSerialization.jsonObject(with: Data(Self.frozenHookWithRecap.utf8))
+            as? [String: Any])
+        var expected = Self.hookWithRecap
+        if field == "attention_reason" || field == "both" {
+            fields["attention_reason"] = "future_prompt"
+            expected.attentionReason = nil
+        }
+        if field == "provider_sleep_activity" || field == "both" {
+            fields["provider_sleep_activity"] = "waiting"
+            expected.providerSleepActivity = nil
+        }
+        let data = try JSONSerialization.data(withJSONObject: fields)
+        #expect(try JSONDecoder().decode(TeamHookRequest.self, from: data) == expected)
+        let message = try JSONDecoder().decode(NotificationMessage.self, from: data)
+        #expect(message == .teamHook(expected))
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(message)) == message)
+    }
+
+    @Test func knownAndNullHookEnumsPreserveRequest() throws {
+        let reasons: [AgentHookAttentionReason?] = [nil, .permission, .question, .planReview]
+        let activities: [ProviderSleepActivity?] = [nil, .unknown, .busy, .idle]
+        for reason in reasons {
+            for activity in activities {
+                var fields = try #require(JSONSerialization.jsonObject(with: Data(Self.frozenHookWithRecap.utf8))
+                    as? [String: Any])
+                fields["attention_reason"] = reason.map { $0.rawValue as Any } ?? NSNull()
+                fields["provider_sleep_activity"] = activity.map { $0.rawValue as Any } ?? NSNull()
+                var expected = Self.hookWithRecap
+                expected.attentionReason = reason
+                expected.providerSleepActivity = activity
+                let data = try JSONSerialization.data(withJSONObject: fields)
+                #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == .teamHook(expected))
+            }
+        }
+    }
+
+    @Test(arguments: ["attention_reason", "provider_sleep_activity", "caller_worktree", "runtime", "event",
+                      "caller_agent_id", "session_id", "pane_session_name", "stop_hook_active", "turn_id",
+                      "fallback_report"])
+    func malformedHookFieldsStillThrow(field: String) throws {
+        let malformedValues: [Any] = field == "stop_hook_active" ? [42, "true", [], [:]] : [42, true, [], [:]]
+        for malformed in malformedValues {
+            var fields = try #require(JSONSerialization.jsonObject(with: Data(Self.frozenHookWithRecap.utf8))
+                as? [String: Any])
+            fields[field] = malformed
+            let data = try JSONSerialization.data(withJSONObject: fields)
+            #expect(throws: DecodingError.self) { try JSONDecoder().decode(NotificationMessage.self, from: data) }
+        }
+    }
+
+    @Test(arguments: ["caller_worktree", "runtime", "event"])
+    func requiredHookFieldsStillThrow(field: String) throws {
+        let invalidValues: [Any?] = [nil, NSNull(), "future_value"]
+        for invalid in invalidValues {
+            // Any string is a valid caller path; only enum strings can be unknown.
+            if field == "caller_worktree", invalid is String { continue }
+            var fields = try #require(JSONSerialization.jsonObject(with: Data(Self.frozenHookWithRecap.utf8))
+                as? [String: Any])
+            fields[field] = invalid
+            let data = try JSONSerialization.data(withJSONObject: fields)
+            #expect(throws: DecodingError.self) { try JSONDecoder().decode(NotificationMessage.self, from: data) }
         }
     }
 
