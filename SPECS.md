@@ -1752,9 +1752,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-1.12** While the server is listening, the Settings pane shall render a **Base URL** row distinct from the diagnostic "Listening on" row. The Base URL is the HTTPS URL composed from the machine's MagicDNS FQDN (WEB-8.1) and the listening port — the URL a user copies to open the web client. It renders as a clickable `Link` opening the default browser, plus a copy button (`doc.on.doc`, accessible label "Copy URL") that writes to `NSPasteboard.general`. The "Listening on" row below is informational (which sockets are actually up) and must not be conflated with the Base URL. Plain selectable text is not sufficient for the Base URL — users were expected to triple-click, copy, then switch apps and paste (four steps for one ask).
 
-**WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
+**WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable or not answering status, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
 
 **WEB-1.15** While web access is enabled, the application shall query the Tailscale daemon off the main actor, so constructing the web server controller or applying a Web Access settings change returns without waiting for the daemon to respond.
+
+**WEB-1.16** When a LocalAPI request is cancelled, the application shall close its transport and finish with cancellation without waiting for the daemon's status, whois, or certificate receive timeout, while keeping socket I/O off the main actor and cooperative executor.
+
+**WEB-1.17** When a Tailscale status query fails with an unreachable socket, malformed response or invalid JSON, or HTTP 5xx, the application shall classify that attempt as transient; other HTTP errors and unrelated errors shall remain terminal.
+
+**WEB-1.18** When Web Access starts or stops a listener, the application shall await NIO lifecycle completion without blocking the main actor, close every partial bind on failure or cancellation, and allow the released port to be bound again.
+
+**WEB-1.19** When Web Access is disabled or reconfigured during bring-up or shutdown, the application shall cancel obsolete work, await its listener cleanup before replacement startup, and publish only the latest settings generation.
+
+**WEB-1.20** If a LocalAPI transport fails before its channel is initialized, then the application shall complete the request with a recoverable socket error and release all request resources.
+
+**WEB-1.21** While a LocalAPI request is pending, the application shall bound sending to two seconds and receive inactivity to two seconds for status and whois or ninety seconds for certificates, refreshing the receive deadline as bytes arrive.
+
+**WEB-1.22** When a LocalAPI request write completes, the application shall start the endpoint receive deadline on its event loop before resuming the caller's task, so executor delays cannot shorten certificate provisioning time.
 
 ### WEB-2.x — Authorization
 
@@ -1790,7 +1804,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-4.2** When the user disables web access, the application shall close all listening sockets and terminate all in-flight `zmx attach` children spawned for the web.
 
-**WEB-4.3** When the application quits, the application shall stop the server (same tear-down as 15.4.2) as part of normal shutdown.
+**WEB-4.3** When the application quits, the application shall await Web Access listener and session teardown before completing normal termination, while keeping the main actor responsive.
 
 **WEB-4.4** When a WebSocket connects, the application shall spawn one child `zmx attach --replay-grid <session>` whose PTY it owns, using the session naming and ZMX_DIR rules.
 
