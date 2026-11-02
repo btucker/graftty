@@ -262,6 +262,19 @@ struct CLIWorktreeCreationTests {
         #expect(result == mismatch)
     }
 
+    @Test("Remote creation explicitly requests the destination default agent")
+    func remoteCreationRequestsDefaultAgent() throws {
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other"])
+        let request = command.creationRequest(callerWorktree: "", names: ("fix", "fix"),
+            agentRuntime: nil, resolvedPrompt: "task\nnext line", operationID: "op-123")
+        guard case .remoteWorktree(let target, .createDefaultAgent(let options)) = request else {
+            Issue.record("Expected explicit default-agent creation"); return
+        }
+        #expect(target == "Studio" && options.project == "other")
+        #expect(options.agentPrompt == "task\nnext line" && options.operationID == "op-123")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(request)) == request)
+    }
+
     @Test("Remote create and polling requests preserve CLI options through socket serialization")
     func remoteCreationWireRoundTrip() throws {
         let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other", "--base", "origin/main", "--agent", "claude"])

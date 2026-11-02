@@ -289,13 +289,15 @@ struct WorktreeAdd: ParsableCommand {
         operationID: String? = nil
     ) -> NotificationMessage {
         if let remote {
-            return .remoteWorktree(target: remote, request: .create(RemoteWorktreeCreation(
+            let creation = RemoteWorktreeCreation(
                 callerWorktree: callerWorktree, project: project,
                 worktreeName: names.worktree, branchName: names.branch, existing: existing,
                 base: base, command: command ?? agentRuntime?.rawValue,
                 agentRuntime: agentRuntime, agentPrompt: resolvedPrompt,
                 operationID: operationID ?? UUID().uuidString.lowercased()
-            )))
+            )
+            return .remoteWorktree(target: remote, request: command == nil && agentRuntime == nil
+                ? .createDefaultAgent(creation) : .create(creation))
         }
         return .createWorktree(
             callerWorktree: callerWorktree,

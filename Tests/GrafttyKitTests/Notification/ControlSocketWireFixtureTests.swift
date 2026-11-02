@@ -109,6 +109,10 @@ struct ControlSocketWireFixtureTests {
              #"{"request":{"status":{"operationID":"op"}},"target":"Studio","type":"remote_worktree"}"#),
             (.remoteWorktree(target: "Studio", request: remoteOriginCreate),
              #"{"request":{"create":{"_0":{"branchName":"wt","callerWorktree":"/r","existing":false,"operationID":"op","origin":{"host":"git.example.com","path":"/srv/app.git","port":2222,"sshUser":"deploy","transport":"ssh"},"worktreeName":"wt"}}},"target":"Studio","type":"remote_worktree"}"#),
+            (.remoteWorktree(target: "Studio", request: .createDefaultAgent(.init(
+                callerWorktree: "/r", project: "app", worktreeName: "wt", branchName: "br", existing: false,
+                base: nil, command: nil, agentRuntime: nil, agentPrompt: "task", operationID: "op"))),
+             #"{"request":{"createDefaultAgent":{"_0":{"agentPrompt":"task","branchName":"br","callerWorktree":"/r","existing":false,"operationID":"op","project":"app","worktreeName":"wt"}}},"target":"Studio","type":"remote_worktree"}"#),
             (.addPane(path: "/r", direction: .down, command: "ls", agentRuntime: .codex, agentPrompt: "go"),
              #"{"agent_prompt":"go","agent_runtime":"codex","command":"ls","direction":"down","path":"/r","type":"add_pane"}"#),
             (.paneAgentCapability, #"{"type":"pane_agent_capability"}"#),

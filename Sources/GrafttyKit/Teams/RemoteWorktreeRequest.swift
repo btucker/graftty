@@ -3,37 +3,13 @@ import GrafttyProtocol
 
 public enum RemoteWorktreeRequest: Codable, Sendable, Equatable {
     case create(RemoteWorktreeCreation)
+    /// Older hosts reject this case instead of creating a shell-only worktree.
+    case createDefaultAgent(RemoteWorktreeCreation)
     case status(operationID: String)
-
-    // Preserve the released enum payload shape. Older hosts must reject
-    // default-agent creation rather than interpret it as a shell request.
-    private enum Wire: Codable {
-        case create(RemoteWorktreeCreation)
-        case createDefaultAgent(RemoteWorktreeCreation)
-        case status(operationID: String)
-    }
-
-    public init(from decoder: Decoder) throws {
-        switch try Wire(from: decoder) {
-        case .create(let request), .createDefaultAgent(let request): self = .create(request)
-        case .status(let operationID): self = .status(operationID: operationID)
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        let wire: Wire
-        switch self {
-        case .create(let request):
-            wire = request.command == nil && request.agentRuntime == nil
-                ? .createDefaultAgent(request) : .create(request)
-        case .status(let operationID): wire = .status(operationID: operationID)
-        }
-        try wire.encode(to: encoder)
-    }
 
     public var operationID: String {
         switch self {
-        case .create(let request): request.operationID
+        case .create(let request), .createDefaultAgent(let request): request.operationID
         case .status(let operationID): operationID
         }
     }
