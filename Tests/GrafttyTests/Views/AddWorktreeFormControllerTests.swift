@@ -35,12 +35,31 @@ struct AddWorktreeFormControllerTests {
         )
     }
 
-    @Test func newBranchModeRequiresWorktreeNameAndBranchName() {
+    @Test func blankNewBranchNamesCanBeGenerated() {
         let c = AddWorktreeFormController(initialWorktreeName: "")
-        #expect(c.canSubmit == false)  // empty worktree name
+        #expect(c.canSubmit)
+        #expect(c.selectedSelection == .createNew(name: ""))
         c.worktreeName = "wt"
+        #expect(!c.canSubmit) // An independently cleared branch still requires input.
         c.newBranchName = "wt"
         #expect(c.canSubmit == true)
+    }
+
+    @Test func generatedSubmissionRetainsAgentAndExistingBranchSource() async throws {
+        let form = AddWorktreeFormController(initialWorktreeName: "")
+        form.agent = .init(provider: "claude", taskDescription: "Fix login\nKeep sessions")
+        let fresh = try #require(await form.submission(repositoryName: "App", generate: { _ in "Fix Login" }))
+        #expect(fresh.worktree == "fix-login")
+        #expect(fresh.branch == .createNew(name: "fix-login"))
+        #expect(fresh.agent == form.agent)
+
+        form.branchMode = .existing
+        form.existingSelection = BranchPickerEntry(name: "feature/login", source: .remoteOnly,
+            lastCommitDate: Date(), mountedWorktreePath: nil, pr: nil)
+        let existing = try #require(await form.submission(repositoryName: "App", generate: { _ in "Fix Login" }))
+        #expect(existing.worktree == "fix-login")
+        #expect(existing.branch == .useExisting(name: "feature/login", source: .remoteOnly))
+        #expect(form.worktreeName.isEmpty)
     }
 
     @Test("@spec GIT-5.15: When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.")

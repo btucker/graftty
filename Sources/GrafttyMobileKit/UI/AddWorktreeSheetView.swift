@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GrafttyProtocol
+import GrafttyCommandUI
 import SwiftUI
 
 /// @spec REMOTE-13.10: When GrafttyMobile creates a worktree while the
@@ -29,6 +30,7 @@ public struct AddWorktreeSheetView: View {
     @State private var branchMirrorsWorktree: Bool = true
     @State private var branchMode: BranchMode = .newBranch
     @State private var isSubmitting: Bool = false
+    @State private var submissionTask: Task<Void, Never>?
     @State private var agent = WorktreeAgentConfiguration()
     @FocusState private var taskDescriptionFocused: Bool
 
@@ -111,7 +113,10 @@ public struct AddWorktreeSheetView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        submissionTask?.cancel()
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSubmitting {
@@ -124,6 +129,7 @@ public struct AddWorktreeSheetView: View {
                 }
             }
             .task { await loadRepos() }
+            .onDisappear { submissionTask?.cancel() }
         }
     }
 
@@ -154,7 +160,7 @@ public struct AddWorktreeSheetView: View {
                 }
             }
             Section("Worktree name") {
-                TextField("feature-xyz", text: $worktreeName)
+                TextField("Automatic if blank", text: $worktreeName)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .onChange(of: worktreeName) { _, new in
@@ -232,8 +238,9 @@ public struct AddWorktreeSheetView: View {
 
     private var canSubmit: Bool {
         guard !isSubmitting, selectedRepoPath != nil else { return false }
-        return !WorktreeNameSanitizer.trimForSubmit(worktreeName).isEmpty
-            && !WorktreeNameSanitizer.trimForSubmit(branchName).isEmpty
+        return WorktreeNameSuggestion.canSubmit(
+            worktreeName: worktreeName, branchName: branchName, existing: branchMode == .existing
+        )
     }
 
     enum RepositoryLoadError: Error {
@@ -329,37 +336,33 @@ public struct AddWorktreeSheetView: View {
               case .loaded(let repositories) = reposState,
               let repository = repositories.first(where: { $0.id == repoPath }) else { return }
         isSubmitting = true
-        let request = CreateWorktreeClient.Request(
-            repoPath: repoPath,
-            worktreeName: WorktreeNameSanitizer.trimForSubmit(worktreeName),
-            branchName: WorktreeNameSanitizer.trimForSubmit(branchName),
-            existing: branchMode == .existing,
-            agent: agent
-        )
-        onSubmit(Submission(
-            request: request,
-            repository: repository,
-            existingSource: request.existing
-                ? existingBranchSource(repositoryID: repoPath, branchName: request.branchName)
-                : nil
-        ))
-        dismiss()
-    }
-
-    private func existingBranchSource(
-        repositoryID: String,
-        branchName: String
-    ) -> RemoteRepositoryInfo.Branch.Source {
-        guard case .loaded(let repositories) = reposState else {
-            return .automatic
+        let configuration = agent
+        let existing = branchMode == .existing
+        let name = worktreeName
+        let branch = branchName
+        submissionTask = Task { @MainActor in
+            defer { isSubmitting = false }
+            do {
+                let names = try await WorktreeNameSuggestion.resolve(
+                    worktreeName: name, branchName: branch, existing: existing,
+                    repositoryName: repository.displayName, taskDescription: configuration.taskDescription
+                )
+                try Task.checkCancellation()
+                let request = CreateWorktreeClient.Request(
+                    repoPath: repoPath, worktreeName: names.worktree, branchName: names.branch,
+                    existing: existing, agent: configuration
+                )
+                onSubmit(Submission(
+                    request: request, repository: repository,
+                    existingSource: existing
+                        ? Self.existingBranchSource(repositoryID: repoPath, branchName: names.branch, repositories: repositories)
+                        : nil
+                ))
+                dismiss()
+            } catch {
+                // Name resolution only throws on cancellation. No request was sent.
+            }
         }
-        // Known branches use their advertised source. A missing or stale
-        // snapshot asks the owning Mac to resolve exact refs.
-        return Self.existingBranchSource(
-            repositoryID: repositoryID,
-            branchName: branchName,
-            repositories: repositories
-        )
     }
 }
 #endif

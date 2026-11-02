@@ -25,6 +25,7 @@ struct AddWorktreeSheet: View {
     @State private var isPullingDefaultBranch: Bool = false
     @State private var defaultBranchOfferDismissed: Bool = false
     @State private var errorMessage: String?
+    @State private var submissionTask: Task<Void, Never>?
 
     @FocusState private var worktreeFieldFocused: Bool
     @FocusState private var taskFieldFocused: Bool
@@ -57,7 +58,7 @@ struct AddWorktreeSheet: View {
                 GridRow {
                     Text("Worktree name:")
                         .foregroundStyle(.secondary)
-                    TextField("feature-xyz", text: $controller.worktreeName)
+                    TextField("Automatic if blank", text: $controller.worktreeName)
                         .textFieldStyle(.roundedBorder)
                         .focused($worktreeFieldFocused)
                         .onChange(of: controller.worktreeName) { _, new in
@@ -113,18 +114,20 @@ struct AddWorktreeSheet: View {
                                         }
                                     }
                                 ),
-                                onCommit: { Task { await submit() } }
+                                onCommit: { startSubmission() }
                             )
                         }
                     }
                 }
             }
+            .disabled(isSubmitting)
 
             Picker("Agent", selection: $controller.agent.provider) {
                 Text("Default agent").tag(String?.none)
                 Text("Codex").tag(Optional("codex"))
                 Text("Claude").tag(Optional("claude"))
             }
+            .disabled(isSubmitting)
             VStack(alignment: .leading, spacing: 6) {
                 Text("What do you want to do?").foregroundStyle(.secondary)
                 TextEditor(text: $controller.agent.taskDescription)
@@ -137,6 +140,7 @@ struct AddWorktreeSheet: View {
                 Text("Optional. Sent as the agent's first message.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            .disabled(isSubmitting)
 
             if shouldOfferDefaultBranchPull, let status = defaultBranchStatus {
                 VStack(alignment: .leading, spacing: 8) {
@@ -150,7 +154,7 @@ struct AddWorktreeSheet: View {
                         .disabled(isPullingDefaultBranch || isSubmitting)
                         Button("Create Anyway") {
                             defaultBranchOfferDismissed = true
-                            Task { await submit() }
+                            startSubmission()
                         }
                         .disabled(isPullingDefaultBranch || isSubmitting || !controller.canSubmit)
                     }
@@ -169,10 +173,13 @@ struct AddWorktreeSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { onCancel() }
+                Button("Cancel", role: .cancel) {
+                    submissionTask?.cancel()
+                    onCancel()
+                }
                     .keyboardShortcut(.cancelAction)
                 Button {
-                    Task { await submit() }
+                    startSubmission()
                 } label: {
                     if isSubmitting {
                         ProgressView().controlSize(.small)
@@ -186,6 +193,7 @@ struct AddWorktreeSheet: View {
         }
         .padding(20)
         .frame(width: 460)
+        .onDisappear { submissionTask?.cancel() }
         .onAppear {
             worktreeFieldFocused = true
             if !initialWorktreeName.isEmpty {
@@ -196,16 +204,23 @@ struct AddWorktreeSheet: View {
         }
     }
 
-    private func submit() async {
-        guard let selection = controller.selectedSelection else { return }
-        guard !shouldOfferDefaultBranchPull else { return }
+    private func startSubmission() {
+        guard controller.canSubmit, !isSubmitting, !isPullingDefaultBranch, !shouldOfferDefaultBranchPull else { return }
         errorMessage = nil
         isSubmitting = true
-        defer { isSubmitting = false }
-
-        let wt = WorktreeNameSanitizer.trimForSubmit(controller.worktreeName)
-        if let err = await onSubmit(wt, selection, controller.agent) {
-            errorMessage = err
+        submissionTask = Task { @MainActor in
+            defer { isSubmitting = false }
+            do {
+                guard let submission = try await controller.submission(repositoryName: repoDisplayName) else { return }
+                try Task.checkCancellation()
+                if let err = await onSubmit(submission.worktree, submission.branch, submission.agent) {
+                    errorMessage = err
+                }
+            } catch is CancellationError {
+                // Closing the sheet during generation must not create a worktree.
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

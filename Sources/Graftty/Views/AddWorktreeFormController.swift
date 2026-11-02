@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 
 /// State holder for `AddWorktreeSheet`. Owns the user's inputs across
 /// both branch modes (`newBranchName` for "New branch", `existingSelection`
@@ -42,9 +43,6 @@ public final class AddWorktreeFormController {
     }
 
     public var canSubmit: Bool {
-        guard !WorktreeNameSanitizer.trimForSubmit(worktreeName).isEmpty else {
-            return false
-        }
         return selectedSelection != nil
     }
 
@@ -52,10 +50,35 @@ public final class AddWorktreeFormController {
         switch branchMode {
         case .newBranch:
             let trimmed = WorktreeNameSanitizer.trimForSubmit(newBranchName)
-            return trimmed.isEmpty ? nil : .createNew(name: trimmed)
+            return WorktreeNameSuggestion.canSubmit(worktreeName: worktreeName, branchName: trimmed, existing: false)
+                ? .createNew(name: trimmed) : nil
         case .existing:
             guard let entry = existingSelection else { return nil }
             return .useExisting(name: entry.name, source: entry.source)
         }
+    }
+
+    @MainActor
+    func submission(
+        repositoryName: String,
+        generate: @escaping WorktreeNameSuggestion.Generator = WorktreeNameSuggestion.onDevice
+    ) async throws -> (worktree: String, branch: BranchSelection, agent: WorktreeAgentConfiguration)? {
+        guard let selection = selectedSelection else { return nil }
+        let configuration = agent
+        let existing: Bool
+        switch selection {
+        case .createNew: existing = false
+        case .useExisting: existing = true
+        }
+        let names = try await WorktreeNameSuggestion.resolve(
+            worktreeName: worktreeName, branchName: selection.branchName, existing: existing,
+            repositoryName: repositoryName, taskDescription: configuration.taskDescription, generate: generate
+        )
+        let branch: BranchSelection
+        switch selection {
+        case .createNew: branch = .createNew(name: names.branch)
+        case .useExisting: branch = selection
+        }
+        return (names.worktree, branch, configuration)
     }
 }
