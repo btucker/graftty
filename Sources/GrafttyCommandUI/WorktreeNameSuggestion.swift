@@ -25,6 +25,7 @@ public enum WorktreeNameSuggestion {
         existing: Bool = false,
         repositoryName: String,
         taskDescription: String,
+        reservedNames: Set<String> = [],
         timeout: Duration = .seconds(8),
         generate: @escaping Generator = onDevice
     ) async throws -> Names {
@@ -38,25 +39,64 @@ public enum WorktreeNameSuggestion {
                 """
             let reply: String?
             do {
-                reply = try await withThrowingTaskGroup(of: String?.self) { group in
-                    defer { group.cancelAll() }
-                    group.addTask { try await generate(prompt) }
-                    group.addTask {
-                        try await Task.sleep(for: timeout)
-                        return nil
-                    }
-                    return try await group.next() ?? nil
-                }
+                reply = try await Generation().reply(to: prompt, timeout: timeout, generate: generate)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 reply = nil
             }
             try Task.checkCancellation()
-            worktree = reply.flatMap(normalized) ?? "worktree-\(UUID().uuidString.prefix(8).lowercased())"
+            let reserved = Set(reservedNames.map { $0.lowercased() })
+            if let name = reply.flatMap(normalized), !reserved.contains(name) {
+                worktree = name
+            } else {
+                repeat {
+                    worktree = "worktree-\(UUID().uuidString.prefix(8).lowercased())"
+                } while reserved.contains(worktree)
+            }
         }
         let branch = WorktreeNameSanitizer.trimForSubmit(branchName)
         return Names(worktree: worktree, branch: branch.isEmpty && !existing ? worktree : branch)
+    }
+
+    /// Finish on the first result without waiting for an unresponsive model to acknowledge cancellation.
+    private actor Generation {
+        private var continuation: CheckedContinuation<String?, Error>?
+        private var tasks: [Task<Void, Never>] = []
+
+        func reply(to prompt: String, timeout: Duration, generate: @escaping Generator) async throws -> String? {
+            try Task.checkCancellation()
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    self.continuation = continuation
+                    tasks = [
+                        Task {
+                            do {
+                                try Task.checkCancellation()
+                                let reply = try await generate(prompt)
+                                finish(.success(reply))
+                            } catch {
+                                finish(.failure(error))
+                            }
+                        },
+                        Task {
+                            do { try await Task.sleep(for: timeout) } catch { return }
+                            finish(.success(nil))
+                        },
+                    ]
+                }
+            } onCancel: {
+                Task { await self.finish(.failure(CancellationError())) }
+            }
+        }
+
+        private func finish(_ result: Result<String?, Error>) {
+            guard let continuation else { return }
+            self.continuation = nil
+            tasks.forEach { $0.cancel() }
+            tasks.removeAll()
+            continuation.resume(with: result)
+        }
     }
 
     /// Model output is untrusted text, so it cannot supply path or ref syntax.

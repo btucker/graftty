@@ -62,6 +62,19 @@ struct AddWorktreeFormControllerTests {
         #expect(form.worktreeName.isEmpty)
     }
 
+    @Test func automaticNamesAvoidKnownBranchesAndMountedDirectories() async throws {
+        let form = AddWorktreeFormController(initialWorktreeName: "")
+        let entries = [BranchPickerEntry(name: "fix-login", source: .local, lastCommitDate: Date(),
+            mountedWorktreePath: "/repo/.worktrees/custom-directory", pr: nil)]
+        for name in ["fix-login", "custom-directory"] {
+            let submission = try #require(await form.submission(
+                repositoryName: "App", branchEntries: entries, generate: { _ in name }
+            ))
+            #expect(submission.worktree.hasPrefix("worktree-"))
+            #expect(submission.branch == .createNew(name: submission.worktree))
+        }
+    }
+
     @Test("@spec GIT-5.15: When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.")
     func pickingExistingBranchAutoFillsWorktreeName() {
         let c = AddWorktreeFormController(initialWorktreeName: "")

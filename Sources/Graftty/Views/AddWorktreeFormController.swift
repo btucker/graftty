@@ -61,6 +61,7 @@ public final class AddWorktreeFormController {
     @MainActor
     func submission(
         repositoryName: String,
+        branchEntries: [BranchPickerEntry] = [],
         generate: @escaping WorktreeNameSuggestion.Generator = WorktreeNameSuggestion.onDevice
     ) async throws -> (worktree: String, branch: BranchSelection, agent: WorktreeAgentConfiguration)? {
         guard let selection = selectedSelection else { return nil }
@@ -70,9 +71,16 @@ public final class AddWorktreeFormController {
         case .createNew: existing = false
         case .useExisting: existing = true
         }
+        var reservedNames = Set(branchEntries.map(\.name))
+        for entry in branchEntries {
+            if let path = entry.mountedWorktreePath {
+                reservedNames.insert(URL(fileURLWithPath: path).lastPathComponent)
+            }
+        }
         let names = try await WorktreeNameSuggestion.resolve(
             worktreeName: worktreeName, branchName: selection.branchName, existing: existing,
-            repositoryName: repositoryName, taskDescription: configuration.taskDescription, generate: generate
+            repositoryName: repositoryName, taskDescription: configuration.taskDescription,
+            reservedNames: reservedNames, generate: generate
         )
         let branch: BranchSelection
         switch selection {

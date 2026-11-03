@@ -345,7 +345,8 @@ public struct AddWorktreeSheetView: View {
             do {
                 let names = try await WorktreeNameSuggestion.resolve(
                     worktreeName: name, branchName: branch, existing: existing,
-                    repositoryName: repository.displayName, taskDescription: configuration.taskDescription
+                    repositoryName: repository.displayName, taskDescription: configuration.taskDescription,
+                    reservedNames: Set(repository.branches.map(\.name))
                 )
                 try Task.checkCancellation()
                 let request = CreateWorktreeClient.Request(

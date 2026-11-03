@@ -211,7 +211,9 @@ struct AddWorktreeSheet: View {
         submissionTask = Task { @MainActor in
             defer { isSubmitting = false }
             do {
-                guard let submission = try await controller.submission(repositoryName: repoDisplayName) else { return }
+                guard let submission = try await controller.submission(
+                    repositoryName: repoDisplayName, branchEntries: branchEntries
+                ) else { return }
                 try Task.checkCancellation()
                 if let err = await onSubmit(submission.worktree, submission.branch, submission.agent) {
                     errorMessage = err
