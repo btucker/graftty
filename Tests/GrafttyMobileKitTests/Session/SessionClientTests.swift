@@ -298,7 +298,7 @@ struct SessionClientTests {
                 "Replay must position R in the leader's last column: \(client.session.readViewportText()?.debugDescription ?? "nil")")
     }
 
-    @Test("@spec IOS-4.60: While a mobile terminal's parser is behind by its backlog limit, the application shall hold further terminal output in the transport, while continuing to apply control frames that arrive ahead of that output.")
+    @Test("@spec IOS-4.60: While a mobile terminal's parser is behind by its backlog threshold, the application shall pace further terminal output with waits bounded to one second, while continuing to apply control frames that arrive ahead of that output.")
     func parserBacklogHoldsOutputUntilItClears() async throws {
         let ws = DelayedReceiveWS()
         let renderer = PagingRenderer()
@@ -326,6 +326,28 @@ struct SessionClientTests {
         #expect(client.session.pendingOutputByteCount > before)
     }
 
+    @Test("A parser that cannot clear its backlog still releases later ordered frames")
+    func parserBacklogTimeoutAllowsLaterControl() async throws {
+        let ws = DelayedReceiveWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, pagedRenderer: PagingRenderer())
+        primeViewport(client, columns: 120, rows: 50)
+        client.start()
+        defer { client.stop(); ws.fail(CancellationError()) }
+        try await waitUntil("initial receive") { ws.receiveCalls == 1 }
+        ws.deliver(.text(WebControlEnvelope.ownership(try ownershipSnapshot(
+            ownerClientID: DisplayClientID("desktop"), ownerKind: .mac, cols: 120, rows: 50)).encoded()))
+        try await waitUntil("ownership") { ws.receiveCalls == 2 }
+        client.outputBacklog.setBacklogged(true)
+        ws.deliver(.binary(Data("held".utf8)))
+        try await waitUntil("bounded parser wait", timeout: .seconds(5)) { ws.receiveCalls == 3 }
+        let clearedAt = ContinuousClock.now
+        await client.outputBacklog.waitUntilClear(timeout: .seconds(3))
+        #expect(clearedAt.duration(to: .now) < .seconds(1),
+            "A stale high-water state must clear when the native queue is below low-water")
+        ws.deliver(.text(WebControlEnvelope.grid(cols: 120, rows: 50).encoded()))
+        try await waitUntil("later control") { ws.receiveCalls == 4 }
+    }
+
     @Test("Backlogged output confirms the native grid only when it is about to parse")
     func parserBacklogWaitsBeforeConfirmingTheGrid() async throws {
         let ws = DelayedReceiveWS()
@@ -348,8 +370,8 @@ struct SessionClientTests {
         #expect(renderer.resized == [.init(cols: 100, rows: 30)])
     }
 
-    @Test("A real parser behind on title updates keeps its backlog bounded", .timeLimit(.minutes(2)))
-    func realParserBacklogStaysBounded() async throws {
+    @Test("Pacing reduces the native backlog during a title-update flood", .timeLimit(.minutes(2)), arguments: [false, true])
+    func realParserBacklogStaysBounded(staleClearCallback: Bool) async throws {
         let ws = DelayedReceiveWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
@@ -392,6 +414,7 @@ struct SessionClientTests {
         var peak = 0
         let start = ContinuousClock.now
         while fed < total {
+            if staleClearCallback { client.outputBacklog.setBacklogged(false) }
             ws.deliver(.binary(chunk))
             fed += chunk.count
             calls += 1
@@ -1074,6 +1097,7 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() },
                                    backoffSchedule: [0.01], pagedRenderer: renderer)
         let failedSession = client.session
+        let failedBacklog = client.outputBacklog
         let retained = RetainedMobilePane(client: client)
         let container = TerminalInputContainerView(frame: .zero)
         container.terminalView.configuration = .init(backend: .inMemory(failedSession))
@@ -1088,6 +1112,7 @@ struct SessionClientTests {
         try await waitUntil("replacement receive") { second.receiveCalls == 1 }
         #expect(first.closed)
         #expect(client.session !== failedSession)
+        #expect(client.outputBacklog !== failedBacklog)
         if operation == "checkpoint" {
             #expect(client.lastRestoreDiagnostic?.outcome == .timedOut)
         }

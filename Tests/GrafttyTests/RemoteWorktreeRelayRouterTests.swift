@@ -8,6 +8,31 @@ import Testing
 @Suite("Remote worktree one-hop relay")
 @MainActor
 struct RemoteWorktreeRelayRouterTests {
+    @Test("@spec REMOTE-13.32: When a paged relay reports checkpoint or grid dimensions, the application shall publish the size callback only after earlier output events have been consumed.", arguments: [false, true])
+    func pagedSizeCallbacksFollowQueuedOutput(checkpoint: Bool) async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        defer { Task { await stream.close() } }
+        let sizes = LockedRelaySizes()
+        stream.onPTYSize = { sizes.append(cols: $0, rows: $1) }
+        let change: PagedTerminalEvent = checkpoint
+            ? .checkpoint(.init(incarnation: 1, id: 2, cols: 91, rows: 17,
+                ready: Data("ready".utf8), hasPrimaryHistory: false, hasAlternateHistory: false))
+            : .grid(cols: 91, rows: 17)
+        client.deliver(.binary(Data("old grid".utf8)))
+        client.deliver(.text(try PagedTerminalEnvelope(event: change).encoded()))
+        client.deliverEnd(status: 0)
+        try await waitUntil { client.didReceiveEnd }
+        #expect(sizes.values().isEmpty)
+        var iterator = stream.events.makeAsyncIterator()
+        #expect(await iterator.next() == .output(Data("old grid".utf8)))
+        #expect(sizes.values().isEmpty)
+        #expect(await iterator.next() == change)
+        #expect(sizes.values() == [RelaySize(cols: 91, rows: 17)])
+        #expect(await iterator.next() == .ended(0))
+    }
+
     @Test("@spec REMOTE-13.29: When a relayed terminal receives a burst of small output frames within its byte and event limits, the application shall preserve all output in order and shall keep the attachment open until the source ends.")
     func pagedRelayKeepsSmallOutputBurstsConnected() async throws {
         let client = RelayWebSocketClient()
@@ -23,9 +48,9 @@ struct RemoteWorktreeRelayRouterTests {
         }
         client.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 91, rows: 17)).encoded()))
         client.deliver(.binary(Data("tail".utf8)))
-        try await waitUntil { client.didClose || sizes.values().last?.cols == 91 }
-        #expect(!client.didClose)
         client.deliverEnd(status: 0)
+        try await waitUntil { client.didReceiveEnd }
+        #expect(!client.didClose)
         var output = Data()
         var controls: [PagedTerminalEvent] = []
         for await event in stream.events {

@@ -74,7 +74,10 @@ Terminal output is paced from the receiver back to the host in three steps:
 
 1. On iOS, `SessionClient` stops taking output while the parser is more than
    3 MiB behind, resuming at 512 KiB. `InMemoryTerminalSession.receive` never
-   blocks, so this backlog would otherwise be invisible to the transport. Dense
+   blocks, so this backlog would otherwise be invisible to the transport. Each
+   wait lasts at most one second so a stuck parser cannot permanently block
+   later ordered control frames. This throttles a permanently stalled parser;
+   it does not impose a hard bound on its attached native queue. Dense
    title updates are the slowest measured input, because they pass through a
    mailbox that only the main thread drains. Measure with the main thread free:
    blocking in `waitForPendingOutput` drains that mailbox only every 10 ms, which

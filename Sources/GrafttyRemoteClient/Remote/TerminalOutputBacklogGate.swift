@@ -20,6 +20,13 @@ public final class TerminalOutputBacklogGate: @unchecked Sendable {
 
     public init() {}
 
+    /// Native callbacks can cross between threads after releasing their lock.
+    /// Recheck at admission so a late low-water callback cannot leave pacing
+    /// disabled for an entire busy turn. Preserve low-water hysteresis otherwise.
+    public func holdIfPendingBytes(_ bytes: Int, highWater: Int) {
+        if bytes >= highWater { setBacklogged(true) }
+    }
+
     public func setBacklogged(_ value: Bool) {
         let released = lock.withLock { () -> [Waiter] in
             backlogged = value

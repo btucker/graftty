@@ -9,6 +9,14 @@ import Testing
 
 @Suite("@spec REMOTE-9.14: When an SSH terminal receiver cancels or disconnects, the application shall release its pending receive work and discarded output, reject output after closure, and preserve final output before a deliberate remote exit.", .timeLimit(.minutes(1)))
 struct TerminalSessionClientBufferingTests {
+    @Test("Unsupported local output windows fall back without trapping", arguments: [-8, Int.min, 0, 1, Int.max])
+    func unsupportedLocalOutputWindow(window: Int) async throws {
+        let (client, channel) = try await makeClient(outputWindowBytes: window)
+        defer { client.close(); channel.close(promise: nil) }
+        client.deliverInboundBinary(Data([1]))
+        #expect(try await client.receive() == .binary(Data([1])))
+    }
+
     @Test func overflowDisconnectsAndReleasesQueuedBytes() async throws {
         let (client, channel) = try await makeClient()
         defer { client.close(); channel.close(promise: nil) }
@@ -96,6 +104,28 @@ struct TerminalSessionClientBufferingTests {
         }
     }
 
+    @Test("@spec REMOTE-9.22: When an auxiliary history channel closes before the terminal channel, the application shall preserve terminal output and apply the terminal channel's eventual exit status.", arguments: [false, true])
+    func historyCloseCannotDiscardFinalOutput(historyClosesFirst: Bool) async throws {
+        let (client, channel) = try await makeClient()
+        defer { client.close(); channel.close(promise: nil) }
+        client.deliverInboundBinary(Data([1, 2]))
+        client.deliverInboundText("control")
+        if historyClosesFirst { client.handleHistoryClose() }
+        client.handleSessionEnded(exitStatus: 7)
+        if !historyClosesFirst { client.handleHistoryClose() }
+        client.deliverInboundBinary(Data([3]))
+        client.handleChildClose()
+        #expect(try await client.receive() == .binary(Data([1, 2])))
+        #expect(try await client.receive() == .text("control"))
+        #expect(try await client.receive() == .binary(Data([3])))
+        do {
+            _ = try await client.receive()
+            Issue.record("Expected the primary terminal's exit status")
+        } catch TerminalSessionClient.ClientError.sessionEnded(let status) {
+            #expect(status == 7)
+        }
+    }
+
     @Test func canceledWaiterDoesNotConsumeSubsequentOutput() async throws {
         let (client, channel) = try await makeClient()
         defer { client.close(); channel.close(promise: nil) }
@@ -138,14 +168,15 @@ struct TerminalSessionClientBufferingTests {
         func mark() { lock.withLock { released = true } }
     }
 
-    private func makeClient() async throws -> (TerminalSessionClient, NIOAsyncTestingChannel) {
+    private func makeClient(outputWindowBytes: Int? = TerminalOutputCredit.clientWindowBytes) async throws -> (TerminalSessionClient, NIOAsyncTestingChannel) {
         let channel = NIOAsyncTestingChannel()
         let client = try await channel.eventLoop.submit {
             let key = Curve25519.Signing.PrivateKey()
             let publicKey = try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
             let handler = SSHClientSetup.makeHandler(clientKey: key,
                 expectedHostFingerprint: .init(of: publicKey), allocator: channel.allocator)
-            return TerminalSessionClient(parentChannel: channel, parentHandler: handler, sessionName: "buffer-test")
+            return TerminalSessionClient(parentChannel: channel, parentHandler: handler, sessionName: "buffer-test",
+                outputWindowBytes: outputWindowBytes)
         }.get()
         return (client, channel)
     }
@@ -153,6 +184,23 @@ struct TerminalSessionClientBufferingTests {
 
 @Suite("Terminal output backlog gate", .timeLimit(.minutes(1)))
 struct TerminalOutputBacklogGateTests {
+    @Test func admissionRechecksBytesAfterAStaleClearCallback() async throws {
+        let gate = TerminalOutputBacklogGate()
+        gate.setBacklogged(true)
+        gate.setBacklogged(false)
+        gate.holdIfPendingBytes(100, highWater: 100)
+        let completed = ReleaseFlagForBacklog()
+        let waiter = Task {
+            await gate.waitUntilClear(timeout: .seconds(30))
+            completed.mark()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(!completed.value)
+        gate.setBacklogged(false)
+        await waiter.value
+        #expect(completed.value)
+    }
+
     @Test func passesThroughWithoutABacklog() async {
         await TerminalOutputBacklogGate().waitUntilClear(timeout: .seconds(30))
     }
@@ -186,5 +234,12 @@ struct TerminalOutputBacklogGateTests {
         try await Task.sleep(for: .milliseconds(20))
         waiter.cancel()
         await waiter.value
+    }
+
+    private final class ReleaseFlagForBacklog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var released = false
+        var value: Bool { lock.withLock { released } }
+        func mark() { lock.withLock { released = true } }
     }
 }

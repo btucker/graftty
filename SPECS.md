@@ -2376,7 +2376,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.59** When a mobile terminal displays a Back badge, the application shall count pending requests only in the worktree list that Back opens, respecting its project scope and search query.
 
-**IOS-4.60** While a mobile terminal's parser is behind by its backlog limit, the application shall hold further terminal output in the transport, while continuing to apply control frames that arrive ahead of that output.
+**IOS-4.60** While a mobile terminal's parser is behind by its backlog threshold, the application shall pace further terminal output with waits bounded to one second, while continuing to apply control frames that arrive ahead of that output.
 
 ### IOS-5.x — Multi-pane layout
 
@@ -3492,6 +3492,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.21** If a host does not support negotiated output windows, then a paused terminal client shall remain attached under SSH flow control and receive all of its output once it resumes.
 
+**REMOTE-9.22** When an auxiliary history channel closes before the terminal channel, the application shall preserve terminal output and apply the terminal channel's eventual exit status.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -3661,6 +3663,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.30** If a worktree snapshot carries an attention source or timestamp without attention text, then the application shall treat the worktree as having no worktree-scoped attention.
 
 **REMOTE-13.31** When a client sends a worktree-management request over a remote host link, it shall open a dedicated worktree-management channel for that request and close the channel whether the open, the send, or neither fails.
+
+**REMOTE-13.32** When a paged relay reports checkpoint or grid dimensions, the application shall publish the size callback only after earlier output events have been consumed.
 
 ### REMOTE-14.x — Shared project navigation
 

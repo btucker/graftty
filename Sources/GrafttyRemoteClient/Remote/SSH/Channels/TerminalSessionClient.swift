@@ -94,7 +94,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.sessionName = sessionName
-        self.outputWindowBytes = outputWindowBytes
+        self.outputWindowBytes = outputWindowBytes.flatMap { TerminalOutputCredit.parseWindow(String($0)) }
     }
 
     func setHistorySetupTask(_ task: Task<Void, Never>) {
@@ -534,11 +534,11 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         return OutputFlow(reads: reads, acknowledgement: acknowledgement)
     }
 
-    /// The history channel can close first when its terminal exits. Let the
-    /// terminal's own close finish delivering that terminal's final output.
+    /// The history transport can close before the terminal's exit status even
+    /// arrives. The host binds a history failure to closing the primary channel,
+    /// so only that primary close may decide whether to discard final output.
     func handleHistoryClose() {
-        guard lock.withLock({ pendingExit == nil }) else { return }
-        handleChildClose()
+        lock.withLock { historyChannel = nil }
     }
 
     func handleChildClose() {

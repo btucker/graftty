@@ -399,7 +399,20 @@ final class RelayedTerminalByteStream:
     GrafttyKit.TerminalSizeReporting,
     @unchecked Sendable {
     let inboundBytes: AsyncStream<Data>
-    fileprivate let pagedEvents: AsyncStream<PagedTerminalEvent>
+    fileprivate var pagedEvents: AsyncStream<PagedTerminalEvent> {
+        let buffer = pagedBuffer
+        return AsyncStream(unfolding: { [self] in
+            guard let event = await buffer.next() else { return nil }
+            // The host requests this event only after forwarding earlier
+            // output. Size callbacks must respect that same ordering.
+            switch event {
+            case .checkpoint(let checkpoint): reportPTYSize(cols: checkpoint.cols, rows: checkpoint.rows)
+            case .grid(let cols, let rows): reportPTYSize(cols: cols, rows: rows)
+            default: break
+            }
+            return event
+        }, onCancel: { buffer.cancel() })
+    }
 
     private let client: any WebSocketClient & Sendable
     private let pagedBuffer = RelayedPagedEventBuffer()
@@ -431,7 +444,6 @@ final class RelayedTerminalByteStream:
     init(client: any WebSocketClient & Sendable, paged: Bool = false) {
         self.client = client
         let buffer = pagedBuffer
-        self.pagedEvents = AsyncStream(unfolding: { await buffer.next() }, onCancel: { buffer.cancel() })
         self.inboundBytes = AsyncStream(unfolding: {
             while let event = await buffer.next() {
                 if case .output(let bytes) = event { return bytes }
@@ -539,11 +551,6 @@ final class RelayedTerminalByteStream:
     /// stops this relay's reads, which paces the upstream host. Overflow stays
     /// fatal because skipping VT bytes would corrupt the replay.
     private func enqueuePagedEvent(_ event: PagedTerminalEvent) async -> Bool {
-        switch event {
-        case .checkpoint(let checkpoint): reportPTYSize(cols: checkpoint.cols, rows: checkpoint.rows)
-        case .grid(let cols, let rows): reportPTYSize(cols: cols, rows: rows)
-        default: break
-        }
         await pagedBuffer.waitForCapacity()
         switch pagedBuffer.enqueue(event) {
         case .accepted: return true
