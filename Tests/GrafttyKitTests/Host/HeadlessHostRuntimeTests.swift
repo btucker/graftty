@@ -792,7 +792,7 @@ struct HeadlessHostRuntimeTests {
         #expect(runtime.state.repos[0].worktrees[0].history?.inputs.count == 1)
     }
 
-    @Test("@spec LAYOUT-2.153: When a remote client changes a repository's worktree order mode, the owning host shall persist the mode and publish that order while preserving pinned order and the saved manual order.")
+    @Test("@spec LAYOUT-2.153: When a remote client changes a repository's worktree order mode, the owning host shall persist the mode for older clients while publishing temporary worktrees by recent activity and preserving pinned order and the saved manual order.")
     func remoteOrderPersistsAndPublishesHostOrder() async throws {
         let (root, config, initial) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -818,7 +818,7 @@ struct HeadlessHostRuntimeTests {
         let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(metadata)) as? [String: Any])
         #expect(json["worktreeOrderMode"] as? String == "recentActivity")
         #expect(await runtime.manage(try request("manual", repository: root.path)) == .ok)
-        #expect(runtime.snapshot().map(\.path) == [root.path, pinned.path, older.path, newer.path])
+        #expect(runtime.snapshot().map(\.path) == [root.path, pinned.path, newer.path, older.path])
         #expect(try AppState.load(from: root).repos[0].worktreeOrderMode == .manual)
         guard case .error = await runtime.manage(try request("recentActivity", repository: "/missing")) else {
             Issue.record("Unknown repository must fail"); return

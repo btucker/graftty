@@ -172,7 +172,6 @@ struct MainWindow: View {
                 onInitializeGit: initializeGitRepositoryInPlace,
                 onStopWorktree: stopWorktreeWithConfirmation,
                 onDeleteWorktree: deleteWorktreeWithConfirmation,
-                onMovePane: movePane,
                 onAddWorktree: addWorktree,
                 pendingAddWorktree: $pendingAddWorktree,
                 navigation: sidebarNavigation
@@ -1531,14 +1530,6 @@ struct MainWindow: View {
         }
     }
 
-    private func movePane(_ terminalID: PaneSlotID, to newPWD: String) {
-        PaneCommands.reassignPaneByPWD(
-            appState: $appState,
-            terminalManager: terminalManager,
-            terminalID: terminalID,
-            newPWD: newPWD
-        )
-    }
 
     private func stopWorktreeWithConfirmation(_ worktreePath: String) {
         for repoIdx in appState.repos.indices {

@@ -73,3 +73,16 @@ struct SidebarMergedRowsTests {
         #expect(merged.projects.map { merged.sections(for: $0.id).temporary.map(\.row.displayName) } == [["one"], ["two"]])
     }
 }
+
+@Suite("@spec LAYOUT-2.205: When the user right-clicks a terminal while the web server is listening, the application shall offer Copy web URL for that pane.")
+struct PaneWebURLTests {
+    @Test func composesURLForOwningSession() {
+        let slot = PaneSlotID()
+        var worktree = WorktreeEntry(path: "/r/w", branch: "w", state: .running, splitTree: SplitTree(root: .leaf(slot)))
+        let session = worktree.ensurePaneSession(for: slot)
+        let repos = [RepoEntry(path: "/r", displayName: "r", worktrees: [worktree])]
+        let url = SidebarView.paneWebURL(terminalID: slot, repos: repos, host: "mac.local", port: 8799)
+        #expect(url == WebURLComposer.url(session: ZmxLauncher.sessionName(for: session), host: "mac.local", port: 8799))
+        #expect(SidebarView.paneWebURL(terminalID: PaneSlotID(), repos: repos, host: "mac.local", port: 8799) == nil)
+    }
+}

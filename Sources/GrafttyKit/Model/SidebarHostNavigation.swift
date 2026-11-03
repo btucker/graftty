@@ -165,11 +165,10 @@ public enum SidebarHostNavigation {
         }
     }
 
-    /// Recent activity re-ranks only temporary worktrees. Never written back,
-    /// so pinned order stays stable and manual order survives mode changes.
+    /// Temporary worktrees always sort by recent activity. Never written back,
+    /// so an older client's saved order survives.
     public static func displayedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
-        guard repo.worktreeOrderMode == .recentActivity else { return canonicalWorktrees(in: repo) }
-        return pinnedWorktrees(in: repo)
+        pinnedWorktrees(in: repo)
             + WorktreeOrdering.byRecentActivity(repo.worktrees.filter { !isPinned($0, in: repo) })
     }
 
@@ -288,7 +287,7 @@ public enum SidebarHostNavigation {
               rows[source].path != repo.path,
               !rows[source].state.isInFlight, !rows[target].state.isInFlight,
               isPinned(rows[source], in: repo) == isPinned(rows[target], in: repo),
-              repo.worktreeOrderMode == .manual || isPinned(rows[source], in: repo),
+              isPinned(rows[source], in: repo),
               rows[target].path != repo.path || after else { return false }
         let sectionRows = rows.filter { isPinned($0, in: repo) == isPinned(rows[source], in: repo) }
         let nodes = SidebarWorktreeHierarchy.nodes(for: sectionRows, inRepoAtPath: repo.path, defaultBranch: nil)

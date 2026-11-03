@@ -131,8 +131,7 @@ struct PinnedAgentEditingTests {
                 isActive: false, displayName: name, isMainCheckout: name == "trunk",
                 theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
                 .frame(minHeight: 28)
-            PaneTitleRow(title: pinned ? "Durable role" : "Working on a task", isActiveWorktree: false,
-                isFocusedPane: false, isBusy: false, theme: .fallback, attentionStyle: nil, portBindings: [])
+            SidebarStatusLine(status: .whereWeAre(pinned ? "Durable role" : "Working on a task", isUnread: false), secondary: .secondary)
         }
         .padding(.vertical, 8)
     }

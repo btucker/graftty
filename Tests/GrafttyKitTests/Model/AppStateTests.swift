@@ -619,7 +619,7 @@ struct AppStateTests {
     }
 
     // MARK: indicesOfWorktreeContaining — pane-to-worktree reverse lookup
-    // used by the Move-to-worktree menu builders (PWD-1.4 / TERM-8.10).
+    // used by the Move-to-worktree menu builders (TERM-8.10).
 
     @Test func indicesOfWorktreeContaining_findsHostingWorktree() {
         let pane = PaneSlotID()

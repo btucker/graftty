@@ -29,10 +29,10 @@ struct RemoteWorktreeDragPayload: Codable, Transferable {
 }
 
 enum RemoteWorktreeReorderPolicy {
-    static func allows(_ worktree: WorktreePanes, editableProjectIDs: Set<String>, query: String, orderMode: WorktreeOrderMode? = nil) -> Bool {
+    static func allows(_ worktree: WorktreePanes, editableProjectIDs: Set<String>, query: String) -> Bool {
         query.isEmpty && !worktree.isMainCheckout && !worktree.state.isInFlight
             && editableProjectIDs.contains(SidebarProjection.projectID(worktree))
-            && (orderMode != .recentActivity || isPinned(worktree))
+            && isPinned(worktree)
     }
 
     static func areSiblings(_ source: WorktreePanes, _ target: WorktreePanes) -> Bool {
@@ -516,22 +516,9 @@ struct RemoteMacsSection: View {
         let identity = RemoteMacIdentity(remoteMac)
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
-        let agentLeaves = worktree.sidebarAgentLeaves(in: workspaceLayout(identity, worktree))
-        let groupsPanes = !showsMacHierarchy && !agentLeaves.isEmpty
         let context = contextForWorktree(worktree)
-        let reportPane = SidebarProjection.attentionPaneRoute(for: context.item, in: worktree)
-        let questionPane = context.question == nil ? nil : reportPane.flatMap { route in
-            agentLeaves.contains { $0.sessionName == route } ? route : nil
-        }
-        let pending = context.pending
-        let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]).filter { raw in
-            pending.contains { item in
-                guard item.occurrence == raw.occurrence else { return false }
-                if item.id == raw.id { return true }
-                guard let pane = item.paneID.flatMap(model.relayRouter.resolvePane), let rawPane = raw.paneID else { return false }
-                return pane.identity == identity && pane.worktreePath == worktree.path && pane.sessionName == rawPane
-            }
-        })
+        let status = SidebarRowStatus.resolve(context: context, worktree: worktree, isAsleep: false)
+        let counts = SidebarActivityCounts(items: context.pending)
         let projectID = SidebarProjection.projectID(worktree)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)
@@ -544,73 +531,21 @@ struct RemoteMacsSection: View {
             stats: sidebarStats(for: worktree),
             baseRef: worktree.stats?.baseRef,
             prBadge: worktree.prBadge,
-            attentionStyle: worktree.attentionText.map {
-                AttentionCapsuleStyle.from(
-                    text: $0,
-                    source: worktree.attentionSource
-                )
-            },
-            attentionCount: max(0, counts.attentionByWorktree[worktree.path, default: 0]
-                - agentLeaves.reduce(0) { $0 + counts.attentionByPane[$1.sessionName, default: 0] }),
+            attentionStyle: nil,
+            attentionCount: max(counts.attentionByWorktree[worktree.path, default: 0], status.needsAttention ? 1 : 0),
             project: project, projectIconData: projectIcons[projectID], hostLabel: hostLabel,
             brief: context.brief,
             onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) }
         )
         .frame(minHeight: 24)
         .contentShape(Rectangle())
-        let panes = Group {
-            if !agentLeaves.isEmpty {
-                ForEach(agentLeaves, id: \.sessionName) { leaf in
-                    Button {
-                        onSelectRemoteWorktree(remoteMac, worktree.path)
-                    } label: {
-                        PaneTitleRow(
-                            title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.presentationSessionName == leaf.sessionName }?.name),
-                            isActiveWorktree: isActive,
-                            isFocusedPane: false,
-                            isBusy: leaf.isBusy,
-                            theme: theme,
-                            attentionStyle: questionPane == leaf.sessionName ? nil : leaf.attentionText.map {
-                                AttentionCapsuleStyle.from(
-                                    text: $0,
-                                    source: leaf.attentionSource
-                                )
-                            },
-                            portBindings: (worktree.origin?.relayDepth ?? 0) == 0 ? worktree.portBindings?[leaf.sessionName] ?? [] : [],
-                            needsInput: leaf.attentionSource == .agentStop || questionPane == leaf.sessionName,
-                            agent: worktree.agents?.first { $0.presentationSessionName == leaf.sessionName },
-                            attentionCount: counts.attentionByPane[leaf.sessionName, default: 0],
-                            onOpenPort: { binding in
-                                Task {
-                                    do {
-                                        let url = try await model.forwardedPortURL(on: remoteMac, worktreePath: worktree.path,
-                                            sessionName: leaf.sessionName, binding: binding)
-                                        try Task.checkCancellation()
-                                        NSWorkspace.shared.open(url)
-                                    } catch is CancellationError {
-                                    } catch {
-                                        portError = "\(error.localizedDescription)\nOn a Mac host, check Settings → Device Pairing → Port forwarding. For a Linux host, rerun setup to enable localhost forwarding unless it was explicitly disabled."
-                                    }
-                                }
-                            }
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    if questionPane == leaf.sessionName {
-                        SidebarWorktreeQuestion(context: context).padding(.leading, 33).padding(.trailing, 8)
-                    }
-                }
-            }
-            if questionPane == nil {
-                SidebarWorktreeQuestion(context: context).padding(.leading, 33).padding(.trailing, 8)
-            }
-        }
+        let statusLine = SidebarStatusLine(status: status, secondary: theme.sidebarSecondaryText)
+            .padding(.leading, 33).padding(.trailing, 8).padding(.bottom, status == .none ? 0 : 3)
         let preview = AnyView(
             VStack(spacing: 0) {
                 heading
-                panes
+                statusLine
             }
-            .padding(.vertical, groupsPanes ? 8 : 0)
             .background((isActive ? theme.highlightedWorktreeBackground : .clear), in: RoundedRectangle(cornerRadius: 6))
             .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
         )
@@ -638,10 +573,8 @@ struct RemoteMacsSection: View {
                 return true
             }
 
-
-            panes
+            statusLine
         }
-        .padding(.vertical, groupsPanes ? 8 : 0)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
@@ -707,8 +640,7 @@ struct RemoteMacsSection: View {
 
     private func canReorder(_ worktree: WorktreePanes, on remoteMac: RemoteMac) -> Bool {
         model.connectionState(for: RemoteMacIdentity(remoteMac)) == .connected
-            && RemoteWorktreeReorderPolicy.allows(worktree, editableProjectIDs: editableProjectIDs, query: query,
-                orderMode: projects.first { $0.id == SidebarProjection.projectID(worktree) }?.worktreeOrderMode)
+            && RemoteWorktreeReorderPolicy.allows(worktree, editableProjectIDs: editableProjectIDs, query: query)
     }
 
     private func moveRemoteWorktree(_ source: WorktreePanes, relativeTo target: WorktreePanes, after: Bool, remoteMac: RemoteMac) {

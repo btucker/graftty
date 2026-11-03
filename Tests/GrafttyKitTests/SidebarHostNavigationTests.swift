@@ -218,8 +218,13 @@ struct SidebarHostNavigationTests {
     func worktreeMove() {
         let root = "/tmp/project"
         let main = WorktreeEntry(path: root, branch: "main", state: .closed)
-        let a = WorktreeEntry(path: root + "/.worktrees/a", branch: "a", state: .closed)
-        let b = WorktreeEntry(path: root + "/.worktrees/b", branch: "b", state: .closed)
+        var a = WorktreeEntry(path: root + "/.worktrees/a", branch: "a", state: .closed)
+        var b = WorktreeEntry(path: root + "/.worktrees/b", branch: "b", state: .closed)
+        var temporaryState = AppState(repos: [RepoEntry(path: root, displayName: "project", worktrees: [main, a, b])])
+        #expect(!SidebarHostNavigation.moveWorktree(in: &temporaryState, repositoryID: root, worktreeID: b.path, relativeTo: a.path, after: false),
+                "temporary worktrees have no manual order")
+        a.isPinned = true
+        b.isPinned = true
         var state = AppState(repos: [RepoEntry(path: root, displayName: "project", worktrees: [main, a, b])])
         let moved = SidebarHostNavigation.moveWorktree(in: &state, repositoryID: root, worktreeID: b.path, relativeTo: a.path, after: false)
         #expect(moved)
@@ -227,11 +232,13 @@ struct SidebarHostNavigationTests {
         let beforeMain = SidebarHostNavigation.moveWorktree(in: &state, repositoryID: root, worktreeID: b.path, relativeTo: main.path, after: false)
         #expect(!beforeMain)
         let stale = WorktreeEntry(path: root + "/gone", branch: "gone", state: .stale)
+        b.isPinned = false
+        a.isPinned = false
         let oldOrder = RepoEntry(path: root, displayName: "Project", worktrees: [stale, b, main, a])
         #expect(SidebarHostNavigation.canonicalWorktrees(in: oldOrder).map(\.branch) == ["main", "b", "a", "gone"])
     }
 
-    @Test("@spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.")
+    @Test("@spec LAYOUT-2.95: While the sidebar displays a repository, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, and preserve manual pinned order.")
     func recentActivityOrdering() throws {
         let root = "/tmp/project"
         let main = WorktreeEntry(path: root, branch: "main")

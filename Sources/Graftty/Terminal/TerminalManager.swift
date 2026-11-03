@@ -326,6 +326,8 @@ final class TerminalManager: ObservableObject {
     /// race window). The host (GrafttyApp) wires this against
     /// `AppState`; the surface menu (`SurfaceContextMenu`) calls it at
     /// menu-open time so the sampled state is fresh.
+    /// A web URL for this pane, or nil when the web server isn't listening.
+    var paneWebURL: ((PaneSlotID) -> String?)?
     var currentPaneMoveContext: ((PaneSlotID) -> PaneMoveMenuContext?)?
 
     /// Called when a surface emits a user close action. The host removes the

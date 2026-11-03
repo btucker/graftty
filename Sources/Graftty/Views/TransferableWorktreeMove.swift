@@ -63,22 +63,18 @@ enum WorktreeDropReorder {
 
 }
 
-/// One destination imports both payloads so pane drops cannot shadow reordering.
 enum WorktreeRowDrop: Transferable {
     case worktree(TransferableWorktreeMove)
-    case pane(TransferablePaneSlotID)
 
-    static let contentTypes = [TransferableWorktreeMove.contentType, TransferablePaneSlotID.contentType]
+    static let contentTypes = [TransferableWorktreeMove.contentType]
     static var transferRepresentation: some TransferRepresentation {
         ProxyRepresentation(importing: { WorktreeRowDrop.worktree($0 as TransferableWorktreeMove) })
-        ProxyRepresentation(importing: { WorktreeRowDrop.pane($0 as TransferablePaneSlotID) })
     }
 
     enum Result: Equatable {
         case rejected
         case reordered
         case pinned
-        case movePane(PaneSlotID, String)
     }
 
     func apply(repoID: RepoEntry.ID, targetWorktreeID: WorktreeEntry.ID,
@@ -97,11 +93,6 @@ enum WorktreeRowDrop: Transferable {
             }
             return WorktreeDropReorder.apply(payload, targetWorktreeID: targetWorktreeID,
                                              placement: placement, to: &state) ? .reordered : .rejected
-        case .pane(let payload):
-            let slot = PaneSlotID(id: payload.id)
-            guard let indices = state.indicesOfWorktreeContaining(terminalID: slot),
-                  state.repos[indices.repo].id == repoID else { return .rejected }
-            return .movePane(slot, target.path)
         }
     }
 }
@@ -113,12 +104,10 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     let allowsReordering: Bool
     let isInFlight: Bool
     @Binding var placement: WorktreeDropPlacement?
-    let onPaneTargeted: (Bool) -> Void
     let onDrop: (WorktreeRowDrop, WorktreeDropPlacement) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        !isInFlight && (info.hasItemsConforming(to: [TransferablePaneSlotID.contentType])
-            || (allowsReordering && info.hasItemsConforming(to: [TransferableWorktreeMove.contentType])))
+        !isInFlight && allowsReordering && info.hasItemsConforming(to: [TransferableWorktreeMove.contentType])
     }
 
     func dropEntered(info: DropInfo) {
@@ -138,9 +127,8 @@ private struct WorktreeRowDropDelegate: DropDelegate {
         guard validateDrop(info: info) else { clearIndicator(); return }
         let isWorktree = info.hasItemsConforming(to: [TransferableWorktreeMove.contentType])
         placement = isWorktree ? WorktreeDropPlacement.fromRowDropLocation(info.location, rowHeight: rowHeight) : nil
-        onPaneTargeted(!isWorktree)
     }
-    private func clearIndicator() { placement = nil; onPaneTargeted(false) }
+    private func clearIndicator() { placement = nil }
 
     func performDrop(info: DropInfo) -> Bool {
         clearIndicator()
@@ -186,8 +174,6 @@ struct WorktreeReorderTarget: ViewModifier {
     @Binding var appState: AppState
     var isEnabled: Bool = true
     let onSelect: () -> Void
-    let onMovePane: (PaneSlotID, String) -> Void
-    let onPaneTargeted: (Bool) -> Void
     @State private var rowHeight: CGFloat = 28
     @State private var placement: WorktreeDropPlacement?
 
@@ -202,7 +188,7 @@ struct WorktreeReorderTarget: ViewModifier {
     private var allowsReordering: Bool {
         guard isEnabled, let worktree,
               let repo = appState.repos.first(where: { $0.id == repoID }) else { return false }
-        return repo.worktreeOrderMode == .manual || SidebarHostNavigation.isPinned(worktree, in: repo)
+        return SidebarHostNavigation.isPinned(worktree, in: repo)
     }
 
     private func dragSource(_ content: Content) -> some View {
@@ -222,12 +208,10 @@ struct WorktreeReorderTarget: ViewModifier {
             .onDrop(of: WorktreeRowDrop.contentTypes, delegate: WorktreeRowDropDelegate(
                 rowHeight: rowHeight, allowsReordering: allowsReordering,
                 isInFlight: worktree?.state.isInFlight ?? true,
-                placement: $placement, onPaneTargeted: onPaneTargeted,
+                placement: $placement,
                 onDrop: { payload, destination in
-                    let result = payload.apply(repoID: repoID, targetWorktreeID: worktreeID, placement: destination,
+                    _ = payload.apply(repoID: repoID, targetWorktreeID: worktreeID, placement: destination,
                                   allowsReordering: allowsReordering, to: &appState)
-                    // Invoke pane moves after releasing the state binding's writeback.
-                    if case .movePane(let slot, let path) = result { onMovePane(slot, path) }
                 }))
             .overlay(alignment: placement == .after ? .bottom : .top) {
                 if placement != nil { Rectangle().fill(Color.accentColor).frame(height: 2).allowsHitTesting(false) }
@@ -259,14 +243,11 @@ extension View {
         worktreeID: WorktreeEntry.ID,
         appState: Binding<AppState>,
         isEnabled: Bool = true,
-        onSelect: @escaping () -> Void,
-        onMovePane: @escaping (PaneSlotID, String) -> Void,
-        onPaneTargeted: @escaping (Bool) -> Void
+        onSelect: @escaping () -> Void
     ) -> some View {
         modifier(WorktreeReorderTarget(
             repoID: repoID, worktreeID: worktreeID,
-            appState: appState, isEnabled: isEnabled, onSelect: onSelect,
-            onMovePane: onMovePane, onPaneTargeted: onPaneTargeted
+            appState: appState, isEnabled: isEnabled, onSelect: onSelect
         ))
     }
 }

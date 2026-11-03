@@ -792,23 +792,6 @@ final class RemoteMacsModel: ObservableObject {
         return (mac, repository)
     }
 
-    func canSetWorktreeOrder(for project: SidebarProject) -> Bool {
-        project.worktreeOrderMode != nil && editableRepositoryTarget(for: project) != nil
-    }
-
-    func setWorktreeOrder(_ mode: WorktreeOrderMode, for project: SidebarProject) async throws {
-        guard project.worktreeOrderMode != nil else { throw ProjectControlError.unsupportedOrder }
-        guard let route = editableRepositoryTarget(for: project) else { throw ProjectControlError.unavailable }
-        let response = try await sendWorktreeManagement(identity: route.identity,
-            request: .setWorktreeOrder(repositoryID: route.repositoryID, mode: mode))
-        switch response {
-        case .ok: return
-        case .error(_, let message, _, _): throw ProjectControlError.host(message)
-        default: throw ProjectControlError.unexpectedResponse
-        }
-    }
-
-    @discardableResult
     func refreshRepositories(on remoteMac: RemoteMac) async throws
         -> [RemoteRepositoryInfo] {
         let repositories = try await repositories(on: remoteMac)

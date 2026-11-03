@@ -73,7 +73,6 @@ struct SidebarView: View {
     let onInitializeGit: (RepoEntry) -> Void
     let onStopWorktree: (String) -> Void
     let onDeleteWorktree: (String, NSWindow) -> Void
-    let onMovePane: (PaneSlotID, String) -> Void
     /// Called when the user submits the add-worktree sheet. Returns nil
     /// on success, or a user-visible error string (typically git's
     /// stderr) on failure so the sheet can display it inline.
@@ -96,13 +95,6 @@ struct SidebarView: View {
 
     @Binding var pendingAddWorktree: AddWorktreeRequest?
 
-    /// Hovered drop-target row during a pane drag (PWD-1.5). Nil otherwise.
-    @State private var dropTargetWorktreeID: WorktreeEntry.ID?
-
-    /// Virtual folders start expanded. Only explicit user collapses are
-    /// retained, scoped by repository so same-named folders do not share UI
-    /// state across projects.
-    @State private var worktreeFolderExpansion = SidebarWorktreeFolderExpansion()
     @State private var remoteSectionExpansion = RemoteSidebarExpansion()
 
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
@@ -124,14 +116,6 @@ struct SidebarView: View {
 
     private var owner: WorktreeOrigin { iconStore.owner }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
-    private var orderedSidebarRepos: [RepoEntry] {
-        let positions = Dictionary(projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
-        return appState.repos.enumerated().sorted {
-            let left = positions[localProjectID($0.element), default: .max]
-            let right = positions[localProjectID($1.element), default: .max]
-            return left == right ? $0.offset < $1.offset : left < right
-        }.map(\.element)
-    }
     private var localWorktrees: [WorktreePanes] {
         sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles,
             liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
@@ -421,7 +405,6 @@ struct SidebarView: View {
                                 ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
                                     worktreeRows(section: .tasks, activityCounts: counts, remoteContexts: promotedContexts, merged: merged)
                                 }
-                                .emptySpaceMenu(selectedProjectEmptySpaceMenu)
                             } else {
                                 List { worktreeRows(section: .tasks, activityCounts: counts, remoteContexts: promotedContexts, merged: merged) }.listStyle(.sidebar)
                             }
@@ -451,6 +434,12 @@ struct SidebarView: View {
         .ignoresSafeArea(.container, edges: .top)
         }
         .task { await appStateChanges.observe { await refreshNavigation() } }
+        .onAppear {
+            terminalManager.paneWebURL = { [appState = $appState, webController] terminalID in
+                guard case let .listening(_, port) = webController.status, let host = webController.serverHostname else { return nil }
+                return Self.paneWebURL(terminalID: terminalID, repos: appState.wrappedValue.repos, host: host, port: port)
+            }
+        }
         .onChange(of: reportController.activeID) { _, id in
             if id != nil {
                 if frozenWorktreeOrder.isEmpty {
@@ -781,22 +770,6 @@ struct SidebarView: View {
             let repo = appState.repos.first { localProjectID($0) == project.id }
             let canAdd = canAddWorktree(to: project)
             if repo != nil || project.owner != nil {
-                let order = Group {
-                    SidebarWorktreeOrderControl(selection: Binding(
-                        get: {
-                            if let repo { return appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual }
-                            return project.worktreeOrderMode ?? .manual
-                        },
-                        set: { mode in
-                            if let repo { setWorktreeOrderMode(mode, for: repo) }
-                            else { setRemoteWorktreeOrderMode(mode, for: project) }
-                        }
-                    ), helpText: repo != nil || project.worktreeOrderMode != nil
-                        ? "Worktree order" : "Update Graftty on the owning host to change worktree order.",
-                        color: NSColor(theme.sidebarDimIcon))
-                    .disabled(repo == nil && (!remoteMacsModel.canSetWorktreeOrder(for: project) || remoteProjectOperationInProgress))
-                    .frame(width: 136, height: 28)
-                }
                 let add = Group {
                     if canAdd {
                         Button(action: addWorktreeToSelectedProject) {
@@ -813,13 +786,7 @@ struct SidebarView: View {
                         .accessibilityLabel("Add worktree to \(project.name)")
                     }
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { order; Spacer(minLength: 0); add }
-                    VStack(alignment: .leading, spacing: 6) {
-                        order
-                        add.frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                }
+                HStack(spacing: 8) { Spacer(minLength: 0); add }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
             }
@@ -862,26 +829,8 @@ struct SidebarView: View {
         }
     }
 
-    private func setRemoteWorktreeOrderMode(_ mode: WorktreeOrderMode, for project: SidebarProject) {
-        guard !remoteProjectOperationInProgress else { return }
-        remoteProjectOperationInProgress = true
-        navigationError = nil
-        Task { @MainActor in
-            defer { remoteProjectOperationInProgress = false }
-            do {
-                try await remoteMacsModel.setWorktreeOrder(mode, for: project)
-                await refreshNavigation()
-            } catch { navigationError = error.localizedDescription }
-        }
-    }
-
-    /// Renders a worktree and its pane children as one visually-unified
-    /// block. When the worktree is active, the whole block (worktree row +
-    /// every pane row underneath) gets a single rounded highlight — the
-    /// user can see at a glance which worktree they're "in" even when
-    /// multiple panes are listed. Inside the highlighted block, the
-    /// focused pane is distinguished by text emphasis rather than a
-    /// second background.
+    /// Renders a worktree and its status line as one block, with a single
+    /// rounded highlight when it's active.
     @ViewBuilder
     private func worktreeBlock(
         _ worktree: WorktreeEntry,
@@ -891,12 +840,8 @@ struct SidebarView: View {
         hostLabel: String? = nil
     ) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
-        let attention = SidebarAttentionLayout.layout(for: worktree)
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: displayName)
-        let isDropTarget = dropTargetWorktreeID == worktree.id
-        let paneLeaves = worktree.sidebarAgentSlots
-        let agentSessions = Set(paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) })
-        let groupsPanes = showsProjectRail && !paneLeaves.isEmpty
+        let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isAsleep: false)
         let projectID = localProjectID(repo)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: repo.id.uuidString, name: repo.displayName)
@@ -916,9 +861,8 @@ struct SidebarView: View {
                 repoPath: repo.path
             ),
             prBadge: prBadge,
-            attentionStyle: attention.worktreeCapsule,
-            attentionCount: max(0, activityCounts.attentionByWorktree[worktree.path, default: 0]
-                - agentSessions.reduce(0) { $0 + activityCounts.attentionByPane[$1, default: 0] }),
+            attentionStyle: nil,
+            attentionCount: max(activityCounts.attentionByWorktree[worktree.path, default: 0], status.needsAttention ? 1 : 0),
             project: project, projectIconData: iconStore.iconData(for: repo), hostLabel: hostLabel,
             identityMenu: worktree.path == repo.path ? nil : { anchor in
                 WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
@@ -932,78 +876,19 @@ struct SidebarView: View {
             SleepingWorktreeIndicator(state: terminalManager.worktreeSleepState, path: worktree.path)
         }
         .contentShape(Rectangle())
-        let paneRow: (PaneSlotID) -> PaneTitleRow = { terminalID in
-            let sessionName = worktree.paneSessions[terminalID]
-                .map(ZmxLauncher.sessionName(for:))
-            return PaneTitleRow(
-                title: SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: terminalID),
-                    agentName: worktree.agents.first { $0.presentationSlotID == terminalID }?.name),
-                isActiveWorktree: isActive,
-                isFocusedPane: false,
-                isBusy: AgentLivenessMerge.isPaneBusy(
-                    sessionName: sessionName,
-                    liveness: claudeSessionRegistry.livenessBySession),
-                theme: theme,
-                // The pane-scoped capsule (agent-stop icon, or
-                // notify/✓! text) renders directly; busy/idle no
-                // longer feed it.
-                attentionStyle: context.question != nil && context.questionPaneID == sessionName ? nil : attention.paneCapsules[terminalID],
-                portBindings: portBindings.bindings[terminalID] ?? [],
-                needsInput: worktree.paneAttention[terminalID]?.source == .agentStop || (context.question != nil && context.questionPaneID == sessionName),
-                agent: context.worktree.agents?.first { $0.id == worktree.agents.first(where: { $0.presentationSlotID == terminalID })?.id },
-                attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
-            )
-        }
-        let panes = ForEach(paneLeaves, id: \.self) { terminalID in
-            Button {
-                onSelect(worktree.path)
-            } label: {
-                paneRow(terminalID)
-            }
-            .buttonStyle(.plain)
-            .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
-            // PWD-1.4: pane rows are drag sources. The payload
-            // is a typed wrapper around the pane's UUID so
-            // SwiftUI's Transferable matching keeps unrelated
-            // drops from being mis-decoded as panes.
-            .draggable(TransferablePaneSlotID(id: terminalID.id))
-            .rightClickMenu {
-                buildPaneMenu(terminalID: terminalID)
-            }
-            if let route = context.questionPaneID,
-               worktree.paneSessions[terminalID].map(ZmxLauncher.sessionName(for:)) == route {
-                SidebarWorktreeQuestionTarget(context: context) {
-                    Task { _ = await openReport(context) }
-                }
-            }
-        }
         WorktreeBlock(
-            worktree: worktree, repoID: repo.id, isActive: isActive, isDropTarget: isDropTarget,
-            groupsPanes: groupsPanes, theme: theme, appState: $appState,
+            worktree: worktree, repoID: repo.id, isActive: isActive,
+            theme: theme, appState: $appState,
             reorderingEnabled: navigation.query.isEmpty,
             onSelect: { onSelect(worktree.path) },
-            onMovePane: onMovePane,
-            onPaneTargeted: { targeted in
-                if targeted { dropTargetWorktreeID = worktree.id }
-                else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
-            },
             menu: { anchor in buildWorktreeMenu(worktree, repo: repo, window: anchor.window) }
         ) {
             heading
-        } panes: {
-            panes
-            if Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
-                                          displayedPaneSessions: paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) }) {
-                SidebarWorktreeQuestionTarget(context: context) {
-                    Task { _ = await openReport(context) }
-                }
+        } status: {
+            SidebarWorktreeStatusTarget(status: status, secondary: theme.sidebarSecondaryText) {
+                Task { _ = await openReport(context) }
             }
         }
-    }
-
-    static func showsWorktreeQuestion(questionPaneID: String?, displayedPaneSessions: [String]) -> Bool {
-        guard let questionPaneID else { return true }
-        return !displayedPaneSessions.contains(questionPaneID)
     }
 
     /// Worktree row's right-click menu. Built as `NSMenu` (not a
@@ -1124,85 +1009,15 @@ struct SidebarView: View {
         }
     }
 
-    // MARK: Worktree order (LAYOUT-2.95)
-
-    private func setWorktreeOrderMode(_ mode: WorktreeOrderMode, for repo: RepoEntry) {
-        guard let index = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
-        appState.repos[index].worktreeOrderMode = mode
-    }
-
-    private static let worktreeOrderChoices = SidebarWorktreeOrderControl.choices
-
-    private func worktreeOrderPicker(_ repo: RepoEntry) -> some View {
-        Picker("Sort Worktrees", selection: Binding(
-            get: { appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual },
-            set: { setWorktreeOrderMode($0, for: repo) }
-        )) {
-            ForEach(Self.worktreeOrderChoices, id: \.mode) { Text($0.title).tag($0.mode) }
-        }
-    }
-
-    private func worktreeOrderMenu(_ repo: RepoEntry) -> NSMenu {
-        let menu = NSMenu()
-        for choice in Self.worktreeOrderChoices {
-            let item = ClosureMenuItem(title: choice.title) { setWorktreeOrderMode(choice.mode, for: repo) }
-            item.state = repo.worktreeOrderMode == choice.mode ? .on : .off
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    /// Right-click below the last row in the project column.
-    private func selectedProjectEmptySpaceMenu() -> NSMenu {
-        let menu = NSMenu()
-        guard navigation.query.isEmpty,
-              let repo = appState.repos.first(where: { localProjectID($0) == navigation.selectedProjectID }) else { return menu }
-        let sort = NSMenuItem(title: "Sort Worktrees", action: nil, keyEquivalent: "")
-        sort.submenu = worktreeOrderMenu(repo)
-        menu.addItem(sort)
-        return menu
-    }
 
     /// AppKit-side pane right-click menu (PWD-1.1 / PWD-1.3 / LAYOUT-2.7
     /// / TERM-8.10). The Move section is shared with the terminal-surface
     /// menu via `PaneMoveMenuBuilder`; the Copy-web-URL item is sidebar-
     /// only because the surface has no worktree-context-free way to know
     /// its session name without going through this same view tree.
-    private func buildPaneMenu(terminalID: PaneSlotID) -> NSMenu {
-        let menu = NSMenu()
-        let defaultBranches = PaneMoveMenuContext.defaultBranches(
-            for: appState.repos,
-            using: remoteBranchStore
-        )
-        if !appState.repos.flatMap(\.worktrees).contains(where: { $0.ownsManagedAgent(in: terminalID) }),
-           let context = PaneMoveMenuContext.resolve(
-            terminalID: terminalID,
-            appState: appState,
-            shellCwd: terminalManager.shellCwd(for: terminalID),
-            defaultBranchesByRepoPath: defaultBranches
-        ) {
-            for item in PaneMoveMenuBuilder.items(
-                terminalID: terminalID,
-                context: context,
-                onMove: onMovePane
-            ) {
-                menu.addItem(item)
-            }
-        }
-        if case let .listening(_, port) = webController.status,
-           let host = webController.serverHostname,
-           let indices = appState.indicesOfWorktreeContaining(terminalID: terminalID),
-           let sessionID = appState.repos[indices.repo].worktrees[indices.worktree].paneSessions[terminalID] {
-            menu.addItem(.separator())
-            menu.addItem(ClosureMenuItem(title: "Copy web URL") {
-                Pasteboard.copy(WebURLComposer.url(
-                    session: ZmxLauncher.sessionName(for: sessionID),
-                    host: host,
-                    port: port
-                ))
-            })
-        }
-        return menu
+    static func paneWebURL(terminalID: PaneSlotID, repos: [RepoEntry], host: String, port: Int) -> String? {
+        guard let session = repos.lazy.flatMap(\.worktrees).compactMap({ $0.paneSessions[terminalID] }).first else { return nil }
+        return WebURLComposer.url(session: ZmxLauncher.sessionName(for: session), host: host, port: port)
     }
 
     private func dismissWorktree(_ worktree: WorktreeEntry) {
@@ -1263,108 +1078,6 @@ struct MergedRowInsets: ViewModifier {
             content
         } else {
             content.listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)).listRowSeparator(.hidden)
-        }
-    }
-}
-
-struct SidebarWorktreeRowInsets: ViewModifier {
-    let node: SidebarWorktreeNode
-    let depth: Int
-    var projectColumn: Bool = false
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if projectColumn {
-            content
-        } else if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
-            content.listRowInsets(
-                EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
-            )
-        } else {
-            content
-        }
-    }
-}
-
-/// Recursive row renderer with caller-owned disclosure state. `OutlineGroup`
-/// owns its expansion state internally and starts folders collapsed; using
-/// explicit `DisclosureGroup` bindings makes the initial state deterministic
-/// and lets the folder label react to collapse by showing aggregate stats.
-struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
-    let node: SidebarWorktreeNode
-    let depth: Int
-    let repositoryID: UUID
-    @Binding var expansion: SidebarWorktreeFolderExpansion
-    let statsByWorktreePath: [String: WorktreeStats]
-    let theme: GhosttyTheme
-    var projectColumn: Bool = false
-    var isPinnedSection: Bool = false
-    let worktreeContent: (WorktreeEntry, String) -> WorktreeContent
-
-    @ViewBuilder
-    var body: some View {
-        switch node {
-        case .worktree(let worktree, let displayName):
-            worktreeContent(worktree, displayName)
-
-        case .folder(let path, let name, let children):
-            let folderID = SidebarWorktreeFolderID(
-                repositoryID: repositoryID,
-                path: (isPinnedSection ? "pinned:" : "tasks:") + path
-            )
-            let isExpanded = expansion.isExpanded(folderID)
-            let aggregate = SidebarWorktreeHierarchy.aggregateStats(
-                in: node,
-                statsByWorktreePath: statsByWorktreePath
-            )
-            DisclosureGroup(
-                isExpanded: Binding(
-                    get: { expansion.isExpanded(folderID) },
-                    set: { expansion.setExpanded($0, for: folderID) }
-                )
-            ) {
-                ForEach(children) { child in
-                    SidebarWorktreeNodeRow(
-                        node: child,
-                        depth: depth + 1,
-                        repositoryID: repositoryID,
-                        expansion: $expansion,
-                        statsByWorktreePath: statsByWorktreePath,
-                        theme: theme,
-                        projectColumn: projectColumn,
-                        isPinnedSection: isPinnedSection,
-                        worktreeContent: worktreeContent
-                    )
-                    .modifier(SidebarWorktreeRowInsets(
-                        node: child,
-                        depth: depth + 1,
-                        projectColumn: projectColumn
-                    ))
-                    .padding(.leading, projectColumn ? 16 : 0)
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.sidebarDimIcon)
-                    Text(name)
-                        .lineLimit(1)
-                        .foregroundColor(theme.sidebarPrimaryText(isActive: false))
-                    Spacer()
-                    if !isExpanded {
-                        WorktreeRowGutter(
-                            stats: aggregate,
-                            baseRef: nil,
-                            theme: theme
-                        )
-                    }
-                }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
-                .frame(minHeight: projectColumn ? 44 : 0)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
         }
     }
 }

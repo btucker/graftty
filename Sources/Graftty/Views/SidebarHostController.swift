@@ -178,7 +178,7 @@ final class SidebarHostController: ObservableObject {
 
     /// An origin rarely changes, so look again every few minutes, and at once
     /// for a repository this host hasn't checked yet.
-    func refreshOriginKeys(state: Binding<AppState>, loader: GitRepositoryOrigin.Loader = GitRepositoryOrigin.detect(repoPath:)) async {
+    func refreshOriginKeys(state: Binding<AppState>, loader: GitRepositoryOrigin.Loader = { try await GitRepositoryOrigin.detect(repoPath: $0) }) async {
         let now = Date()
         let due = state.wrappedValue.repos.filter { repo in
             repo.isGitTracked && now.timeIntervalSince(originKeysChecked[repo.path] ?? .distantPast) > 300

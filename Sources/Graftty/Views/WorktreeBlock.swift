@@ -5,85 +5,69 @@ import GrafttyCommandUI
 
 /// The question owns its click so the block's drag target cannot replace
 /// navigation to the requesting pane with worktree-only selection.
-struct SidebarWorktreeQuestionTarget: View {
-    let context: SidebarWorktreeContext
+struct SidebarWorktreeStatusTarget: View {
+    let status: SidebarRowStatus
+    let secondary: Color
     let onOpen: () -> Void
 
     var body: some View {
-        if context.question != nil {
-            Button(action: onOpen) {
-                SidebarWorktreeQuestion(context: context)
-                    .padding(.leading, 33).padding(.trailing, 8)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Open the worktree and focus the requesting pane")
-            .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.question: $0] }
+        switch status {
+        case .none:
+            EmptyView()
+        case .question:
+            Button(action: onOpen) { line }
+                .buttonStyle(.plain)
+                .accessibilityHint("Open the worktree and focus the requesting pane")
+                .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.question: $0] }
+        case .notification(_, let paneID) where paneID != nil:
+            Button(action: onOpen) { line }
+                .buttonStyle(.plain)
+                .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.question: $0] }
+        case .notification, .working, .whereWeAre:
+            line
         }
+    }
+
+    private var line: some View {
+        SidebarStatusLine(status: status, secondary: secondary)
+            .padding(.leading, 33).padding(.trailing, 8).padding(.bottom, 3)
+            .contentShape(Rectangle())
     }
 }
 
-/// One sidebar worktree block: the heading button, the pane rows beneath
-/// it, the unified active highlight and drop stroke, and the block-level
-/// drag source / drop target. `SidebarView` supplies the heading and pane
-/// content; the click-target tests compose the same block so hit testing
-/// is verified against the production structure rather than a copy.
-struct WorktreeBlock<Heading: View, Panes: View>: View {
+/// One sidebar worktree block: the heading button, its status line, the active
+/// highlight, and the block-level drag source and drop target. The click-target
+/// tests compose the same block, so hit testing covers the production structure.
+struct WorktreeBlock<Heading: View, Status: View>: View {
     let worktree: WorktreeEntry
     let repoID: RepoEntry.ID
     let isActive: Bool
-    let isDropTarget: Bool
-    /// True when pane rows render under the heading on the project column.
-    /// The block then carries vertical breathing room inside its highlight.
-    let groupsPanes: Bool
     let theme: GhosttyTheme
     @Binding var appState: AppState
     let reorderingEnabled: Bool
     let onSelect: () -> Void
-    let onMovePane: (PaneSlotID, String) -> Void
-    let onPaneTargeted: (Bool) -> Void
     let menu: (NSView) -> NSMenu
     @ViewBuilder let heading: () -> Heading
-    @ViewBuilder let panes: () -> Panes
+    @ViewBuilder let status: () -> Status
 
     var body: some View {
         VStack(spacing: 0) {
-            if groupsPanes { breathingRoom }
             Button(action: onSelect) { heading() }
                 .buttonStyle(.plain)
                 .id(worktree.path)
                 .rightClickMenu(anchored: menu)
-
-            panes()
-            if groupsPanes { breathingRoom }
+            status()
         }
         .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
         )
-        // PWD-1.5: drop-target highlight. Stroked so it composes with
-        // the active-worktree background fill above when the dragged-
-        // onto row is also the active one.
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
-        )
-        // The whole block (heading + pane rows) is the drag image and the
-        // drop target, so a worktree never lands between another's panes.
         .worktreeReorderTarget(
             repoID: repoID,
             worktreeID: worktree.id,
             appState: $appState, isEnabled: reorderingEnabled,
-            onSelect: onSelect,
-            onMovePane: onMovePane,
-            onPaneTargeted: onPaneTargeted
+            onSelect: onSelect
         )
-    }
-
-    /// LAYOUT-2.117: the native block target also selects through this space.
-    private var breathingRoom: some View {
-        Color.clear.frame(maxWidth: .infinity).frame(height: 8)
-            .accessibilityHidden(true)
     }
 }

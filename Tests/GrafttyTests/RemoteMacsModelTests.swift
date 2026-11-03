@@ -60,32 +60,6 @@ struct RemoteMacsModelTests {
         await #expect(throws: (any Error).self) { try await model.addWorktreeRepository(for: project) }
     }
 
-    @Test("@spec LAYOUT-2.155: When a remote project's sort mode is changed, the application shall route the request to the owning repository and display the host's acknowledged snapshot mode, while disabling sorting for older hosts and retaining the mode after failure.")
-    func remoteSortRoutesAndRejectsUnsupportedOrFailedRequests() async throws {
-        let remote = try remoteMac()
-        let failure = WorktreeManagementResponse.error(code: "denied", message: "Host refused sorting", forceAllowed: false, shortStatus: nil)
-        let recorder = RemoteMacsModelManagementRecorder(response: failure)
-        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
-        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
-        let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", supportsWorktreeEditing: true, worktreeOrderMode: .manual)
-        let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
-        #expect(model.canSetWorktreeOrder(for: project))
-        var legacy = project; legacy.worktreeOrderMode = nil
-        #expect(!model.canSetWorktreeOrder(for: legacy))
-        await #expect(throws: (any Error).self) { try await model.setWorktreeOrder(.recentActivity, for: legacy) }
-        #expect(await recorder.requests().isEmpty)
-        do {
-            try await model.setWorktreeOrder(.recentActivity, for: project)
-            Issue.record("Expected host error")
-        } catch { #expect(error.localizedDescription == "Host refused sorting") }
-        #expect(project.worktreeOrderMode == .manual)
-        #expect(await recorder.requests() == [.setWorktreeOrder(repositoryID: "/repo", mode: .recentActivity)])
-        #expect(await model.sendRelayedWorktreeManagement(.setWorktreeOrder(repositoryID: project.repositoryID, mode: .recentActivity)) == failure)
-        #expect(await recorder.requests().count == 2)
-        var offline = project; offline.isAvailable = false
-        #expect(!model.canSetWorktreeOrder(for: offline))
-    }
-
     @Test("@spec REMOTE-13.34: When a client sets a rank on a relayed project or pinned worktree, the relaying Mac shall forward the write to the owning host using that host's identifiers.")
     func relayForwardsRankRequestsToOwner() async throws {
         let remote = try remoteMac()
@@ -191,20 +165,6 @@ struct RemoteMacsModelTests {
         let result = try await action.value
         #expect(result.1.id == repository.id)
         #expect(RemoteMacIdentity(result.0) == RemoteMacIdentity(remote))
-    }
-
-    @Test func successfulSortUsesRawRepositoryRoute() async throws {
-        let remote = try remoteMac()
-        let recorder = RemoteMacsModelManagementRecorder()
-        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
-        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
-        let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", supportsWorktreeEditing: true, worktreeOrderMode: .manual)
-        let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
-        try await model.setWorktreeOrder(.recentActivity, for: project)
-        #expect(await recorder.requests() == [.setWorktreeOrder(repositoryID: "/repo", mode: .recentActivity)])
-        #expect(project.worktreeOrderMode == .manual)
-        let hostUpdate = SidebarProject(id: raw.id, repositoryID: raw.repositoryID, name: raw.name, supportsWorktreeEditing: true, worktreeOrderMode: .recentActivity)
-        #expect(model.relayRouter.promoteProjects([hostUpdate], from: remote).first?.worktreeOrderMode == .recentActivity)
     }
 
     private func projectControlModel(remotes: [RemoteMac], recorder: RemoteMacsModelManagementRecorder) async throws -> (RemoteMacsModel, RemoteMacConnectionRegistry) {

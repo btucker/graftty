@@ -16,17 +16,15 @@ final class SidebarPRBadgeInteractionTests: XCTestCase {
         var selections = 0
         var removalWindow: NSWindow?
         let hosting = NSHostingView(rootView: WorktreeBlock(
-            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
-            groupsPanes: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
-            reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
-            onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
+            worktree: worktree, repoID: repo.id, isActive: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
+            reorderingEnabled: true, onSelect: { selections += 1 }, menu: { _ in NSMenu() }
         ) {
             WorktreeRow(entry: worktree, isActive: false, displayName: "merged", isMainCheckout: false,
                 theme: .fallback, stats: nil, baseRef: nil,
                 prBadge: .init(number: 806, state: .merged, checks: .success,
                     url: URL(string: "https://github.com/btucker/graftty/pull/806")!),
                 attentionStyle: nil, onRemove: { removalWindow = $0 })
-        } panes: { EmptyView() })
+        } status: { EmptyView() })
         let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 320, height: 44),
             styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = hosting
@@ -52,43 +50,33 @@ final class SidebarPRBadgeInteractionTests: XCTestCase {
     /// @spec PR-3.3: When the user clicks a forge-specific PR/MR reference sidebar badge, the application shall open its URL in the system browser without triggering the row's worktree-selection action.
     func testBadgeClickDoesNotSelectWorktree() throws {
         for url in ["https://github.com/btucker/graftty/pull/5000", "https://gitlab.corp.example/team/graftty/-/merge_requests/5000"] {
-            for grouped in [false, true] { try verifyBadgeClick(urlString: url, groupsPanes: grouped) }
+            try verifyBadgeClick(urlString: url)
         }
     }
 
-    private func verifyBadgeClick(urlString: String, groupsPanes: Bool) throws {
+    private func verifyBadgeClick(urlString: String) throws {
         let url = try XCTUnwrap(URL(string: urlString))
         var openedURLs: [URL] = []
         var selections = 0
-        let paneID = PaneSlotID()
         let worktree = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature",
-                                    state: groupsPanes ? .running : .closed)
+                                    state: .closed)
         let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
         var state = AppState(repos: [repo])
         let content = WorktreeBlock(
-            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
-            groupsPanes: groupsPanes, theme: .fallback,
+            worktree: worktree, repoID: repo.id, isActive: false, theme: .fallback,
             appState: Binding(get: { state }, set: { state = $0 }),
             reorderingEnabled: true,
-            onSelect: { selections += 1 }, onMovePane: { _, _ in }, onPaneTargeted: { _ in },
-            menu: { _ in NSMenu() }
+            onSelect: { selections += 1 }, menu: { _ in NSMenu() }
         ) {
             WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
                         theme: .fallback, stats: nil, baseRef: nil,
                         prBadge: PRBadge(number: 5000, state: .open, checks: .success, url: url),
                         attentionStyle: nil)
-                .frame(height: groupsPanes ? 28 : 44)
-        } panes: {
-            if groupsPanes {
-                Button {} label: {
-                    Text("Pane").frame(maxWidth: .infinity).frame(height: 28).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                    .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(paneID)] = $1 }
-            }
-        }
+                .frame(height: 44)
+        } status: { EmptyView() }
         .environment(\.openURL, OpenURLAction { openedURLs.append($0); return .handled })
         let hosting = NSHostingView(rootView: content)
-        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 240, height: groupsPanes ? 72 : 44),
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 240, height: 44),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
@@ -112,14 +100,6 @@ final class SidebarPRBadgeInteractionTests: XCTestCase {
         try click(at: rowPoint, in: window, dragView: dragView)
         XCTAssertTrue(openedURLs == [url])
         XCTAssertTrue(selections == 1)
-        if groupsPanes {
-            let paneRect = try XCTUnwrap(dragView.excludedRects.max { $0.width * $0.height < $1.width * $1.height })
-            let panePoint = dragView.convert(NSPoint(x: paneRect.midX, y: paneRect.midY), to: nil)
-            let panePress = try NSEvent.syntheticClick(.leftMouseDown, at: panePoint, in: window)
-            XCTAssertTrue(dragView.hitTest(try XCTUnwrap(dragView.superview).convert(panePoint, from: nil), event: panePress) == nil)
-            XCTAssertTrue(selections == 1)
-        XCTAssertTrue(openedURLs == [url])
-        }
     }
 
     /// @spec GIT-5.5: While a worktree is creating, the application shall show a working indicator, hide terminal panes and Git statistics, suppress worktree actions, and allow selecting the row to inspect creation in the terminal content area.
@@ -132,14 +112,12 @@ final class SidebarPRBadgeInteractionTests: XCTestCase {
         let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
         var selections = 0
         let hosting = NSHostingView(rootView: WorktreeBlock(
-            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
-            groupsPanes: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
-            reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
-            onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
+            worktree: worktree, repoID: repo.id, isActive: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
+            reorderingEnabled: true, onSelect: { selections += 1 }, menu: { _ in NSMenu() }
         ) {
             WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
                 theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
-        } panes: { EmptyView() }
+        } status: { EmptyView() }
             .background(GhosttyTheme.fallback.sidebarBackground)
             .foregroundStyle(GhosttyTheme.fallback.foreground))
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 320, height: 70),

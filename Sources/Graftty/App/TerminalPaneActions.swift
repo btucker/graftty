@@ -45,9 +45,8 @@ enum TerminalPaneActions {
             }
         }
 
-        // TERM-8.10 / PWD-1.4: terminal surface menu and sidebar drag
-        // both route through this callback to share the existing
-        // PWD-2.x reassignment pipeline.
+        // TERM-8.10: the terminal surface menu routes through this callback
+        // to share the existing PWD-2.x reassignment pipeline.
         terminalManager.onMovePane = { [appState, tm = terminalManager] terminalID, destinationPath in
             MainActor.assumeIsolated {
                 PaneCommands.reassignPaneByPWD(
