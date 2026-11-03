@@ -309,12 +309,26 @@ struct RemoteMacsSection: View {
     var projects: [SidebarProject] = []
     var projectIcons: [String: Data] = [:]
     var section: SidebarWorktreeSection = .all
+    struct SingleRow {
+        let worktree: WorktreePanes
+        let remoteMac: RemoteMac
+        let displayName: String
+        let hostLabel: String?
+    }
+    /// Renders one row for the merged sidebar instead of whole sections.
+    var singleRow: SingleRow? = nil
     var reportController: SidebarReportController? = nil
     var contextForWorktree: (WorktreePanes) -> SidebarWorktreeContext = { .init(worktree: $0) }
 
     @ViewBuilder
     var body: some View {
-        if section != .pinned || !displayedRemoteMacs.isEmpty {
+        if let singleRow {
+            remoteWorktreeBlock(singleRow.worktree, remoteMac: singleRow.remoteMac, displayName: singleRow.displayName, hostLabel: singleRow.hostLabel)
+                .alert("Could not open remote port", isPresented: Binding(
+                    get: { portError != nil }, set: { if !$0 { portError = nil } }
+                )) { Button("OK", role: .cancel) { portError = nil } }
+                message: { Text(portError ?? "") }
+        } else if section != .pinned || !displayedRemoteMacs.isEmpty {
             if showsMacHierarchy {
                 Section {
                     remoteContents
@@ -495,7 +509,9 @@ struct RemoteMacsSection: View {
     @ViewBuilder
     private func remoteWorktreeBlock(
         _ worktree: WorktreePanes,
-        remoteMac: RemoteMac
+        remoteMac: RemoteMac,
+        displayName: String? = nil,
+        hostLabel: String? = nil
     ) -> some View {
         let identity = RemoteMacIdentity(remoteMac)
         let isActive = selectedRemoteIdentity == identity
@@ -522,7 +538,7 @@ struct RemoteMacsSection: View {
         let heading = WorktreeRow(
             entry: sidebarEntry(for: worktree),
             isActive: isActive,
-            displayName: worktree.displayName,
+            displayName: displayName ?? worktree.displayName,
             isMainCheckout: worktree.isMainCheckout,
             theme: theme,
             stats: sidebarStats(for: worktree),
@@ -536,7 +552,7 @@ struct RemoteMacsSection: View {
             },
             attentionCount: max(0, counts.attentionByWorktree[worktree.path, default: 0]
                 - agentLeaves.reduce(0) { $0 + counts.attentionByPane[$1.sessionName, default: 0] }),
-            project: project, projectIconData: projectIcons[projectID],
+            project: project, projectIconData: projectIcons[projectID], hostLabel: hostLabel,
             brief: context.brief,
             onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) }
         )

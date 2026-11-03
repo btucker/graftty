@@ -186,6 +186,8 @@ struct WorktreeRow: View {
     var attentionCount: Int = 0
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
+    /// Set when the host matters for this row: see `MergedWorktreeRow.showsHostLabel`.
+    var hostLabel: String? = nil
     /// Right-click menu for the identity slot (LAYOUT-2.96); nil for rows
     /// whose identity is not editable.
     var identityMenu: ((NSView) -> NSMenu)? = nil
@@ -228,7 +230,16 @@ struct WorktreeRow: View {
                     }
                 case .label:
                     VStack(alignment: .leading, spacing: 2) {
-                        branchLabel
+                        HStack(spacing: 4) {
+                            branchLabel
+                            if let hostLabel {
+                                Text(hostLabel)
+                                    .font(.system(size: 10.5))
+                                    .foregroundColor(theme.sidebarDimIcon)
+                                    .lineLimit(1)
+                                    .layoutPriority(-1)
+                            }
+                        }
                         if let progress = entry.creationProgress {
                             WorktreeCreationProgressView(progress: progress)
                                 .foregroundStyle(theme.sidebarSecondaryText)
