@@ -399,13 +399,24 @@ final class RelayedTerminalByteStream:
     GrafttyKit.TerminalSizeReporting,
     @unchecked Sendable {
     let inboundBytes: AsyncStream<Data>
-    fileprivate let pagedEvents: AsyncStream<PagedTerminalEvent>
+    fileprivate var pagedEvents: AsyncStream<PagedTerminalEvent> {
+        let buffer = pagedBuffer
+        return AsyncStream(unfolding: { [self] in
+            guard let event = await buffer.next() else { return nil }
+            // The host requests this event only after forwarding earlier
+            // output. Size callbacks must respect that same ordering.
+            switch event {
+            case .checkpoint(let checkpoint): reportPTYSize(cols: checkpoint.cols, rows: checkpoint.rows)
+            case .grid(let cols, let rows): reportPTYSize(cols: cols, rows: rows)
+            default: break
+            }
+            return event
+        }, onCancel: { buffer.cancel() })
+    }
 
     private let client: any WebSocketClient & Sendable
-    private let continuation: AsyncStream<Data>.Continuation
     private let pagedBuffer = RelayedPagedEventBuffer()
     private static let trace = Logger(subsystem: "com.quotably.graftty", category: "terminal-relay")
-    private let paged: Bool
     private let lock = NSLock()
     private var receiveTask: Task<Void, Never>?
     private var closed = false
@@ -432,12 +443,13 @@ final class RelayedTerminalByteStream:
 
     init(client: any WebSocketClient & Sendable, paged: Bool = false) {
         self.client = client
-        self.paged = paged
         let buffer = pagedBuffer
-        self.pagedEvents = AsyncStream(unfolding: { await buffer.next() }, onCancel: { buffer.cancel() })
-        var continuation: AsyncStream<Data>.Continuation!
-        self.inboundBytes = AsyncStream { continuation = $0 }
-        self.continuation = continuation
+        self.inboundBytes = AsyncStream(unfolding: {
+            while let event = await buffer.next() {
+                if case .output(let bytes) = event { return bytes }
+            }
+            return nil
+        }, onCancel: { buffer.cancel() })
         self.receiveTask = Task { [weak self] in
             guard let self else { return }
             await client.sendHello(
@@ -452,13 +464,10 @@ final class RelayedTerminalByteStream:
                 do {
                     switch try await client.receive() {
                     case .binary(let data) where !data.isEmpty:
-                        if paged {
-                            guard self.enqueuePagedEvent(.output(data)) else { await self.close(); return }
-                        }
-                        else { self.continuation.yield(data) }
+                        guard await self.enqueuePagedEvent(.output(data)) else { await self.close(); return }
                     case .text(let text):
                         if paged, let event = try? PagedTerminalEnvelope.parse(text).event {
-                            guard self.enqueuePagedEvent(event) else { await self.close(); return }
+                            guard await self.enqueuePagedEvent(event) else { await self.close(); return }
                         } else {
                             self.handleTextFrame(text)
                         }
@@ -471,7 +480,6 @@ final class RelayedTerminalByteStream:
                     } else if !Task.isCancelled {
                         Self.trace.error("Downstream terminal receive failed: \(String(describing: error), privacy: .public)")
                     }
-                    self.continuation.finish()
                     self.pagedBuffer.finish()
                     return
                 }
@@ -539,14 +547,11 @@ final class RelayedTerminalByteStream:
             && ownershipSnapshot?.ownerKind == .mac
     }
 
-    /// The downstream transport can outpace a mobile channel. Closing on
-    /// overflow preserves replay integrity rather than skipping VT bytes.
-    private func enqueuePagedEvent(_ event: PagedTerminalEvent) -> Bool {
-        switch event {
-        case .checkpoint(let checkpoint): reportPTYSize(cols: checkpoint.cols, rows: checkpoint.rows)
-        case .grid(let cols, let rows): reportPTYSize(cols: cols, rows: rows)
-        default: break
-        }
+    /// The downstream transport can outpace a mobile channel. Waiting here
+    /// stops this relay's reads, which paces the upstream host. Overflow stays
+    /// fatal because skipping VT bytes would corrupt the replay.
+    private func enqueuePagedEvent(_ event: PagedTerminalEvent) async -> Bool {
+        await pagedBuffer.waitForCapacity()
         switch pagedBuffer.enqueue(event) {
         case .accepted: return true
         case .finished: return false
@@ -617,7 +622,6 @@ final class RelayedTerminalByteStream:
         }
         task?.cancel()
         client.close()
-        continuation.finish()
         pagedBuffer.finish()
     }
 

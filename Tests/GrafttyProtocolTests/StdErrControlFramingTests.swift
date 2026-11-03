@@ -158,3 +158,30 @@ struct StdErrControlFramingTests {
         #expect(decoder.isOverAccumulated)
     }
 }
+
+@Suite("Terminal output credit wire format")
+struct TerminalOutputCreditWireTests {
+    @Test func consumedTotalRoundTrips() {
+        let text = TerminalOutputCredit.encodeConsumed(1 << 40)
+        #expect(TerminalOutputCredit.parseConsumed(Data(text.utf8)) == 1 << 40)
+    }
+
+    @Test func otherFramesAreNotAcknowledgements() {
+        #expect(TerminalOutputCredit.parseConsumed(Data(#"{"type":"hello"}"#.utf8)) == nil)
+        #expect(TerminalOutputCredit.parseConsumed(Data(#"{"type":"outputConsumed","bytes":-1}"#.utf8)) == nil)
+        #expect(TerminalOutputCredit.parseConsumed(Data("not json".utf8)) == nil)
+    }
+
+    @Test func framesLongerThanAnyTotalSkipTheParse() {
+        #expect(TerminalOutputCredit.encodeConsumed(.max).utf8.count <= 64)
+        let padded = #"{"type":"outputConsumed","bytes":1}"# + String(repeating: " ", count: 64)
+        #expect(TerminalOutputCredit.parseConsumed(Data(padded.utf8)) == nil)
+    }
+
+    @Test func windowOutsideTheSupportedRangeIsRejected() {
+        #expect(TerminalOutputCredit.parseWindow("1048576") == 1_048_576)
+        #expect(TerminalOutputCredit.parseWindow("1") == nil)
+        #expect(TerminalOutputCredit.parseWindow(String(1 << 25)) == nil)
+        #expect(TerminalOutputCredit.parseWindow("many") == nil)
+    }
+}

@@ -449,7 +449,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyTests",
-            dependencies: ["Graftty", "GrafttyCLI", "GrafttyTestSupport", "GrafttyKitTestSupport"],
+            dependencies: ["Graftty", "GrafttyCLI", "GrafttyTestSupport", "GrafttyKitTestSupport", "GrafttyRemoteTestSupport"],
             swiftSettings: strictWarnings
         ),
         .testTarget(

@@ -64,6 +64,8 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private let pagedFactory: PagedTerminalStreamFactory?
     private let bulkChannels: BulkTerminalChannels?
     private var historyChannel: Channel?
+    /// Nil unless the client negotiated an output window before `shell`.
+    private var outputCredit: TerminalOutputCreditGate?
     private var historyForwardingTask: Task<Void, Never>?
     private var historyForwardingContinuation: AsyncStream<Data>.Continuation?
     private var historyPending = false
@@ -199,6 +201,10 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 let terminal = context.channel
                 bulk.closeFuture.whenComplete { _ in terminal.close(promise: nil) }
             }
+            if envEvent.name == TerminalOutputCredit.environmentName, stream == nil,
+               let window = TerminalOutputCredit.parseWindow(envEvent.value) {
+                outputCredit = TerminalOutputCreditGate(windowBytes: window)
+            }
             if envEvent.name == "GRAFTTY_SESSION" {
                 envSessionName = envEvent.value
             }
@@ -298,6 +304,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         historyChannel?.close(promise: nil)
         historyChannel = nil
         isShuttingDown = true
+        outputCredit?.close()
         inboundForwardingTask?.cancel()
         ptyWriteContinuation?.finish()
         ptyWriteContinuation = nil
@@ -519,10 +526,11 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             return
         }
         guard let stream = stream as? any TerminalByteStream else { channel.close(promise: nil); return }
+        let credit = outputCredit
         let task = Task { [weak self] in
             do {
                 for await chunk in stream.inboundBytes {
-                    try await Self.writeOutput(chunk, to: channel)
+                    try await Self.writeOutput(chunk, to: channel, credit: credit)
                 }
             } catch {
                 channel.close(promise: nil)
@@ -556,7 +564,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         inboundForwardingTask = task
     }
 
-    private static func writeOutput(_ bytes: Data, to channel: Channel) async throws {
+    private static func writeOutput(_ bytes: Data, to channel: Channel, credit: TerminalOutputCreditGate?) async throws {
         // Limit how much one terminal hands to SSH at once. Awaiting each
         // slice lets sibling channels send keystroke echoes between writes
         // instead of queuing behind a complete redraw or replay.
@@ -564,6 +572,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         while buffer.readableBytes > 0 {
             try Task.checkCancellation()
             let slice = buffer.readSlice(length: min(buffer.readableBytes, 16 * 1024))!
+            try await credit?.reserve(slice.readableBytes)
             let data = SSHChannelData(type: .channel, data: .byteBuffer(slice))
             try await channel.writeAndFlush(data).get()
         }
@@ -584,13 +593,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     }
 
     private func startPagedForwarding(stream: any PagedTerminalStream, channel: Channel, loop: EventLoop) {
+        let credit = outputCredit
         inboundForwardingTask = Task { [weak self] in
             do {
                 for await event in stream.events {
                     guard !Task.isCancelled else { return }
                     switch event {
                     case .output(let bytes):
-                        try await Self.writeOutput(bytes, to: channel)
+                        try await Self.writeOutput(bytes, to: channel, credit: credit)
                     case .checkpoint, .page, .unavailable, .grid:
                         let text = try PagedTerminalEnvelope(event: event).encoded()
                         guard let framed = StdErrControlFraming.encode(text) else { throw PagedTerminalEnvelope.Error.tooLarge }
@@ -697,6 +707,10 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private func drainControlFrames(channel: Channel) {
         let (frames, oversized) = stdErrDecoder.drain()
         for payload in frames {
+            if let total = TerminalOutputCredit.parseConsumed(payload) {
+                outputCredit?.acknowledge(consumed: total)
+                continue
+            }
             if pagedFactory != nil,
                let paging = try? PagedTerminalEnvelope.parse(String(decoding: payload, as: UTF8.self)),
                let request = paging.request {

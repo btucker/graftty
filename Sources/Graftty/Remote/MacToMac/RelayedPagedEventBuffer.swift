@@ -12,6 +12,10 @@ final class RelayedPagedEventBuffer: @unchecked Sendable {
     private var buffered: [PagedTerminalEvent] = []
     private var bufferedBytes = 0
     private var waiter: CheckedContinuation<PagedTerminalEvent?, Never>?
+    private var capacityWaiter: CheckedContinuation<Void, Never>?
+    /// Room for the largest single control frame, so a producer that waits for
+    /// capacity before each enqueue cannot overflow (REMOTE-13.27).
+    private static let producerHeadroom = 1024 * 1024
     private var finished = false
     // Reserve one terminal outcome independently of the output budget.
     private var exitStatus: Int32?
@@ -49,13 +53,41 @@ final class RelayedPagedEventBuffer: @unchecked Sendable {
         return .accepted
     }
 
+    /// Waits for room to enqueue. The relay stops taking upstream output here,
+    /// which paces the upstream host instead of overflowing this queue.
+    func waitForCapacity() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if finished || hasProducerCapacity {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                precondition(capacityWaiter == nil, "A relayed terminal has one producer")
+                capacityWaiter = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    private var hasProducerCapacity: Bool {
+        bufferedBytes <= Self.byteLimit - Self.producerHeadroom && buffered.count < Self.eventLimit
+    }
+
+    private func takeCapacityWaiter() -> CheckedContinuation<Void, Never>? {
+        guard finished || hasProducerCapacity else { return nil }
+        defer { capacityWaiter = nil }
+        return capacityWaiter
+    }
+
     func next() async -> PagedTerminalEvent? {
         await withCheckedContinuation { continuation in
             lock.lock()
             if !buffered.isEmpty {
                 let event = buffered.removeFirst()
                 bufferedBytes -= Self.payloadBytes(event)
+                let producer = takeCapacityWaiter()
                 lock.unlock()
+                producer?.resume()
                 continuation.resume(returning: event)
             } else if let status = exitStatus {
                 exitStatus = nil
@@ -80,7 +112,9 @@ final class RelayedPagedEventBuffer: @unchecked Sendable {
         let waiter = self.waiter
         self.waiter = nil
         if waiter != nil { self.exitStatus = nil }
+        let producer = takeCapacityWaiter()
         lock.unlock()
+        producer?.resume()
         waiter?.resume(returning: exitStatus.map(PagedTerminalEvent.ended))
     }
 
@@ -92,7 +126,9 @@ final class RelayedPagedEventBuffer: @unchecked Sendable {
         exitStatus = nil
         let waiter = self.waiter
         self.waiter = nil
+        let producer = takeCapacityWaiter()
         lock.unlock()
+        producer?.resume()
         waiter?.resume(returning: nil)
     }
 

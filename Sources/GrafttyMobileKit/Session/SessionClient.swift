@@ -70,6 +70,13 @@ public final class SessionClient {
 
     public let sessionName: String
     public private(set) var session: InMemoryTerminalSession
+    private(set) var outputBacklog = TerminalOutputBacklogGate()
+    // IOS-4.60: `session.receive` never blocks, and dense title updates can
+    // parse more slowly than WebRTC delivers. The high mark stays above the
+    // 2 MiB a detached session retains, so a hidden pane does not trip it.
+    private static let parserBacklogHighWater = 3 * 1024 * 1024
+    private static let parserBacklogLowWater = 512 * 1024
+    private static let parserBacklogWait: Duration = .seconds(1)
     private final class NativeCallbacks {
         var onBytes: (@Sendable (Data) -> Void)?
         var onResize: (@Sendable (InMemoryTerminalViewport) -> Void)?
@@ -77,6 +84,11 @@ public final class SessionClient {
     @ObservationIgnored private var nativeCallbacks: NativeCallbacks
     private let rendererOverride: (any PagedTerminalRenderer)?
     public private(set) var paging: PagedTerminalCoordinator?
+    @ObservationIgnored private var previousRestoreDiagnostic: PagedTerminalCoordinator.RestoreDiagnostic?
+    /// Preserve timeout evidence when recovery replaces the coordinator.
+    public var lastRestoreDiagnostic: PagedTerminalCoordinator.RestoreDiagnostic? {
+        paging?.lastRestoreDiagnostic ?? previousRestoreDiagnostic
+    }
     @ObservationIgnored
     internal var additionalHistoryRowCapacity: (() -> UInt32)?
     private var historyPollTask: Task<Void, Never>?
@@ -385,6 +397,7 @@ public final class SessionClient {
         let box = NativeCallbacks()
         self.nativeCallbacks = box
         self.session = Self.makeSession(callbacks: box)
+        observeParserBacklog()
         bindNativeCallbacks(box)
         configureTerminalRenderer()
     }
@@ -452,13 +465,28 @@ public final class SessionClient {
         )
     }
 
+    private func observeParserBacklog() {
+        let gate = outputBacklog
+        gate.setBacklogged(false)
+        session.setOutputBacklogHandler(
+            highWater: Self.parserBacklogHighWater, lowWater: Self.parserBacklogLowWater
+        ) { gate.setBacklogged($0) }
+    }
+
     /// A transport retry cannot unblock a native operation parked on the old
     /// session's output queue. Replacing the observable session also makes the
     /// mounted or retained view tear down that surface before using the new one.
     private func replaceTimedOutTerminal() {
+        previousRestoreDiagnostic = lastRestoreDiagnostic
         let box = NativeCallbacks()
         nativeCallbacks = box
+        session.setOutputBacklogHandler(highWater: 1, lowWater: 0, nil)
+        // A callback already released by the old parser may still run. Keep
+        // it bound to the old gate rather than changing the replacement.
+        outputBacklog.setBacklogged(false)
+        outputBacklog = TerminalOutputBacklogGate()
         session = Self.makeSession(callbacks: box)
+        observeParserBacklog()
         nativeGrid = nil
         snapshotGrid = nil
         terminalReplay = RetainedTerminalReplay()
@@ -596,6 +624,8 @@ public final class SessionClient {
                                     self.diagnosticPagedGridMismatches.append("source=\(grid.cols)x\(grid.rows) native=\(self.gridTraceLabel(self.nativeGrid)) owner=\(self.isOwner) bytes=\(data.count)")
                                 }
                                 #endif
+                                await self.waitForParserBacklog()
+                                guard self.isCurrentTransport(generation) else { return }
                                 self.session.receive(data)
                             }
                         case .text(let text):
@@ -685,7 +715,23 @@ public final class SessionClient {
         grid.map { "\($0.cols)x\($0.rows)" } ?? "nil"
     }
 
+    private func waitForParserBacklog() async {
+        let gate = outputBacklog
+        gate.holdIfPendingBytes(session.pendingOutputByteCount,
+            highWater: Self.parserBacklogHighWater)
+        await gate.waitUntilClear(timeout: Self.parserBacklogWait)
+        // A stale high-water snapshot can race the parser's clear callback.
+        // Bound that race to one wait instead of throttling every later frame.
+        if session.pendingOutputByteCount <= Self.parserBacklogLowWater {
+            gate.setBacklogged(false)
+        }
+    }
+
     private func receiveNonPagedOutput(_ data: Data, generation: UInt64) async throws -> Bool {
+        // Wait before the grid steps below, so the parser takes this output at
+        // the grid they confirmed rather than one a later resize replaced.
+        await waitForParserBacklog()
+        guard isCurrentTransport(generation) else { return false }
         try await terminalRenderer?.releaseSourceGrid()
         guard isCurrentTransport(generation) else { return false }
         snapshotGrid = nil
@@ -702,7 +748,6 @@ public final class SessionClient {
             guard isCurrentTransport(generation) else { return false }
             installingCheckpointGrid = nil
         }
-        guard isCurrentTransport(generation) else { return false }
         session.receive(terminalReplay.prepare(data))
         return true
     }

@@ -1061,7 +1061,14 @@ struct SingleSessionView: View {
         let current = step.worktreePath ?? attentionWorktrees.first {
             $0.layout?.leaves.contains { $0.sessionName == step.sessionName } == true
         }?.path
-        return MobilePaneAttention.pendingCount(worktrees: attentionWorktrees,
+        let projectID = showsProjectRail ? step.worktreeProject?.id : nil
+        let destinationWorktrees = attentionWorktrees.filter {
+            if !sidebarNavigation.query.isEmpty {
+                return sidebarNavigation.worktreeContext($0).matches(query: sidebarNavigation.query)
+            }
+            return projectID == nil || SidebarProjection.projectID($0) == projectID
+        }
+        return MobilePaneAttention.pendingCount(worktrees: destinationWorktrees,
             currentWorktree: current, navigation: sidebarNavigation)
     }
 
@@ -1613,8 +1620,7 @@ private struct FullScreenChrome: ViewModifier {
         if contained { content.ignoresSafeArea(.keyboard).toolbar(enabled ? .hidden : .automatic, for: .navigationBar) }
         else if enabled {
             content
-                .ignoresSafeArea(.container, edges: [.top, .bottom])
-                .ignoresSafeArea(.keyboard)
+                .ignoresSafeArea(.all, edges: [.top, .bottom])
                 .toolbar(.hidden, for: .navigationBar)
         } else {
             content

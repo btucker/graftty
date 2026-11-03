@@ -95,6 +95,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
     private let dataChannel: RTCDataChannel
     private let embeddedLoop: NIOAsyncTestingEventLoop
     private let embedded: NIOAsyncTestingChannel
+    private let outboundRelay: OutboundRelayHandler
     /// Strongly held — `RTCDataChannel.delegate` is `weak`. Without a
     /// strong reference here the inbox would deallocate the moment
     /// `init` returns and every inbound message would be dropped.
@@ -187,6 +188,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
             sink: dataChannel,
             mtu: Self.mtu
         )
+        self.outboundRelay = relay
         // Add the relay and register the channel synchronously. The
         // loop auto-pumps on `execute` (which `submit` uses internally),
         // so `.wait()` returns once the registration task has run.
@@ -293,6 +295,15 @@ public final class SSHNIOTransport: @unchecked Sendable {
             embeddedLoop.execute {
                 self.performClose()
                 continuation.resume()
+            }
+        }
+    }
+
+    /// Snapshots counters on the owning event loop, including after close.
+    public func sendDiagnostics() async -> WebRTCSendDiagnostics {
+        await withCheckedContinuation { continuation in
+            embeddedLoop.execute {
+                continuation.resume(returning: self.outboundRelay.sendDiagnostics)
             }
         }
     }
@@ -463,6 +474,7 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
     private struct Write {
         var buffer: ByteBuffer
         let promise: EventLoopPromise<Void>?
+        let enqueuedAt: UInt64
     }
     private let sink: DataChannelSink
     private let mtu: Int
@@ -472,14 +484,27 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
     private var pendingBytes = 0
     private var context: ChannelHandlerContext?
     private var stopped = false
+    private let diagnosticNow: @Sendable () -> UInt64
+    private var metrics = WebRTCSendDiagnostics()
+
+    var sendDiagnostics: WebRTCSendDiagnostics {
+        let buffered = sink.sinkBufferedAmount
+        metrics.peakBufferedBytes = max(metrics.peakBufferedBytes, buffered)
+        var snapshot = metrics
+        snapshot.pendingBytes = pendingBytes
+        snapshot.bufferedBytes = buffered
+        return snapshot
+    }
 
     init(sink: DataChannelSink, mtu: Int, bufferedByteLimit: Int = 256 * 1024,
-         pendingByteLimit: Int = 8 * 1024 * 1024) {
+         pendingByteLimit: Int = 8 * 1024 * 1024,
+         diagnosticNow: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         precondition(mtu > 0 && bufferedByteLimit >= mtu && pendingByteLimit > 0)
         self.sink = sink
         self.mtu = mtu
         self.bufferedByteLimit = UInt64(bufferedByteLimit)
         self.pendingByteLimit = pendingByteLimit
+        self.diagnosticNow = diagnosticNow
     }
 
     func handlerAdded(context: ChannelHandlerContext) { self.context = context }
@@ -491,17 +516,21 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
         let buffer = unwrapOutboundIn(data)
         guard !stopped, sink.sinkReadyState == .open else {
+            metrics.failedWrites &+= 1
             promise?.fail(ChannelError.ioOnClosedChannel)
             return
         }
         guard buffer.readableBytes > 0 else { promise?.succeed(()); return }
         guard buffer.readableBytes <= pendingByteLimit - pendingBytes else {
+            metrics.failedWrites &+= 1
             promise?.fail(ChannelError.outputClosed)
             abort(context: context)
             return
         }
-        pending.append(Write(buffer: buffer, promise: promise))
+        pending.append(Write(buffer: buffer, promise: promise, enqueuedAt: diagnosticNow()))
         pendingBytes += buffer.readableBytes
+        metrics.acceptedBytes &+= UInt64(buffer.readableBytes)
+        metrics.peakPendingBytes = max(metrics.peakPendingBytes, pendingBytes)
         resumeSending()
     }
 
@@ -515,10 +544,15 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
             let length = min(mtu, pending[offset: 0].buffer.readableBytes)
             if length == 0 {
                 let write = pending.removeFirst()
+                let elapsed = diagnosticNow() &- write.enqueuedAt
+                metrics.completedWrites &+= 1
+                metrics.totalAdmissionNanoseconds &+= elapsed
+                metrics.maxAdmissionNanoseconds = max(metrics.maxAdmissionNanoseconds, elapsed)
                 write.promise?.succeed(())
                 continue
             }
             let buffered = sink.sinkBufferedAmount
+            metrics.peakBufferedBytes = max(metrics.peakBufferedBytes, buffered)
             guard buffered <= bufferedByteLimit,
                   UInt64(length) <= bufferedByteLimit - buffered else {
                 return
@@ -529,6 +563,8 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
                 return
             }
             pendingBytes -= length
+            metrics.submittedBytes &+= UInt64(length)
+            metrics.peakBufferedBytes = max(metrics.peakBufferedBytes, sink.sinkBufferedAmount)
         }
     }
 
@@ -543,6 +579,7 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
         let writes = pending
         pending.removeAll()
         pendingBytes = 0
+        metrics.failedWrites &+= UInt64(writes.count)
         for write in writes { write.promise?.fail(error) }
     }
 

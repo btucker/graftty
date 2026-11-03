@@ -782,6 +782,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.53** When a mobile checkpoint arrives before its terminal surface mounts, the application shall install the checkpoint after the first mount and then parse live output at the checkpoint grid without requiring navigation.
 
+**TERM-12.54** If applying a terminal source grid stalls, then the application shall fail the attachment within its restore deadline and release the wait on disconnect or cancellation so recovery can replace the stalled renderer.
+
+**TERM-12.55** When a checkpoint installation completes or fails in the current attachment, the application shall retain only its latest elapsed installation duration and outcome for diagnosis without retaining snapshot contents.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
@@ -2374,6 +2378,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.58** While an iPhone agent terminal shows resource controls, the application shall order Preview, Browser, and Context from left to right in one top-right capsule, use the right-sidebar glyph for Context, retain at least 44-point targets, and keep the group stable when no latest pane preview exists.
 
+**IOS-4.59** When a mobile terminal displays a Back badge, the application shall count pending requests only in the worktree list that Back opens, respecting its project scope and search query.
+
+**IOS-4.60** While a mobile terminal's parser is behind by its backlog threshold, the application shall pace further terminal output with waits bounded to one second, while continuing to apply control frames that arrive ahead of that output.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2508,7 +2516,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
-**IOS-7.10** If a mobile checkpoint restore exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
+**IOS-7.10** If a mobile checkpoint restore or source-grid update exceeds its deadline, then the application shall retain its latest checkpoint diagnostic, replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 
@@ -2762,7 +2770,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.25** While a compact worktree has no agent with a presentable session, the application shall present its terminal panes full screen without the agent bar, the Terminal sheet, or the agent placeholder.
 
-**IPAD-2.26** While a compact agent workspace shows the software keyboard, the application shall keep the terminal and its key accessory bar above the keyboard.
+**IPAD-2.26** While a compact agent workspace shows the software keyboard, the application shall keep the terminal above the keyboard and place its key accessory bar directly against the keyboard.
 
 **IPAD-2.27** While a compact agent workspace is shown, the application shall open its shells from Terminal in the agent-selection dropdown instead of reserving a button in the top-right controls or a bottom bar.
 
@@ -3476,6 +3484,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.15** When an SSH terminal attachment closes or is canceled before shell acknowledgement, the application shall fail the pending connection and close its child channel without disconnecting the shared transport.
 
+**REMOTE-9.16** When consecutive small SSH terminal writes accumulate, the application shall coalesce them within bounded receive batches so packet fragmentation alone does not exhaust the frame budget and disconnect the pane.
+
+**REMOTE-9.17** While an SSH terminal consumer has not taken its received output, the application shall stop reading that channel so SSH flow control pauses the host, keeping the terminal attached and delivering every byte in order once the consumer resumes.
+
+**REMOTE-9.18** When a terminal exits while its output is paused, the application shall deliver all of that output before reporting the exit status.
+
+**REMOTE-9.19** While a terminal client has negotiated an output window, the host shall hold back terminal bytes beyond that window of unconsumed output, so ownership, takeover and recovery messages reach the client behind no more than that window.
+
+**REMOTE-9.20** If a terminal client does not negotiate an output window, then the host shall forward its output under SSH flow control alone.
+
+**REMOTE-9.21** If a host does not support negotiated output windows, then a paused terminal client shall remain attached under SSH flow control and receive all of its output once it resumes.
+
+**REMOTE-9.22** When an auxiliary history channel closes before the terminal channel, the application shall preserve terminal output and apply the terminal channel's eventual exit status.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -3636,7 +3658,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.26** When a relayed session has never had a display owner, the application shall preserve its reported source grid rather than publish the ownerless hello's echoed client dimensions.
 
-**REMOTE-13.27** If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.
+**REMOTE-13.27** While a relay's mobile receiver is stalled, the application shall stop taking output from the upstream terminal once the relay's bounded queue is full, without closing the attachment or dropping terminal events, and shall resume in order when the receiver drains the queue.
 
 **REMOTE-13.28** When a paged relay receives process exit while its bounded output queue is full, the application shall retain and deliver the exit status after the queued terminal events.
 
@@ -3645,6 +3667,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.30** If a worktree snapshot carries an attention source or timestamp without attention text, then the application shall treat the worktree as having no worktree-scoped attention.
 
 **REMOTE-13.31** When a client sends a worktree-management request over a remote host link, it shall open a dedicated worktree-management channel for that request and close the channel whether the open, the send, or neither fails.
+
+**REMOTE-13.32** When a paged relay reports checkpoint or grid dimensions, the application shall publish the size callback only after earlier output events have been consumed.
 
 ### REMOTE-14.x — Shared project navigation
 
@@ -5695,6 +5719,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.7** When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
 
 **SSH-1.8** When the NIO channel of an SSH-over-DataChannel transport closes, the host and the client shall close the underlying WebRTC DataChannel at once rather than wait for the transport owner to observe the closure.
+
+**SSH-1.9** While an SSH-over-WebRTC transport is active or closed, the application shall expose bounded numeric send diagnostics for queued bytes, WebRTC buffering, completed and failed writes, and local write-admission delay without retaining payloads.
+
+**SSH-1.10** When a transport latency probe reports percentiles, the application shall include the sample count and nearest-rank p50, p95, p99, and maximum latency without retaining terminal contents.
 
 ## TEST — TEST
 

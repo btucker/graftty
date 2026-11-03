@@ -430,6 +430,7 @@ public struct RootView: View {
                 }
                 .navigationDestination(for: SessionStep.self) { step in
                     SingleSessionView(step: step, navigationPath: $navigationPath,
+                                      showsProjectRail: showsProjectRail,
                                       onBackToWorktrees: {
                                           Self.applyCompactBack(step: step, appState: iPadAppState,
                                                                 navigationPath: &navigationPath,
