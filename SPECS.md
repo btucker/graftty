@@ -2258,8 +2258,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.1** When the user selects a paired Mac, the application shall consume its authenticated panes-state channel and render the snapshot as a **worktree** picker grouped by `WorktreePanes.repoDisplayName` (one row per running worktree, not one row per pane). The mobile flow remains drill-down — worktree → pane tree → single pane.
 
-**IOS-4.2** When the authenticated paired connection or panes-state channel cannot be established, the application shall preserve any prior snapshot, render an error banner with a manual retry button, and never retry through the legacy Web Access endpoints.
-
 **IOS-4.3** When the user selects a pane, the application shall open that pane's terminal subsystem over the mutually authenticated paired connection and attach its byte stream to an `InMemoryTerminalSession` from `libghostty-spm` rendered by `GhosttyTerminal.TerminalView`.
 
 **IOS-4.4** When the selected terminal transport supports owner-aware control frames, the application shall send an initial `hello` containing a fresh iOS display client ID, kind `.ios`, role `.interactive` for fullscreen panes or `.preview` for pane previews, visibility, and the last measured viewport grid. The authenticated terminal subsystem may use its direct resize protocol.
@@ -2312,10 +2310,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.29** While the initial authenticated worktree load remains incomplete for at least 750 milliseconds, the application shall reveal the current connection stage and elapsed time. Loads that finish sooner shall keep the loading presentation compact.
 
-**IOS-4.30** When a paired host's worktree list mounts before the biometric gate has made authenticated connections available, the application shall keep the initial loading state pending and automatically start the load when the active, unlocked readiness state arrives. A successful list shall remain mounted across transient inactive/active cycles, while changing hosts shall automatically load the new host without requiring Refresh.
-
-**IOS-4.31** When an authenticated worktree push or refresh delivers rows equal to the list already rendered, the application shall not replace the list state. It shall apply a genuinely changed snapshot so pane metadata and topology still update promptly.
-
 **IOS-4.32** When a follower takes control without typing, the application shall lay out and confirm its physical viewport before sending the owner resize, including while rendering is reduced.
 
 **IOS-4.33** When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display its full report in a presentation that fits a compact iPhone width.
@@ -2355,10 +2349,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.51** While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling. When a subscription that delivered frames ends after staying open for at least a minimum lifetime, the application shall subscribe again immediately; when it ends sooner, the application shall wait a retry delay first without reporting the host unavailable. If subscribing fails or a subscription ends before delivering a frame, then the application shall report the host unavailable and subscribe again only after a retry delay, stopping once the view stops observing.
 
 **IOS-4.52** While a paired host's worktree list is displayed, when the host pushes a changed panes-state frame, the application shall render it without fetching the list again.
-
-**IOS-4.53** When the host whose worktree list is displayed becomes paired, the application shall begin applying the host's pushed panes-state frames without requiring Refresh.
-
-**IOS-4.54** If a pulled worktree list completes after a newer pushed panes-state frame was applied, then the application shall keep the pushed frame rather than replace it with the pulled rows.
 
 **IOS-4.55** When the phone shows a worktree with agents, the application shall list agent cards ordered by waiting for the user, working, idle, failed, then finished, each titled by its live terminal title and showing its question or result, followed by the worktree's shells and a one-line purpose from its brief.
 
@@ -2688,7 +2678,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.24** While the iPad layout displays a paired host, the application shall apply the host's pushed panes-state frames to the shared worktree state from outside the split view's columns, so the collapsed-sidebar attention indicator (IPAD-1.11) stays current without the sidebar list on screen.
 
-**IPAD-1.25** When the iPad layout starts observing a paired host's pushed panes-state frames, the application shall recompute the shared worktree state from the first frame even if its rows equal the rows already stored, such as rows seeded by a notification or recent-pane activation, so the collapsed-sidebar attention indicator (IPAD-1.11) reflects them.
+**IPAD-1.25** When the iPad layout starts observing a paired host's pushed panes-state frames, the application shall recompute the shared worktree state from the first frame even if its rows equal state seeded before observation.
 
 **IPAD-1.26** When the iPad layout applies a pushed panes-state frame whose rows equal the shared worktree state, the application shall leave the shared rows and attention indicator unwritten, so views observing them are not invalidated by a repeated frame.
 
@@ -2705,6 +2695,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-1.32** While an iPad workspace is visible, the application shall show worktree history Back and Forward buttons to the left of the worktree name, enabled only when a visited worktree is available in that direction.
 
 **IPAD-1.33** While the app shows worktrees from several paired hosts, the application shall merge their rows and projects, show cached rows for sleeping hosts, and keep each row tied to the host that delivered it.
+
+**IPAD-1.34** While a different host's worktree is selected, the application shall leave shared worktree state alone when other hosts push frames.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -3602,7 +3594,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.9** When a Remote Mac connection becomes unavailable, the application shall remove its cached worktree and repository rows so offline remote worktrees are not displayed or relayed.
 
-**REMOTE-13.10** When GrafttyMobile creates a worktree while the connected Mac exposes repositories from multiple Macs, the Add Worktree sheet shall require an explicit target Mac selection before repository selection and creation.
+**REMOTE-13.10** When GrafttyMobile creates a worktree, the Add Worktree sheet shall ask for the project first, then the host when the project is on several, loading each host's own branches.
 
 **REMOTE-13.11** When a Remote Mac reconnects with user-notify or agent-stop attention that was not present in its final connected snapshot, the application shall deliver one summary notification for all newly observed items, keep unchanged attention silent, and target the first affected worktree or pane when the summary is activated.
 

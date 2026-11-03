@@ -38,7 +38,7 @@ struct IPadWorktreeSubtitle: ViewModifier {
     }
 
     static func text(for worktree: WorktreePanes, context: SidebarWorktreeContext) -> String? {
-        let parts = [worktree.prBadge.map { "#\($0.number)" },
+        let parts = [worktree.origin?.deviceLabel, worktree.prBadge.map { "#\($0.number)" },
                      MobileWorktreeOverview(worktree: worktree, context: context).purpose].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }

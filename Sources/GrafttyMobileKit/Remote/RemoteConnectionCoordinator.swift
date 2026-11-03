@@ -446,6 +446,11 @@ public final class RemoteConnectionCoordinator {
     /// `PinnedHostStore` entry). UI routing and authenticated channel
     /// factories read this same gate so their definition of a usable paired
     /// Mac cannot drift.
+    /// Only a host with verified wake details can be asleep rather than offline.
+    public func hasWakeAddresses(_ host: Host) -> Bool {
+        pinnedHost(for: host)?.wakeOnLAN != nil
+    }
+
     public func isPaired(_ host: Host) -> Bool {
         pinnedHost(for: host) != nil
     }
@@ -496,13 +501,14 @@ public final class RemoteConnectionCoordinator {
     private func subscribedPanesStore(
         for host: Host,
         onProgress: RemoteWorktreeLoadProgress? = nil,
-        reconnect: Bool = false
+        reconnect: Bool = false,
+        wake: WakePolicy = .whileDialing
     ) async throws -> WorktreePanesStore {
         let clock = ContinuousClock()
         let loadStarted = clock.now
         onProgress?(.connecting)
         guard isPaired(host) else { throw ConnectionError.pairingRequired }
-        guard let connection = await connection(for: host, replacingExistingConnection: reconnect) else {
+        guard let connection = await connection(for: host, replacingExistingConnection: reconnect, wake: wake) else {
             throw ConnectionError.unavailable
         }
         let connectionFinished = clock.now
@@ -547,13 +553,13 @@ public final class RemoteConnectionCoordinator {
     /// (a slow observer skips to the newest), across reconnects, without
     /// polling (IOS-4.51). Each subscription shares `worktreePanes(for:)`'s
     /// connection dedup, failure cooldown and first-snapshot wait.
-    public func worktreeUpdates(for host: Host) -> AsyncStream<RemoteWorktreeUpdate> {
+    public func worktreeUpdates(for host: Host, wake: WakePolicy = .whileDialing) -> AsyncStream<RemoteWorktreeUpdate> {
         RemoteWorktreeUpdates.stream(
             subscribe: { [weak self] in
                 guard let self else { throw ConnectionError.unavailable }
                 // Observe the store that passed the first-snapshot wait,
                 // not whatever the registry holds after the await.
-                return try await self.subscribedPanesStore(for: host).frameUpdates()
+                return try await self.subscribedPanesStore(for: host, wake: wake).frameUpdates()
             },
             retryDelay: { try await Task.sleep(for: Self.worktreeUpdateRetryDelay) }
         )

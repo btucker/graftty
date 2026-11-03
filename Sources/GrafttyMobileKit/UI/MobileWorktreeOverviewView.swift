@@ -14,7 +14,8 @@ struct MobileWorktreeIdentityHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(worktree.repoDisplayName).font(.caption).foregroundStyle(theme.foreground.opacity(0.65))
+            Text([worktree.repoDisplayName, worktree.origin?.deviceLabel].compactMap { $0 }.joined(separator: " · "))
+                .font(.caption).foregroundStyle(theme.foreground.opacity(0.65))
             HStack(spacing: 8) {
                 if let project {
                     WorktreeIdentityView(identity: worktree.iconIdentity, project: project, size: 22)

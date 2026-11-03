@@ -3,25 +3,39 @@ import GrafttyProtocol
 import GrafttyCommandUI
 import SwiftUI
 
-/// @spec REMOTE-13.10: When GrafttyMobile creates a worktree while the
-/// connected Mac exposes repositories from multiple Macs, the Add Worktree
-/// sheet shall require an explicit target Mac selection before repository
-/// selection and creation.
+/// @spec REMOTE-13.10: When GrafttyMobile creates a worktree, the Add Worktree sheet shall ask for the project first, then the host when the project is on several, loading each host's own branches.
 public struct AddWorktreeSheetView: View {
 
-    public let host: Host
-    public let remoteConnectionProvider: RemoteConnectionProvider?
+    /// One checkout of the project, reached through the host that reported it.
+    public struct Route: Identifiable {
+        public let choice: AddWorktreeHostChoice
+        public let host: Host
+        public let provider: RemoteConnectionProvider
+        public let repositoryID: String
+        public var id: String { choice.id }
+    }
+
+    public struct Target: Identifiable {
+        public let id: String
+        public let name: String
+        public let routes: [Route]
+    }
+
+    public let targets: [Target]
+    public let initialProjectID: String?
     public struct Submission {
         public let request: CreateWorktreeClient.Request
         public let repository: RemoteRepositoryInfo
         public let existingSource: RemoteRepositoryInfo.Branch.Source?
+        public let route: Route
     }
 
     public let onSubmit: (Submission) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var reposState: ReposState = .loading
-    @State private var selectedTargetID: String?
+    @State private var selectedProjectID: String?
+    @State private var selectedRouteID: String?
     @State private var selectedRepoPath: String?
     @State private var worktreeName: String = ""
     @State private var branchName: String = ""
@@ -36,34 +50,35 @@ public struct AddWorktreeSheetView: View {
 
     enum BranchMode { case newBranch, existing }
 
-    private struct TargetMac: Identifiable {
-        let id: String
-        let label: String
-    }
-
     public init(
-        host: Host,
-        remoteConnectionProvider: RemoteConnectionProvider?,
+        targets: [Target],
+        initialProjectID: String?,
         onSubmit: @escaping (Submission) -> Void
     ) {
-        self.host = host
-        self.remoteConnectionProvider = remoteConnectionProvider
+        self.targets = targets
+        self.initialProjectID = initialProjectID
         self.onSubmit = onSubmit
+        _selectedProjectID = State(initialValue: initialProjectID ?? (targets.count == 1 ? targets[0].id : nil))
+    }
+
+    private var routes: [Route] { targets.first { $0.id == selectedProjectID }?.routes ?? [] }
+    private var selectedRoute: Route? { routes.first { $0.id == selectedRouteID } }
+
+    /// Opening the sheet only dials a sleeping host when every host is asleep.
+    private func chooseDefaultRoute() {
+        guard let selectedProjectID else { selectedRouteID = nil; return }
+        let lastUsed = UserDefaults.standard.string(forKey: "addWorktree.lastHost.\(selectedProjectID)")
+        selectedRouteID = AddWorktreeHostChoice.defaultChoice(AddWorktreeHostChoice.labeled(routes.map(\.choice)), lastUsedID: lastUsed)?.choice.id
     }
 
     public static func shouldSubmitOnReturn(canSubmit: Bool, isSubmitting: Bool, editingTaskDescription: Bool = false) -> Bool {
         canSubmit && !isSubmitting && !editingTaskDescription
     }
 
-    static func initialTargetID(
-        preservedTargetID: String?,
-        targetIDs: [String]
-    ) -> String? {
-        if let preservedTargetID,
-           targetIDs.contains(preservedTargetID) {
-            return preservedTargetID
-        }
-        return targetIDs.count == 1 ? targetIDs[0] : nil
+    /// A typed branch name carries to the next host only if that host has it.
+    static func carriedBranch(_ name: String, existing: Bool, in repository: RemoteRepositoryInfo?) -> String {
+        guard existing, repository?.branches.contains(where: { $0.name == name }) != true else { return name }
+        return ""
     }
 
     static func existingBranchSource(
@@ -81,6 +96,7 @@ public struct AddWorktreeSheetView: View {
         case loading
         case loaded([RemoteRepositoryInfo])
         case error(String)
+        case noSelection
     }
 
     public var body: some View {
@@ -98,6 +114,8 @@ public struct AddWorktreeSheetView: View {
                         Button("Retry") { Task { await loadRepos() } }
                             .buttonStyle(.borderedProminent)
                     }
+                case .noSelection:
+                    form(repos: [])
                 case .loaded(let repos) where repos.isEmpty:
                     ContentUnavailableView(
                         "No repositories tracked",
@@ -128,32 +146,31 @@ public struct AddWorktreeSheetView: View {
                     }
                 }
             }
-            .task { await loadRepos() }
+            .onAppear { if selectedRouteID == nil { chooseDefaultRoute() } }
+            .onChange(of: selectedProjectID) { _, _ in chooseDefaultRoute() }
+            .task(id: selectedRouteID) { await loadRepos() }
             .onDisappear { submissionTask?.cancel() }
         }
     }
 
     @ViewBuilder
     private func form(repos: [RemoteRepositoryInfo]) -> some View {
-        let targets = targetMacs(in: repos)
-        let visibleRepos = repositories(on: selectedTargetID, from: repos)
+        let choices = AddWorktreeHostChoice.labeled(routes.map(\.choice))
         Form {
-            if targets.count > 1 {
-                Section("Target Mac") {
-                    Picker("Mac", selection: $selectedTargetID) {
-                        Text("Select a Mac").tag(String?.none)
-                        ForEach(targets) { target in
-                            Text(target.label).tag(Optional(target.id))
-                        }
+            if initialProjectID == nil, targets.count > 1 {
+                Section("Project") {
+                    Picker("Project", selection: $selectedProjectID) {
+                        Text("Select a project").tag(String?.none)
+                        ForEach(targets) { target in Text(target.name).tag(Optional(target.id)) }
                     }
                     .pickerStyle(.menu)
                 }
             }
-            if visibleRepos.count > 1 {
-                Section("Repository") {
-                    Picker("Repository", selection: $selectedRepoPath) {
-                        ForEach(visibleRepos, id: \.id) { repo in
-                            Text(repo.displayName).tag(Optional(repo.id))
+            if AddWorktreeHostChoice.showsRow(choices) {
+                Section("Host") {
+                    Picker("Host", selection: $selectedRouteID) {
+                        ForEach(choices) { choice in
+                            Text(choice.label).tag(Optional(choice.id)).selectionDisabled(!choice.isSelectable)
                         }
                     }
                     .pickerStyle(.menu)
@@ -228,12 +245,6 @@ public struct AddWorktreeSheetView: View {
         }
         .submitLabel(.done)
         .onSubmit { submitFromReturn() }
-        .onChange(of: selectedTargetID) { _, targetID in
-            let candidates = repositories(on: targetID, from: repos)
-            if !candidates.contains(where: { $0.id == selectedRepoPath }) {
-                selectedRepoPath = candidates.first?.id
-            }
-        }
     }
 
     private var canSubmit: Bool {
@@ -263,66 +274,25 @@ public struct AddWorktreeSheetView: View {
     }
 
     private func loadRepos() async {
+        guard let route = selectedRoute else {
+            // Nothing to load until a project is chosen.
+            reposState = targets.isEmpty ? .loaded([]) : .noSelection
+            return
+        }
         reposState = .loading
         do {
-            let repos = try await Self.loadRepositories(using: remoteConnectionProvider)
+            let repos = try await Self.loadRepositories(using: route.provider)
+            guard !Task.isCancelled else { return }
             reposState = .loaded(repos)
-            let selectedRepo = repos.first { $0.id == selectedRepoPath }
-            let targets = targetMacs(in: repos)
-            let preservedTarget = selectedRepo.map(targetID(for:))
-            selectedTargetID = Self.initialTargetID(
-                preservedTargetID: preservedTarget,
-                targetIDs: targets.map(\.id)
-            )
-            if !repos.contains(where: { $0.id == selectedRepoPath }) {
-                selectedRepoPath = repositories(
-                    on: selectedTargetID,
-                    from: repos
-                ).first?.id
-            }
+            selectedRepoPath = route.repositoryID
+            branchName = Self.carriedBranch(branchName, existing: branchMode == .existing, in: repos.first { $0.id == route.repositoryID })
+        } catch is CancellationError {
+            return
         } catch RepositoryLoadError.unexpectedResponse {
             reposState = .error("The paired Mac returned an unexpected response.")
         } catch {
-            reposState = .error("Couldn't reach the server.")
+            reposState = .error("Couldn't reach \(route.choice.host).")
         }
-    }
-
-    private func targetID(for repo: RemoteRepositoryInfo) -> String {
-        repo.origin.map { "device:\($0.deviceID.value)" }
-            ?? "legacy:connected-mac"
-    }
-
-    private func targetMacs(
-        in repos: [RemoteRepositoryInfo]
-    ) -> [TargetMac] {
-        var seen: Set<String> = []
-        let targets = repos.compactMap { repo -> TargetMac? in
-            let id = targetID(for: repo)
-            guard seen.insert(id).inserted else { return nil }
-            return TargetMac(
-                id: id,
-                label: repo.origin?.deviceLabel ?? host.label
-            )
-        }
-        let counts = Dictionary(grouping: targets, by: \.label)
-            .mapValues(\.count)
-        return targets.map { target in
-            guard counts[target.label, default: 0] > 1 else { return target }
-            let ownerID = target.id.split(separator: ":").last
-                .map { String($0.prefix(6)) } ?? target.id
-            return TargetMac(
-                id: target.id,
-                label: "\(target.label) (\(ownerID))"
-            )
-        }
-    }
-
-    private func repositories(
-        on targetID: String?,
-        from repos: [RemoteRepositoryInfo]
-    ) -> [RemoteRepositoryInfo] {
-        guard let targetID else { return [] }
-        return repos.filter { self.targetID(for: $0) == targetID }
     }
 
     private func submitFromReturn() {
@@ -332,7 +302,7 @@ public struct AddWorktreeSheetView: View {
     }
 
     private func submit() {
-        guard canSubmit, let repoPath = selectedRepoPath,
+        guard canSubmit, let repoPath = selectedRepoPath, let route = selectedRoute,
               case .loaded(let repositories) = reposState,
               let repository = repositories.first(where: { $0.id == repoPath }) else { return }
         isSubmitting = true
@@ -353,11 +323,15 @@ public struct AddWorktreeSheetView: View {
                     repoPath: repoPath, worktreeName: names.worktree, branchName: names.branch,
                     existing: existing, agent: configuration
                 )
+                if let projectID = selectedProjectID {
+                    UserDefaults.standard.set(route.id, forKey: "addWorktree.lastHost.\(projectID)")
+                }
                 onSubmit(Submission(
                     request: request, repository: repository,
                     existingSource: existing
                         ? Self.existingBranchSource(repositoryID: repoPath, branchName: names.branch, repositories: repositories)
-                        : nil
+                        : nil,
+                    route: route
                 ))
                 dismiss()
             } catch {

@@ -15,15 +15,13 @@ struct WorktreeBlock: View {
     /// for pane rows beneath it.
     let isActive: Bool
     let isOpening: Bool
-    /// Session name of the focused pane within `appState`. Each pane
-    /// row tests `leaf.sessionName == focusedPaneId` to decide whether
-    /// to use the brightest focused bucket from `theme.paneTitle(…)`.
-    let focusedPaneId: String?
     var projectColumn: Bool = false
     let context: SidebarWorktreeContext
-    var workspace: WorkspaceLayout<String>? = nil
     let onSelect: () -> Void
-    let onSelectPane: (PaneLayoutNode.Leaf) -> Void
+    /// A row from a sleeping host's last report: dim, and tapping wakes it.
+    var isAsleep = false
+    /// Text after the name: see `SidebarMergedRows.hostText`.
+    var hostText: String? = nil
     let onReport: () -> Void
     var onRemove: (() -> Void)? = nil
 
@@ -36,7 +34,7 @@ struct WorktreeBlock: View {
         // sidebar-style's full per-row padding.
         VStack(alignment: .leading, spacing: 3) {
             worktreeRow
-            paneRows
+            statusLine
             ForEach((worktree.agents ?? []).filter { $0.status == "failed" && $0.sessionName == nil }) { agent in
                 Label("\(agent.name) · Failed", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
@@ -50,6 +48,7 @@ struct WorktreeBlock: View {
         .padding(.trailing, projectColumn ? 8 : 2)
         .padding(.vertical, projectColumn ? 0 : 3)
         .frame(minHeight: 44)
+        .opacity(isAsleep ? 0.55 : 1)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(highlightFill)
@@ -115,43 +114,24 @@ struct WorktreeBlock: View {
     private var rowIdentity: some View {
         WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
             theme: theme, isActive: isActive, isOpening: isOpening,
-            attentionCount: MobileWorktreeRowPresentation(context: context, workspace: workspace).worktreeAttentionCount)
+            attentionCount: max(context.pending.count, status.needsAttention ? 1 : 0), hostText: hostText)
             .frame(minHeight: 24)
             .contentShape(Rectangle())
     }
 
+    private var status: SidebarRowStatus {
+        SidebarRowStatus.resolve(context: context, worktree: worktree, isAsleep: isAsleep)
+    }
+
     @ViewBuilder
-    private var paneRows: some View {
-        let presentation = MobileWorktreeRowPresentation(context: context, workspace: workspace)
-        ForEach(presentation.leaves, id: \.sessionName) { leaf in
-            let isQuestionPane = presentation.questionPaneID == leaf.sessionName
-            let effective = leaf.attentionText
-            let style = isQuestionPane ? nil : effective.map {
-                AttentionCapsuleStyle.from(text: $0, source: leaf.attentionSource)
-            }
+    private var statusLine: some View {
+        if status != .none {
             MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
-                VStack(alignment: .leading, spacing: 4) {
-                    SidebarPaneTitleRow(title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.presentationSessionName == leaf.sessionName }?.name),
-                        isFocusedPane: false, isActiveWorktree: isActive,
-                        isBusy: leaf.isBusy, attentionStyle: style,
-                        attentionCount: context.pending.filter { $0.paneID == leaf.sessionName }.count,
-                        theme: theme, needsInput: leaf.attentionSource == .agentStop || isQuestionPane, agent: worktree.agents?.first { $0.presentationSessionName == leaf.sessionName })
-                        .padding(.leading, 18)
-                    if isQuestionPane {
-                        SidebarWorktreeQuestion(context: context)
-                            .padding(.leading, SidebarPaneLayout.markerLeading + SidebarPaneLayout.markerSpacing)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        if presentation.showsWorktreeQuestion {
-            MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
-                SidebarWorktreeQuestion(context: context)
+                SidebarStatusLine(status: status, secondary: theme?.sidebarSecondaryText ?? .secondary)
                     .padding(.leading, SidebarPaneLayout.markerLeading + SidebarPaneLayout.markerSpacing)
             }
         }
     }
-
 }
 
 /// Wrap a themed `Color` in an `AnyShapeStyle`, falling back to the
@@ -174,15 +154,25 @@ struct WorktreeRowContent: View {
     let isActive: Bool
     let isOpening: Bool
     let attentionCount: Int
+    var hostText: String? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             SidebarActivityBadge(attentionCount)
             typeIcon
             VStack(alignment: .leading, spacing: 1) {
-                primaryText.accessibilityLabel(worktree.displayName)
-                    .font(.system(size: 11, weight: .semibold)).tracking(0.3)
-                    .lineLimit(1).truncationMode(.tail)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    primaryText.accessibilityLabel(worktree.displayName)
+                        .font(.system(size: 11, weight: .semibold)).tracking(0.3)
+                        .lineLimit(1).truncationMode(.tail)
+                    if let hostText {
+                        Text(hostText)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
+                            .lineLimit(1)
+                            .layoutPriority(-1)
+                    }
+                }
                 if let progress = worktree.creationProgress {
                     WorktreeCreationProgressView(progress: progress)
                         .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))

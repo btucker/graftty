@@ -28,9 +28,9 @@ struct MobileAttentionPaneTests {
                 stats: .init(ahead: 12, behind: 25, hasUncommittedChanges: true, baseRef: "main"),
                 attentionText: nil, layout: nil)
             let hosted = UIHostingController(rootView: WorktreeBlock(worktree: row,
-                theme: nil, isActive: false, isOpening: false, focusedPaneId: nil,
+                theme: nil, isActive: false, isOpening: false,
                 projectColumn: true, context: SidebarWorktreeContext(worktree: row),
-                onSelect: {}, onSelectPane: { _ in }, onReport: {}))
+                onSelect: {}, onReport: {}))
             return hosted.sizeThatFits(in: CGSize(width: width, height: 600))
         }
         let short = size(name: "feature")
@@ -134,8 +134,8 @@ struct MobileAttentionPaneTests {
         let navigation = SidebarNavigationState(prefix: "mobile-question.\(UUID())")
         func rowHeight(_ context: SidebarWorktreeContext) -> CGFloat {
             UIHostingController(rootView: WorktreeBlock(worktree: context.worktree,
-                theme: nil, isActive: false, isOpening: false, focusedPaneId: nil,
-                context: context, onSelect: {}, onSelectPane: { _ in }, onReport: {}))
+                theme: nil, isActive: false, isOpening: false,
+                context: context, onSelect: {}, onReport: {}))
                 .sizeThatFits(in: available).height
         }
         navigation.dismissRequest(in: context)

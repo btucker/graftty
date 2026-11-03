@@ -9,6 +9,7 @@ public struct HostPickerView: View {
     @State private var showingAdd = false
     @State private var forgetError: String?
     @Environment(\.remoteConnectionCoordinator) private var coordinator
+    @Environment(\.multiHostFeed) private var feed
 
     /// When non-nil, tapping a saved-host row fires this callback instead of
     /// using `NavigationLink(value: host)`. Lets the iPad host-switcher
@@ -25,8 +26,15 @@ public struct HostPickerView: View {
         self.onSelect = onSelect
     }
 
+    private func status(of host: Host) -> String {
+        guard let feed else { return "Paired" }
+        if feed.state.isLive(host.id) { return "Connected" }
+        return feed.state.isAsleep(host.id) ? "Asleep" : "Not connected"
+    }
+
     public var body: some View {
         List {
+            if let feed { DownstreamHostsSection(feed: feed) }
             Section("Paired Macs") {
                 if store.hasLoaded && store.hosts.isEmpty {
                     Text("No paired Macs yet.").foregroundStyle(.secondary)
@@ -46,13 +54,12 @@ public struct HostPickerView: View {
                         Button {
                             onSelect(host)
                         } label: {
-                            HostPickerRowLabel(host: host, status: "Paired")
+                            HostPickerRowLabel(host: host, status: status(of: host))
                         }
                         .buttonStyle(.plain)
                     } else {
-                        NavigationLink(value: host) {
-                            HostPickerRowLabel(host: host, status: "Paired")
-                        }
+                        // Managing hosts doesn't change what the app shows.
+                        HostPickerRowLabel(host: host, status: status(of: host))
                     }
                 }
                 .onDelete { offsets in
@@ -74,7 +81,7 @@ public struct HostPickerView: View {
                 }
             }
         }
-        .navigationTitle("Graftty")
+        .navigationTitle("Hosts")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Menu {

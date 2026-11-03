@@ -63,7 +63,7 @@ struct MobileWorktreeContextDrawer: ViewModifier {
                                 .onTapGesture { close() }
                                 .accessibilityLabel("Close context")
                                 .accessibilityAddTraits(.isButton)
-                            WorktreeContextPanel(context: context, theme: theme, collapsesBrief: true, showAgent: onShowAgent.map { action in
+                            WorktreeContextPanel(context: context, theme: theme, hostLabel: context.worktree.origin?.deviceLabel, collapsesBrief: true, showAgent: onShowAgent.map { action in
                                 { id in action(id); close() }
                             }, onClose: close)
                                 .environment(\.worktreeContextActions, navigationActions)

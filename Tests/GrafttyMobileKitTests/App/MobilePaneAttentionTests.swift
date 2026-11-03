@@ -292,8 +292,7 @@ struct TerminalBackNavigationTests {
         let step = SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell",
                                worktreeProject: project)
         var pickerPath = NavigationPath()
-        pickerPath.append(host)
-        pickerPath.append(ProjectStep(host: host, project: project))
+        pickerPath.append(ProjectStep(project: project))
         var path = pickerPath
         if throughPaneDetail { path.append(WorktreeStep(host: host, worktree: current)) }
         path.append(step)
@@ -317,7 +316,6 @@ struct TerminalBackNavigationTests {
         let current = worktree("current", pending: false)
         let step = SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell")
         var pickerPath = NavigationPath()
-        pickerPath.append(host)
         var path = pickerPath
         if throughPaneDetail { path.append(WorktreeStep(host: host, worktree: current)) }
         path.append(step)
@@ -386,9 +384,8 @@ struct TerminalBackNavigationTests {
         let step = try #require(selection.session)
         var path = selection.path
         var pickerPath = NavigationPath()
-        pickerPath.append(host)
         if showsProjectRail {
-            pickerPath.append(ProjectStep(host: host, project: SidebarProjection.projects([current])[0]))
+            pickerPath.append(ProjectStep(project: SidebarProjection.projects([current])[0]))
         }
         let view = SingleSessionView(step: step, navigationPath: Binding(get: { path }, set: { path = $0 }),
                                      showsProjectRail: showsProjectRail)
@@ -421,8 +418,7 @@ struct TerminalBackNavigationTests {
         let step = try #require(openingSelection.session)
         var path = openingSelection.path
         var pickerPath = NavigationPath()
-        pickerPath.append(host)
-        if currentRail { pickerPath.append(ProjectStep(host: host, project: project)) }
+        if currentRail { pickerPath.append(ProjectStep(project: project)) }
         let pendingBefore = MobilePaneAttention.pendingCount(worktrees: rows, currentWorktree: nil,
                                                            navigation: navigation)
         let view = SingleSessionView(
@@ -477,8 +473,7 @@ struct TerminalBackNavigationTests {
         var step = SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell",
                                worktreeProject: pickerProject)
         var pickerPath = NavigationPath()
-        pickerPath.append(host)
-        pickerPath.append(ProjectStep(host: host, project: pickerProject))
+        pickerPath.append(ProjectStep(project: pickerProject))
         var path = pickerPath
         if throughPaneDetail {
             path.append(WorktreeStep(host: host, worktree: current, project: pickerProject))
@@ -532,7 +527,6 @@ struct TerminalBackNavigationTests {
         let step = SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell",
                                worktreeProject: project)
         var path = NavigationPath()
-        path.append(host)
         path.append(step)
         let view = SingleSessionView(step: step, navigationPath: Binding(get: { path }, set: { path = $0 }),
             onBackToWorktrees: {
@@ -547,7 +541,7 @@ struct TerminalBackNavigationTests {
         #expect(returningSelection.worktree == nil)
 
         let otherHost = Host(label: "Other Mac", baseURL: URL(string: "https://other.local")!)
-        RootView.applyCompactHost(otherHost, to: state)
+        IPadRootLayout.applyHostSwitch(appState: state, to: otherHost.id)
         let otherSelection = try #require(RootView.compactSelection(appState: state, hosts: [otherHost]))
         #expect(otherSelection.project == nil)
     }

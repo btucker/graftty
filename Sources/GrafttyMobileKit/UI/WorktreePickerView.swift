@@ -9,28 +9,26 @@ import SwiftUI
 /// `WorktreeListContent` directly with different callbacks.
 public struct WorktreePickerView: View {
     public var navigation: SidebarNavigationState? = nil
-    public let host: Host
+    public let feed: MultiHostFeed
     let project: SidebarProject?
     public let theme: GhosttyThemeColors?
-    public let onSelect: (WorktreePanes) -> Void
-    public let onSelectPane: (WorktreePanes, PaneLayoutNode.Leaf) -> Void
-    private let onSelectWorktreeDetail: ((WorktreePanes) -> Void)?
+    public let onSelect: (Host, WorktreePanes) -> Void
+    public let onSelectPane: (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void
+    private let onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
-    @Environment(\.remoteConnectionCoordinator) private var coordinator
-    @Environment(\.remoteWorktreeUpdates) private var worktreeUpdates
 
     public init(
-        host: Host,
+        feed: MultiHostFeed,
         theme: GhosttyThemeColors? = nil,
-        onSelect: @escaping (WorktreePanes) -> Void,
-        onSelectPane: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
+        onSelect: @escaping (Host, WorktreePanes) -> Void,
+        onSelectPane: @escaping (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void,
         navigation: SidebarNavigationState? = nil,
         project: SidebarProject? = nil,
-        onSelectWorktreeDetail: ((WorktreePanes) -> Void)? = nil
+        onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)? = nil
     ) {
         self.navigation = navigation
-        self.host = host
+        self.feed = feed
         self.project = project
         self.theme = theme
         self.onSelect = onSelect
@@ -40,26 +38,20 @@ public struct WorktreePickerView: View {
 
     public var body: some View {
         WorktreeListContent(
-            host: host,
+            feed: feed,
             theme: theme,
             isReadyToLoad: LiveSessionReadiness.isActive(
                 scene: scenePhase,
                 gateUnlocked: gate.isUnlocked
             ),
-            remote: RemoteWorktreeProviders(coordinator: coordinator, host: host, worktreeUpdates: worktreeUpdates),
             onSelect: onSelect,
             onSelectPane: onSelectPane,
             navigation: navigation,
             project: project,
             onSelectWorktreeDetail: onSelectWorktreeDetail
         )
-        // Set on this iPhone-compact wrapper rather than inside
-        // WorktreeListContent: the iPad sidebar uses `HostMenu` (in the
-        // sidebar nav bar's `.topBarLeading` slot) as its sole host
-        // indicator and a system nav-bar title there would duplicate
-        // the host label as a second row above it (IPAD-1.2).
-        .navigationTitle(project?.name ?? host.label)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(project?.name ?? "Projects")
+        .navigationBarTitleDisplayMode(project == nil ? .large : .inline)
     }
 }
 #endif

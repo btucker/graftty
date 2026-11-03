@@ -97,9 +97,9 @@ struct IPadRootLayoutSelectionTests {
 """)
     func ipad_1_3_sidebarBindsToWorktreeListContent() {
         let view = WorktreeListContent(
-            host: sampleHost(),
-            onSelect: { _ in },
-            onSelectPane: { _, _ in }
+            feed: MultiHostFeed(coordinator: nil),
+            onSelect: { _, _ in },
+            onSelectPane: { _, _, _ in }
         )
         _ = view
         #expect(true)
@@ -304,17 +304,17 @@ struct IPadRootLayoutSelectionTests {
         // standard grouped-list background. The actual opacity-ladder
         // values are covered in GhosttyThemeCoreTests.
         let themed = WorktreeListContent(
-            host: sampleHost(),
+            feed: MultiHostFeed(coordinator: nil),
             theme: GhosttyThemeColors.fallback,
-            onSelect: { _ in },
-            onSelectPane: { _, _ in }
+            onSelect: { _, _ in },
+            onSelectPane: { _, _, _ in }
         )
         #expect(themed.theme == GhosttyThemeColors.fallback)
 
         let untyped = WorktreeListContent(
-            host: sampleHost(),
-            onSelect: { _ in },
-            onSelectPane: { _, _ in }
+            feed: MultiHostFeed(coordinator: nil),
+            onSelect: { _, _ in },
+            onSelectPane: { _, _, _ in }
         )
         #expect(untyped.theme == nil)
     }
@@ -598,15 +598,13 @@ struct IPadRootLayoutSelectionTests {
         // Smoke-check the parameter pass-through here so a future
         // signature drift surfaces in this test rather than visually.
         let view = WorktreeListContent(
-            host: sampleHost(),
+            feed: MultiHostFeed(coordinator: nil),
             theme: GhosttyThemeColors.fallback,
             selectedWorktreePath: "/repo/feat",
-            focusedPaneId: "session-xyz",
-            onSelect: { _ in },
-            onSelectPane: { _, _ in }
+            onSelect: { _, _ in },
+            onSelectPane: { _, _, _ in }
         )
         #expect(view.selectedWorktreePath == "/repo/feat")
-        #expect(view.focusedPaneId == "session-xyz")
 
         // The brightness ladders the visual treatment reads from are
         // covered by GhosttyThemeCoreTests' paneArrowOpacityLadder /
