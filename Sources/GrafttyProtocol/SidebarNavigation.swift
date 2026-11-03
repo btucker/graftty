@@ -51,6 +51,8 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var rank: String?
     /// When a drag last set `rank`. Nil for a rank seeded from host order.
     public var rankChangedAt: Double?
+    /// Client-side availability text shown instead of Offline, never sent by hosts.
+    public var statusLabel: String?
 
     public init(id: String, repositoryID: String, name: String, owner: WorktreeOrigin? = nil,
                 iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil, worktreeOrderMode: WorktreeOrderMode? = nil,
@@ -69,7 +71,7 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
 
     public func ownerSubtitle(localDeviceID: RemoteDeviceID?) -> String? {
         let host = owner.flatMap { $0.deviceID == localDeviceID ? nil : $0.deviceLabel }
-        let parts = [host, isAvailable ? nil : "Offline"].compactMap { $0 }
+        let parts = [host, statusLabel ?? (isAvailable ? nil : "Offline")].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
