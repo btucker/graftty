@@ -65,10 +65,13 @@ enum WorktreeDropReorder {
 
 enum WorktreeRowDrop: Transferable {
     case worktree(TransferableWorktreeMove)
+    /// A remote row, dropped here to reorder pinned agents across hosts.
+    case remote(RemoteWorktreeDragPayload)
 
-    static let contentTypes = [TransferableWorktreeMove.contentType]
+    static let contentTypes = [TransferableWorktreeMove.contentType, RemoteWorktreeDragPayload.contentType]
     static var transferRepresentation: some TransferRepresentation {
         ProxyRepresentation(importing: { WorktreeRowDrop.worktree($0 as TransferableWorktreeMove) })
+        ProxyRepresentation(importing: { WorktreeRowDrop.remote($0 as RemoteWorktreeDragPayload) })
     }
 
     enum Result: Equatable {
@@ -84,6 +87,8 @@ enum WorktreeRowDrop: Transferable {
               let target = repo.worktrees.first(where: { $0.id == targetWorktreeID }),
               !target.state.isInFlight else { return .rejected }
         switch self {
+        case .remote:
+            return .rejected
         case .worktree(let payload):
             guard allowsReordering, payload.repoID == repoID else { return .rejected }
             if SidebarHostNavigation.isPinned(target, in: repo),
@@ -107,7 +112,7 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     let onDrop: (WorktreeRowDrop, WorktreeDropPlacement) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        !isInFlight && allowsReordering && info.hasItemsConforming(to: [TransferableWorktreeMove.contentType])
+        !isInFlight && allowsReordering && info.hasItemsConforming(to: WorktreeRowDrop.contentTypes)
     }
 
     func dropEntered(info: DropInfo) {
@@ -125,7 +130,7 @@ private struct WorktreeRowDropDelegate: DropDelegate {
 
     private func updateIndicator(_ info: DropInfo) {
         guard validateDrop(info: info) else { clearIndicator(); return }
-        let isWorktree = info.hasItemsConforming(to: [TransferableWorktreeMove.contentType])
+        let isWorktree = info.hasItemsConforming(to: WorktreeRowDrop.contentTypes)
         placement = isWorktree ? WorktreeDropPlacement.fromRowDropLocation(info.location, rowHeight: rowHeight) : nil
     }
     private func clearIndicator() { placement = nil }
@@ -174,6 +179,9 @@ struct WorktreeReorderTarget: ViewModifier {
     @Binding var appState: AppState
     var isEnabled: Bool = true
     let onSelect: () -> Void
+    /// Handles the drop when pinned rows span hosts. Returning false leaves it
+    /// to the local path, which pins a temporary row.
+    var onDrop: ((WorktreeRowDrop, WorktreeDropPlacement) -> Bool)? = nil
     @State private var rowHeight: CGFloat = 28
     @State private var placement: WorktreeDropPlacement?
 
@@ -210,6 +218,7 @@ struct WorktreeReorderTarget: ViewModifier {
                 isInFlight: worktree?.state.isInFlight ?? true,
                 placement: $placement,
                 onDrop: { payload, destination in
+                    if onDrop?(payload, destination) == true { return }
                     _ = payload.apply(repoID: repoID, targetWorktreeID: worktreeID, placement: destination,
                                   allowsReordering: allowsReordering, to: &appState)
                 }))
@@ -243,11 +252,12 @@ extension View {
         worktreeID: WorktreeEntry.ID,
         appState: Binding<AppState>,
         isEnabled: Bool = true,
-        onSelect: @escaping () -> Void
+        onSelect: @escaping () -> Void,
+        onDrop: ((WorktreeRowDrop, WorktreeDropPlacement) -> Bool)? = nil
     ) -> some View {
         modifier(WorktreeReorderTarget(
             repoID: repoID, worktreeID: worktreeID,
-            appState: appState, isEnabled: isEnabled, onSelect: onSelect
+            appState: appState, isEnabled: isEnabled, onSelect: onSelect, onDrop: onDrop
         ))
     }
 }

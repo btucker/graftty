@@ -84,4 +84,78 @@ struct SidebarMergedRows {
         let section = sections(for: projectID)
         return flatten(section.pinned) + section.temporary
     }
+
+    enum PinnedMove: Equatable {
+        /// Rank writes, each sent to the row's own host.
+        case ranks([PinnedRankWrite])
+        /// A row on an older host, which only understands moves within itself.
+        case legacy(source: MergedWorktreeRow, target: MergedWorktreeRow, after: Bool)
+    }
+
+    struct PinnedRankWrite: Equatable {
+        let row: MergedWorktreeRow
+        let rank: String
+    }
+
+    /// Drags stay among one folder's rows, as they always have (`LAYOUT-2.34`).
+    func pinnedMove(source: String, target: String, after: Bool, projectID: String,
+                    isWritable: (MergedWorktreeRow) -> Bool) -> PinnedMove? {
+        guard let rows = Self.siblings(of: source, in: sections(for: projectID).pinned),
+              let moving = rows.first(where: { $0.id == source }), !moving.row.isMainCheckout,
+              let destination = rows.first(where: { $0.id == target }) else { return nil }
+        if moving.row.sidebar?.pinnedRank == nil {
+            guard moving.hostID == destination.hostID, destination.row.sidebar?.pinnedRank == nil else { return nil }
+            return .legacy(source: moving, target: destination, after: after)
+        }
+        let ranked = rows.filter { !$0.row.isMainCheckout }
+        let rest = ranked.filter { $0.id != source }
+        let toIndex = destination.row.isMainCheckout ? 0
+            : (rest.firstIndex { $0.id == target } ?? rest.count) + (after ? 1 : 0)
+        let writes = RankPlacement.move(source, toIndex: toIndex, in: ranked.map {
+            RankPlacement.Row(id: $0.id, rank: $0.row.sidebar?.pinnedRank, isWritable: isWritable($0))
+        })
+        let byID = Dictionary(uniqueKeysWithValues: ranked.map { ($0.id, $0) })
+        return .ranks(writes.compactMap { write in byID[write.id].map { PinnedRankWrite(row: $0, rank: write.rank) } })
+    }
+
+    private static func siblings(of id: String, in nodes: [MergedWorktreeNode]) -> [MergedWorktreeRow]? {
+        let rows = nodes.compactMap { node -> MergedWorktreeRow? in
+            if case .row(let row) = node { return row }
+            return nil
+        }
+        if rows.contains(where: { $0.id == id }) { return rows }
+        for node in nodes {
+            if case .folder(_, _, let children) = node, let found = siblings(of: id, in: children) { return found }
+        }
+        return nil
+    }
+
+    /// The same rank and time go to every member it can reach. Empty when the
+    /// project has no reachable member that stores ranks.
+    func projectMove(id: String, target: String, after: Bool, changedAt: Double,
+                     isReachable: (SidebarProject) -> Bool) -> [(member: SidebarProject, rank: String, changedAt: Double)] {
+        let rest = projects.filter { $0.id != id }
+        guard let index = rest.firstIndex(where: { $0.id == target }) else { return [] }
+        let writes = RankPlacement.move(id, toIndex: index + (after ? 1 : 0), in: projects.map { project in
+            RankPlacement.Row(id: project.id, rank: project.rank, isWritable: project.members.contains { $0.rank != nil && isReachable($0) })
+        })
+        return writes.flatMap { write -> [(member: SidebarProject, rank: String, changedAt: Double)] in
+            (project(id: write.id)?.members ?? []).filter { $0.rank != nil && isReachable($0) }
+                .map { (member: $0, rank: write.rank, changedAt: changedAt) }
+        }
+    }
+}
+
+/// Sends each repair once: a host's next report is what clears it.
+struct ProjectRankRepairTracker {
+    private var sent: [String: Double] = [:]
+
+    mutating func due(_ repairs: [(member: SidebarProject, rank: String, changedAt: Double)])
+        -> [(member: SidebarProject, rank: String, changedAt: Double)] {
+        repairs.filter { repair in
+            guard (sent[repair.member.id] ?? -.infinity) < repair.changedAt else { return false }
+            sent[repair.member.id] = repair.changedAt
+            return true
+        }
+    }
 }

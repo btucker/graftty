@@ -86,3 +86,72 @@ struct PaneWebURLTests {
         #expect(SidebarView.paneWebURL(terminalID: PaneSlotID(), repos: repos, host: "mac.local", port: 8799) == nil)
     }
 }
+
+@Suite("@spec LAYOUT-2.206: When a user drags a pinned row or a project, the application shall write the new rank to the hosts that own it, so the same order appears on every device, and shall keep older hosts' moves on their existing request.")
+struct SidebarMergedMoveTests {
+    private let local = WorktreeOrigin(deviceID: .init(value: "mac"), deviceLabel: "MacBook", relayDepth: 0)
+    private let box = WorktreeOrigin(deviceID: .init(value: "box"), deviceLabel: "build-box", relayDepth: 0)
+
+    private func pin(_ name: String, _ owner: WorktreeOrigin, rank: String?) -> WorktreePanes {
+        WorktreePanes(path: "/\(owner.deviceID.value)/\(name)", displayName: name, repoDisplayName: "app", repositoryID: "/\(owner.deviceID.value)", displayBranch: name, state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, origin: owner,
+            sidebar: .init(id: "\(owner.deviceID.value):repo:\(name)", projectID: "\(owner.deviceID.value):repo", isPinned: true, pinnedRank: rank))
+    }
+    private func merged(_ rows: [WorktreePanes]) -> SidebarMergedRows {
+        let projects = [local, box].map { SidebarProject(id: "\($0.deviceID.value):repo", repositoryID: "/\($0.deviceID.value)", name: "app", owner: $0, originKey: "k/app") }
+        return SidebarMergedRows.make(projects: projects, localRows: rows.filter { $0.origin == local }, remoteRows: rows.filter { $0.origin != local },
+                                      localDeviceID: local.deviceID, availability: { _ in .reachable })
+    }
+    private func id(_ row: WorktreePanes) -> String { MergedWorktreeList.identity(row) }
+
+    @Test func pinnedDragAcrossHostsWritesOnlyDraggedHost() throws {
+        let a = pin("a", local, rank: "a"), b = pin("b", box, rank: "b"), c = pin("c", local, rank: "c")
+        let plan = merged([a, b, c]).pinnedMove(source: id(c), target: id(b), after: false, projectID: "origin:k/app", isWritable: { _ in true })
+        guard case .ranks(let writes)? = plan else { Issue.record("\(String(describing: plan))"); return }
+        #expect(writes.map(\.row.row.displayName) == ["c"])
+        #expect(writes[0].rank > "a" && writes[0].rank < "b")
+    }
+    @Test func pinnedDragStaysAmongSiblings() {
+        let a = pin("agents/a", local, rank: "a"), b = pin("agents/b", box, rank: "b"), c = pin("solo", local, rank: "c")
+        #expect(merged([a, b, c]).pinnedMove(source: id(c), target: id(a), after: true, projectID: "origin:k/app", isWritable: { _ in true }) == nil)
+        #expect(merged([a, b, c]).pinnedMove(source: id(a), target: id(b), after: true, projectID: "origin:k/app", isWritable: { _ in true }) != nil)
+    }
+    @Test func olderHostFallsBackToMove() {
+        let a = pin("a", box, rank: nil), b = pin("b", box, rank: nil), c = pin("c", local, rank: "a")
+        let plan = merged([a, b, c]).pinnedMove(source: id(b), target: id(a), after: false, projectID: "origin:k/app", isWritable: { _ in true })
+        guard case .legacy(let source, let target, false)? = plan else { Issue.record("\(String(describing: plan))"); return }
+        #expect(source.row.displayName == "b")
+        #expect(target.row.displayName == "a")
+        #expect(merged([a, b, c]).pinnedMove(source: id(a), target: id(c), after: false, projectID: "origin:k/app", isWritable: { _ in true }) == nil,
+                "an older host's row can't cross hosts")
+    }
+    private func project(_ id: String, _ owner: WorktreeOrigin, key: String, rank: String?, at: Double? = nil) -> SidebarProject {
+        SidebarProject(id: id, repositoryID: "/" + id, name: id, owner: owner, originKey: key, rank: rank, rankChangedAt: at)
+    }
+    private func railMerged(_ projects: [SidebarProject]) -> SidebarMergedRows {
+        SidebarMergedRows.make(projects: projects, localRows: [], remoteRows: [], localDeviceID: local.deviceID, availability: { _ in .reachable })
+    }
+    @Test func railDragWritesAllReachableMembers() {
+        let rows = railMerged([project("one", local, key: "k/one", rank: "a"), project("two-m", local, key: "k/two", rank: "b"), project("two-b", box, key: "k/two", rank: "b"), project("three", box, key: "k/three", rank: "c")])
+        let plan = rows.projectMove(id: "origin:k/three", target: "origin:k/two", after: false, changedAt: 50, isReachable: { _ in true })
+        #expect(plan.count == 1)
+        #expect(plan[0].member.id == "three")
+        #expect(plan[0].changedAt == 50)
+        #expect(plan[0].rank > "a" && plan[0].rank < "b")
+        let toMerged = rows.projectMove(id: "origin:k/two", target: "origin:k/one", after: false, changedAt: 50, isReachable: { _ in true })
+        #expect(Set(toMerged.map(\.member.id)) == ["two-m", "two-b"])
+        #expect(Set(toMerged.map(\.rank)).count == 1)
+    }
+    @Test func railDragSkipsUnreachableMembersWithoutWaking() {
+        let rows = railMerged([project("one", local, key: "k/one", rank: "a"), project("two-m", local, key: "k/two", rank: "b"), project("two-b", box, key: "k/two", rank: "b")])
+        let plan = rows.projectMove(id: "origin:k/two", target: "origin:k/one", after: false, changedAt: 50, isReachable: { $0.id == "two-m" })
+        #expect(plan.map(\.member.id) == ["two-m"])
+    }
+    @Test func repairCopiesNewestOnce() {
+        var tracker = ProjectRankRepairTracker()
+        let member = project("b", box, key: "k/a", rank: "c", at: 1)
+        #expect(tracker.due([(member: member, rank: "d", changedAt: 5)]).count == 1)
+        #expect(tracker.due([(member: member, rank: "d", changedAt: 5)]).isEmpty)
+        #expect(tracker.due([(member: member, rank: "e", changedAt: 9)]).count == 1)
+    }
+}

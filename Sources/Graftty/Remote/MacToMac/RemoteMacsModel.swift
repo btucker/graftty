@@ -792,6 +792,34 @@ final class RemoteMacsModel: ObservableObject {
         return (mac, repository)
     }
 
+    func setProjectRank(_ rank: String, changedAt: Double, for project: SidebarProject) async throws {
+        guard let route = relayRouter.resolveRepository(project.repositoryID) else { throw ProjectControlError.unavailable }
+        try expectOK(await sendWorktreeManagement(identity: route.identity,
+            request: .setProjectRank(repositoryID: route.repositoryID, rank: rank, changedAt: changedAt)))
+    }
+
+    func setPinnedRank(_ rank: String, worktree: WorktreePanes, on remoteMac: RemoteMac) async throws {
+        guard let repositoryID = worktree.repositoryID else { throw ProjectControlError.unavailable }
+        try expectOK(await sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac),
+            request: .setPinnedRank(repositoryID: repositoryID, worktreeID: worktree.path, rank: rank)))
+    }
+
+    /// A row on an older host, which has no rank to write.
+    func moveWorktree(_ source: WorktreePanes, relativeTo target: WorktreePanes, after: Bool, on remoteMac: RemoteMac) async throws {
+        guard let repositoryID = source.repositoryID else { throw ProjectControlError.unavailable }
+        try expectOK(await sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac),
+            request: .moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after)))
+    }
+
+    private func expectOK(_ response: WorktreeManagementResponse) throws {
+        switch response {
+        case .ok: return
+        case .error(_, let message, _, _): throw ProjectControlError.host(message)
+        default: throw ProjectControlError.unexpectedResponse
+        }
+    }
+
+    @discardableResult
     func refreshRepositories(on remoteMac: RemoteMac) async throws
         -> [RemoteRepositoryInfo] {
         let repositories = try await repositories(on: remoteMac)

@@ -107,6 +107,7 @@ struct SidebarView: View {
     /// The row last selected in each merged project. Paths alone can repeat across hosts.
     @State private var rememberedRowIDs: [String: String] = [:]
     @State private var collapsedMergedFolders: Set<String> = []
+    @State private var rankRepairs = ProjectRankRepairTracker()
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
     @State private var navigationError: String?
@@ -211,6 +212,7 @@ struct SidebarView: View {
             .map { merged.mergedID(forMember: localProjectID($0)) } ?? merged.projects.first?.id
         let next = selected ?? fallback
         if navigation.selectedProjectID != next { navigation.selectedProjectID = next }
+        write(rankRepairs.due(ProjectMerge.repairs(merged.projects, isReachable: { $0.isAvailable && isReachable(host: $0.owner?.deviceID) })))
         iconStore.remoteIconCache.reconcile(remote.projects)
         for project in remote.projects where project.isAvailable {
             guard let revision = project.iconRevision else { continue }
@@ -258,8 +260,15 @@ struct SidebarView: View {
         }
     }
     private func moveProject(_ id: String, _ target: String, _ after: Bool) {
-        guard var state = appState.sidebarNavigation else { return }
-        guard state.order.move(id, relativeTo: target, after: after) else { return }
+        let merged = mergedSidebar
+        let writes = merged.projectMove(id: id, target: target, after: after, changedAt: Date().timeIntervalSinceReferenceDate,
+                                        isReachable: { $0.isAvailable && isReachable(host: $0.owner?.deviceID) })
+        if !writes.isEmpty { write(writes); return }
+        // No member stores ranks, so this is an older host: keep this device's order.
+        guard var state = appState.sidebarNavigation,
+              let source = merged.project(id: id)?.members.first?.id,
+              let destination = merged.project(id: target)?.members.first?.id,
+              state.order.move(source, relativeTo: destination, after: after) else { return }
         state.cachedProjects = state.order.sorted(state.cachedProjects)
         appState.sidebarNavigation = state; projects = state.cachedProjects
     }
@@ -737,8 +746,76 @@ struct SidebarView: View {
                 .modifier(MergedRowInsets(projectColumn: showsProjectRail))
         } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == row.hostID }) {
             remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.leafName,
-                          hostLabel: row.showsHostLabel ? row.hostLabel : nil))
+                          hostLabel: row.showsHostLabel ? row.hostLabel : nil, onDrop: { drop, after in
+                              handleRowDrop(drop, target: row.row.path, targetHost: mac.id, after: after)
+                          }))
                 .modifier(MergedRowInsets(projectColumn: showsProjectRail))
+        }
+    }
+
+    /// Pinned rows take their order from ranks. Returns false for a drop this
+    /// doesn't own, such as pinning a temporary row.
+    private func handleRowDrop(_ drop: WorktreeRowDrop, target: String, targetHost: RemoteDeviceID, after: Bool) -> Bool {
+        let merged = mergedSidebar
+        guard let projectID = merged.selectedProjectID(for: navigation.selectedProjectID) ?? merged.projects.first(where: { project in
+            merged.flattenedRows(for: project.id).contains { $0.hostID == targetHost && $0.row.path == target }
+        })?.id else { return false }
+        let rows = merged.flattenedRows(for: projectID)
+        guard let targetRow = rows.first(where: { $0.hostID == targetHost && $0.row.path == target }) else { return false }
+        let sourceRow: MergedWorktreeRow?
+        switch drop {
+        case .worktree(let payload):
+            let path = appState.repos.first { $0.id == payload.repoID }?.worktrees.first { $0.id == payload.worktreeID }?.path
+            sourceRow = rows.first { $0.hostID == owner.deviceID && $0.row.path == path }
+        case .remote(let payload):
+            sourceRow = rows.first { $0.hostID == payload.deviceID && $0.row.path == payload.path }
+        }
+        // A temporary row dropped here pins it: the local path owns that.
+        guard let sourceRow, sourceRow.row.sidebar?.isPinned == true else { return false }
+        guard let move = merged.pinnedMove(source: sourceRow.id, target: targetRow.id, after: after, projectID: projectID,
+                                           isWritable: { isReachable(host: $0.hostID) && $0.row.sidebar?.pinnedRank != nil }) else { return true }
+        apply(move)
+        return true
+    }
+
+    private func isReachable(host: RemoteDeviceID?) -> Bool {
+        host == owner.deviceID || remoteMacsModel.savedRemoteMacs.contains {
+            $0.id == host && remoteMacsModel.connectionState(for: RemoteMacIdentity($0)) == .connected
+        }
+    }
+
+    private func apply(_ move: SidebarMergedRows.PinnedMove) {
+        switch move {
+        case .legacy(let source, let target, let after):
+            guard let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == source.hostID }) else { return }
+            Task { @MainActor in
+                do { try await remoteMacsModel.moveWorktree(source.row, relativeTo: target.row, after: after, on: mac) }
+                catch { navigationError = error.localizedDescription }
+            }
+        case .ranks(let writes):
+            for write in writes {
+                if write.row.hostID == owner.deviceID, let repositoryID = write.row.row.repositoryID {
+                    SidebarHostNavigation.setPinnedRank(write.rank, worktreeID: write.row.row.path, repositoryID: repositoryID, in: &appState)
+                } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == write.row.hostID }) {
+                    Task { @MainActor in
+                        do { try await remoteMacsModel.setPinnedRank(write.rank, worktree: write.row.row, on: mac) }
+                        catch { navigationError = error.localizedDescription }
+                    }
+                }
+            }
+        }
+    }
+
+    private func write(_ writes: [(member: SidebarProject, rank: String, changedAt: Double)]) {
+        for write in writes {
+            if write.member.owner?.deviceID == owner.deviceID {
+                SidebarHostNavigation.setProjectRank(write.rank, changedAt: write.changedAt, repositoryID: write.member.repositoryID, in: &appState)
+            } else {
+                Task { @MainActor in
+                    do { try await remoteMacsModel.setProjectRank(write.rank, changedAt: write.changedAt, for: write.member) }
+                    catch { navigationError = error.localizedDescription }
+                }
+            }
         }
     }
 
@@ -881,7 +958,10 @@ struct SidebarView: View {
             theme: theme, appState: $appState,
             reorderingEnabled: navigation.query.isEmpty,
             onSelect: { onSelect(worktree.path) },
-            menu: { anchor in buildWorktreeMenu(worktree, repo: repo, window: anchor.window) }
+            menu: { anchor in buildWorktreeMenu(worktree, repo: repo, window: anchor.window) },
+            onDrop: { drop, placement in
+                handleRowDrop(drop, target: worktree.path, targetHost: owner.deviceID, after: placement == .after)
+            }
         ) {
             heading
         } status: {

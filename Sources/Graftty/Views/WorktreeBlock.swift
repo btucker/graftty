@@ -47,6 +47,7 @@ struct WorktreeBlock<Heading: View, Status: View>: View {
     let reorderingEnabled: Bool
     let onSelect: () -> Void
     let menu: (NSView) -> NSMenu
+    var onDrop: ((WorktreeRowDrop, WorktreeDropPlacement) -> Bool)? = nil
     @ViewBuilder let heading: () -> Heading
     @ViewBuilder let status: () -> Status
 
@@ -67,7 +68,7 @@ struct WorktreeBlock<Heading: View, Status: View>: View {
             repoID: repoID,
             worktreeID: worktree.id,
             appState: $appState, isEnabled: reorderingEnabled,
-            onSelect: onSelect
+            onSelect: onSelect, onDrop: onDrop
         )
     }
 }

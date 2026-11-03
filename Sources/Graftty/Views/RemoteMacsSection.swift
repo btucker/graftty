@@ -314,6 +314,7 @@ struct RemoteMacsSection: View {
         let remoteMac: RemoteMac
         let displayName: String
         let hostLabel: String?
+        let onDrop: (WorktreeRowDrop, Bool) -> Bool
     }
     /// Renders one row for the merged sidebar instead of whole sections.
     var singleRow: SingleRow? = nil
@@ -561,10 +562,13 @@ struct RemoteMacsSection: View {
                 remoteWorktreeMenu(worktree, remoteMac: remoteMac)
             }
             .modifier(RemoteWorktreeDragSource(payload: .init(identity: identity, path: worktree.path), isEnabled: canReorder(worktree, on: remoteMac), preview: preview))
-            .dropDestination(for: RemoteWorktreeDragPayload.self) { values, location in
+            .dropDestination(for: WorktreeRowDrop.self) { values, location in
+                if let singleRow, let value = values.first, query.isEmpty, !worktree.state.isInFlight {
+                    return singleRow.onDrop(value, location.y > 14)
+                }
                 guard query.isEmpty, !worktree.state.isInFlight,
                       editableProjectIDs.contains(SidebarProjection.projectID(worktree)),
-                      let value = values.first,
+                      case .remote(let value)? = values.first,
                       let source = value.resolve(on: identity, in: worktreePanesByRemote[identity] ?? []),
                       canReorder(source, on: remoteMac), source.path != worktree.path,
                       RemoteWorktreeReorderPolicy.areSiblings(source, worktree),
