@@ -1014,6 +1014,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.39** When a remote CLI requests worktree creation with the destination's default agent, the application shall use a distinct request type so older hosts reject the request rather than create a shell-only worktree.
 
+**GIT-5.40** When the user submits Add Worktree on Mac or mobile with a blank worktree name, the application shall request a brief on-device Apple Intelligence name using the optional task description, normalize it to lowercase kebab-case of at most four words and 40 characters, and use it for an unnamed new branch while preserving explicit worktree and branch names.
+
+**GIT-5.41** If Apple Intelligence is unavailable, fails, exceeds an eight-second generation budget, returns no usable name, or proposes a name already known in the repository, then the application shall use a brief unique kebab-case fallback; if name generation is cancelled, then the application shall stop submission.
+
 ### GIT-6.x — Auto-tracking Pinned Agents
 
 **GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.
