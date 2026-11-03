@@ -3650,6 +3650,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.34** When a client sets a rank on a relayed project or pinned worktree, the relaying Mac shall forward the write to the owning host using that host's identifiers.
 
+**REMOTE-13.35** When a project is on several hosts, Add Worktree shall offer the hosts that have it, defaulting to the last one used unless that host is asleep and another is awake, so opening the sheet wakes nothing while any host is awake.
+
+**REMOTE-13.36** When the user changes host in Add Worktree, the application shall keep the typed name and clear a selected branch that doesn't exist on the new host.
+
 ### REMOTE-14.x — Shared project navigation
 
 **REMOTE-14.1** When a host publishes sidebar metadata, the application shall preserve the original worktree snapshot fields and decode older snapshots without navigation metadata.

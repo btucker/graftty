@@ -1,4 +1,5 @@
 import SwiftUI
+import GrafttyProtocol
 import GrafttyKit
 
 /// A pending Add Worktree sheet presentation, bundling the target repo
@@ -8,7 +9,18 @@ import GrafttyKit
 struct AddWorktreeRequest: Identifiable {
     let repo: RepoEntry
     let prefill: String
+    var existingBranch: String? = nil
+    var hostContext: AddWorktreeHostContext? = nil
     var id: UUID { repo.id }
+}
+
+/// The Host row, for a project on several hosts. Changing host reopens the
+/// sheet for that host, because each host has its own branch list.
+struct AddWorktreeHostContext {
+    let projectName: String
+    let choices: [AddWorktreeHostChoice]
+    let selectedID: String
+    let onSelect: (_ id: String, _ name: String, _ branch: String?) -> Void
 }
 
 /// Scene-scoped command exposed by `MainWindow` so the `.commands` block

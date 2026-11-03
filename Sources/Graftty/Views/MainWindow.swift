@@ -103,6 +103,9 @@ struct MainWindow: View {
         let id = UUID()
         let remoteMac: RemoteMac
         let repository: RemoteRepositoryInfo
+        var hostContext: AddWorktreeHostContext? = nil
+        var name = ""
+        var branch: String? = nil
     }
 
     @ViewBuilder private func remoteWorkspaceContent(for remote: RemoteMac) -> some View {
@@ -158,7 +161,11 @@ struct MainWindow: View {
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
                 onSelectRemotePane: selectRemotePane,
-                onAddRemoteWorktree: beginAddRemoteWorktree,
+                onAddRemoteWorktree: { beginAddRemoteWorktree($0, repository: $1) },
+                onAddRemoteWorktreeWithHost: { mac, repository, context, name, branch in
+                    pendingAddRemoteWorktree = RemoteAddWorktreeRequest(remoteMac: mac, repository: repository,
+                                                                        hostContext: context, name: name, branch: branch)
+                },
                 onDeleteRemoteWorktree: deleteRemoteWorktree,
                 onAddRemoteMac: { isShowingAddRemoteMacSheet = true },
                 onSetupLinuxHost: presentLinuxHostSetup,
@@ -353,6 +360,7 @@ struct MainWindow: View {
         .sheet(item: $pendingAddRemoteWorktree) { request in
             AddWorktreeSheet(
                 repoDisplayName: "\(request.repository.displayName) on \(request.remoteMac.label)",
+                initialWorktreeName: request.name,
                 branchEntries: request.repository.branches.map {
                     BranchPickerEntry(
                         name: $0.name,
@@ -393,7 +401,14 @@ struct MainWindow: View {
                     return response.errorMessage
                         ?? "The remote Mac returned an unexpected response."
                 },
-                onCancel: { pendingAddRemoteWorktree = nil }
+                onCancel: { pendingAddRemoteWorktree = nil },
+                existingBranch: request.branch,
+                hostContext: request.hostContext.map { context in
+                    AddWorktreeHostContext(projectName: context.projectName, choices: context.choices, selectedID: context.selectedID) { id, name, branch in
+                        pendingAddRemoteWorktree = nil
+                        context.onSelect(id, name, branch)
+                    }
+                }
             )
         }
         // Force the SwiftUI color scheme from the theme so SwiftUI-rendered

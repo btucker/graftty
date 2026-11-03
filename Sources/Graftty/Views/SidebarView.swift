@@ -63,6 +63,8 @@ struct SidebarView: View {
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
     let onSelectRemotePane: (RemoteMac, String, String) -> Void
     let onAddRemoteWorktree: (RemoteMac, RemoteRepositoryInfo) -> Void
+    /// Opens the sheet for a remote host from the Host row or Add worktree.
+    let onAddRemoteWorktreeWithHost: (RemoteMac, RemoteRepositoryInfo, AddWorktreeHostContext?, String, String?) -> Void
     let onDeleteRemoteWorktree: (RemoteMac, WorktreePanes) -> Void
     let onAddRemoteMac: () -> Void
     var onSetupLinuxHost: (() -> Void)? = nil
@@ -517,7 +519,9 @@ struct SidebarView: View {
                     if err == nil { pendingAddWorktree = nil }
                     return err
                 },
-                onCancel: { pendingAddWorktree = nil }
+                onCancel: { pendingAddWorktree = nil },
+                existingBranch: request.existingBranch,
+                hostContext: request.hostContext
             )
         }
     }
@@ -872,13 +876,64 @@ struct SidebarView: View {
         }
     }
 
-    /// The selected project's checkout that Add worktree targets: this Mac's,
-    /// otherwise the first host that's available.
+    /// The checkout Add worktree targets in the selected project.
     private var addWorktreeTarget: SidebarProject? {
         let merged = mergedSidebar
-        guard let project = merged.project(id: merged.selectedProjectID(for: navigation.selectedProjectID)) else { return nil }
-        let available = project.members.filter(\.isAvailable)
-        return available.first { $0.owner?.deviceID == owner.deviceID } ?? available.first
+        guard let project = merged.project(id: merged.selectedProjectID(for: navigation.selectedProjectID)),
+              let choice = AddWorktreeHostChoice.defaultChoice(addWorktreeChoices(project), lastUsedID: lastUsedHost(project))?.choice else { return nil }
+        return project.members.first { $0.id == choice.id }
+    }
+
+    private func lastUsedHost(_ project: MergedProject) -> String? {
+        UserDefaults.standard.string(forKey: "addWorktree.lastHost.\(project.id)")
+    }
+
+    private func addWorktreeChoices(_ project: MergedProject) -> [AddWorktreeHostChoice] {
+        AddWorktreeHostChoice.labeled(project.members.filter { $0.supportsWorktreeEditing == true || $0.owner?.deviceID == owner.deviceID }.map { member in
+            let isLocal = member.owner?.deviceID == owner.deviceID
+            return AddWorktreeHostChoice(
+                id: member.id,
+                host: isLocal ? "This Mac" : member.owner?.deviceLabel ?? member.name,
+                path: isLocal ? member.repositoryID : remoteMacsModel.relayRouter.resolveRepository(member.repositoryID)?.repositoryID,
+                availability: mergedAvailability(member))
+        })
+    }
+
+    private func mergedAvailability(_ member: SidebarProject) -> HostAvailability {
+        member.isAvailable ? .reachable : .offline
+    }
+
+    /// Opens Add Worktree on one host. A project on several hosts gets a Host row.
+    private func presentAddWorktree(member: SidebarProject, project: MergedProject, name: String = "", branch: String? = nil) {
+        let choices = addWorktreeChoices(project)
+        let context = AddWorktreeHostContext(projectName: project.name, choices: choices, selectedID: member.id) { id, name, branch in
+            guard let next = project.members.first(where: { $0.id == id }) else { return }
+            pendingAddWorktree = nil
+            // Local and remote sheets have separate presenters, and one can't
+            // appear while the other is still dismissing.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                presentAddWorktree(member: next, project: project, name: name, branch: branch)
+            }
+        }
+        UserDefaults.standard.set(member.id, forKey: "addWorktree.lastHost.\(project.id)")
+        if let repo = appState.repos.first(where: { localProjectID($0) == member.id }) {
+            guard SidebarMenuVisibility.showsAddWorktree(repo: repo) else { return }
+            remoteBranchStore.pulse()
+            prStatusStore.pulse()
+            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: name, existingBranch: branch, hostContext: choices.count > 1 ? context : nil)
+            return
+        }
+        guard !remoteProjectOperationInProgress else { return }
+        remoteProjectOperationInProgress = true
+        navigationError = nil
+        Task { @MainActor in
+            defer { remoteProjectOperationInProgress = false }
+            do {
+                let (mac, repository) = try await remoteMacsModel.addWorktreeRepository(for: member)
+                onAddRemoteWorktreeWithHost(mac, repository, choices.count > 1 ? context : nil, name, branch)
+            } catch { navigationError = error.localizedDescription }
+        }
     }
 
     private func canAddWorktree(to project: SidebarProject) -> Bool {
@@ -889,23 +944,10 @@ struct SidebarView: View {
     }
 
     private func addWorktreeToSelectedProject() {
-        guard navigation.query.isEmpty, let project = addWorktreeTarget else { return }
-
-        if let repo = appState.repos.first(where: { localProjectID($0) == project.id }) {
-            if SidebarMenuVisibility.showsAddWorktree(repo: repo) { presentAddWorktree(for: repo) }
-            return
-        }
-
-        guard !remoteProjectOperationInProgress else { return }
-        remoteProjectOperationInProgress = true
-        navigationError = nil
-        Task { @MainActor in
-            defer { remoteProjectOperationInProgress = false }
-            do {
-                let (mac, repository) = try await remoteMacsModel.addWorktreeRepository(for: project)
-                onAddRemoteWorktree(mac, repository)
-            } catch { navigationError = error.localizedDescription }
-        }
+        let merged = mergedSidebar
+        guard navigation.query.isEmpty, let member = addWorktreeTarget,
+              let project = merged.project(id: merged.mergedID(forMember: member.id)) else { return }
+        presentAddWorktree(member: member, project: project)
     }
 
     /// Renders a worktree and its status line as one block, with a single

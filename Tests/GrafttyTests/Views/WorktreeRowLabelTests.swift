@@ -1,3 +1,4 @@
+import Foundation
 import AppKit
 import SwiftUI
 import Testing
@@ -26,5 +27,26 @@ struct WorktreeRowLabelTests {
         let size = host.sizeThatFits(in: CGSize(width: 160, height: 1000))
         #expect(size.height < 30)
         #expect(size.width <= 160)
+    }
+}
+
+@Suite("@spec REMOTE-13.36: When the user changes host in Add Worktree, the application shall keep the typed name and clear a selected branch that doesn't exist on the new host.")
+struct AddWorktreeHostSwitchTests {
+    private func entry(_ name: String) -> BranchPickerEntry {
+        BranchPickerEntry(name: name, source: .local, lastCommitDate: Date(timeIntervalSince1970: 1), mountedWorktreePath: nil, pr: nil)
+    }
+    @Test func switchingKeepsNameAndBranchThatExists() {
+        let form = AddWorktreeFormController(initialWorktreeName: "typed")
+        form.carry(existingBranch: "feature", entries: [entry("feature")])
+        #expect(form.worktreeName == "typed")
+        #expect(form.branchMode == .existing)
+        #expect(form.existingSelection?.name == "feature")
+    }
+    @Test func switchingClearsMissingBranch() {
+        let form = AddWorktreeFormController(initialWorktreeName: "typed")
+        form.carry(existingBranch: "feature", entries: [entry("other")])
+        #expect(form.worktreeName == "typed")
+        #expect(form.branchMode == .newBranch)
+        #expect(form.existingSelection == nil)
     }
 }
