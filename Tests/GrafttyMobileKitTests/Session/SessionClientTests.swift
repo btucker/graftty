@@ -298,6 +298,116 @@ struct SessionClientTests {
                 "Replay must position R in the leader's last column: \(client.session.readViewportText()?.debugDescription ?? "nil")")
     }
 
+    @Test("@spec IOS-4.60: While a mobile terminal's parser is behind by its backlog limit, the application shall hold further terminal output in the transport, while continuing to apply control frames that arrive ahead of that output.")
+    func parserBacklogHoldsOutputUntilItClears() async throws {
+        let ws = DelayedReceiveWS()
+        let renderer = PagingRenderer()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, pagedRenderer: renderer)
+        primeViewport(client, columns: 120, rows: 50)
+        client.start()
+        defer { client.stop(); ws.fail(CancellationError()) }
+        try await waitUntil("initial receive") { ws.receiveCalls == 1 }
+        func ownership(cols: UInt16) throws -> WebSocketFrame {
+            .text(WebControlEnvelope.ownership(try ownershipSnapshot(
+                ownerClientID: DisplayClientID("desktop"), ownerKind: .mac, cols: cols, rows: 50)).encoded())
+        }
+        ws.deliver(try ownership(cols: 120))
+        try await waitUntil("first control frame") { ws.receiveCalls == 2 }
+        client.outputBacklog.setBacklogged(true)
+        ws.deliver(.text(WebControlEnvelope.grid(cols: 120, rows: 50).encoded()))
+        try await waitUntil("control frame during backlog") { ws.receiveCalls == 3 }
+        let before = client.session.pendingOutputByteCount
+        ws.deliver(.binary(Data("held".utf8)))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(client.session.pendingOutputByteCount == before)
+        #expect(ws.receiveCalls == 3)
+        client.outputBacklog.setBacklogged(false)
+        try await waitUntil("output released") { ws.receiveCalls == 4 }
+        #expect(client.session.pendingOutputByteCount > before)
+    }
+
+    @Test("Backlogged output confirms the native grid only when it is about to parse")
+    func parserBacklogWaitsBeforeConfirmingTheGrid() async throws {
+        let ws = DelayedReceiveWS()
+        let renderer = PagingRenderer()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, pagedRenderer: renderer)
+        primeViewport(client, columns: 120, rows: 50)
+        client.start()
+        defer { client.stop(); ws.fail(CancellationError()) }
+        try await waitUntil("initial receive") { ws.receiveCalls == 1 }
+        ws.deliver(.text(WebControlEnvelope.ownership(try ownershipSnapshot(
+            ownerClientID: DisplayClientID("desktop"), ownerKind: .mac, cols: 100, rows: 30)).encoded()))
+        try await waitUntil("control frame") { ws.receiveCalls == 2 }
+        #expect(client.snapshotCanvasGrid == .init(cols: 100, rows: 30))
+        client.outputBacklog.setBacklogged(true)
+        ws.deliver(.binary(Data("held".utf8)))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(renderer.resized.isEmpty)
+        client.outputBacklog.setBacklogged(false)
+        try await waitUntil("output released") { ws.receiveCalls == 3 }
+        #expect(renderer.resized == [.init(cols: 100, rows: 30)])
+    }
+
+    @Test("A real parser behind on title updates keeps its backlog bounded", .timeLimit(.minutes(2)))
+    func realParserBacklogStaysBounded() async throws {
+        let ws = DelayedReceiveWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 11")
+        container.terminalView.configuration = .init(backend: .inMemory(client.session))
+        host.view.addSubview(container)
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        container.layoutIfNeeded()
+        try await waitUntil("terminal surface") { container.terminalView.surface != nil }
+        let grid = try #require(container.terminalGridMetrics)
+        client.start()
+        defer { client.stop(); ws.fail(CancellationError()) }
+        try await waitUntil("initial receive") { ws.receiveCalls == 1 }
+        // As the owner there is no per-frame grid readiness flush, so nothing
+        // but the gate paces this path, as with paged output.
+        try await waitUntil("hello") { ws.sent.contains { frame in
+            if case .text(let text) = frame, case .hello? = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+            return false
+        } }
+        let owner = try ws.sent.compactMap { frame -> DisplayClientID? in
+            guard case .text(let text) = frame,
+                  case .hello(let id, _, _, _, _, _) = try WebControlEnvelope.parse(Data(text.utf8)) else { return nil }
+            return id
+        }.first
+        ws.deliver(.text(WebControlEnvelope.ownership(try ownershipSnapshot(
+            ownerClientID: try #require(owner), ownerKind: .ios,
+            cols: UInt16(grid.columns), rows: UInt16(grid.rows))).encoded()))
+        try await waitUntil("control frame") { ws.receiveCalls == 2 }
+        // Dense title updates are the slowest measured parser input.
+        let line = Data((0..<20).map { "\u{1b}]0;title \($0)\u{07}line\r\n" }.joined().utf8)
+        var chunk = Data()
+        while chunk.count < 256 * 1024 { chunk.append(line) }
+        let total = 8 * 1024 * 1024
+        var fed = 0
+        var calls = 2
+        var peak = 0
+        let start = ContinuousClock.now
+        while fed < total {
+            ws.deliver(.binary(chunk))
+            fed += chunk.count
+            calls += 1
+            let expected = calls
+            try await waitUntil("next receive", timeout: .seconds(60), interval: .milliseconds(1)) {
+                peak = max(peak, client.session.pendingOutputByteCount)
+                return ws.receiveCalls >= expected
+            }
+        }
+        let feedDuration = start.duration(to: .now).components
+        client.session.waitForPendingOutput()
+        print("[terminal-flow] {\"scenario\":\"sessionClientParserBacklog\",\"fedBytes\":\(fed),\"peakPendingBytes\":\(peak),\"feedSeconds\":\(feedDuration.seconds)}")
+        // The high mark plus the frame in hand when the gate closes.
+        #expect(peak <= 3 * 1024 * 1024 + 2 * chunk.count)
+    }
+
     final class ImmediateReplayWS: WebSocketClient, @unchecked Sendable {
         private let lock = NSLock()
         private var frames: [WebSocketFrame]

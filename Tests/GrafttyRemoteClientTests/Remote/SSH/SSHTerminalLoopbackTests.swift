@@ -155,6 +155,69 @@ struct SSHTerminalLoopbackTests {
         await separateConnection?.close()
     }
 
+    // This loopback's host predates negotiated windows and ignores the request.
+    // Timing is reported, not asserted.
+    @Test("@spec REMOTE-9.21: If a host does not support negotiated output windows, then a paused terminal client shall remain attached under SSH flow control and receive all of its output once it resumes.", .timeLimit(.minutes(5)))
+    func slowConsumerOverWebRTCWithLegacyHost() async throws {
+        let total = 32 * 1024 * 1024
+        let bulkStream = EchoStream()
+        let connection = try await makeLoopbackConnection { channel, type in
+            guard case .session = type else {
+                return channel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+            }
+            return channel.eventLoop.makeCompletedFuture {
+                try channel.pipeline.syncOperations.addHandler(TerminalSessionHandler(
+                    streamFactory: { name in name == "bulk" ? bulkStream : EchoStream() }
+                ))
+            }
+        }
+        let interactive = TerminalSessionClient(parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler, sessionName: "interactive")
+        let bulk = TerminalSessionClient(parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler, sessionName: "bulk")
+        defer { interactive.close(); bulk.close() }
+        do {
+            try await interactive.connect()
+            try await bulk.connect()
+            func milliseconds(_ duration: Duration) -> Double {
+                Double(duration.components.seconds) * 1_000 + Double(duration.components.attoseconds) / 1e15
+            }
+            // A consumer keeping up: the transport's own rate.
+            let rateStart = ContinuousClock.now
+            try await bulkStream.send(Data(repeating: 120, count: total))
+            var received = 0
+            while received < total, case .binary(let data) = try await bulk.receive() { received += data.count }
+            let drainMilliseconds = milliseconds(rateStart.duration(to: .now))
+            // Now pause that consumer while the same volume is produced.
+            try await bulkStream.send(Data(repeating: 121, count: total))
+            var echoes: [Double] = []
+            let pauseStart = ContinuousClock.now
+            while pauseStart.duration(to: .now) < .seconds(1) {
+                let start = ContinuousClock.now
+                try await interactive.send(.binary(Data([0])))
+                #expect(try await interactive.receive() == .binary(Data([0])))
+                echoes.append(milliseconds(start.duration(to: .now)))
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let buffered = bulk.bufferedByteCountForTesting
+            let server = await connection.serverTransport.sendDiagnostics()
+            var resumed = 0
+            while resumed < total {
+                guard case .binary(let data) = try await bulk.receive() else { continue }
+                #expect(data.allSatisfy { $0 == 121 })
+                resumed += data.count
+            }
+            #expect(resumed == total)
+            echoes.sort()
+            print("[terminal-flow] {\"scenario\":\"webrtcSlowConsumer\",\"activeDrainMilliseconds\":\(drainMilliseconds),\"activeBytes\":\(total),\"pausedReceiveBufferBytes\":\(buffered),\"siblingEchoP95Milliseconds\":\(echoes[min(echoes.count - 1, echoes.count * 95 / 100)]),\"siblingEchoSamples\":\(echoes.count),\"serverPeakPendingBytes\":\(server.peakPendingBytes),\"serverPeakBufferedBytes\":\(server.peakBufferedBytes),\"resumedBytes\":\(resumed)}")
+        } catch {
+            interactive.close(); bulk.close()
+            await connection.close()
+            throw error
+        }
+        await connection.close()
+    }
+
     /// End-to-end: client opens session channel, sends env+pty+shell,
     /// writes "hi\n", server-side echo stream returns "hi\n".
     @Test(.timeLimit(.minutes(3)))

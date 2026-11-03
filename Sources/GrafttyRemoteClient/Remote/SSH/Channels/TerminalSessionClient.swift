@@ -60,7 +60,25 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private var historyToken: String?
     private var historySetupTask: Task<Void, Never>?
     internal var hasHistoryChannelForTesting: Bool { lock.withLock { historyChannel != nil } }
-    private var receiveBuffer = TerminalReceiveBuffer()
+    // REMOTE-9.17: reads stop above the high mark, which closes the SSH window
+    // and pauses the host. NIOSSH grants a fixed 16 MiB window. A read hands
+    // over everything it holds and re-grants that window, and a close hands
+    // over whatever filled it next, so a conforming peer stays below two
+    // windows plus these marks. A control frame costs over 32 bytes of window,
+    // so only a peer ignoring flow control overflows either budget.
+    private static let readHighWater = 4 * 1024 * 1024
+    private static let readLowWater = 1024 * 1024
+    static let receiveByteLimit = 2 * (1 << 24) + 2 * readHighWater
+    private var receiveBuffer = TerminalReceiveBuffer(byteLimit: receiveByteLimit, frameLimit: receiveByteLimit / 32)
+    private var parkedReads: [Channel] = []
+    /// Nil keeps this client on SSH flow control alone.
+    private let outputWindowBytes: Int?
+    private var consumedOutputBytes: UInt64 = 0
+    private var acknowledgedOutputBytes: UInt64 = 0
+    /// NIOSSH delivers channel requests ahead of data it still holds, so an
+    /// exit status takes effect only when the child closes, which hands over
+    /// everything it held (REMOTE-9.18).
+    private var pendingExit: ClientError?
     private var pendingReceivers: [(id: UUID, continuation: CheckedContinuation<WebSocketFrame, Error>)] = []
     var bufferedByteCountForTesting: Int { lock.withLock { receiveBuffer.byteCount } }
     var pendingReceiverCountForTesting: Int { lock.withLock { pendingReceivers.count } }
@@ -71,10 +89,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public private(set) var usesPagedHistory = false
     public var supportsPagedHistory: Bool { usesPagedHistory }
 
-    public init(parentChannel: Channel, parentHandler: NIOSSHHandler, sessionName: String) {
+    public init(parentChannel: Channel, parentHandler: NIOSSHHandler, sessionName: String,
+                outputWindowBytes: Int? = TerminalOutputCredit.clientWindowBytes) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.sessionName = sessionName
+        self.outputWindowBytes = outputWindowBytes
     }
 
     func setHistorySetupTask(_ task: Task<Void, Never>) {
@@ -91,7 +111,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         let child = try await openBulkSubsystem(
             parentChannel: parentChannel, parentHandler: parentHandler,
             subsystem: GrafttyWebRTC.historySubsystemPrefix + token
-        ) { [self] child, _ in child.pipeline.addHandler(InboundRelay(owner: self)) }
+        ) { [self] child, _ in InboundRelay.install(on: child, owner: self) }
         let accepted = lock.withLock {
             guard !closed else { return false }
             historyChannel = child
@@ -99,7 +119,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             return true
         }
         guard accepted else { child.close(promise: nil); throw ClientError.channelClosed }
-        child.closeFuture.whenComplete { [weak self] _ in self?.handleChildClose() }
+        child.closeFuture.whenComplete { [weak self] _ in self?.handleHistoryClose() }
         if let terminal = lock.withLock({ childChannel }) {
             try await Self.sendEnv(channel: terminal, name: GrafttyWebRTC.historyTokenEnvironment, value: token)
         }
@@ -151,7 +171,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
                 }
                 guard accepted else { return child.eventLoop.makeFailedFuture(ClientError.channelClosed) }
                 child.closeFuture.whenComplete { [weak self] _ in self?.handleChildClose() }
-                return child.pipeline.addHandler(InboundRelay(owner: self))
+                return InboundRelay.install(on: child, owner: self)
             }
         } catch {
             throw ClientError.openFailed(error)
@@ -184,6 +204,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         do {
             if let token = lock.withLock({ historyToken }) {
                 try await Self.sendEnv(channel: child, name: GrafttyWebRTC.historyTokenEnvironment, value: token)
+            }
+            if let outputWindowBytes {
+                try await Self.sendEnv(channel: child, name: TerminalOutputCredit.environmentName, value: String(outputWindowBytes))
             }
             try await Self.sendEnv(channel: child, name: "GRAFTTY_SESSION", value: sessionName)
             try await Self.sendPty(channel: child, term: "xterm-256color", cols: 80, rows: 24)
@@ -265,13 +288,18 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         let id = UUID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { cont in
-                lock.withLock {
+                let flow = lock.withLock { () -> OutputFlow? in
                     if Task.isCancelled { cont.resume(throwing: CancellationError()) }
-                    else if let next = receiveBuffer.popFirst() { cont.resume(returning: next) }
+                    else if let next = popOutputLocked() {
+                        cont.resume(returning: next)
+                        return takeOutputFlowLocked()
+                    }
                     else if let error = didFailReceive { cont.resume(throwing: error) }
                     else if closed { cont.resume(throwing: ClientError.channelClosed) }
                     else { pendingReceivers.append((id, cont)) }
+                    return nil
                 }
+                flow?.perform()
             }
         } onCancel: {
             let waiter = self.lock.withLock {
@@ -303,6 +331,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             historyChannel = nil
             historySetupTask = nil
             historyToken = nil
+            parkedReads.removeAll()
             return (pending, channels, didFailReceive!, waiter)
         }
         result.3?.finish(.failure(result.2))
@@ -416,11 +445,13 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private func sendRawControlFrame(_ payload: String) async throws {
         let child = lock.withLock { childChannel }
         guard let child else { throw ClientError.notConnected }
-        guard let framed = StdErrControlFraming.encode(payload) else { return }
-        var buffer = child.allocator.buffer(capacity: framed.count)
-        buffer.writeBytes(framed)
-        let data = SSHChannelData(type: .stdErr, data: .byteBuffer(buffer))
+        guard let data = Self.controlData(payload, on: child) else { return }
         try await child.writeAndFlush(data).get()
+    }
+
+    private static func controlData(_ payload: String, on channel: Channel) -> SSHChannelData? {
+        guard let framed = StdErrControlFraming.encode(payload) else { return nil }
+        return SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(bytes: framed)))
     }
 
     // MARK: - Inbound bytes from the SSH channel
@@ -434,6 +465,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     }
 
     private func deliverInbound(_ frame: WebSocketFrame) {
+        var flow: OutputFlow?
         let overflow = lock.withLock {
             guard !closed else { return false }
             guard receiveBuffer.append(frame) else {
@@ -443,16 +475,75 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
                 didFailReceive = ClientError.receiveBufferOverflow
                 return true
             }
-            while !pendingReceivers.isEmpty, let output = receiveBuffer.popFirst() {
+            while !pendingReceivers.isEmpty, let output = popOutputLocked() {
                 pendingReceivers.removeFirst().continuation.resume(returning: output)
             }
+            flow = takeOutputFlowLocked()
             return false
         }
+        flow?.perform()
         if overflow { terminate(discardOutput: true, error: ClientError.receiveBufferOverflow) }
+    }
+
+    /// Continues reading a channel unless its consumer is behind, in which case
+    /// the next `receive()` that drains the backlog resumes it.
+    fileprivate func readCompleted(on channel: Channel) {
+        let shouldRead = lock.withLock {
+            guard !closed, receiveBuffer.byteCount >= Self.readHighWater else { return true }
+            parkedReads.append(channel)
+            return false
+        }
+        if shouldRead { channel.read() }
+    }
+
+    private func popOutputLocked() -> WebSocketFrame? {
+        let frame = receiveBuffer.popFirst()
+        if case .binary(let bytes)? = frame { consumedOutputBytes &+= UInt64(bytes.count) }
+        return frame
+    }
+
+    /// Work a consumed frame releases, performed after the lock is dropped.
+    private struct OutputFlow {
+        let reads: [Channel]
+        let acknowledgement: (channel: Channel, bytes: UInt64)?
+
+        func perform() {
+            for channel in reads { channel.read() }
+            guard let acknowledgement,
+                  let data = TerminalSessionClient.controlData(
+                      TerminalOutputCredit.encodeConsumed(acknowledgement.bytes), on: acknowledgement.channel
+                  ) else { return }
+            acknowledgement.channel.writeAndFlush(data, promise: nil)
+        }
+    }
+
+    private func takeOutputFlowLocked() -> OutputFlow {
+        var reads: [Channel] = []
+        if !parkedReads.isEmpty, receiveBuffer.byteCount <= Self.readLowWater {
+            swap(&reads, &parkedReads)
+        }
+        var acknowledgement: (Channel, UInt64)?
+        // A window eighth keeps acknowledgements cheap, and the host can never
+        // be blocked on less than this. An unsent total retries on the next pop.
+        if let outputWindowBytes,
+           consumedOutputBytes &- acknowledgedOutputBytes >= UInt64(outputWindowBytes / 8),
+           let channel = childChannel ?? openingChannel {
+            acknowledgedOutputBytes = consumedOutputBytes
+            acknowledgement = (channel, consumedOutputBytes)
+        }
+        return OutputFlow(reads: reads, acknowledgement: acknowledgement)
+    }
+
+    /// The history channel can close first when its terminal exits. Let the
+    /// terminal's own close finish delivering that terminal's final output.
+    func handleHistoryClose() {
+        guard lock.withLock({ pendingExit == nil }) else { return }
+        handleChildClose()
     }
 
     func handleChildClose() {
         let ended = lock.withLock {
+            if didFailReceive == nil, let pendingExit { didFailReceive = pendingExit }
             if let error = didFailReceive as? ClientError, case .sessionEnded = error { return true }
             return false
         }
@@ -460,16 +551,10 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     }
 
     func handleSessionEnded(exitStatus: Int) {
-        let failure = ClientError.sessionEnded(exitStatus: exitStatus)
-        let toResume = lock.withLock {
-            guard didFailReceive == nil else { return [CheckedContinuation<WebSocketFrame, Error>]() }
-            didFailReceive = failure
-            closed = true
-            let pending = pendingReceivers.map(\.continuation)
-            pendingReceivers.removeAll()
-            return pending
+        lock.withLock {
+            guard didFailReceive == nil else { return }
+            pendingExit = ClientError.sessionEnded(exitStatus: exitStatus)
         }
-        for cont in toResume { cont.resume(throwing: failure) }
     }
 
     // MARK: - Channel-request senders
@@ -555,6 +640,23 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
 
     init(owner: TerminalSessionClient) {
         self.owner = owner
+    }
+
+    /// Every read is explicit, so an unconsumed backlog closes the SSH window.
+    static func install(on child: Channel, owner: TerminalSessionClient) -> EventLoopFuture<Void> {
+        child.setOption(ChannelOptions.autoRead, value: false).flatMap {
+            child.pipeline.addHandler(InboundRelay(owner: owner))
+        }
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        context.fireChannelActive()
+        context.read()
+    }
+
+    func channelReadComplete(context: ChannelHandlerContext) {
+        context.fireChannelReadComplete()
+        owner.readCompleted(on: context.channel)
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {

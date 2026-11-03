@@ -12,8 +12,9 @@ struct TerminalSessionClientBufferingTests {
     @Test func overflowDisconnectsAndReleasesQueuedBytes() async throws {
         let (client, channel) = try await makeClient()
         defer { client.close(); channel.close(promise: nil) }
-        // Distinct allocations model a stalled viewer, with only 8 MiB + 8 KiB input.
-        for _ in 0..<1025 { client.deliverInboundBinary(Data(repeating: 0x61, count: 8192)) }
+        // Past every SSH window: only a peer ignoring flow control gets here.
+        let chunk = Data(repeating: 0x61, count: 256 * 1024)
+        for _ in 0...(TerminalSessionClient.receiveByteLimit / chunk.count) { client.deliverInboundBinary(chunk) }
         #expect(client.bufferedByteCountForTesting == 0)
         do {
             _ = try await client.receive()
@@ -21,6 +22,23 @@ struct TerminalSessionClientBufferingTests {
         } catch TerminalSessionClient.ClientError.receiveBufferOverflow {}
         client.deliverInboundBinary(Data([1]))
         #expect(client.bufferedByteCountForTesting == 0)
+    }
+
+    @Test func pausedConsumerKeepsControlFramesInterleavedWithOutput() async throws {
+        let (client, channel) = try await makeClient()
+        defer { client.close(); channel.close(promise: nil) }
+        // Control frames are coalescing barriers, so these reach neither byte
+        // mark. A resize storm behind a paused consumer looks like this.
+        let control = WebControlEnvelope.grid(cols: 80, rows: 24).encoded()
+        let pairs = 1100
+        for index in 0..<pairs {
+            client.deliverInboundBinary(Data([UInt8(truncatingIfNeeded: index)]))
+            client.deliverInboundText(control)
+        }
+        for index in 0..<pairs {
+            #expect(try await client.receive() == .binary(Data([UInt8(truncatingIfNeeded: index)])))
+            #expect(try await client.receive() == .text(control))
+        }
     }
 
     @Test func explicitAndAbruptCloseDiscardOutput() async throws {
@@ -130,5 +148,43 @@ struct TerminalSessionClientBufferingTests {
             return TerminalSessionClient(parentChannel: channel, parentHandler: handler, sessionName: "buffer-test")
         }.get()
         return (client, channel)
+    }
+}
+
+@Suite("Terminal output backlog gate", .timeLimit(.minutes(1)))
+struct TerminalOutputBacklogGateTests {
+    @Test func passesThroughWithoutABacklog() async {
+        await TerminalOutputBacklogGate().waitUntilClear(timeout: .seconds(30))
+    }
+
+    @Test func waitsForTheBacklogToClear() async throws {
+        let gate = TerminalOutputBacklogGate()
+        gate.setBacklogged(true)
+        let waiter = Task { await gate.waitUntilClear(timeout: .seconds(30)) }
+        try await Task.sleep(for: .milliseconds(20))
+        gate.setBacklogged(false)
+        await waiter.value
+    }
+
+    @Test func timeoutReleasesAParserThatCannotDrain() async {
+        let gate = TerminalOutputBacklogGate()
+        gate.setBacklogged(true)
+        await gate.waitUntilClear(timeout: .milliseconds(10))
+    }
+
+    @Test func anImmediateTimeoutIsNeverLost() async {
+        let gate = TerminalOutputBacklogGate()
+        gate.setBacklogged(true)
+        // The deadline can fire before the waiter registers. It must still release it.
+        for _ in 0..<20_000 { await gate.waitUntilClear(timeout: .zero) }
+    }
+
+    @Test func cancellationReleasesTheWaiter() async throws {
+        let gate = TerminalOutputBacklogGate()
+        gate.setBacklogged(true)
+        let waiter = Task { await gate.waitUntilClear(timeout: .seconds(30)) }
+        try await Task.sleep(for: .milliseconds(20))
+        waiter.cancel()
+        await waiter.value
     }
 }

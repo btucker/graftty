@@ -59,17 +59,50 @@ struct RemoteWorktreeRelayRouterTests {
         await stream.close()
     }
 
-    @Test("@spec REMOTE-13.27: If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.", arguments: ["events", "bytes"])
-    func pagedRelayClosesWhenReceiverStalls(limit: String) async throws {
+    @Test("@spec REMOTE-13.27: While a relay's mobile receiver is stalled, the application shall stop taking output from the upstream terminal once the relay's bounded queue is full, without closing the attachment or dropping terminal events, and shall resume in order when the receiver drains the queue.", arguments: ["events", "bytes"])
+    func pagedRelayPausesUpstreamWhileReceiverStalls(limit: String) async throws {
         let client = RelayWebSocketClient()
         client.supportsPagedHistory = true
         let stream = try RelayedPagedTerminalStream(client: client)
-        let frame: WebSocketFrame = limit == "bytes"
-            ? .binary(Data(repeating: 42, count: 16 * 1024))
-            : .text(try PagedTerminalEnvelope(event: .grid(cols: 91, rows: 17)).encoded())
-        for _ in 0..<300 { client.deliver(frame) }
-        try await waitUntil { client.didClose }
-        #expect(client.didClose)
+        // A control frame keeps each event distinct, so "events" reaches its
+        // count limit. A unique first byte makes every output event checkable.
+        let count = 600
+        let frames: [WebSocketFrame] = try (0..<count).map { index in
+            limit == "bytes"
+                ? .binary(Data(repeating: UInt8(truncatingIfNeeded: index), count: 64 * 1024))
+                : .text(try PagedTerminalEnvelope(event: .grid(cols: UInt16(80 + index % 7), rows: 17)).encoded())
+        }
+        frames.forEach(client.deliver)
+        // Measure only after the relay has made no progress for a settle period.
+        var paused = client.pendingFrameCount
+        var settled = false
+        for _ in 0..<100 where !settled {
+            try await Task.sleep(for: .milliseconds(100))
+            let pending = client.pendingFrameCount
+            settled = pending == paused
+            paused = pending
+        }
+        #expect(settled, "The relay must stop taking output while its queue is full")
+        #expect(paused > 0)
+        #expect(!client.didClose)
+        var received = 0
+        var bytes = Data()
+        var events = stream.events.makeAsyncIterator()
+        while received < (limit == "bytes" ? count * 64 * 1024 : count) {
+            switch await events.next() {
+            case .output(let data)?:
+                received += data.count
+                bytes.append(data)
+            case .grid?: received += 1
+            default: Issue.record("Unexpected relay event"); return
+            }
+        }
+        if limit == "bytes" {
+            #expect(bytes == frames.reduce(into: Data()) { result, frame in
+                if case .binary(let data) = frame { result.append(data) }
+            })
+        }
+        #expect(!client.didClose)
         await stream.close()
     }
 
@@ -678,6 +711,7 @@ private final class RelayWebSocketClient:
     var didReceiveEnd: Bool { lock.withLock { receivedEnd } }
     private var closed = false
     var didClose: Bool { lock.withLock { closed } }
+    var pendingFrameCount: Int { lock.withLock { frames.count } }
 
     func send(_ frame: WebSocketFrame) async throws { lock.withLock { sent.append(frame) } }
     func sentFrames() -> [WebSocketFrame] { lock.withLock { sent } }

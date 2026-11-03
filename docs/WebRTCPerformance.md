@@ -18,7 +18,7 @@ TEST_RUNNER_GRAFTTY_WEBRTC_LATENCY_SAMPLES=100 xcodebuild \
   '-only-testing:GrafttyRemoteClientTests/SSHTerminalLoopbackTests/interactiveLatencyWithSiblingTraffic(scenario:)' \
   test > /tmp/graftty-webrtc-performance.log 2>&1
 
-python3 scripts/summarize-terminal-latency.py \
+scripts/summarize-terminal-latency.py \
   /tmp/graftty-webrtc-performance.log \
   --output /tmp/graftty-webrtc-performance.json
 ```
@@ -68,9 +68,46 @@ Archive the source revision, working-tree status, host model, Xcode version,
 and simulator runtime alongside each report. The JSON distinguishes simulator
 and device loopback, but does not collect that machine metadata automatically.
 
+## Slow-consumer flow control
+
+Terminal output is paced from the receiver back to the host in three steps:
+
+1. On iOS, `SessionClient` stops taking output while the parser is more than
+   3 MiB behind, resuming at 512 KiB. `InMemoryTerminalSession.receive` never
+   blocks, so this backlog would otherwise be invisible to the transport. Dense
+   title updates are the slowest measured input, because they pass through a
+   mailbox that only the main thread drains. Measure with the main thread free:
+   blocking in `waitForPendingOutput` drains that mailbox only every 10 ms, which
+   measures the wait rather than the parser.
+2. A client's negotiated output window, 1 MiB by default, limits how many
+   unconsumed terminal bytes the host sends. The client opts in with the
+   `GRAFTTY_TERMINAL_OUTPUT_WINDOW` environment request and acknowledges a
+   cumulative byte count as it takes output. Control frames do not count, so
+   they reach the client behind at most one window.
+3. If the host ignores that request, `TerminalSessionClient` stops reading above
+   4 MiB, which closes the standard SSH window. Nothing disconnects, but control
+   frames share that fixed 16 MiB window and wait behind whatever it holds.
+
+The relay on a Mac stops taking upstream output while its bounded queue is full,
+so these limits apply across a one-hop attachment.
+
+Measure the comparison with these opt-in probes. Native WebRTC runs in the last
+one on macOS, and `TEST_RUNNER_GRAFTTY_TERMINAL_FLOW_PROBES=1` enables the parser
+probe in `xcodebuild`:
+
+```sh
+GRAFTTY_TERMINAL_FLOW_PROBES=1 scripts/swiftpm test \
+  --filter 'SSHTerminalBackpressureTests/probe|TerminalFlowWebRTCProbeTests'
+```
+
+Each probe prints one `[terminal-flow]` JSON line holding numbers only.
+`probeDelayedLink` adds delay inside its test harness, and that harness's pump
+limits it to about 3 MB/s, so use it for lag and not for throughput. These probes
+do not measure a physical iPhone, cellular loss or network handoffs.
+
 After a measurement change, run the shared tests and regenerate the specs:
 
 ```sh
-scripts/swiftpm test --filter 'SSHNIOTransportUnitTests|PagedTerminalCoordinatorTests|TransportLatencySummaryTests'
-python3 scripts/generate-specs.py
+scripts/swiftpm test --filter 'SSHNIOTransportUnitTests|PagedTerminalCoordinatorTests|TransportLatencySummaryTests|SSHTerminalBackpressureTests|TerminalOutputCredit'
+scripts/generate-specs.py
 ```
