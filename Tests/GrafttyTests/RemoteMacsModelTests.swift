@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
@@ -129,6 +130,34 @@ struct RemoteMacsModelTests {
         #expect(recorder.dials == [false, true])
     }
 
+    @Test("@spec REMOTE-2.35: When removing a worktree needs a sleeping host, the application shall wake that host before sending the removal.")
+    func removingAWorktreeOnASleepingHostWakesIt() async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        _ = await model.deleteWorktree(on: remote, worktreePath: "/repo/w", force: false)
+        #expect(recorder.dials == [true])
+    }
+
+    @Test func wakeDetailsLearnedFromAConnectionApplyWithoutRelaunch() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let pins = OSAllocatedUnfairLock(initialState: Set<RemoteDeviceID>())
+        let registry = RemoteMacConnectionRegistry(wakeAwareFactory: { remoteMac, identity, _, _ in
+            // The host signs its wake details during the dial, and the pin keeps them.
+            pins.withLock { $0 = [remoteMac.id] }
+            return RemoteMacConnectionRegistry.Entry(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        })
+        let cache = HostSnapshotCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry, hostSnapshotCache: cache,
+                                    wakeableHostIDs: { pins.withLock { $0 } })
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        _ = await model.sidebarRelaySnapshot()
+        model.disconnect(identity: RemoteMacIdentity(remote))
+        #expect(model.sleepingSnapshot().hostIDs == [remote.id])
+    }
+
     private func sleepingModel(wakeAddresses: Bool) async throws -> (RemoteMacsModel, RemoteMac, HostSnapshotCache) {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
         let remote = try remoteMac()
@@ -164,11 +193,20 @@ struct RemoteMacsModelTests {
         await #expect(throws: (any Error).self) { try await model.wake(remote) }
     }
 
-    @Test func forgetDeletesSnapshot() async throws {
-        let (model, remote, cache) = try await sleepingModel(wakeAddresses: true)
-        model.forgetSnapshot(of: remote)
+    @Test func removingAHostDeletesItsSnapshot() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let cache = HostSnapshotCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        try cache.save(hostID: remote.id, projects: [], rows: [])
+        let model = RemoteMacsModel(store: store, connectionRegistry: RemoteMacConnectionRegistry(factory: { _, _ in throw URLError(.cannotConnectToHost) }),
+                                    hostSnapshotCache: cache, wakeableHostIDs: { [remote.id] })
+        await model.loadSavedRemotes()
+        #expect(model.sleepingSnapshot().hostIDs == [remote.id])
+        try store.delete(id: remote.id, fingerprint: remote.fingerprint)
+        await model.loadSavedRemotes()
         #expect(cache.load(hostID: remote.id) == nil)
-        #expect(model.sleepingSnapshot().rows.isEmpty)
+        #expect(model.sleepingSnapshot().hostIDs.isEmpty)
     }
 
     @Test func addRepositoryReportsHostErrorsAndMissingRepository() async throws {

@@ -22,8 +22,7 @@ final class SidebarPRBadgeInteractionTests: XCTestCase {
             WorktreeRow(entry: worktree, isActive: false, displayName: "merged", isMainCheckout: false,
                 theme: .fallback, stats: nil, baseRef: nil,
                 prBadge: .init(number: 806, state: .merged, checks: .success,
-                    url: URL(string: "https://github.com/btucker/graftty/pull/806")!),
-                attentionStyle: nil, onRemove: { removalWindow = $0 })
+                    url: URL(string: "https://github.com/btucker/graftty/pull/806")!), onRemove: { removalWindow = $0 })
         } status: { EmptyView() })
         let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 320, height: 44),
             styleMask: .borderless, backing: .buffered, defer: false)
@@ -70,8 +69,7 @@ final class SidebarPRBadgeInteractionTests: XCTestCase {
         ) {
             WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
                         theme: .fallback, stats: nil, baseRef: nil,
-                        prBadge: PRBadge(number: 5000, state: .open, checks: .success, url: url),
-                        attentionStyle: nil)
+                        prBadge: PRBadge(number: 5000, state: .open, checks: .success, url: url))
                 .frame(height: 44)
         } status: { EmptyView() }
         .environment(\.openURL, OpenURLAction { openedURLs.append($0); return .handled })
@@ -116,7 +114,7 @@ final class SidebarPRBadgeInteractionTests: XCTestCase {
             reorderingEnabled: true, onSelect: { selections += 1 }, menu: { _ in NSMenu() }
         ) {
             WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
-                theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
         } status: { EmptyView() }
             .background(GhosttyTheme.fallback.sidebarBackground)
             .foregroundStyle(GhosttyTheme.fallback.foreground))

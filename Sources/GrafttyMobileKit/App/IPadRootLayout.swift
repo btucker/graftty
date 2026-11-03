@@ -28,6 +28,8 @@ public struct IPadRootLayout: View {
     @Environment(\.remoteConnectionCoordinator) private var coordinator
     @Environment(\.multiHostFeed) private var feed
     @State private var showsHosts = false
+    /// The host whose theme and keybindings are showing.
+    @State private var presentationHostID: UUID?
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var mobilePaneCommandError: String?
     @State private var explicitSelectionGeneration: UInt64 = 0
@@ -96,6 +98,10 @@ public struct IPadRootLayout: View {
         Self.resolveSelectedHost(from: hostStore.hosts, selectedHostId: appState.selectedHostId)
     }
 
+    private var selectedHostIsLive: Bool {
+        appState.selectedHostId.map { feed?.state.isLive($0) == true } ?? false
+    }
+
     public var body: some View {
         let selectionGeneration = explicitSelectionGeneration
         let displayedHostID = selectedHost?.id
@@ -122,10 +128,6 @@ public struct IPadRootLayout: View {
                             theme: appState.theme,
                             selectedHostID: appState.selectedHostId,
                             selectedWorktreePath: appState.selectedWorktreePath,
-                            isReadyToLoad: LiveSessionReadiness.isActive(
-                                scene: scenePhase,
-                                gateUnlocked: gate.isUnlocked
-                            ),
                             onSelect: { host, wt in
                                 adoptHost(host)
                                 selectWorktree(wt)
@@ -213,7 +215,8 @@ public struct IPadRootLayout: View {
             isReady: LiveSessionReadiness.isActive(
                 scene: scenePhase,
                 gateUnlocked: gate.isUnlocked
-            )
+            ),
+            isConnected: selectedHostIsLive
         )) {
             await refreshHostPresentationState()
         }
@@ -229,7 +232,8 @@ public struct IPadRootLayout: View {
             isReady: LiveSessionReadiness.isActive(
                 scene: scenePhase,
                 gateUnlocked: gate.isUnlocked
-            )
+            ),
+            isConnected: selectedHostIsLive
         )) {
             await refreshPaneEnvironment()
         }
@@ -268,13 +272,6 @@ public struct IPadRootLayout: View {
     ) -> WorktreePanes? {
         guard let selectedPath else { return nil }
         return worktrees.first { $0.path == selectedPath }
-    }
-
-    static func applyHostSwitch(appState: IPadAppState, to newHostId: UUID) {
-        appState.select(hostID: newHostId, worktreePath: nil, paneID: nil)
-        appState.latestWorktrees = []
-        appState.worktreePickerProject = nil
-        appState.anyWorktreeHasAttention = false
     }
 
     /// A row on another host moves the selection there, with that host's rows.
@@ -1244,16 +1241,23 @@ public struct IPadRootLayout: View {
             return
         }
         guard let host = selectedHost else {
+            presentationHostID = nil
             appState.theme = .fallback
             keybindingSet = Self.keybindingSetForStartingHostRefresh()
             return
         }
         let capturedHostID = host.id
-        keybindingSet = Self.keybindingSetForStartingHostRefresh()
-        let presentation = await coordinator?.presentation(for: host)
+        // This runs again whenever the host's connection changes, and a brief
+        // disconnect shouldn't take away the theme and keys already showing.
+        let alreadyResolved = presentationHostID == capturedHostID
+        if !alreadyResolved { keybindingSet = Self.keybindingSetForStartingHostRefresh() }
+        // A selection restored at launch or on foreground isn't a reason to wake it.
+        let presentation = await coordinator?.presentation(for: host, wake: .never)
         let text = presentation?.ghosttyConfig
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
+        if presentation == nil, alreadyResolved { return }
+        presentationHostID = presentation == nil ? nil : capturedHostID
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
 
         let resolvedKeybindingSet = Self.keybindingSet(for: presentation)
@@ -1275,7 +1279,7 @@ public struct IPadRootLayout: View {
 
         await closeAndClearPaneEnvironment()
         let capturedHostID = host.id
-        let remoteHost = await coordinator?.connection(for: host)
+        let remoteHost = await coordinator?.connection(for: host, wake: .never)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         let environment = await buildPaneEnvironment(remoteHost: remoteHost)
@@ -1308,16 +1312,17 @@ public struct IPadRootLayout: View {
 private struct PaneEnvironmentRefreshKey: Hashable {
     let hostID: UUID?
     let isReady: Bool
+    /// These dials never wake a host, so they run again once it answers.
+    let isConnected: Bool
 }
 
 private struct HostPresentationRefreshKey: Hashable {
     let hostID: UUID?
     let isReady: Bool
+    /// These dials never wake a host, so they run again once it answers.
+    let isConnected: Bool
 }
 
-// MARK: - HostMenu (private)
-
-/// @spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 /// @spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall keep workspace tabs and terminals below navigation chrome, extend the terminal tree to the bottom detail-column edge, and respect the sidebar boundary.
 struct IPadTerminalDetailChrome: ViewModifier {
     func body(content: Content) -> some View {

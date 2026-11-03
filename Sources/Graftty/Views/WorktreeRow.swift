@@ -8,61 +8,6 @@ private enum WorktreeRowGeometry {
     static let identityWidth: CGFloat = 18
     static let spacing: CGFloat = 6
     static let horizontalInset: CGFloat = 8
-    static let paneIndent: CGFloat = 18
-}
-
-/// Minimal flow layout: wraps subviews to next line at container width
-/// while preserving inline layout on each row. Used by `PaneTitleRow` so
-/// wrapped port chips align under the title text rather than flush to
-/// the row's leading edge (PORTS-3.3). Subviews are queried with the
-/// row's available width (not `.unspecified`) so a `Text` with
-/// `.lineLimit(1)` truncates instead of reporting its unwrapped natural
-/// width — that overflow is what would otherwise clip the enclosing
-/// worktree block's `.listRowInsets` outdent (LAYOUT-2.22).
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 4
-    var rowSpacing: CGFloat = 3
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
-        let childProposal = ProposedViewSize(width: maxWidth, height: nil)
-        var rowWidth: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var totalHeight: CGFloat = 0
-        var maxRowWidth: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(childProposal)
-            if rowWidth + size.width > maxWidth, rowWidth > 0 {
-                totalHeight += rowHeight + rowSpacing
-                maxRowWidth = max(maxRowWidth, rowWidth - spacing)
-                rowWidth = 0
-                rowHeight = 0
-            }
-            rowWidth += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        totalHeight += rowHeight
-        maxRowWidth = max(maxRowWidth, rowWidth - spacing)
-        return CGSize(width: maxRowWidth, height: totalHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let childProposal = ProposedViewSize(width: bounds.width, height: nil)
-        var x = bounds.minX
-        var y = bounds.minY
-        var rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(childProposal)
-            if x + size.width > bounds.maxX, x > bounds.minX {
-                x = bounds.minX
-                y += rowHeight + rowSpacing
-                rowHeight = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-    }
 }
 
 struct WorktreeRow: View {
@@ -70,7 +15,7 @@ struct WorktreeRow: View {
     /// True when this is the currently-selected worktree. Used only for
     /// *text* emphasis; the row's highlight background is drawn by the
     /// enclosing worktree block in SidebarView, which spans both this row
-    /// and any pane rows beneath it.
+    /// and its status line.
     let isActive: Bool
     /// Primary display label, computed by the sidebar with knowledge of
     /// the worktree's siblings so we can disambiguate same-basename
@@ -97,12 +42,6 @@ struct WorktreeRow: View {
     /// deliberately narrower than `PRInfo` so unrelated changes (CI
     /// checks, title, fetchedAt) don't invalidate the row on each poll.
     let prBadge: PRBadge?
-    /// Worktree-scoped attention (STATE-2.3). Driven by the CLI's
-    /// `graftty notify` path (or a worktree-scoped agent stop). Rendered as
-    /// a red capsule next to the branch label, visible regardless of the
-    /// worktree's running state so a ping set on a closed worktree stays
-    /// reachable.
-    let attentionStyle: AttentionCapsuleStyle?
     var attentionCount: Int = 0
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
@@ -167,9 +106,6 @@ struct WorktreeRow: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
 
                 }
-            }
-            if let attentionStyle {
-                AttentionCapsule(style: attentionStyle)
             }
             if let onRemove, SidebarMergedWorktreeRemoval.isAvailable(
                 prState: prBadge?.state, isMainCheckout: isMainCheckout, state: entry.state.wireState) {

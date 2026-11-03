@@ -16,12 +16,23 @@ struct IPadWorktreeFeed: ViewModifier {
         return feed.state.rawRows(of: hostID)
     }
 
+    /// The sidebar lists every host, so its collapsed indicator covers them all.
+    /// A sleeping host's last report says nothing about what needs attention now.
+    private var anyHostHasAttention: Bool {
+        feed?.state.liveRows.contains(where: IPadWorktreeNavigation.hasAttention) ?? false
+    }
+
     func body(content: Content) -> some View {
-        content.onChange(of: rows, initial: true) { _, list in
-            guard let list else { return }
-            IPadRootLayout.onWorktreeListChanged(appState: appState, list: list)
-            didApply(list)
-        }
+        content
+            .onChange(of: rows, initial: true) { _, list in
+                guard let list else { return }
+                IPadRootLayout.onWorktreeListChanged(appState: appState, list: list)
+                appState.anyWorktreeHasAttention = anyHostHasAttention
+                didApply(list)
+            }
+            .onChange(of: anyHostHasAttention, initial: true) { _, hasAttention in
+                appState.anyWorktreeHasAttention = hasAttention
+            }
     }
 }
 #endif

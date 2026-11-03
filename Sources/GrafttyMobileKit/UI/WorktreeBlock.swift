@@ -12,7 +12,7 @@ struct WorktreeBlock: View {
     /// True when this worktree's path matches `selectedWorktreePath`
     /// (IPAD-1.16). Drives both the rounded-rectangle background
     /// highlight on the whole block and the active brightness bucket
-    /// for pane rows beneath it.
+    /// for its text.
     let isActive: Bool
     let isOpening: Bool
     var projectColumn: Bool = false
@@ -26,12 +26,11 @@ struct WorktreeBlock: View {
     var onRemove: (() -> Void)? = nil
 
     var body: some View {
-        // IPAD-1.13: pack the worktree row + its pane rows into a
+        // IPAD-1.13: pack the worktree row + its status line into a
         // single List row via a tight VStack so the iOS sidebar-list
         // style's default per-row padding doesn't compound between
-        // panes. A small 3pt inter-row spacing gives breathing room
-        // between consecutive pane rows without re-inflating to the
-        // sidebar-style's full per-row padding.
+        // them. A small 3pt spacing gives breathing room without
+        // re-inflating to the sidebar-style's full per-row padding.
         VStack(alignment: .leading, spacing: 3) {
             worktreeRow
             statusLine
@@ -42,7 +41,7 @@ struct WorktreeBlock: View {
         }
         // IPAD-1.16: active-worktree block highlight (Mac parity).
         // Painted on the whole VStack so the rounded rectangle spans
-        // both the worktree row and its pane children — same visual
+        // both the worktree row and its status line — same visual
         // grouping as the Mac sidebar's `worktreeBlock`.
         .padding(.leading, projectColumn ? 8 : 6)
         .padding(.trailing, projectColumn ? 8 : 2)
@@ -114,7 +113,7 @@ struct WorktreeBlock: View {
     private var rowIdentity: some View {
         WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
             theme: theme, isActive: isActive, isOpening: isOpening,
-            attentionCount: max(context.pending.count, status.needsAttention ? 1 : 0), hostText: hostText)
+            attentionCount: isAsleep ? 0 : max(context.pending.count, status.needsAttention ? 1 : 0), hostText: hostText)
             .frame(minHeight: 24)
             .contentShape(Rectangle())
     }
@@ -128,7 +127,7 @@ struct WorktreeBlock: View {
         if status != .none {
             MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
                 SidebarStatusLine(status: status, secondary: theme?.sidebarSecondaryText ?? .secondary)
-                    .padding(.leading, SidebarPaneLayout.markerLeading + SidebarPaneLayout.markerSpacing)
+                    .padding(.leading, SidebarStatusLine.mobileLeadingInset)
             }
         }
     }

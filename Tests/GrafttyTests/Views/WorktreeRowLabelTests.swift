@@ -11,7 +11,7 @@ struct WorktreeRowLabelTests {
     func worktreeLabelsStayOnOneLine() {
         let row = WorktreeRow(entry: .init(path: "/repo/load-team-skill", branch: "auto-update-agent-plugins"),
             isActive: false, displayName: "load-team-skill", isMainCheckout: false,
-            theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+            theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
         let host = NSHostingController(rootView: row)
         let size = host.sizeThatFits(in: CGSize(width: 160, height: 1000))
         #expect(size.height < 30)
@@ -22,7 +22,7 @@ struct WorktreeRowLabelTests {
     func hostLabelStaysOnOneLine() {
         let row = WorktreeRow(entry: .init(path: "/repo/load-team-skill", branch: "main"),
             isActive: false, displayName: "load-team-skill", isMainCheckout: false,
-            theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil, hostLabel: "build-box")
+            theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, hostLabel: "build-box")
         let host = NSHostingController(rootView: row)
         let size = host.sizeThatFits(in: CGSize(width: 160, height: 1000))
         #expect(size.height < 30)

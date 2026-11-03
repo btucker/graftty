@@ -18,6 +18,15 @@ public enum SidebarRowStatus: Equatable, Sendable {
         }
     }
 
+    /// Clicking the line goes to the pane that spoke, not just the worktree.
+    public var opensPane: Bool {
+        switch self {
+        case .question: return true
+        case .notification(_, let paneID): return paneID != nil
+        case .working, .whereWeAre, .none: return false
+        }
+    }
+
     /// `isAsleep` means the row came from the host's last report: nothing is
     /// known to be running, so only the saved where-we-are text is meaningful.
     public static func resolve(context: SidebarWorktreeContext, worktree: WorktreePanes, isAsleep: Bool) -> SidebarRowStatus {

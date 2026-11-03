@@ -52,7 +52,7 @@ struct MobileNavigationDecisionTests {
     }
 
     @Test("""
-@spec IOS-4.21: When the user taps a pane child row beneath a multi-leaf worktree in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture returns the user to the worktree picker.
+@spec IOS-4.21: When the user opens a pane from an attention request in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree detail screen.
 """)
     func paneRowTapDecidesToSession() {
         let node: PaneLayoutNode = .leaf(sessionName: "abc", title: "Editor", attentionText: nil, isBusy: false, attentionSource: nil)

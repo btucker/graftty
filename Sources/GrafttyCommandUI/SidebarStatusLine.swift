@@ -3,6 +3,9 @@ import SwiftUI
 /// The line under a worktree's name. Attention gets color; ambient states stay
 /// dim, and unread text stays undimmed until the stopped turn is viewed.
 public struct SidebarStatusLine: View {
+    /// Lines the text up under the worktree's name on mobile rows.
+    public static let mobileLeadingInset: CGFloat = 28
+
     public let status: SidebarRowStatus
     public let secondary: Color
     public init(status: SidebarRowStatus, secondary: Color) {

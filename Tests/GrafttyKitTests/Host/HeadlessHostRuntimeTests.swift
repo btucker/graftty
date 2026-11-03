@@ -826,6 +826,29 @@ struct HeadlessHostRuntimeTests {
         #expect(runtime.state.repos == state.repos)
     }
 
+    @Test("@spec REMOTE-22.66: While a headless host publishes its projects, the application shall give each an id unique to that host, so two hosts with the same checkout path stay separate members of a merged project.")
+    func projectIDsDifferBetweenHostsWithTheSamePath() throws {
+        let (root, config, state) = try fixture()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        runtime.origin = WorktreeOrigin(deviceID: .init(value: "box"), deviceLabel: "box", relayDepth: 0)
+        guard case .snapshot(let rows, let sidebar) = runtime.panesMessage() else { Issue.record("Missing snapshot"); return }
+        let project = try #require(sidebar?.projects.first)
+        #expect(project.id == "box:\(root.path)")
+        #expect(project.repositoryID == root.path)
+        #expect(rows.first?.sidebar?.projectID == project.id)
+    }
+
+    @Test func aNewPinGetsARankWithoutWaitingForTheOriginCheck() async throws {
+        let (root, config, state) = try fixture()
+        var seeded = state
+        seeded.repos[0].worktrees.append(WorktreeEntry(path: root.appendingPathComponent("pin").path, branch: "pin"))
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: seeded)
+        await runtime.refreshProjectIcons()
+        runtime.state.repos[0].worktrees[1].isPinned = true
+        await runtime.refreshProjectIcons()
+        #expect(runtime.state.repos[0].worktrees[1].pinnedRank != nil)
+    }
+
     @Test func failedOrderPersistenceLeavesHostSnapshotUnchanged() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

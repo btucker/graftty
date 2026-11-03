@@ -21,11 +21,20 @@ struct SidebarRowStatusTests {
         SidebarRowStatus.resolve(context: SidebarWorktreeContext(worktree: row), worktree: row, isAsleep: asleep)
     }
 
+    @Test func onlyAQuestionOrPaneNotificationOpensAPane() {
+        #expect(SidebarRowStatus.question("q", paneID: nil).opensPane)
+        #expect(SidebarRowStatus.notification("n", paneID: "p").opensPane)
+        #expect(!SidebarRowStatus.notification("n", paneID: nil).opensPane)
+        #expect(!SidebarRowStatus.working("w").opensPane)
+        #expect(!SidebarRowStatus.whereWeAre("w", isUnread: true).opensPane)
+    }
+
     @Test func questionBeatsNotification() {
         let row = worktree(layout: leaf("a", attention: "Which image?", source: .agentStop), attention: "Build done", source: .userNotify)
         guard case .question("Which image?", "a") = status(row) else { Issue.record("\(status(row))"); return }
     }
-    @Test func notificationBeatsWorking() {
+    @Test("@spec STATE-2.3: While a worktree has notification text, the sidebar shall show it in the status line of that worktree, ahead of a working agent, regardless of the worktree running state.")
+    func notificationBeatsWorking() {
         let row = worktree(layout: leaf("a", busy: true), attention: "Build done", source: .userNotify)
         guard case .notification("Build done", nil) = status(row) else { Issue.record("\(status(row))"); return }
     }

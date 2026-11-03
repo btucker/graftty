@@ -21,6 +21,8 @@ struct AddWorktreeHostContext {
     let choices: [AddWorktreeHostChoice]
     let selectedID: String
     let onSelect: (_ id: String, _ name: String, _ branch: String?) -> Void
+    /// The chosen host becomes the project's default once a worktree exists on it.
+    let onCreated: () -> Void
 }
 
 /// Scene-scoped command exposed by `MainWindow` so the `.commands` block

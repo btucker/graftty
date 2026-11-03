@@ -191,7 +191,8 @@ private let remoteWiringLogger = Logger(
 func makeRemoteConnectionProvider(
     coordinator: RemoteConnectionCoordinator?,
     host: Host,
-    sessionName: String
+    sessionName: String,
+    wake: RemoteConnectionCoordinator.WakePolicy = .whileDialing
 ) -> @Sendable () async -> RemoteHostConnection? {
     { [weak coordinator] in
         guard let coordinator else {
@@ -200,7 +201,7 @@ func makeRemoteConnectionProvider(
             )
             return nil
         }
-        if let connection = await coordinator.connection(for: host) {
+        if let connection = await coordinator.connection(for: host, wake: wake) {
             return connection
         }
         remoteWiringLogger.warning(

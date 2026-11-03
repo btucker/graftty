@@ -30,7 +30,7 @@ struct SidebarReportPreviewTests {
         ) {
             HStack {
             WorktreeRow(entry: worktree, isActive: false, displayName: "Worktree",
-                        isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                        isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
             SidebarReportButton(controller: controller, context: context, theme: .fallback)
                 .frame(width: 20, height: 20)
                 .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.reportButton: $0] }

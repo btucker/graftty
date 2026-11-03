@@ -11,19 +11,14 @@ struct SidebarWorktreeStatusTarget: View {
     let onOpen: () -> Void
 
     var body: some View {
-        switch status {
-        case .none:
+        if status == .none {
             EmptyView()
-        case .question:
+        } else if status.opensPane {
             Button(action: onOpen) { line }
                 .buttonStyle(.plain)
                 .accessibilityHint("Open the worktree and focus the requesting pane")
                 .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.question: $0] }
-        case .notification(_, let paneID) where paneID != nil:
-            Button(action: onOpen) { line }
-                .buttonStyle(.plain)
-                .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.question: $0] }
-        case .notification, .working, .whereWeAre:
+        } else {
             line
         }
     }

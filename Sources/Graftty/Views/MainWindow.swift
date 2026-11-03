@@ -148,9 +148,6 @@ struct MainWindow: View {
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
                 remoteMacsModel: remoteMacsModel,
-                remoteWorkspaceLayout: { identity, worktree in
-                    remoteViewer.workspaceLayout(identity: identity, worktree: worktree)
-                },
                 appStateChanges: appStateChanges,
                 selectedRemoteIdentity: selectedRemoteIdentity,
                 selectedRemoteWorktreePath: selectedRemoteWorktreePath,
@@ -158,11 +155,9 @@ struct MainWindow: View {
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
                 onNavigationIntent: { attentionOpenGeneration &+= 1 },
-                onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
                 onWakeRemoteWorktree: wakeAndOpen,
-                onSelectRemotePane: selectRemotePane,
                 onAddRemoteWorktree: { beginAddRemoteWorktree($0, repository: $1) },
                 onAddRemoteWorktreeWithHost: { mac, repository, context, name, branch in
                     pendingAddRemoteWorktree = RemoteAddWorktreeRequest(remoteMac: mac, repository: repository,
@@ -401,6 +396,7 @@ struct MainWindow: View {
                         agent: agent
                     )
                     if case .created = response {
+                        request.hostContext?.onCreated()
                         pendingAddRemoteWorktree = nil
                         return nil
                     }
@@ -410,10 +406,10 @@ struct MainWindow: View {
                 onCancel: { pendingAddRemoteWorktree = nil },
                 existingBranch: request.branch,
                 hostContext: request.hostContext.map { context in
-                    AddWorktreeHostContext(projectName: context.projectName, choices: context.choices, selectedID: context.selectedID) { id, name, branch in
+                    AddWorktreeHostContext(projectName: context.projectName, choices: context.choices, selectedID: context.selectedID, onSelect: { id, name, branch in
                         pendingAddRemoteWorktree = nil
                         context.onSelect(id, name, branch)
-                    }
+                    }, onCreated: context.onCreated)
                 }
             )
         }
@@ -741,7 +737,7 @@ struct MainWindow: View {
             } catch {
                 let alert = NSAlert()
                 alert.messageText = "Could not open remote port"
-                alert.informativeText = "\(error.localizedDescription)\nOn a Mac host, check Settings → Device Pairing."
+                alert.informativeText = "\(error.localizedDescription)\nOn a Mac host, check Settings → Device Pairing → Port forwarding. For a Linux host, rerun setup to enable localhost forwarding unless it was explicitly disabled."
                 alert.runModal()
             }
         }
@@ -973,6 +969,7 @@ struct MainWindow: View {
 
     @discardableResult
     private func selectWorktree(_ path: String, acknowledging: Bool, inspectingCreation: Bool = true) -> Bool {
+        wakeFlow = nil
         if inspectingCreation, let worktree = appState.worktree(forPath: path), worktree.showsCreationProgress {
             if let previous = appState.selectedWorktreePath, previous != path {
                 setWorktreeSurfacesVisible(false, worktreePath: previous)
@@ -1135,6 +1132,7 @@ struct MainWindow: View {
     }
 
     private func selectRemoteMac(_ remoteMac: RemoteMac) {
+        wakeFlow = nil
         attentionOpenGeneration &+= 1
         leaveLocalSelectionForRemote()
         remoteViewer.selectRemoteMac(remoteMac)
@@ -1167,10 +1165,15 @@ struct MainWindow: View {
             do {
                 try await remoteMacsModel.wake(remoteMac)
                 let identity = RemoteMacIdentity(remoteMac)
-                for _ in 0..<50 where remoteMacsModel.worktreePanesByRemote[identity]?.contains(where: { $0.path == worktreePath }) != true {
+                let hasRow = { remoteMacsModel.worktreePanesByRemote[identity]?.contains(where: { $0.path == worktreePath }) == true }
+                for _ in 0..<50 where !hasRow() {
                     try await Task.sleep(for: .milliseconds(100))
                 }
                 guard wakeFlow?.id == flow.id else { return }
+                guard hasRow() else {
+                    wakeFlow = WakeFlow(remoteMac: remoteMac, worktreePath: worktreePath, phase: .failed)
+                    return
+                }
                 wakeFlow = nil
                 selectRemoteWorktree(remoteMac, worktreePath: worktreePath)
             } catch {
@@ -1275,6 +1278,7 @@ struct MainWindow: View {
     }
 
     private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String, acknowledging: Bool) {
+        wakeFlow = nil
         leaveLocalSelectionForRemote()
         remoteViewer.selectRemotePane(
             remoteMac,

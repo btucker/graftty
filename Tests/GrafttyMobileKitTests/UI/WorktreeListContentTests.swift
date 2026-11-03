@@ -70,6 +70,27 @@ struct WorktreeListContentTests {
         #expect(destination.project?.id == "repo")
     }
 
+    @Test("A compact destination naming one host's project lists the merged project's rows", .timeLimit(.minutes(1)))
+    func destinationNamingAMemberProjectListsRows() async throws {
+        let suite = "worktree-member-destination-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let member = SidebarProject(id: "member", repositoryID: "/repo", name: "repo", originKey: "github.com/acme/repo")
+        let row = WorktreePanes(path: "/repo/first", displayName: "first", repoDisplayName: "repo", displayBranch: "main", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: SidebarWorktreeMetadata(id: "member:first", projectID: member.id))
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        frames.continuation.yield(.frame(.snapshot([row], sidebar: SidebarSnapshot(projects: [member]))))
+        let hosted = try host(WorktreeListContent(
+            feed: makeFeed(frames.stream),
+            onSelect: { _, _ in }, onSelectPane: { _, _, _ in },
+            navigation: SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true),
+            project: member
+        ), defaults: defaults)
+        defer { hosted.isHidden = true }
+        try await waitUntilRendered(hosted, ["first"])
+    }
+
     @Test("Selecting a project cancels an outstanding report open, including offline projects")
     func projectChangesCancelReportOpen() {
         let defaults = UserDefaults(suiteName: "selection-\(UUID())")!

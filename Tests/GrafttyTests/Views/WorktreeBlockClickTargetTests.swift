@@ -57,7 +57,7 @@ private struct WorktreeBlockClickColumn: View {
         ) {
             WorktreeRow(entry: worktree, isActive: isActive, displayName: worktree.branch,
                         isMainCheckout: worktree.path == repo.path, theme: .fallback,
-                        stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                        stats: nil, baseRef: nil, prBadge: nil)
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {

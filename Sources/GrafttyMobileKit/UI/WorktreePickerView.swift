@@ -15,8 +15,6 @@ public struct WorktreePickerView: View {
     public let onSelect: (Host, WorktreePanes) -> Void
     public let onSelectPane: (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)?
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.biometricGate) private var gate
 
     public init(
         feed: MultiHostFeed,
@@ -40,10 +38,6 @@ public struct WorktreePickerView: View {
         WorktreeListContent(
             feed: feed,
             theme: theme,
-            isReadyToLoad: LiveSessionReadiness.isActive(
-                scene: scenePhase,
-                gateUnlocked: gate.isUnlocked
-            ),
             onSelect: onSelect,
             onSelectPane: onSelectPane,
             navigation: navigation,

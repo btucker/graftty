@@ -116,6 +116,16 @@ struct SidebarMergedMoveTests {
         #expect(merged([a, b, c]).pinnedMove(source: id(c), target: id(a), after: true, projectID: "origin:k/app", isWritable: { _ in true }) == nil)
         #expect(merged([a, b, c]).pinnedMove(source: id(a), target: id(b), after: true, projectID: "origin:k/app", isWritable: { _ in true }) != nil)
     }
+    @Test func droppingARowOnItselfMovesNothing() {
+        let a = pin("a", local, rank: "a"), b = pin("b", box, rank: "b"), c = pin("c", local, rank: "c")
+        #expect(merged([a, b, c]).pinnedMove(source: id(a), target: id(a), after: true, projectID: "origin:k/app", isWritable: { _ in true }) == nil)
+    }
+    @Test func findsTheProjectHoldingARowOnEitherHost() {
+        let a = pin("a", local, rank: "a"), b = pin("b", box, rank: "b")
+        let merged = merged([a, b])
+        #expect(merged.projectID(holdingRowAt: b.path, on: box.deviceID) == "origin:k/app")
+        #expect(merged.projectID(holdingRowAt: b.path, on: local.deviceID) == nil)
+    }
     @Test func olderHostFallsBackToMove() {
         let a = pin("a", box, rank: nil), b = pin("b", box, rank: nil), c = pin("c", local, rank: "a")
         let plan = merged([a, b, c]).pinnedMove(source: id(b), target: id(a), after: false, projectID: "origin:k/app", isWritable: { _ in true })

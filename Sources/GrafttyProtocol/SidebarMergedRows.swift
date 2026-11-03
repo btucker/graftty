@@ -101,6 +101,17 @@ public struct SidebarMergedRows: Sendable {
         return result
     }
 
+    /// The project a row belongs to, whichever project is selected. Paths can
+    /// repeat across hosts, so the host is part of the question.
+    public func projectID(holdingRowAt path: String, on host: RemoteDeviceID?) -> String? {
+        rowsByProject.first { _, rows in rows.contains { $0.path == path && $0.origin?.deviceID == host } }?.key
+    }
+
+    /// Each project's temporary rows as they stand, to hand back as `frozenOrder`.
+    public func temporaryOrder() -> [String: [String]] {
+        Dictionary(uniqueKeysWithValues: projects.map { ($0.id, sections(for: $0.id).temporary.map(\.id)) })
+    }
+
     /// Displayed order, with folders flattened.
     public func flattenedRows(for projectID: String) -> [MergedWorktreeRow] {
         func flatten(_ nodes: [MergedWorktreeNode]) -> [MergedWorktreeRow] {
@@ -130,7 +141,8 @@ public struct SidebarMergedRows: Sendable {
     /// Drags stay among one folder's rows, as they always have (`LAYOUT-2.34`).
     public func pinnedMove(source: String, target: String, after: Bool, projectID: String,
                     isWritable: (MergedWorktreeRow) -> Bool) -> PinnedMove? {
-        guard let rows = Self.siblings(of: source, in: sections(for: projectID).pinned),
+        guard source != target,
+              let rows = Self.siblings(of: source, in: sections(for: projectID).pinned),
               let moving = rows.first(where: { $0.id == source }), !moving.row.isMainCheckout,
               let destination = rows.first(where: { $0.id == target }) else { return nil }
         if moving.row.sidebar?.pinnedRank == nil {

@@ -64,7 +64,7 @@ struct LayoutTodo {
     func layout_2_9() async throws { }
 
     @Test("""
-@spec LAYOUT-2.11: The sidebar shall display the active worktree row and all its pane rows inside a single unified highlighted block; within that block, the focused pane's row shall additionally be emphasized via text weight and color (no secondary background).
+@spec LAYOUT-2.11: The sidebar shall display the active worktree row and its status line inside a single unified highlighted block.
 """, .disabled("not yet implemented"))
     func layout_2_11() async throws { }
 

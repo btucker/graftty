@@ -48,50 +48,8 @@ struct MobileWorktreePresentationTests {
         }
     }
 
-    @Test("Pending creation hides early pane layouts until startup completes")
-    func pendingCreationHidesPanes() {
-        var progress = WorktreeCreationProgress()
-        progress.transition(to: .startingPane)
-        let running = row("pending", layout: leaf("early-pane", title: "Shell"))
-        let pending = running.with(creationProgress: progress)
-        #expect(MobileWorktreeRowPresentation(context: SidebarWorktreeContext(worktree: pending)).leaves.isEmpty)
-        progress.transition(to: .ready)
-        let ready = running.with(creationProgress: progress)
-        #expect(MobileWorktreeRowPresentation(context: SidebarWorktreeContext(worktree: ready)).leaves.count == 1)
-    }
-
-    @Test("@spec IOS-9.12: When a mobile worktree question has no displayed matching pane, the application shall display it beneath the worktree, including empty layouts and non-running worktrees, without acknowledging its request.")
-    func questionFallsBackToWorktree() {
-        for layout in [nil, leaf("other", title: "Other"), leaf("reported", title: "Reported")] {
-            for state in [WorktreeWireState.running, .closed, .stale] {
-                let worktree = row("question", layout: layout, state: state, question: true)
-                let context = SidebarWorktreeContext(worktree: worktree)
-                let presentation = MobileWorktreeRowPresentation(context: context)
-                let hasDisplayedMatch = state == .running && layout?.leaves.first?.sessionName == "reported"
-                #expect(presentation.showsWorktreeQuestion == !hasDisplayedMatch)
-                #expect(presentation.questionPaneID == (hasDisplayedMatch ? "reported" : nil))
-                #expect(presentation.leaves.count == (state == .running ? layout?.leaves.count ?? 0 : 0))
-                // This report has no pane binding, so it stays on the worktree heading.
-                #expect(presentation.worktreeAttentionCount == 1)
-                #expect(context.pending.count == 1)
-            }
-        }
-        let noQuestion = MobileWorktreeRowPresentation(context: SidebarWorktreeContext(worktree: row("quiet")))
-        #expect(!noQuestion.showsWorktreeQuestion)
-        #expect(noQuestion.questionPaneID == nil)
-    }
-
     private func leaf(_ session: String, title: String) -> PaneLayoutNode {
         .leaf(sessionName: session, title: title, attentionText: nil, isBusy: false, attentionSource: nil)
-    }
-
-    @Test("Shell questions remain at the worktree when shell rows are omitted")
-    func hiddenShellKeepsWorktreeQuestion() {
-        let worktree = row("question", layout: leaf("reported", title: "Reported"), question: true).with(agents: [])
-        let presentation = MobileWorktreeRowPresentation(context: SidebarWorktreeContext(worktree: worktree))
-        #expect(presentation.leaves.isEmpty)
-        #expect(presentation.questionPaneID == nil)
-        #expect(presentation.showsWorktreeQuestion)
     }
 
     private func row(_ path: String, project: String = "project", pinned: Bool? = nil,

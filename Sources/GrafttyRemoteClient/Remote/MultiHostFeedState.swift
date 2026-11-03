@@ -23,8 +23,21 @@ public struct MultiHostFeedState: Sendable, Equatable {
         var projects: [SidebarProject] = []
     }
 
+    /// One worktree's chosen route to this client.
+    private struct Delivery: Sendable, Equatable {
+        var row: WorktreePanes
+        var host: UUID
+        var isLive: Bool
+    }
+
     private var order: [UUID] = []
     private var records: [UUID: Record] = [:]
+    /// Views read these once per drawn row, so they're rebuilt when a host
+    /// changes rather than on each read.
+    private var deliveries: [Delivery] = []
+    private var hostByIdentity: [String: UUID] = [:]
+    public private(set) var rows: [WorktreePanes] = []
+    public private(set) var projects: [SidebarProject] = []
 
     public init() {}
 
@@ -39,16 +52,19 @@ public struct MultiHostFeedState: Sendable, Equatable {
             record.info = host
             records[host.id] = record
         }
+        rebuild()
     }
 
     public mutating func apply(rows: [WorktreePanes], projects: [SidebarProject], from hostID: UUID) {
         records[hostID]?.isLive = true
         records[hostID]?.rows = rows
         records[hostID]?.projects = projects
+        rebuild()
     }
 
     public mutating func markUnavailable(_ hostID: UUID) {
         records[hostID]?.isLive = false
+        rebuild()
     }
 
     /// The report saved at the last launch, until the host answers.
@@ -56,6 +72,24 @@ public struct MultiHostFeedState: Sendable, Equatable {
         guard let record = records[hostID], !record.isLive, record.rows.isEmpty else { return }
         records[hostID]?.rows = snapshot.rows
         records[hostID]?.projects = snapshot.projects
+        rebuild()
+    }
+
+    /// Gives every sleeping host with nothing to show its saved report.
+    public mutating func loadCaches(_ load: (RemoteDeviceID) -> HostSnapshotCache.Snapshot?) {
+        for id in order where isAsleep(id) {
+            guard let record = records[id], record.rows.isEmpty, let device = record.info.deviceID,
+                  let snapshot = load(device) else { continue }
+            setCache(snapshot, for: id)
+        }
+    }
+
+    /// A host signs its wake details during a dial, so they can arrive after it
+    /// was first listed.
+    public mutating func setWakeable(_ isWakeable: Bool, for hostID: UUID) {
+        guard let record = records[hostID], record.info.isWakeable != isWakeable else { return }
+        records[hostID]?.info.isWakeable = isWakeable
+        rebuild()
     }
 
     public func isLive(_ hostID: UUID) -> Bool { records[hostID]?.isLive == true }
@@ -74,6 +108,9 @@ public struct MultiHostFeedState: Sendable, Equatable {
         records[hostID].map { .init(projects: $0.projects, rows: $0.rows) }
     }
 
+    /// Rows a host is reporting now, without a sleeping host's last report.
+    public var liveRows: [WorktreePanes] { deliveries.filter(\.isLive).map(\.row) }
+
     private func visibleRows(of record: Record) -> [WorktreePanes] {
         if record.isLive { return record.rows }
         guard record.info.isWakeable else { return [] }
@@ -81,50 +118,62 @@ public struct MultiHostFeedState: Sendable, Equatable {
         return record.rows.filter { ($0.origin?.relayDepth ?? 0) == 0 }
     }
 
-    /// Direct routes come first, so de-duplication keeps them.
-    private var deliveries: [(row: WorktreePanes, host: UUID)] {
-        order.flatMap { id -> [(row: WorktreePanes, host: UUID)] in
-            guard let record = records[id] else { return [] }
-            return visibleRows(of: record).map { row in
-                (row: row.origin == nil ? row.with(origin: WorktreeOrigin(deviceID: record.info.deviceID ?? RemoteDeviceID(value: id.uuidString), deviceLabel: record.info.label, relayDepth: 0)) : row, host: id)
+    private mutating func rebuild() {
+        var all: [Delivery] = []
+        for id in order {
+            guard let record = records[id] else { continue }
+            for row in visibleRows(of: record) {
+                let attributed = row.origin == nil
+                    ? row.with(origin: WorktreeOrigin(deviceID: record.info.deviceID ?? RemoteDeviceID(value: id.uuidString), deviceLabel: record.info.label, relayDepth: 0))
+                    : row
+                all.append(Delivery(row: attributed, host: id, isLive: record.isLive))
             }
-        }.sorted { ($0.row.origin?.relayDepth ?? 0) < ($1.row.origin?.relayDepth ?? 0) }
-    }
-
-    public var rows: [WorktreePanes] {
+        }
+        // De-duplication keeps the first: a live route over a saved report, then
+        // the most direct.
+        func priority(_ delivery: Delivery) -> (Int, Int) { (delivery.isLive ? 0 : 1, delivery.row.origin?.relayDepth ?? 0) }
+        all.sort { priority($0) < priority($1) }
         var seen: Set<String> = []
-        return deliveries.filter { seen.insert(MergedWorktreeList.identity($0.row)).inserted }.map(\.row)
+        deliveries = all.filter { seen.insert(MergedWorktreeList.identity($0.row)).inserted }
+        rows = deliveries.map(\.row)
+        hostByIdentity = Dictionary(deliveries.map { (MergedWorktreeList.identity($0.row), $0.host) }, uniquingKeysWith: { first, _ in first })
+
+        let liveProjects = Set(order.flatMap { id -> [String] in
+            guard let record = records[id], record.isLive else { return [] }
+            return record.projects.map(\.id)
+        })
+        projects = order.flatMap { id -> [SidebarProject] in
+            guard let record = records[id] else { return [] }
+            if record.isLive { return record.projects }
+            return record.projects.filter {
+                !liveProjects.contains($0.id) && (($0.owner?.relayDepth ?? 0) == 0 || $0.owner?.deviceID == record.info.deviceID)
+            }
+        }
     }
 
     /// The host to send this row's requests through.
     public func hostID(for row: WorktreePanes) -> UUID? {
-        let identity = MergedWorktreeList.identity(row)
-        if let delivered = deliveries.first(where: { MergedWorktreeList.identity($0.row) == identity }) { return delivered.host }
+        if let host = hostByIdentity[MergedWorktreeList.identity(row)] { return host }
         // A row from an older host has no origin until it's attributed here.
-        return deliveries.first { $0.row.path == row.path && row.origin == nil }?.host
-    }
-
-    public var projects: [SidebarProject] {
-        order.flatMap { id -> [SidebarProject] in
-            guard let record = records[id] else { return [] }
-            return record.isLive ? record.projects : record.projects.filter { ($0.owner?.relayDepth ?? 0) == 0 || $0.owner?.deviceID == record.info.deviceID }
-        }
+        guard row.origin == nil else { return nil }
+        return deliveries.first { $0.row.path == row.path }?.host
     }
 
     public func availability(of project: SidebarProject) -> HostAvailability {
         guard let device = project.owner?.deviceID else { return project.isAvailable ? .reachable : .offline }
-        if let host = records.values.first(where: { $0.info.deviceID == device }) {
-            if host.isLive { return project.isAvailable ? .reachable : .offline }
-            if host.info.isWakeable { return .asleep }
-        }
-        // A third machine reached only through a live relay.
+        let host = records.values.first { $0.info.deviceID == device }
+        if let host, host.isLive { return project.isAvailable ? .reachable : .offline }
+        // A live relay reaches it without waking anything.
         let relayed = records.values.contains { $0.isLive && $0.projects.contains { $0.id == project.id && $0.isAvailable } }
-        return relayed ? .reachable : .offline
+        if relayed { return .reachable }
+        return host?.info.isWakeable == true ? .asleep : .offline
     }
 
-    public func merged(localDeviceID: RemoteDeviceID?) -> SidebarMergedRows {
+    /// `rows` stands in for the delivered rows, for a client that adds its own
+    /// placeholders while a worktree is being created.
+    public func merged(localDeviceID: RemoteDeviceID?, rows: [WorktreePanes]? = nil) -> SidebarMergedRows {
         let state = self
-        return SidebarMergedRows.make(projects: projects, localRows: rows, remoteRows: [], localDeviceID: localDeviceID,
+        return SidebarMergedRows.make(projects: projects, localRows: rows ?? self.rows, remoteRows: [], localDeviceID: localDeviceID,
                                       availability: { state.availability(of: $0) })
     }
 }

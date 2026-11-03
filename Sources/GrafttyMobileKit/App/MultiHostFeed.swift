@@ -42,11 +42,7 @@ public final class MultiHostFeed {
             .init(id: host.id, label: host.label, deviceID: host.remoteDeviceID,
                   isWakeable: coordinator?.hasWakeAddresses(host) ?? false)
         })
-        for host in paired where state.isAsleep(host.id) && state.rows.isEmpty {
-            if let device = host.remoteDeviceID, let snapshot = cache.load(hostID: device) {
-                state.setCache(snapshot, for: host.id)
-            }
-        }
+        state.loadCaches { cache.load(hostID: $0) }
         settledHosts.formIntersection(paired.map(\.id))
         hasSettled = settledHosts.count == paired.count
     }
@@ -83,10 +79,12 @@ public final class MultiHostFeed {
 
     /// Sleeping rows only need to be roughly current.
     private func saveSnapshot(of host: Host) {
-        guard let device = host.remoteDeviceID, coordinator?.hasWakeAddresses(host) == true,
-              Date().timeIntervalSince(savedAt[host.id] ?? .distantPast) > 30,
-              let snapshot = state.snapshot(of: host.id) else { return }
+        guard Date().timeIntervalSince(savedAt[host.id] ?? .distantPast) > 30 else { return }
         savedAt[host.id] = Date()
+        // A host signs its wake details when dialed, so check them again here.
+        let isWakeable = coordinator?.hasWakeAddresses(host) ?? false
+        state.setWakeable(isWakeable, for: host.id)
+        guard isWakeable, let device = host.remoteDeviceID, let snapshot = state.snapshot(of: host.id) else { return }
         let cache = cache
         Task.detached(priority: .utility) {
             try? cache.save(hostID: device, projects: snapshot.projects,
@@ -105,8 +103,11 @@ public final class MultiHostFeed {
             ?? hosts.first { $0.remoteDeviceID == project.owner?.deviceID }
     }
 
-    public func provider(for host: Host) -> RemoteConnectionProvider {
-        if let coordinator { return makeRemoteConnectionProvider(coordinator: coordinator, host: host, sessionName: "worktree-management") }
+    /// Requests through this need the host, so by default they wake it. That
+    /// has to skip the cooldown: this feed's quiet dials fail while a host sleeps.
+    /// Background reads of a host that's already live pass `.never`.
+    public func provider(for host: Host, wake: RemoteConnectionCoordinator.WakePolicy = .now) -> RemoteConnectionProvider {
+        if let coordinator { return makeRemoteConnectionProvider(coordinator: coordinator, host: host, sessionName: "worktree-management", wake: wake) }
         return { nil }
     }
 
@@ -124,6 +125,18 @@ public final class MultiHostFeed {
             try? await Task.sleep(for: .milliseconds(200))
         }
         return state.isLive(host.id)
+    }
+
+    /// The person asked to try again, so hosts that aren't connected may wake.
+    /// A connection this opens reaches the feed through that host's observation.
+    public func retry() async {
+        guard let coordinator else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for host in hosts where !state.isLive(host.id) {
+                group.addTask { @MainActor in _ = await coordinator.connection(for: host, wake: .now) }
+            }
+        }
+        await refresh()
     }
 
     public func refresh() async {

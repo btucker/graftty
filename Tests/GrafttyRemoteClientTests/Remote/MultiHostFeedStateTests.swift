@@ -96,6 +96,50 @@ struct MultiHostFeedStateTests {
         #expect(state.rawRows(of: hostA).map(\.displayName) == ["one"])
         #expect(state.rawRows(of: hostB).isEmpty)
     }
+    @Test func everySleepingHostLoadsItsCache() {
+        var state = MultiHostFeedState()
+        state.setHosts([.init(id: hostA, label: "a", deviceID: deviceA, isWakeable: true),
+                        .init(id: hostB, label: "b", deviceID: deviceB, isWakeable: true)])
+        state.loadCaches { device in .init(projects: [project(device)], rows: [row(device.value, device: device)]) }
+        #expect(Set(state.rows.map(\.displayName)) == ["a", "b"])
+    }
+    @Test func cacheLoadSkipsHostsThatAlreadyHaveRows() {
+        var state = state(wakeableB: true)
+        state.apply(rows: [row("live", device: deviceB)], projects: [project(deviceB)], from: hostB)
+        state.markUnavailable(hostB)
+        state.loadCaches { device in .init(projects: [], rows: [row("stale", device: device)]) }
+        #expect(state.rows.map(\.displayName) == ["live"])
+    }
+    @Test func wakeDetailsLearnedWhileConnectedMakeTheHostSleepNotVanish() {
+        var state = state(wakeableB: false)
+        state.apply(rows: [row("two", device: deviceB)], projects: [project(deviceB)], from: hostB)
+        state.setWakeable(true, for: hostB)
+        state.markUnavailable(hostB)
+        #expect(state.isAsleep(hostB))
+        #expect(state.rows.map(\.displayName) == ["two"])
+    }
+    @Test func sleepingRowsAreNotLive() {
+        var state = state(wakeableB: true)
+        state.apply(rows: [row("one", device: deviceA)], projects: [project(deviceA)], from: hostA)
+        state.setCache(.init(projects: [project(deviceB)], rows: [row("sat", device: deviceB)]), for: hostB)
+        #expect(state.rows.count == 2)
+        #expect(state.liveRows.map(\.displayName) == ["one"])
+    }
+    @Test func liveRelayBeatsCachedDirectRoute() {
+        var state = state(wakeableB: true)
+        state.setCache(.init(projects: [project(deviceB)], rows: [row("two", device: deviceB, path: "/b/two")]), for: hostB)
+        state.apply(rows: [row("two", device: deviceB, depth: 1, path: "relay-1")], projects: [project(deviceB, depth: 1)], from: hostA)
+        #expect(state.rows.map(\.path) == ["relay-1"])
+        #expect(state.hostID(for: state.rows[0]) == hostA)
+        #expect(state.projects.map(\.owner?.relayDepth) == [1])
+        #expect(state.availability(of: state.projects[0]) == .reachable)
+    }
+    @Test func mergedListsAClientsPlaceholderRows() {
+        var state = state()
+        state.apply(rows: [row("one", device: deviceA)], projects: [project(deviceA)], from: hostA)
+        let merged = state.merged(localDeviceID: nil, rows: state.rows + [row("creating", device: deviceA)])
+        #expect(Set(merged.sections(for: merged.projects[0].id).temporary.map(\.row.displayName)) == ["one", "creating"])
+    }
     @Test func olderHostWithoutMetadataStillListed() {
         var state = state()
         let legacy = WorktreePanes(path: "/w", displayName: "w", repoDisplayName: "app", displayBranch: "w", state: .running,

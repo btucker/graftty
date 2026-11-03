@@ -57,7 +57,7 @@ private struct RemoteScrollRegions: View {
 @Suite("Remote sidebar scroll regions", .serialized)
 @MainActor
 struct SidebarRemoteScrollTests {
-    @Test("@spec CONTEXT-8: While a local or remote Mac worktree has an acknowledged brief, the application shall retain its context and completed result without adding a description beneath its compact sidebar heading.", arguments: [false, true])
+    @Test("@spec CONTEXT-8: While a local or remote Mac worktree has an acknowledged brief, the application shall retain its context and completed result, showing nothing beyond the completed result beneath its compact sidebar heading.", arguments: [false, true])
     func retainedBriefKeepsSidebarHeadingCompact(hasContext: Bool) async throws {
         let harness = try RemoteScrollHarness(metadata: true)
         defer { try? FileManager.default.removeItem(at: harness.directory) }
@@ -83,11 +83,12 @@ struct SidebarRemoteScrollTests {
         #expect(remoteContext.brief == brief)
         #expect(remoteContext.pending.isEmpty)
         #expect(remoteContext.matches(query: summary))
-        #expect(remoteHeight(brief: brief) == remoteHeight(brief: nil), "Retained context does not expand the remote heading")
+        let withoutContext = WorktreeBrief(recap: AttentionRecap(title: recap.title, completed: recap.completed, next: recap.next), at: Date())
+        #expect(remoteHeight(brief: brief) == remoteHeight(brief: withoutContext), "Retained context does not expand the remote heading")
         var local = WorktreeEntry(path: "/local/work", branch: "work")
         func localHeight(_ entry: WorktreeEntry) -> CGFloat {
             let hosted = NSHostingController(rootView: WorktreeRow(entry: entry, isActive: false, displayName: "work",
-                isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil))
+                isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil))
             return hosted.sizeThatFits(in: CGSize(width: 240, height: 1000)).height
         }
         let emptyHeight = localHeight(local)

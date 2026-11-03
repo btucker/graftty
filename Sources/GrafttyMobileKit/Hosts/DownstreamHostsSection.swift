@@ -31,10 +31,12 @@ struct DownstreamHostsSection: View {
 
     private func refresh() async {
         var next: [(host: Host, mac: RemoteMacConnectionSummary)] = []
+        var seen: Set<RemoteMacConnectionSummary.ID> = []
         for host in feed.hosts where feed.state.isLive(host.id) {
             guard case .remoteMacConnections(let macs)? = try? await RelayedWorktreeManagementClient.send(
-                .listRemoteMacConnections, using: feed.provider(for: host)) else { continue }
-            next += macs.map { (host: host, mac: $0) }
+                .listRemoteMacConnections, using: feed.provider(for: host, wake: .never)) else { continue }
+            // Two paired Macs can both reach the same third one.
+            next += macs.filter { seen.insert($0.id).inserted }.map { (host: host, mac: $0) }
         }
         connections = next
     }

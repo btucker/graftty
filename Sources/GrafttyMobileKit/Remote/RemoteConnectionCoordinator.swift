@@ -300,7 +300,7 @@ public final class RemoteConnectionCoordinator {
             guard permitsConnections(in: generation) else { return nil }
             if result != nil || wake != .now || inFlight.wake != .never { return result }
             failureCooldowns[host.id] = nil
-            return await connection(for: host, wake: .now)
+            return await connection(for: host, replacingExistingConnection: replacingExistingConnection, wake: .now)
         }
         if let live = liveConnections[host.id] {
             return live
@@ -440,17 +440,17 @@ public final class RemoteConnectionCoordinator {
         desiredConnectionsAllowed && connectionsAllowed && connectionGeneration == generation
     }
 
+    /// Only a host with verified wake details can be asleep rather than offline.
+    public func hasWakeAddresses(_ host: Host) -> Bool {
+        pinnedHost(for: host)?.wakeOnLAN != nil
+    }
+
     /// Single source of truth for "is `host` paired" — the same
     /// two-part check `connection(for:)` performs before ever attempting
     /// to negotiate (a non-nil `remoteDeviceID` AND a matching
     /// `PinnedHostStore` entry). UI routing and authenticated channel
     /// factories read this same gate so their definition of a usable paired
     /// Mac cannot drift.
-    /// Only a host with verified wake details can be asleep rather than offline.
-    public func hasWakeAddresses(_ host: Host) -> Bool {
-        pinnedHost(for: host)?.wakeOnLAN != nil
-    }
-
     public func isPaired(_ host: Host) -> Bool {
         pinnedHost(for: host) != nil
     }
@@ -589,10 +589,10 @@ public final class RemoteConnectionCoordinator {
         return try await connection.sendWorktreeManagement(request)
     }
 
-    public func presentation(for host: Host) async
+    public func presentation(for host: Host, wake: WakePolicy = .whileDialing) async
         -> RemoteHostPresentation? {
         guard isPaired(host),
-              let connection = await connection(for: host) else {
+              let connection = await connection(for: host, wake: wake) else {
             return nil
         }
         let connectionIdentity = ObjectIdentifier(connection)
@@ -625,6 +625,7 @@ public final class RemoteConnectionCoordinator {
         previewHistory.remove(hostID: host.id)
         guard let deviceID = host.remoteDeviceID else { return }
         discoveredBaseURLs[deviceID] = nil
+        HostSnapshotCache().remove(hostID: deviceID)
         do {
             try pinnedHostStore.remove(id: deviceID)
         } catch PinnedHostStore.Error.notFound {

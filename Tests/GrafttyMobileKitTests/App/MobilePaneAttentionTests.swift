@@ -541,7 +541,9 @@ struct TerminalBackNavigationTests {
         #expect(returningSelection.worktree == nil)
 
         let otherHost = Host(label: "Other Mac", baseURL: URL(string: "https://other.local")!)
-        IPadRootLayout.applyHostSwitch(appState: state, to: otherHost.id)
+        state.select(hostID: otherHost.id, worktreePath: nil, paneID: nil)
+        state.latestWorktrees = []
+        state.worktreePickerProject = nil
         let otherSelection = try #require(RootView.compactSelection(appState: state, hosts: [otherHost]))
         #expect(otherSelection.project == nil)
     }

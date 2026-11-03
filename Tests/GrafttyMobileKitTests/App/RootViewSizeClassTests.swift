@@ -70,7 +70,9 @@ struct RootViewSizeClassTests {
         #expect(state.focusedPaneId == "third")
         #expect(RootView.compactSelection(appState: state, hosts: []) == nil)
         let secondHost = Host(label: "Other Mac", baseURL: URL(string: "https://other.local")!)
-        IPadRootLayout.applyHostSwitch(appState: state, to: secondHost.id)
+        state.select(hostID: secondHost.id, worktreePath: nil, paneID: nil)
+        state.latestWorktrees = []
+        state.worktreePickerProject = nil
         let hostOnly = RootView.compactSelection(appState: state, hosts: [host, secondHost])
         #expect(hostOnly?.host == secondHost)
         #expect(hostOnly?.session == nil)

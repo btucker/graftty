@@ -56,7 +56,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.9** If a terminal pane has no program-set title, then the pane's row shall display its last-known working directory's basename as the label. If the working directory is also unknown (root `/`, empty, or never reported), then the pane's row shall display the fallback label "shell".
 
-**LAYOUT-2.11** The sidebar shall display the active worktree row and all its pane rows inside a single unified highlighted block; within that block, the focused pane's row shall additionally be emphasized via text weight and color (no secondary background).
+**LAYOUT-2.11** The sidebar shall display the active worktree row and its status line inside a single unified highlighted block.
 
 **LAYOUT-2.12** While a worktree entry is not in the stale state, its context menu shall include an "Open Worktree in Finder..." action that opens the worktree's filesystem path in the system file browser via `NSWorkspace.shared.open`.
 
@@ -94,17 +94,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.31** The agent "needs input" attention (source .agentStop) shall render as a bare red `rectangle.and.pencil.and.ellipsis` SF Symbol (no pill) beside a red-colored pane title, with the text retained as the icon's accessibility label; user-notify and command-finished capsules shall render as text in a red pill.
 
-**LAYOUT-2.32** When at least two linked worktrees beneath `<repo>/.worktrees` share a directory component in their relative names, the sidebar shall collect them beneath a recursively expandable folder row for that component and label each worktree relative to that folder. If fewer than two worktrees share a component, the sidebar shall render the worktree ungrouped with its full relative name.
+**LAYOUT-2.32** When at least two pinned linked worktrees beneath `<repo>/.worktrees` share a directory component in their relative names, the sidebar shall collect them beneath a recursively expandable folder row for that component and label each worktree relative to that folder. If fewer than two worktrees share a component, the sidebar shall render the worktree ungrouped with its full relative name.
 
-**LAYOUT-2.33** When at least two linked worktrees outside `<repo>/.worktrees` diverge beneath the same directory that is at least two components below the filesystem root and is neither the user's home nor an ancestor of the main checkout, the sidebar shall infer that directory as an additional expandable folder root. Worktrees without such a shared root shall remain ungrouped.
+**LAYOUT-2.33** When at least two pinned linked worktrees outside `<repo>/.worktrees` diverge beneath the same directory that is at least two components below the filesystem root and is neither the user's home nor an ancestor of the main checkout, the sidebar shall infer that directory as an additional expandable folder root. Worktrees without such a shared root shall remain ungrouped.
 
 **LAYOUT-2.34** If a user drops a worktree row onto a worktree with a different virtual-folder parent, then the application shall reject the reorder so persisted flat order cannot disagree with the displayed hierarchy.
 
 **LAYOUT-2.35** When worktree rows sharing a virtual-folder parent occupy noncontiguous persisted positions, the application shall reorder only those sibling rows within their existing positions so unrelated rows do not move.
 
-**LAYOUT-2.36** When a virtual worktree folder first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.
+**LAYOUT-2.36** When a virtual folder among pinned agents first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.
 
-**LAYOUT-2.37** When virtual folders coexist with ungrouped worktrees, the sidebar shall apply the established compact worktree-row inset to both top-level and nested worktrees while reserving native disclosure indentation for folder rows.
+**LAYOUT-2.37** When virtual folders coexist with ungrouped pinned agents, the sidebar shall apply the established compact worktree-row inset to both top-level and nested worktrees while reserving native disclosure indentation for folder rows.
 
 **LAYOUT-2.38** When projects are reordered, the application shall preserve their manual order across refreshes, retain unavailable projects, and append newly discovered projects.
 
@@ -352,8 +352,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.183** When a remote worktree is selected again from its sidebar rows, the application shall preserve its current agent tab.
 
-**LAYOUT-2.184** While an agent has a notification capsule, the sidebar shall derive its working indicator from the same input-required state as its tab independently of capsule visibility.
-
 **LAYOUT-2.185** When a user adjusts a native horizontal divider through accessibility, the application shall resize by twenty points and commit the adjustment.
 
 **LAYOUT-2.186** When an agent tab is dragged before or after another tab in its group, the application shall persist the new order without changing selected sessions, keyboard focus, or terminal identities.
@@ -470,9 +468,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **STATE-2.1** A worktree entry in any state may additionally have a worktree-scoped attention overlay, and each of its panes may additionally have a pane-scoped attention overlay keyed by pane. Worktree-scoped overlays are driven by the CLI (`ATTN-1.x`); pane-scoped overlays are driven by per-pane shell-integration events (`NOTIF-2.x`).
 
-**STATE-2.2** While a pane row has a pane-scoped attention overlay, the sidebar shall replace *that pane's* title text with the overlay's text rendered in a red capsule. Sibling pane rows are unaffected.
-
-**STATE-2.3** While a worktree entry has a worktree-scoped attention overlay, the sidebar shall render its text in a red capsule on the worktree's own row (next to the branch label), regardless of the worktree's running state. One worktree-scoped notification produces exactly one visible capsule — pane rows render only their own pane-scoped overlays per STATE-2.2 and do not mirror the worktree-scoped text. A notification set while a worktree is closed therefore remains visible on its row without requiring the user to launch panes first.
+**STATE-2.3** While a worktree has notification text, the sidebar shall show it in the status line of that worktree, ahead of a working agent, regardless of the worktree running state.
 
 **STATE-2.4** When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention until the agent resumes or the request is explicitly dismissed.
 
@@ -584,7 +580,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-7.4** When the application launches with a selected running worktree, the application shall automatically promote that worktree's focused pane to the window's first responder so the user can begin typing without first clicking inside a terminal.
 
-**TERM-7.5** When the user selects a worktree or pane row in the sidebar, the application shall promote the target pane's `NSView` to the window's first responder so subsequent keystrokes route to that pane without an intermediate click.
+**TERM-7.5** When the user selects a worktree in the sidebar, the application shall promote the target pane view to the workspace.
 
 **TERM-7.6** When the user invokes `Previous Pane` / `Next Pane` (libghostty's `goto_split:previous` / `goto_split:next`), the application shall cycle focus through the worktree's leaves in DFS (reading) order regardless of spatial layout. This is distinct from the directional arrow-key navigation in `TERM-7.3` — round-robin cycling is an intentional second mode, not a fallback.
 
@@ -2294,7 +2290,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.20** While the user pull-to-refreshes the worktree picker (`IOS-4.1`), the application shall not blank the already-loaded list to a loading placeholder; the refresh shall re-fetch in place so the SwiftUI `.refreshable` host view remains mounted and the gesture completes without error.
 
-**IOS-4.21** When the user taps a pane child row beneath a multi-leaf worktree in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture returns the user to the worktree picker.
+**IOS-4.21** When the user opens a pane from an attention request in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree detail screen.
 
 **IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
 
@@ -2526,8 +2522,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.11** While the mobile worktree list is not searching, the application shall display pinned agents across projects before temporary worktrees, preserving host order within each region and retaining a flat list for hosts without pin metadata.
 
-**IOS-9.12** When a mobile worktree question has no displayed matching pane, the application shall display it beneath the worktree, including empty layouts and non-running worktrees, without acknowledging its request.
-
 **IOS-9.13** When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.
 
 **IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.
@@ -2632,11 +2626,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.1** When `horizontalSizeClass == .regular`, the iPad application shall render `IPadRootLayout` (NavigationSplitView, 2-column) in place of the compact-width `NavigationStack`.
 
-**IPAD-1.2** While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each paired saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
-
 **IPAD-1.3** While `IPadRootLayout` is presented, the sidebar shall render `WorktreeListContent` extracted from `WorktreePickerView`, preserving `WorktreePickerGrouping`, swipe actions, PR badges, attention pills, and divergence gutter.
 
-**IPAD-1.4** When the user taps a pane child row in the sidebar at iPad regular width, the application shall set `IPadAppState.focusedPaneId` to that leaf's `sessionName` without pushing a new navigation stack frame.
+**IPAD-1.4** When the user opens a pane from an attention request at iPad regular width, the application shall set `IPadAppState.focusedPaneId` to that leafs `sessionName` without pushing a new navigation stack frame.
 
 **IPAD-1.5** While `IPadRootLayout` is presented, the sidebar's row text (worktree name, secondary branch label, type icon for closed/creating/deleting states, pane `↳` arrow and pane title, divergence-gutter ahead side, and the Section repository header) shall be colored from `appState.theme` rather than system label colors, sharing the same opacity ladder the Mac sidebar applies via `GhosttyThemeColors.sidebarPrimaryText`/`sidebarSecondaryText`/`sidebarDimIcon`/`sidebarStaleText`/`paneArrow`/`paneTitle`.
 
@@ -2654,9 +2646,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.12** While `IPadRootLayout` is presented, the sidebar shall render a 1pt trailing border at `appState.theme.foreground.opacity(0.15)` along its leading-of-detail edge so the column boundary reads as a thin divider, matching the Mac sidebar's automatic `NSSplitView` divider. The overlay ignores safe areas so the border runs the full sidebar height including under the nav bar and home indicator.
 
-**IPAD-1.13** While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with explicit compact row insets and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
-
-**IPAD-1.14** While `IPadRootLayout` renders a worktree's pane rows, the worktree-scoped `attentionText` (from `graftty notify`) shall be displayed on the worktree's first pane row when that leaf has no pane-scoped `attentionText` of its own; the worktree title row never displays an attention pill on iPad. Pane-scoped `attentionText` (from shell-integration `COMMAND_FINISHED` events) stays on its own pane row as before.
+**IPAD-1.13** While `IPadRootLayout` is presented, each worktrees row and its status line shall be packed into a single `List` row with explicit compact row insets and `.listRowSeparator(.hidden)`.
 
 **IPAD-1.15** While the iPad sidebar displays a worktree, the application shall keep its heading on one line without repeating a differing branch or a retained report beneath it.
 
@@ -2791,12 +2781,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-5.3** When the application foregrounds, the application shall re-open the `panes_state` channel before re-opening any `terminal` channel, so the splittree shape is current before deciding which leaves to attach.
 
 **IPAD-5.4** When a previously-focused leaf is no longer present in the foreground-fresh `panes_state` snapshot, the application shall surface a "Pane no longer running" banner on the detail column with a "Back to sidebar" action.
-
-### IPAD-6.x — Host Switching
-
-**IPAD-6.1** When the user selects a different host from the host-switcher menu, the application shall reset `selectedWorktreePath` and `focusedPaneId`, dismiss the menu, and re-fetch worktrees and theme for the new host.
-
-**IPAD-6.2** While the new host's worktree fetch is in progress, the sidebar shall show ProgressView and the detail column shall show `ContentUnavailableView`.
 
 ### IPAD-7.x — Compact-Width Fallback
 
@@ -3340,6 +3324,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.34** When an interaction needs a host inside its post-failure cooldown, the client shall dial immediately, while background connections keep honoring the cooldown.
 
+**REMOTE-2.35** When removing a worktree needs a sleeping host, the application shall wake that host before sending the removal.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3590,7 +3576,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.7** When a paired client opens the authenticated worktree-management subsystem, the host shall install the management handler only if that peer has worktree-management permission and shall reject and close the channel otherwise.
 
-**REMOTE-13.8** While a Remote Mac is connected and the project column is disabled, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and PaneTitleRow presentation components as local worktrees.
+**REMOTE-13.8** While a Remote Mac is connected and the project column is disabled, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and status line presentation components as local worktrees.
 
 **REMOTE-13.9** When a Remote Mac connection becomes unavailable, the application shall remove its cached worktree and repository rows so offline remote worktrees are not displayed or relayed.
 
@@ -3895,6 +3881,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.64** When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, report Git creation failures with the Mac's message, and include short status only when forceAllowed is true.
 
 **REMOTE-22.65** When a headless host answers agent-completion or remote-team requests that read presence, the application shall decode presence files off the main actor while preserving responses and request errors.
+
+**REMOTE-22.66** While a headless host publishes its projects, the application shall give each an id unique to that host, so two hosts with the same checkout path stay separate members of a merged project.
 
 ### REMOTE-23.x
 
@@ -5070,7 +5058,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-8.x
 
-**CONTEXT-8** While a local or remote Mac worktree has an acknowledged brief, the application shall retain its context and completed result without adding a description beneath its compact sidebar heading.
+**CONTEXT-8** While a local or remote Mac worktree has an acknowledged brief, the application shall retain its context and completed result, showing nothing beyond the completed result beneath its compact sidebar heading.
 
 ### CONTEXT-9.x
 

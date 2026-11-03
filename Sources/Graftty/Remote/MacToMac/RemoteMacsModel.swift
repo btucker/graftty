@@ -196,11 +196,11 @@ final class RemoteMacsModel: ObservableObject {
             linuxPinGeneration &+= 1
         }
         savedRemoteMacs = store.remoteMacs
-        let provider = wakeableHostIDsProvider
-        wakeableHostIDs = await Task.detached { provider() }.value
+        await refreshWakeableHostIDs()
         let savedIDs = Set(savedRemoteMacs.map(\.id))
         for id in hostSnapshots.keys where !savedIDs.contains(id) {
             hostSnapshots[id] = nil
+            hostSnapshotSavedAt[id] = nil
             hostSnapshotCache.remove(hostID: id)
         }
         for remoteMac in savedRemoteMacs where hostSnapshots[remoteMac.id] == nil && wakeableHostIDs.contains(remoteMac.id) {
@@ -487,6 +487,12 @@ final class RemoteMacsModel: ObservableObject {
         return task
     }
 
+    private func refreshWakeableHostIDs() async {
+        let provider = wakeableHostIDsProvider
+        let hostIDs = await Task.detached { provider() }.value
+        if wakeableHostIDs != hostIDs { wakeableHostIDs = hostIDs }
+    }
+
     private func prepareForExplicitReconnect(identity: RemoteMacIdentity) {
         stopPaneFeedRecovery(identity: identity)
         invalidatePaneControlQueue(for: identity)
@@ -523,6 +529,9 @@ final class RemoteMacsModel: ObservableObject {
             // frame: an empty default can incorrectly prime notification
             // state, then replay durable attention when the real first frame
             // arrives.
+            // A host signs its wake details during the dial, so a host paired
+            // moments ago can already sleep and keep its rows.
+            await refreshWakeableHostIDs()
             return entry
         } catch {
             let requiresPairing = Self.requiresPairing(after: error)
@@ -887,6 +896,14 @@ final class RemoteMacsModel: ObservableObject {
         force: Bool
     ) async -> WorktreeManagementResponse {
         let identity = RemoteMacIdentity(remoteMac)
+        // A sleeping host's rows stay listed, and removing one needs that host.
+        if connectionState(for: identity) != .connected {
+            do {
+                _ = try await connect(to: remoteMac, allowsWake: true)
+            } catch {
+                return Self.downstreamManagementError(error)
+            }
+        }
         let response = await forwardManagement(
             identity: identity,
             request: .delete(worktreeID: worktreePath, force: force)
@@ -1012,12 +1029,6 @@ final class RemoteMacsModel: ObservableObject {
     func wake(_ remoteMac: RemoteMac) async throws {
         _ = try await connect(to: remoteMac, allowsWake: true)
         _ = await sidebarRelaySnapshot()
-    }
-
-    func forgetSnapshot(of remoteMac: RemoteMac) {
-        hostSnapshots[remoteMac.id] = nil
-        hostSnapshotSavedAt[remoteMac.id] = nil
-        hostSnapshotCache.remove(hostID: remoteMac.id)
     }
 
     /// Reports arrive often, and sleeping rows only need to be roughly current.

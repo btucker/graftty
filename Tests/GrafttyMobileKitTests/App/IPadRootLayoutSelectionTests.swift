@@ -70,10 +70,7 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.columnVisibility == .all)
     }
 
-    @Test("""
-@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each paired saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
-""")
-    func ipad_1_2_hostHeaderRowState() {
+    @Test func resolvesTheSelectedHost() {
         let appState = freshAppState()
         let hostA = sampleHost(label: "alpha")
         appState.selectedHostId = hostA.id
@@ -106,7 +103,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.4: When the user taps a pane child row in the sidebar at iPad regular width, the application shall set `IPadAppState.focusedPaneId` to that leaf's `sessionName` without pushing a new navigation stack frame.
+@spec IPAD-1.4: When the user opens a pane from an attention request at iPad regular width, the application shall set `IPadAppState.focusedPaneId` to that leafs `sessionName` without pushing a new navigation stack frame.
 """)
     func ipad_1_4_paneRowTapSetsFocus() {
         let appState = freshAppState()
@@ -244,53 +241,6 @@ struct IPadRootLayoutSelectionTests {
         appState.focusedPaneId = "session-b"
         IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: worktree)
         #expect(appState.focusedPaneId == "session-b")
-    }
-
-    @Test("""
-@spec IPAD-6.1: When the user selects a different host from the host-switcher menu, the application shall reset `selectedWorktreePath` and `focusedPaneId`, dismiss the menu, and re-fetch worktrees and theme for the new host.
-""")
-    func ipad_6_1_hostSwitchResetsSelection() {
-        let appState = freshAppState()
-        let hostA = sampleHost(label: "alpha")
-        let hostB = sampleHost(label: "bravo")
-        appState.selectedHostId = hostA.id
-        appState.selectedWorktreePath = "/repo/branch-a"
-        appState.focusedPaneId = "session-a"
-        appState.latestWorktrees = [
-            .init(
-                path: "/repo/branch-a",
-                displayName: "branch-a",
-                repoDisplayName: "repo",
-                displayBranch: "branch-a",
-                state: .running,
-                isMainCheckout: false,
-                prBadge: nil,
-                stats: nil,
-                attentionText: "old host",
-                layout: .leaf(sessionName: "session-a", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
-            )
-        ]
-        appState.anyWorktreeHasAttention = true
-
-        IPadRootLayout.applyHostSwitch(appState: appState, to: hostB.id)
-
-        #expect(appState.selectedHostId == hostB.id)
-        #expect(appState.selectedWorktreePath == nil)
-        #expect(appState.focusedPaneId == nil)
-        #expect(appState.latestWorktrees.isEmpty)
-        #expect(!appState.anyWorktreeHasAttention)
-        // The "re-fetch worktrees and theme for the new host" clause is
-        // enforced by `WorktreeListContent`'s `.task(id: host.id)` —
-        // not directly testable from a unit test.
-    }
-
-    @Test("""
-@spec IPAD-6.2: While the new host's worktree fetch is in progress, the sidebar shall show ProgressView and the detail column shall show `ContentUnavailableView`.
-""")
-    func ipad_6_2_inProgressPlaceholder() {
-        let appState = freshAppState()
-        appState.selectedHostId = UUID()
-        #expect(appState.selectedWorktreePath == nil)
     }
 
     @Test("""
@@ -528,7 +478,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.13: While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with explicit compact row insets and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
+@spec IPAD-1.13: While `IPadRootLayout` is presented, each worktrees row and its status line shall be packed into a single `List` row with explicit compact row insets and `.listRowSeparator(.hidden)`.
 """)
     func ipad_1_13_paneRowsPackedIntoOneListRow() {
         // Visual concern; smoke-check that WorktreeBlock continues to
@@ -555,38 +505,6 @@ struct IPadRootLayoutSelectionTests {
             layout: layout
         )
         #expect(wt.layout?.leaves.count == 2)
-    }
-
-    @Test("""
-@spec IPAD-1.14: While `IPadRootLayout` renders a worktree's pane rows, the worktree-scoped `attentionText` (from `graftty notify`) shall be displayed on the worktree's first pane row when that leaf has no pane-scoped `attentionText` of its own; the worktree title row never displays an attention pill on iPad. Pane-scoped `attentionText` (from shell-integration `COMMAND_FINISHED` events) stays on its own pane row as before.
-""")
-    func ipad_1_14_attentionPillOnPaneRowNotWorktree() {
-        // PaneLayoutNode.Leaf's initializer is internal — construct
-        // through the case API and project to `.leaves`.
-        let layout = PaneLayoutNode.split(
-            direction: .horizontal, ratio: 0.5,
-            left: .leaf(sessionName: "a", title: "shell A", attentionText: nil, isBusy: false, attentionSource: nil),
-            right: .leaf(sessionName: "b", title: "shell B", attentionText: "build broken", isBusy: false, attentionSource: nil)
-        )
-        let leaves = layout.leaves
-        let leaf1 = leaves[0]
-        let leaf2 = leaves[1]
-
-        // First pane has no own attention → inherits worktree's.
-        let worktreeAttention: String? = "tests failing"
-        let effective1 = leaf1.attentionText ?? worktreeAttention  // index 0
-        #expect(effective1 == "tests failing")
-        // Second pane has its own → keeps it.
-        let effective2 = leaf2.attentionText ?? nil  // index > 0 → no inheritance
-        #expect(effective2 == "build broken")
-        // Non-first pane with NO own attention → does NOT inherit.
-        let leafNone = PaneLayoutNode.split(
-            direction: .horizontal, ratio: 0.5,
-            left: .leaf(sessionName: "c", title: "shell C", attentionText: nil, isBusy: false, attentionSource: nil),
-            right: .leaf(sessionName: "d", title: "shell D", attentionText: nil, isBusy: false, attentionSource: nil)
-        ).leaves[1]
-        let effectiveNone = leafNone.attentionText ?? nil  // index > 0
-        #expect(effectiveNone == nil)
     }
 
     @Test("""

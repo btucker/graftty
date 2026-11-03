@@ -83,6 +83,22 @@ struct IPadWorktreeFeedTests {
         #expect(state.latestWorktrees.isEmpty)
     }
 
+    @Test("The collapsed-sidebar indicator covers every host, not only the selected one", .timeLimit(.minutes(1)))
+    func indicatorCoversEveryHost() async throws {
+        let selected = hostValue("mac"), other = hostValue("box")
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        let feed = MultiHostFeed(coordinator: nil, updates: { $0.id == other.id ? frames.stream : nil })
+        feed.setHosts([selected, other])
+        let observation = Task { await feed.observe() }
+        defer { observation.cancel(); frames.continuation.finish() }
+        let state = try appState()
+        let window = mount(appState: state, hostID: selected.id, feed: feed)
+        defer { window.isHidden = true }
+        frames.continuation.yield(.frame(.snapshot(Self.rows)))
+        try await waitUntil { state.anyWorktreeHasAttention }
+        #expect(state.latestWorktrees.isEmpty)
+    }
+
     @Test("@spec IPAD-1.26: When the iPad layout applies a pushed panes-state frame whose rows equal the shared worktree state, the application shall leave the shared rows and attention indicator unwritten, so views observing them are not invalidated by a repeated frame.")
     func equalFrameLeavesSharedStateUnwritten() throws {
         let suite = "ipad-feed-\(UUID())"

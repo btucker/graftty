@@ -50,7 +50,6 @@ struct SidebarView: View {
     let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
     @ObservedObject var remoteMacsModel: RemoteMacsModel
-    var remoteWorkspaceLayout: (RemoteMacIdentity, WorktreePanes) -> WorkspaceLayout<String> = { _, row in .initial(for: row) }
     let appStateChanges: AppStateChanges
     let selectedRemoteIdentity: RemoteMacIdentity?
     let selectedRemoteWorktreePath: String?
@@ -58,11 +57,9 @@ struct SidebarView: View {
     let onSelect: (String) -> Void
     var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
     var onNavigationIntent: () -> Void = {}
-    let onSelectPane: (String, PaneSlotID) -> Void
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
     let onWakeRemoteWorktree: (RemoteMac, String) -> Void
-    let onSelectRemotePane: (RemoteMac, String, String) -> Void
     let onAddRemoteWorktree: (RemoteMac, RemoteRepositoryInfo) -> Void
     /// Opens the sheet for a remote host from the Host row or Add worktree.
     let onAddRemoteWorktreeWithHost: (RemoteMac, RemoteRepositoryInfo, AddWorktreeHostContext?, String, String?) -> Void
@@ -81,13 +78,12 @@ struct SidebarView: View {
     /// stderr) on failure so the sheet can display it inline.
     let onAddWorktree: (RepoEntry, String, BranchSelection, WorktreeAgentConfiguration) async -> String?
 
-    /// Injected by GrafttyApp so the pane-row context menu can gate the
-    /// "Copy web URL" item on `controller.status == .listening` and read
-    /// the listening addresses to compose the URL.
+    /// Injected by GrafttyApp so the terminal menu can gate "Copy web URL" on
+    /// `controller.status == .listening` and read the address to compose it.
     @EnvironmentObject private var webController: WebServerController
 
-    /// Injected by GrafttyApp so each pane row can render port-binding
-    /// chips for ports its process subtree is currently listening on.
+    /// Injected by GrafttyApp so a local row's context can list the ports its
+    /// panes' process subtrees are listening on.
     @EnvironmentObject private var portBindings: PortBindingsModel
 
     /// SwiftUI's environment-provided window-opener. Used by the
@@ -166,11 +162,13 @@ struct SidebarView: View {
 
     /// Every project and row once, from all hosts. Compute once per use: it
     /// projects every worktree.
-    private var mergedSidebar: SidebarMergedRows {
+    private var mergedSidebar: SidebarMergedRows { makeMerged(local: localWorktrees) }
+
+    private func makeMerged(local: [WorktreePanes]) -> SidebarMergedRows {
         let sleeping = remoteMacsModel.sleepingSnapshot()
         let known = Set(projects.map(\.id))
         let localID = owner.deviceID
-        return SidebarMergedRows.make(projects: projects + sleeping.projects.filter { !known.contains($0.id) }, localRows: localWorktrees,
+        return SidebarMergedRows.make(projects: projects + sleeping.projects.filter { !known.contains($0.id) }, localRows: local,
             remoteRows: displayedRemoteRows.values.flatMap { $0 } + sleeping.rows, localDeviceID: localID,
             availability: { project in
                 if project.owner?.deviceID == localID || project.isAvailable { return .reachable }
@@ -203,7 +201,9 @@ struct SidebarView: View {
         return result
     }
     private func refreshNavigation() async {
-        await iconStore.refreshOriginKeys(state: $appState)
+        // Git can hang, and this loop is what keeps the sidebar current. The
+        // result arrives as a state change, which runs this again.
+        Task { await iconStore.refreshOriginKeys(state: $appState) }
         let remote = await remoteMacsModel.sidebarRelaySnapshot()
         let snapshot = iconStore.snapshot(state: $appState, owner: owner, remote: remote.projects,
             authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
@@ -302,23 +302,29 @@ struct SidebarView: View {
     }
     /// Pull and Remove act on one checkout, so each names its host when the
     /// project has several. Only this Mac's checkout can be removed from here.
-    @ViewBuilder private func projectHostActions(_ project: SidebarProject, repo: RepoEntry?) -> some View {
-        let merged = mergedSidebar.project(id: project.id)
-        let several = merged?.isOnSeveralHosts ?? false
-        if let repo {
-            Button(SidebarMergedRows.pullTitle(hostLabel: "This Mac", isOnSeveralHosts: several)) {
+    @ViewBuilder private func projectHostActions(_ project: SidebarProject, merged: SidebarMergedRows) -> some View {
+        let mergedProject = merged.project(id: project.id)
+        let several = mergedProject?.isOnSeveralHosts ?? false
+        let repos = localRepos(in: mergedProject)
+        // Two checkouts on this Mac are told apart by path.
+        let label = { (repo: RepoEntry) in repos.count > 1 ? "This Mac · \(repo.path)" : "This Mac" }
+        ForEach(repos) { repo in
+            Button(SidebarMergedRows.pullTitle(hostLabel: label(repo), isOnSeveralHosts: several || repos.count > 1)) {
                 Task { @MainActor in
                     if let error = await pullDefaultBranch(for: repo) { navigationError = error }
                 }
             }
         }
-        ForEach((merged?.members ?? []).filter { $0.owner?.deviceID != owner.deviceID }, id: \.id) { member in
-            if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == member.owner?.deviceID }),
-               let route = remoteMacsModel.relayRouter.resolveRepository(member.repositoryID) {
+        ForEach((mergedProject?.members ?? []).filter { $0.owner?.deviceID != owner.deviceID && merged.availability(ofMember: $0.id) != .offline }, id: \.id) { member in
+            if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == member.owner?.deviceID }) {
                 Button(SidebarMergedRows.pullTitle(hostLabel: mac.label, isOnSeveralHosts: several)) {
                     Task { @MainActor in
                         do {
+                            // Waking also registers the route a sleeping host's row uses.
                             if mergedSidebar.availability(ofMember: member.id) == .asleep { try await remoteMacsModel.wake(mac) }
+                            guard let route = remoteMacsModel.relayRouter.resolveRepository(member.repositoryID) else {
+                                throw RemoteMacsModel.ProjectControlError.unavailable
+                            }
                             if case .error(_, let message, _, _) = await remoteMacsModel.pullDefaultBranch(on: mac, repositoryID: route.repositoryID) {
                                 navigationError = message
                             }
@@ -327,17 +333,18 @@ struct SidebarView: View {
                 }
             }
         }
-        if let repo {
-            Button(SidebarMergedRows.removeTitle(hostLabel: "This Mac", isOnSeveralHosts: several)) { onRemoveRepo(repo) }
+        ForEach(repos) { repo in
+            Button(SidebarMergedRows.removeTitle(hostLabel: label(repo), isOnSeveralHosts: several || repos.count > 1)) { onRemoveRepo(repo) }
         }
     }
 
-    private func localRepo(in project: MergedProject?) -> RepoEntry? {
+    private func localRepos(in project: MergedProject?) -> [RepoEntry] {
         let members = Set(project?.members.map(\.id) ?? [])
-        return appState.repos.first { members.contains(localProjectID($0)) }
+        return appState.repos.filter { members.contains(localProjectID($0)) }
     }
-    private func projectMenu(_ project: SidebarProject) -> AnyView {
-        guard let repo = localRepo(in: mergedSidebar.project(id: project.id)) else { return AnyView(projectHostActions(project, repo: nil)) }
+    private func localRepo(in project: MergedProject?) -> RepoEntry? { localRepos(in: project).first }
+    private func projectMenu(_ project: SidebarProject, merged: SidebarMergedRows) -> AnyView {
+        guard let repo = localRepo(in: merged.project(id: project.id)) else { return AnyView(projectHostActions(project, merged: merged)) }
         return AnyView(Group {
             if !repo.isGitTracked {
                 Button("Initialize Git Repository") { onInitializeGit(repo) }
@@ -359,7 +366,7 @@ struct SidebarView: View {
                 }
             }
             Divider()
-            projectHostActions(project, repo: repo)
+            projectHostActions(project, merged: merged)
         })
     }
     /// Relayed-row contexts for `remoteSection`, keyed as its lookup expects.
@@ -370,12 +377,12 @@ struct SidebarView: View {
     }
     private func remoteSection(contexts: [String: SidebarWorktreeContext], projectFilter: String?, query: String = "",
                                section: SidebarWorktreeSection = .all, singleRow: RemoteMacsSection.SingleRow? = nil) -> some View {
-        RemoteMacsSection(model: remoteMacsModel, expansion: $remoteSectionExpansion, worktreePanesByRemote: displayedRemoteRows,
-                          workspaceLayout: remoteWorkspaceLayout,
+        // One row only reads its own worktree, and every row builds this view.
+        RemoteMacsSection(model: remoteMacsModel, expansion: $remoteSectionExpansion, worktreePanesByRemote: singleRow == nil ? displayedRemoteRows : [:],
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
-                          onSelectRemotePane: onSelectRemotePane, onAddRemoteWorktree: onAddRemoteWorktree,
+                          onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
                           onSetupLinuxHost: onSetupLinuxHost,
                           projectFilter: projectFilter, query: query,
@@ -430,7 +437,7 @@ struct SidebarView: View {
         let promoted = remoteMacsModel.promotedWorktreesForRelay()
         let counts = activityCounts(local + promoted)
         let promotedContexts = relayedRowContexts(promoted)
-        let merged = mergedSidebar
+        let merged = makeMerged(local: local)
         let selectedMergedID = merged.selectedProjectID(for: navigation.selectedProjectID)
         // Read native chrome height before expanding underneath it.
         GeometryReader { titleBarGeometry in
@@ -451,7 +458,7 @@ struct SidebarView: View {
                                       management: { AnyView(HStack(spacing: 0) {
                                           addRepositoryIconButton
                                           remoteManagementButton
-                                      }) }, menu: projectMenu)
+                                      }) }, menu: { projectMenu($0, merged: merged) })
                 Divider()
             }
             VStack(spacing: 0) {
@@ -467,7 +474,7 @@ struct SidebarView: View {
                             }
                         } controls: {
                             if navigation.query.isEmpty {
-                                selectedProjectAddWorktreeHeader
+                                selectedProjectAddWorktreeHeader(merged: merged)
                             }
                         } content: {
                             if showsProjectRail {
@@ -515,10 +522,7 @@ struct SidebarView: View {
                     frozenWorktreeOrder = Dictionary(uniqueKeysWithValues: appState.repos.map { ($0.id, SidebarHostNavigation.displayedWorktrees(in: $0).map(\.id)) })
                     frozenPins = Dictionary(uniqueKeysWithValues: appState.repos.flatMap(\.worktrees).map { ($0.id, $0.isPinned) })
                     frozenRemoteRows = remoteMacsModel.worktreePanesByRemote
-                    let merged = mergedSidebar
-                    frozenMergedOrder = Dictionary(uniqueKeysWithValues: merged.projects.map { project in
-                        (project.id, merged.sections(for: project.id).temporary.map(\.id))
-                    })
+                    frozenMergedOrder = mergedSidebar.temporaryOrder()
                 }
             } else {
                 frozenWorktreeOrder = [:]; frozenPins = [:]; frozenRemoteRows = [:]; frozenMergedOrder = [:]
@@ -559,6 +563,8 @@ struct SidebarView: View {
         }
         .publishSidebarWidth()
         .sheet(item: $pendingAddWorktree) { request in
+            // Every way in gets the Host row, including the menu command.
+            let hostContext = request.hostContext ?? localHostContext(request.repo, merged: merged)
             AddWorktreeSheet(
                 repoDisplayName: request.repo.displayName,
                 initialWorktreeName: request.prefill,
@@ -572,12 +578,15 @@ struct SidebarView: View {
                 },
                 onSubmit: { worktreeName, branch, agent in
                     let err = await onAddWorktree(request.repo, worktreeName, branch, agent)
-                    if err == nil { pendingAddWorktree = nil }
+                    if err == nil {
+                        hostContext?.onCreated()
+                        pendingAddWorktree = nil
+                    }
                     return err
                 },
                 onCancel: { pendingAddWorktree = nil },
                 existingBranch: request.existingBranch,
-                hostContext: request.hostContext
+                hostContext: hostContext
             )
         }
     }
@@ -714,7 +723,7 @@ struct SidebarView: View {
                     Spacer()
                     if SidebarMenuVisibility.showsAddWorktree(repo: repo) { addWorktreeButton(repo, showsLabel: false) }
                 }
-                .contextMenu { projectMenu(project.representative) }
+                .contextMenu { projectMenu(project.representative, merged: merged) }
             }
         } else {
             let key = "project:" + project.id
@@ -816,7 +825,9 @@ struct SidebarView: View {
         } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == row.hostID }) {
             remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.leafName,
                           hostLabel: SidebarMergedRows.hostText(row, isLocal: false), isAsleep: row.availability == .asleep,
-                          onOpen: { openMergedRow(row) }, onDrop: { drop, after in
+                          onOpen: { openMergedRow(row) },
+                          onOpenPane: { context in Task { _ = await openReport(context) } },
+                          onDrop: { drop, after in
                               handleRowDrop(drop, target: row.row.path, targetHost: mac.id, after: after)
                           }))
                 .modifier(MergedRowInsets(projectColumn: showsProjectRail))
@@ -827,9 +838,8 @@ struct SidebarView: View {
     /// doesn't own, such as pinning a temporary row.
     private func handleRowDrop(_ drop: WorktreeRowDrop, target: String, targetHost: RemoteDeviceID, after: Bool) -> Bool {
         let merged = mergedSidebar
-        guard let projectID = merged.selectedProjectID(for: navigation.selectedProjectID) ?? merged.projects.first(where: { project in
-            merged.flattenedRows(for: project.id).contains { $0.hostID == targetHost && $0.row.path == target }
-        })?.id else { return false }
+        // Not the selected project: without the rail, every project is on screen.
+        guard let projectID = merged.projectID(holdingRowAt: target, on: targetHost) else { return false }
         let rows = merged.flattenedRows(for: projectID)
         guard let targetRow = rows.first(where: { $0.hostID == targetHost && $0.row.path == target }) else { return false }
         let sourceRow: MergedWorktreeRow?
@@ -861,8 +871,10 @@ struct SidebarView: View {
         case .legacy(let source, let target, let after):
             guard let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == source.hostID }) else { return }
             Task { @MainActor in
-                do { try await remoteMacsModel.moveWorktree(source.row, relativeTo: target.row, after: after, on: mac) }
-                catch { navigationError = error.localizedDescription }
+                do {
+                    if source.availability == .asleep { try await remoteMacsModel.wake(mac) }
+                    try await remoteMacsModel.moveWorktree(source.row, relativeTo: target.row, after: after, on: mac)
+                } catch { navigationError = error.localizedDescription }
             }
         case .ranks(let writes):
             for write in writes {
@@ -916,11 +928,11 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private var selectedProjectAddWorktreeHeader: some View {
+    private func selectedProjectAddWorktreeHeader(merged: SidebarMergedRows) -> some View {
         if navigation.query.isEmpty,
-           let project = addWorktreeTarget {
+           let project = addWorktreeTarget(in: merged) {
             let repo = appState.repos.first { localProjectID($0) == project.id }
-            let canAdd = canAddWorktree(to: project)
+            let canAdd = canAddWorktree(to: project, merged: merged)
             if repo != nil || project.owner != nil {
                 let add = Group {
                     if canAdd {
@@ -946,10 +958,9 @@ struct SidebarView: View {
     }
 
     /// The checkout Add worktree targets in the selected project.
-    private var addWorktreeTarget: SidebarProject? {
-        let merged = mergedSidebar
+    private func addWorktreeTarget(in merged: SidebarMergedRows) -> SidebarProject? {
         guard let project = merged.project(id: merged.selectedProjectID(for: navigation.selectedProjectID)),
-              let choice = AddWorktreeHostChoice.defaultChoice(addWorktreeChoices(project), lastUsedID: lastUsedHost(project))?.choice else { return nil }
+              let choice = AddWorktreeHostChoice.defaultChoice(addWorktreeChoices(project, merged: merged), lastUsedID: lastUsedHost(project))?.choice else { return nil }
         return project.members.first { $0.id == choice.id }
     }
 
@@ -957,21 +968,22 @@ struct SidebarView: View {
         UserDefaults.standard.string(forKey: "addWorktree.lastHost.\(project.id)")
     }
 
-    private func addWorktreeChoices(_ project: MergedProject) -> [AddWorktreeHostChoice] {
+    private func addWorktreeChoices(_ project: MergedProject, merged: SidebarMergedRows) -> [AddWorktreeHostChoice] {
         AddWorktreeHostChoice.labeled(project.members.filter { $0.supportsWorktreeEditing == true || $0.owner?.deviceID == owner.deviceID }.map { member in
             let isLocal = member.owner?.deviceID == owner.deviceID
             return AddWorktreeHostChoice(
                 id: member.id,
                 host: isLocal ? "This Mac" : member.owner?.deviceLabel ?? member.name,
                 path: isLocal ? member.repositoryID : remoteMacsModel.relayRouter.resolveRepository(member.repositoryID)?.repositoryID,
-                availability: mergedSidebar.availability(ofMember: member.id))
+                availability: merged.availability(ofMember: member.id))
         })
     }
 
-    /// Opens Add Worktree on one host. A project on several hosts gets a Host row.
-    private func presentAddWorktree(member: SidebarProject, project: MergedProject, name: String = "", branch: String? = nil) {
-        let choices = addWorktreeChoices(project)
-        let context = AddWorktreeHostContext(projectName: project.name, choices: choices, selectedID: member.id) { id, name, branch in
+    /// The Host row, for a project with more than one checkout to choose from.
+    private func hostContext(member: SidebarProject, project: MergedProject, merged: SidebarMergedRows) -> AddWorktreeHostContext? {
+        let choices = addWorktreeChoices(project, merged: merged)
+        guard choices.count > 1 else { return nil }
+        return AddWorktreeHostContext(projectName: project.name, choices: choices, selectedID: member.id, onSelect: { id, name, branch in
             guard let next = project.members.first(where: { $0.id == id }) else { return }
             pendingAddWorktree = nil
             // Local and remote sheets have separate presenters, and one can't
@@ -980,13 +992,26 @@ struct SidebarView: View {
                 try? await Task.sleep(for: .milliseconds(350))
                 presentAddWorktree(member: next, project: project, name: name, branch: branch)
             }
-        }
-        UserDefaults.standard.set(member.id, forKey: "addWorktree.lastHost.\(project.id)")
+        }, onCreated: {
+            UserDefaults.standard.set(member.id, forKey: "addWorktree.lastHost.\(project.id)")
+        })
+    }
+
+    private func localHostContext(_ repo: RepoEntry, merged: SidebarMergedRows) -> AddWorktreeHostContext? {
+        let id = localProjectID(repo)
+        guard let project = merged.project(id: merged.mergedID(forMember: id)),
+              let member = project.members.first(where: { $0.id == id }) else { return nil }
+        return hostContext(member: member, project: project, merged: merged)
+    }
+
+    /// Opens Add Worktree on one host. A project on several hosts gets a Host row.
+    private func presentAddWorktree(member: SidebarProject, project: MergedProject, name: String = "", branch: String? = nil) {
+        let context = hostContext(member: member, project: project, merged: mergedSidebar)
         if let repo = appState.repos.first(where: { localProjectID($0) == member.id }) {
             guard SidebarMenuVisibility.showsAddWorktree(repo: repo) else { return }
             remoteBranchStore.pulse()
             prStatusStore.pulse()
-            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: name, existingBranch: branch, hostContext: choices.count > 1 ? context : nil)
+            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: name, existingBranch: branch, hostContext: context)
             return
         }
         guard !remoteProjectOperationInProgress else { return }
@@ -1003,21 +1028,23 @@ struct SidebarView: View {
                 var target = member
                 target.isAvailable = true
                 let (mac, repository) = try await remoteMacsModel.addWorktreeRepository(for: target)
-                onAddRemoteWorktreeWithHost(mac, repository, choices.count > 1 ? context : nil, name, branch)
+                onAddRemoteWorktreeWithHost(mac, repository, context, name, branch)
             } catch { navigationError = error.localizedDescription }
         }
     }
 
-    private func canAddWorktree(to project: SidebarProject) -> Bool {
+    private func canAddWorktree(to project: SidebarProject, merged: SidebarMergedRows) -> Bool {
         if let repo = appState.repos.first(where: { localProjectID($0) == project.id }) {
             return SidebarMenuVisibility.showsAddWorktree(repo: repo)
         }
+        // Opening the sheet wakes a sleeping host to load its branches.
+        if merged.availability(ofMember: project.id) == .asleep { return project.supportsWorktreeEditing == true }
         return remoteMacsModel.editableRepositoryTarget(for: project) != nil
     }
 
     private func addWorktreeToSelectedProject() {
         let merged = mergedSidebar
-        guard navigation.query.isEmpty, let member = addWorktreeTarget,
+        guard navigation.query.isEmpty, let member = addWorktreeTarget(in: merged),
               let project = merged.project(id: merged.mergedID(forMember: member.id)) else { return }
         presentAddWorktree(member: member, project: project)
     }
@@ -1054,7 +1081,6 @@ struct SidebarView: View {
                 repoPath: repo.path
             ),
             prBadge: prBadge,
-            attentionStyle: nil,
             attentionCount: max(activityCounts.attentionByWorktree[worktree.path, default: 0], status.needsAttention ? 1 : 0),
             project: project, projectIconData: iconStore.iconData(for: repo), hostLabel: hostLabel,
             identityMenu: worktree.path == repo.path ? nil : { anchor in
@@ -1206,11 +1232,8 @@ struct SidebarView: View {
     }
 
 
-    /// AppKit-side pane right-click menu (PWD-1.1 / PWD-1.3 / LAYOUT-2.7
-    /// / TERM-8.10). The Move section is shared with the terminal-surface
-    /// menu via `PaneMoveMenuBuilder`; the Copy-web-URL item is sidebar-
-    /// only because the surface has no worktree-context-free way to know
-    /// its session name without going through this same view tree.
+    /// The terminal menu's Copy web URL (LAYOUT-2.7): the surface has no way to
+    /// know its session name without the repositories this view holds.
     static func paneWebURL(terminalID: PaneSlotID, repos: [RepoEntry], host: String, port: Int) -> String? {
         guard let session = repos.lazy.flatMap(\.worktrees).compactMap({ $0.paneSessions[terminalID] }).first else { return nil }
         return WebURLComposer.url(session: ZmxLauncher.sessionName(for: session), host: host, port: port)

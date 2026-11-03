@@ -17,7 +17,7 @@ public enum MobileNavigationDecision: Equatable {
     }
 
     /// @spec IOS-4.21
-    /// Pane child rows under a multi-leaf worktree always navigate
+    /// A pane opened from an attention request always navigates
     /// straight to the fullscreen terminal, never to the worktree-
     /// detail / pane-preview screen.
     public static func decide(paneRow leaf: PaneLayoutNode.Leaf) -> MobileNavigationDecision {

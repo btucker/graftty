@@ -41,8 +41,11 @@ public struct WorktreeListContent: View {
     @State private var projectIconCache = ProjectIconCache()
     private var projectIcons: [String: Data] { projectIconCache.icons }
     @State private var listEditMode: EditMode = .inactive
+    /// A row's merged identity: paths alone can repeat across hosts.
     @State private var reportWorktreeID: String?
-    @State private var reportOrder: SidebarWorktreeReportOrder?
+    /// Holds rows still while a report is open, so one doesn't move out from
+    /// under its popover when activity arrives.
+    @State private var frozenMergedOrder: [String: [String]] = [:]
     @State private var orderMutationID: UUID?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var worktreeScrollSpace = UUID()
@@ -95,8 +98,6 @@ public struct WorktreeListContent: View {
     /// The selected worktree. A path alone can repeat across hosts.
     public let selectedHostID: UUID?
     public let selectedWorktreePath: String?
-    /// Waits for the scene to be active and the biometric gate to open.
-    public let isReadyToLoad: Bool
     public let onSelect: (Host, WorktreePanes) -> Void
     public let onSelectPane: (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)?
@@ -107,7 +108,6 @@ public struct WorktreeListContent: View {
         theme: GhosttyThemeColors? = nil,
         selectedHostID: UUID? = nil,
         selectedWorktreePath: String? = nil,
-        isReadyToLoad: Bool = true,
         onSelect: @escaping (Host, WorktreePanes) -> Void,
         onSelectPane: @escaping (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void,
         navigation: SidebarNavigationState? = nil,
@@ -121,7 +121,6 @@ public struct WorktreeListContent: View {
         self.theme = theme
         self.selectedHostID = selectedHostID
         self.selectedWorktreePath = selectedWorktreePath
-        self.isReadyToLoad = isReadyToLoad
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail
@@ -129,7 +128,16 @@ public struct WorktreeListContent: View {
         self.navigationWindowWidth = navigationWindowWidth
     }
 
-    private var merged: SidebarMergedRows { feed.state.merged(localDeviceID: nil) }
+    /// Includes rows for worktrees still being created (IOS-9.5).
+    private var merged: SidebarMergedRows {
+        feed.state.merged(localDeviceID: nil, rows: worktreeCreation.isEmpty ? nil : worktreeCreation.rows(in: feed.state.rows))
+    }
+
+    /// A compact destination can name one host's project, from a context link
+    /// or a restored selection. Rows are grouped under the merged project.
+    private func destinationProjectID(in merged: SidebarMergedRows) -> String? {
+        project.map { merged.selectedProjectID(for: $0.id) ?? $0.id }
+    }
 
     private var selectedMergedID: String? {
         merged.selectedProjectID(for: navigation.selectedProjectID)
@@ -159,11 +167,6 @@ public struct WorktreeListContent: View {
     private struct PendingWorktreeRouteKey: Hashable {
         let item: SidebarActivityItem?
         let loaded: Bool
-    }
-
-    private var displayedRows: [WorktreePanes]? {
-        if case .loaded(let rows) = state { return rows }
-        return nil
     }
 
     private var isLoaded: Bool {
@@ -213,11 +216,11 @@ public struct WorktreeListContent: View {
                 } description: {
                     Text(msg)
                 } actions: {
-                    Button("Retry") { Task { await feed.refresh() } }
+                    Button("Retry") { Task { await feed.retry() } }
                         .buttonStyle(.borderedProminent)
                 }
-            case .loaded(let worktrees):
-                navigationContent(worktreeCreation.rows(in: worktrees))
+            case .loaded:
+                navigationContent()
             }
         }
     }
@@ -285,7 +288,7 @@ public struct WorktreeListContent: View {
             }
         }
         // The caller owns the title: the compact path sets one for its push,
-        // and the iPad sidebar shows none (IPAD-1.2).
+        // and the iPad sidebar shows none.
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -297,7 +300,7 @@ public struct WorktreeListContent: View {
             }
         }
         .sheet(isPresented: $isAddSheetPresented) {
-            AddWorktreeSheetView(targets: addWorktreeTargets, initialProjectID: project?.id ?? (isSidebar ? selectedMergedID : nil)) { submission in
+            AddWorktreeSheetView(targets: addWorktreeTargets, initialProjectID: destinationProjectID(in: merged) ?? (isSidebar ? selectedMergedID : nil)) { submission in
                 beginCreatingWorktree(submission)
             }
         }
@@ -325,6 +328,7 @@ public struct WorktreeListContent: View {
         navigation.reconcile(worktrees: rows, projects: feed.state.projects)
         if selectedMergedID == nil {
             navigation.selectedProjectID = rows.first(where: isSelected).map { merged.mergedID(forMember: SidebarProjection.projectID($0)) }
+                ?? merged.projects.first?.id
         } else if navigation.selectedProjectID != selectedMergedID {
             navigation.selectedProjectID = selectedMergedID
         }
@@ -332,7 +336,7 @@ public struct WorktreeListContent: View {
         projectIconCache.reconcile(members)
         for member in members where merged.availability(ofMember: member.id) == .reachable {
             guard let revision = member.iconRevision, let host = feed.host(for: member) else { continue }
-            let provider = feed.provider(for: host)
+            let provider = feed.provider(for: host, wake: .never)
             Task { await projectIconCache.load(for: member) {
                 let response = try? await RelayedWorktreeManagementClient.send(
                     .projectIcon(repositoryID: member.repositoryID, revision: revision), using: provider)
@@ -344,7 +348,7 @@ public struct WorktreeListContent: View {
 
     private func rowsChanged() {
         let list = feed.state.rows
-        if let reportWorktreeID, !list.contains(where: { $0.path == reportWorktreeID }) { closeReport() }
+        if let reportWorktreeID, !list.contains(where: { MergedWorktreeList.identity($0) == reportWorktreeID }) { closeReport() }
         syncNavigation()
         if let created = worktreeCreation.takeReadySelection(in: list, generation: selectionIntentGeneration) {
             rememberWorktree(created)
@@ -359,7 +363,7 @@ public struct WorktreeListContent: View {
     }
 
     private func consumePendingWorktreeRoute() {
-        guard isSidebar || !showsProjectRail || project?.id == selectedMergedID,
+        guard isSidebar || !showsProjectRail || destinationProjectID(in: merged) == selectedMergedID,
               let item = MobilePaneAttention.pendingRoute(for: navigation),
               case .loaded(let rows) = state,
               rows.contains(where: { $0.path == item.worktreeID && SidebarProjection.projectID($0) == item.projectID }) else { return }
@@ -370,21 +374,22 @@ public struct WorktreeListContent: View {
     }
 
     @ViewBuilder
-    private func navigationContent(_ live: [WorktreePanes]) -> some View {
+    private func navigationContent() -> some View {
         let merged = merged
-        let worktrees = reportOrder?.orderedWorktrees(live) ?? live
+        // A sleeping host's last report says nothing about what's happening now.
+        let live = feed.state.liveRows
         let projects = merged.projects.map(\.representative)
         let activityCounts = SidebarActivityCounts(items: SidebarProjection.activity(live))
         let working = merged.rekeyed(activityCounts.workingByProject)
         let counts = merged.rekeyed(SidebarActivityCounts(items: live.flatMap { navigation.worktreeContext($0).pending }).attentionByProject)
         let icons = mergedIcons(merged)
-        if !isSidebar, let project {
-            projectDetail(worktrees, merged: merged, projectID: project.id)
+        if !isSidebar, let projectID = destinationProjectID(in: merged) {
+            projectDetail(merged: merged, projectID: projectID)
         } else if !showsProjectRail {
             VStack(spacing: 0) {
                 TextField("Find any project or worktree", text: $navigation.query)
                     .textFieldStyle(.roundedBorder).padding(.horizontal, 12)
-                worktreeList(worktrees, merged: merged, projectIDs: merged.projects.map(\.id))
+                worktreeList(merged: merged, projectIDs: merged.projects.map(\.id))
             }
         } else if isSidebar {
             HStack(spacing: 0) {
@@ -397,10 +402,10 @@ public struct WorktreeListContent: View {
                                       allowsReordering: !orderMutationInFlight,
                                       canExpand: navigationWindowWidth >= 1100,
                                       selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
-                                      onSelect: { project in selectProject(project, worktrees: worktrees) },
+                                      onSelect: { project in selectProject(project) },
                                       onMove: moveProject)
                 Divider()
-                projectDetail(worktrees, merged: merged)
+                projectDetail(merged: merged)
                     .frame(minWidth: 220, maxWidth: .infinity)
             }
         } else {
@@ -437,7 +442,7 @@ public struct WorktreeListContent: View {
         return result
     }
 
-    private func projectDetail(_ worktrees: [WorktreePanes], merged: SidebarMergedRows, projectID: String? = nil) -> some View {
+    private func projectDetail(merged: SidebarMergedRows, projectID: String? = nil) -> some View {
         let selectedProjectID = projectID ?? selectedMergedID
         return VStack(spacing: 0) {
             if !isSidebar {
@@ -448,7 +453,7 @@ public struct WorktreeListContent: View {
                 Text("Every host for this project is offline.").font(.caption).foregroundStyle(.secondary)
             }
             TextField("Find any project or worktree", text: $navigation.query).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
-            worktreeList(worktrees, merged: merged, projectIDs: selectedProjectID.map { [$0] } ?? [])
+            worktreeList(merged: merged, projectIDs: selectedProjectID.map { [$0] } ?? [])
         }
     }
 
@@ -539,17 +544,17 @@ public struct WorktreeListContent: View {
     }
 
     private func showReport(_ worktree: WorktreePanes) {
-        guard reportWorktreeID == nil, case .loaded(let worktrees) = state else { return }
+        guard reportWorktreeID == nil, case .loaded = state else { return }
         selectionIntentGeneration &+= 1
-        reportOrder = SidebarWorktreeReportOrder(worktrees: worktrees, projects: merged.projects.map(\.representative))
-        reportWorktreeID = worktree.path
+        frozenMergedOrder = merged.temporaryOrder()
+        reportWorktreeID = MergedWorktreeList.identity(worktree)
     }
 
     private func closeReport() {
         guard reportWorktreeID != nil else { return }
         selectionIntentGeneration &+= 1
         reportWorktreeID = nil
-        reportOrder = nil
+        frozenMergedOrder = [:]
     }
 
     private func openReportTarget(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) async -> Bool {
@@ -559,9 +564,9 @@ public struct WorktreeListContent: View {
         return succeeded
     }
 
-    private func selectProject(_ project: SidebarProject, worktrees: [WorktreePanes]) {
+    private func selectProject(_ project: SidebarProject) {
         Self.applyProjectSelection(project, navigation: navigation, selectionGeneration: &selectionIntentGeneration)
-        if selectedWorktreePath != nil, let previous = worktrees.first(where: isSelected) {
+        if selectedWorktreePath != nil, let previous = feed.state.rows.first(where: isSelected) {
             navigation.rememberedWorktrees[merged.mergedID(forMember: SidebarProjection.projectID(previous))] = MergedWorktreeList.identity(previous)
         }
         guard isSidebar, project.isAvailable else { return }
@@ -581,17 +586,31 @@ public struct WorktreeListContent: View {
     }
 
     private func openAttention(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) async -> Bool {
-        guard let worktree = worktrees.first(where: { $0.path == item.worktreeID }), worktree.state.hasOnDiskWorktree else {
+        // The project tells apart worktrees at the same path on different hosts.
+        guard let listed = worktrees.first(where: { $0.path == item.worktreeID && SidebarProjection.projectID($0) == item.projectID }),
+              listed.state.hasOnDiskWorktree else {
             showErrorToast("This worktree is no longer available."); return false
         }
         guard feed.state.projects.first(where: { $0.id == item.projectID }).map({ feed.state.availability(of: $0) }) != .offline,
-              let route = route(for: worktree) else {
+              let route = route(for: listed) else {
             showErrorToast("The owning Mac is offline."); return false
         }
         selectionIntentGeneration &+= 1
         let generation = selectionIntentGeneration
         let host = route.host
         let provider: RemoteConnectionProvider? = route.provider
+        // A sleeping host's row is only its last report, so wake it for the real one.
+        var worktree = listed
+        if feed.state.isAsleep(host.id) {
+            let woke = await feed.wake(host)
+            guard generation == selectionIntentGeneration else { return false }
+            let identity = MergedWorktreeList.identity(listed)
+            guard woke else { showErrorToast("\(host.label) didn't respond."); return false }
+            guard let live = feed.state.rows.first(where: { MergedWorktreeList.identity($0) == identity }) else {
+                showErrorToast("This worktree is no longer available on \(host.label)."); return false
+            }
+            worktree = live
+        }
         do {
             var target = worktree
             if target.state == .closed {
@@ -655,7 +674,7 @@ public struct WorktreeListContent: View {
     }
 
     @ViewBuilder
-    private func worktreeList(_ worktrees: [WorktreePanes], merged: SidebarMergedRows, projectIDs: [String]) -> some View {
+    private func worktreeList(merged: SidebarMergedRows, projectIDs: [String]) -> some View {
         let searching = !navigation.query.isEmpty
         let scrollKey = searching ? nil : SidebarLayoutPolicy.projectFilter(selectedID: selectedMergedID, showsProjectRail: showsProjectRail)
         ScrollViewReader { proxy in
@@ -665,7 +684,7 @@ public struct WorktreeListContent: View {
                                 let rows = merged.flattenedRows(for: project.id).filter { navigation.worktreeContext($0.row).matches(query: navigation.query) }
                                 if !rows.isEmpty {
                                     Section {
-                                        ForEach(rows) { row in worktreeRow(row, merged: merged, worktrees: worktrees) }
+                                        ForEach(rows) { row in worktreeRow(row, merged: merged) }
                                     } header: {
                                         Text(project.name).foregroundColor(theme?.sidebarPrimaryText(isActive: false))
                                     }
@@ -673,20 +692,20 @@ public struct WorktreeListContent: View {
                             }
                         } else {
                             ForEach(projectIDs, id: \.self) { projectID in
-                                let sections = merged.sections(for: projectID)
+                                let sections = merged.sections(for: projectID, frozenOrder: frozenMergedOrder[projectID])
                                 Section {
                                     if !sections.pinned.isEmpty {
                                         SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: pinnedCollapsed(projectID), separatesPrecedingRows: false)
                                             .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
                                         if !pinnedCollapsed(projectID).wrappedValue {
-                                            pinnedNodes(sections.pinned, projectID: projectID, merged: merged, worktrees: worktrees)
+                                            pinnedNodes(sections.pinned, projectID: projectID, merged: merged)
                                         }
                                     }
                                     if !sections.pinned.isEmpty, !sections.temporary.isEmpty {
                                         Divider().listRowSeparator(.hidden).listRowBackground(Color.clear)
                                     }
                                     ForEach(sections.temporary) { row in
-                                        worktreeRow(row, merged: merged, worktrees: worktrees).moveDisabled(true)
+                                        worktreeRow(row, merged: merged).moveDisabled(true)
                                     }
                                     ForEach(merged.offlineHosts(for: projectID), id: \.self) { host in
                                         Text("\(host) is offline").font(.caption).italic().foregroundStyle(.secondary)
@@ -760,18 +779,18 @@ public struct WorktreeListContent: View {
     }
 
     /// Rows and folders at one level. Only sibling rows can be reordered.
-    private func pinnedNodes(_ nodes: [MergedWorktreeNode], projectID: String, merged: SidebarMergedRows, worktrees: [WorktreePanes]) -> AnyView {
+    private func pinnedNodes(_ nodes: [MergedWorktreeNode], projectID: String, merged: SidebarMergedRows) -> AnyView {
         AnyView(ForEach(nodes) { node in
             switch node {
             case .row(let row):
-                worktreeRow(row, merged: merged, worktrees: worktrees)
+                worktreeRow(row, merged: merged)
                     .moveDisabled(!listEditMode.isEditing || row.row.isMainCheckout || row.row.state.isInFlight || orderMutationInFlight)
             case .folder(let id, let name, let children):
                 DisclosureGroup(isExpanded: Binding(
                     get: { !collapsedFolders.contains(projectID + id) },
                     set: { if $0 { collapsedFolders.remove(projectID + id) } else { collapsedFolders.insert(projectID + id) } }
                 )) {
-                    pinnedNodes(children, projectID: projectID, merged: merged, worktrees: worktrees)
+                    pinnedNodes(children, projectID: projectID, merged: merged)
                 } label: { Label(name, systemImage: "folder").font(.callout) }
                 .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
                 .moveDisabled(true)
@@ -785,9 +804,10 @@ public struct WorktreeListContent: View {
     }
 
     @ViewBuilder
-    private func worktreeRow(_ row: MergedWorktreeRow, merged: SidebarMergedRows, worktrees: [WorktreePanes]) -> some View {
+    private func worktreeRow(_ row: MergedWorktreeRow, merged: SidebarMergedRows) -> some View {
         let wt = row.row
         let memberID = SidebarProjection.projectID(wt)
+        let reportID = MergedWorktreeList.identity(wt)
         let member = feed.state.projects.first { $0.id == memberID }
         WorktreeBlock(
             worktree: wt,
@@ -805,8 +825,8 @@ public struct WorktreeListContent: View {
             onRemove: { pendingDelete = PendingDelete(worktree: wt, action: .delete) }
         )
         .popover(isPresented: Binding(
-            get: { reportWorktreeID == wt.path },
-            set: { if !$0, reportWorktreeID == wt.path { closeReport() } }
+            get: { reportWorktreeID == reportID },
+            set: { if !$0, reportWorktreeID == reportID { closeReport() } }
         ), arrowEdge: .leading) {
             MobileWorktreeReportContent(context: navigation.worktreeContext(wt), onOpen: {
                 await openReportTarget(MobilePaneAttention.openTarget(for: navigation.worktreeContext(wt)), worktrees: feed.state.rows)
@@ -814,11 +834,18 @@ public struct WorktreeListContent: View {
                 navigation.dismissRequest(in: navigation.worktreeContext(wt))
                 closeReport()
             },
-            onClose: { if reportWorktreeID == wt.path { closeReport() } },
+            onClose: { if reportWorktreeID == reportID { closeReport() } },
             host: feed.host(for: wt), remoteConnectionProvider: feed.host(for: wt).map { feed.provider(for: $0) })
             .presentationCompactAdaptation(.sheet)
         }
         .id(wt.sidebar?.id ?? wt.path)
+        .background(GeometryReader { geometry in
+            let frame = geometry.frame(in: .named(worktreeScrollSpace))
+            Color.clear.preference(key: SidebarWorktreeViewportPreference.self, value: [
+                SidebarWorktreeViewportRow(id: wt.sidebar?.id ?? wt.path, minY: frame.minY, maxY: frame.maxY,
+                                           projectID: merged.mergedID(forMember: memberID))
+            ])
+        })
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if let action = WorktreePickerGrouping.swipeAction(for: wt) {
                 Button(role: .destructive) {
@@ -857,7 +884,7 @@ public struct WorktreeListContent: View {
             showErrorToast("The host for this worktree isn't connected.")
             return
         }
-        if feed.state.isAsleep(route.host.id), !feed.state.isLive(route.host.id) {
+        if feed.state.isAsleep(route.host.id) {
             wakeAndOpen(worktree, on: route.host)
             return
         }
@@ -980,7 +1007,9 @@ public struct WorktreeListContent: View {
         closeReport()
         selectionIntentGeneration &+= 1
         let id = worktreeCreation.begin(
-            placeholder: placeholder, knownPaths: Set(rows.map(\.path)),
+            placeholder: placeholder,
+            // A path on another host says nothing about this one.
+            knownPaths: Set(rows.filter { repository.origin == nil || $0.origin?.deviceID == repository.origin?.deviceID }.map(\.path)),
             generation: selectionIntentGeneration
         )
         // Reveal the destination project without selecting its unfinished row.

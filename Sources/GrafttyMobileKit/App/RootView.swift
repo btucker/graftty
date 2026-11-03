@@ -643,7 +643,14 @@ private struct RootFeedObserver: ViewModifier {
         content
             // Before the first frame's layout settles, so the root isn't briefly
             // the pairing screen for someone who has hosts.
-            .onChange(of: hostStore.hosts, initial: true) { _, hosts in feed.setHosts(hosts) }
+            .onChange(of: hostStore.hosts, initial: true) { _, hosts in
+                feed.setHosts(hosts)
+                // Forgetting a host from the Hosts screen ends its selection.
+                if hostStore.hasLoaded, let id = appState.selectedHostId, !hosts.contains(where: { $0.id == id }) {
+                    appState.select(hostID: nil, worktreePath: nil, paneID: nil)
+                    appState.latestWorktrees = []
+                }
+            }
             .task(id: Key(hosts: hostStore.hosts, isReady: isReady)) {
                 await hostStore.loadIfNeeded()
                 feed.setHosts(hostStore.hosts)

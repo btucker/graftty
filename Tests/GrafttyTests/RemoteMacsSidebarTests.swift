@@ -99,7 +99,7 @@ struct RemoteMacsSidebarTests {
             ProjectWorktreeColumn {
                 let entry = WorktreeEntry(path: "/local/feature", branch: "feature")
                 WorktreeRow(entry: entry, isActive: true, displayName: "feature", isMainCheckout: false,
-                    theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                    theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
                     .frame(minHeight: 24)
                     .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
             }.frame(width: 260)
@@ -159,6 +159,8 @@ struct RemoteMacsSidebarTests {
         #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: [], query: ""))
         #expect(RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["project"], query: ""))
         #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["other"], query: ""))
+        #expect(RemoteWorktreeReorderPolicy.allowsWhileAsleep(row, query: ""))
+        #expect(!RemoteWorktreeReorderPolicy.allowsWhileAsleep(row, query: "x"))
         #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["project"], query: "feature"))
         let main = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "Project", displayBranch: "main", state: .closed,
             isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "main", projectID: "project"))
