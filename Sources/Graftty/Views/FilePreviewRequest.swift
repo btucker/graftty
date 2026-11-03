@@ -4,7 +4,8 @@ import GrafttyKit
 @MainActor
 enum FilePreviewRequest {
     static func handle(path: String, targets: [String], paneSessionName: String?,
-                       state: () -> AppState, terminalManager: TerminalManager, store: RemoteOpenStore = .shared) async -> ResponseMessage {
+                       state: () -> AppState, terminalManager: TerminalManager, store: RemoteOpenStore = .shared,
+                       liveReload: FilePreviewLiveReload? = nil) async -> ResponseMessage {
         guard let scope = ImagePreviewRouting.scope(path: path, paneSessionName: paneSessionName, state: state()) else {
             return .error("The originating pane is unavailable. Run graftty preview from a tracked pane.")
         }
@@ -29,6 +30,12 @@ enum FilePreviewRequest {
             }
             let published = try await store.publishPreviews(snapshots, worktree: scope.worktreePath,
                 paneSessionName: scope.sessionName, ownerDeviceID: recipient, previewRevision: generation.sequence)
+            // Publishing makes this the pane's latest preview on every client, whatever
+            // happens to its delivery below, so the earlier preview stops following here.
+            if let group = published.first?.previewGroupID {
+                (liveReload ?? .shared).follow(group: group, urls: urls, snapshots: snapshots,
+                    worktreePath: scope.worktreePath, paneSessionName: scope.sessionName)
+            }
             switch ImagePreviewRouting.destination(ownerKind: ownership?.ownerKind,
                                                    macIsFollower: terminalManager.handle(for: scope.pane) == nil || terminalManager.canTakeDisplayControl(for: scope.pane)) {
             case .mobile:

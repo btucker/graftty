@@ -4462,7 +4462,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-2.11** When the mobile pane lacks horizontal room for Preview and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.
 
-**IMAGE-2.12** When files are previewed in a worktree, the host shall retain their immutable collections for all authorized clients of that worktree, independently of the originating pane, display owner, and temporary delivery expiry.
+**IMAGE-2.12** When files are previewed in a worktree, the host shall retain their collections for all authorized clients of that worktree, independently of the originating pane, display owner, and temporary delivery expiry.
 
 **IMAGE-2.13** When a preview's automatic delivery expires or is withdrawn, the host shall retain it in the worktree library without automatically reopening it on a device.
 
@@ -4476,13 +4476,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.2** When files are requested for native preview, the application shall snapshot readable regular files of any type in order and reject empty collections, more than 20 files, files over 20 MB, or collections over 50 MB.
 
-**PREVIEW-1.3** When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain immutable snapshot files until the tray releases them.
+**PREVIEW-1.3** When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain its private snapshot files until the tray releases them.
 
 **PREVIEW-1.4** When a preview file snapshot is released, the application shall remove its private temporary directory without deleting the original file.
 
 **PREVIEW-1.5** When a native macOS preview is dismantled before attachment, after window closure, or more than once, the application shall close Quick Look safely, reject subsequent preview updates, and retain its snapshots until native teardown completes.
 
-**PREVIEW-1.6** When a Mac preview arrives, the application shall retain the latest 32 requests as immutable session history grouped by worktree, including replaced and closed previews.
+**PREVIEW-1.6** When a Mac preview arrives, the application shall retain the latest 32 requests as session history grouped by worktree, including replaced and closed previews, whose snapshots change only as PREVIEW-1.17 follows a latest preview.
 
 **PREVIEW-1.7** When a Mac preview arrives, the application shall reuse one resizable standard window per worktree without taking terminal focus, and closing that window shall retain its history for reopening.
 
@@ -4503,6 +4503,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PREVIEW-1.15** When a remote preview window is hidden or closed and reopened, the application shall retain its remote catalog transport for browsing and downloading history.
 
 **PREVIEW-1.16** When a library download is superseded before task cancellation is observed, the application shall discard its result without changing the selected preview or appending discarded history.
+
+**PREVIEW-1.17** When a source file of the latest preview from a pane changes, whether written in place or atomically replaced, the application shall update that preview and its stored collection without adding a history entry.
+
+**PREVIEW-1.18** When a newer preview replaces a pane's latest preview, the application shall stop following the earlier preview so that it remains an unchanged snapshot in history.
+
+**PREVIEW-1.19** If a followed source file is removed, unreadable, or too large, then the application shall keep showing the last good content and resume updating when the file becomes readable again.
+
+**PREVIEW-1.20** When a preview revision reaches an open native preview, the application shall show the new content in the same preview, keeping the selected file of its collection and the retained old snapshot until Quick Look has switched.
+
+**PREVIEW-1.21** When a remote host's catalog reports a newer revision of a displayed preview, the application shall download it and update that preview in place.
 
 ### PREVIEW-2.x
 
@@ -4527,6 +4537,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PREVIEW-2.10** While a native preview covers a mobile terminal, the application shall preserve its live terminal channel and mounted session through presentation and dismissal, and perform normal pane cleanup only when the pane is actually removed.
 
 **PREVIEW-2.11** When clients browse preview history, the application shall use the first filename and remaining file count as the collection title, preserve optional creation times across connections, and omit unknown times from legacy offers.
+
+**PREVIEW-2.12** When a followed preview's source files change, the host shall revise its stored collection in place, keeping its collection and offer identities and raising its content revision so that clients can refresh without treating it as a new request.
+
+**PREVIEW-2.13** When the host revises a mobile preview being viewed, the application shall download the new content and show it in the open preview without closing it, and shall not reopen a preview the user dismissed.
 
 ### PREVIEW-3.x
 

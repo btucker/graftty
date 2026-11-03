@@ -23,6 +23,17 @@ struct NativeFilePreviewTests {
         #expect(dismissed)
     }
 
+    @Test("A revised collection reaches the Quick Look controller that is already open.")
+    func revisedFilesReachMountedController() throws {
+        let coordinator = NativeImagePreview.Coordinator(urls: [URL(fileURLWithPath: "/tmp/old/plan.html")], dismiss: {})
+        let navigation = NativeImagePreview.makeController(coordinator: coordinator)
+        let controller = try #require(navigation.topViewController as? QLPreviewController)
+        let revised = URL(fileURLWithPath: "/tmp/new/plan.html")
+        NativeImagePreview.apply([revised], to: coordinator, in: navigation)
+        #expect(navigation.topViewController === controller)
+        #expect(coordinator.source.previewController(controller, previewItemAt: 0).previewItemURL == revised)
+    }
+
     @Test("@spec IMAGE-2.8: When a mobile image opens, the application shall use a native Quick Look controller in a navigation container with a Done action and the system image zoom and sharing interface.")
     func imageUsesQuickLookWithNativeNavigationAndDone() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")

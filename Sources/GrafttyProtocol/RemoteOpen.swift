@@ -18,10 +18,13 @@ public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
     public let previewKind: String?
     public let previewOwnerDeviceID: RemoteDeviceID?
     public let createdAt: Date?
+    /// Raised when the host revises a collection in place as its source files change.
+    /// Absent on older hosts and on content that has never changed.
+    public let contentRevision: Int?
 
     public init(id: UUID, filename: String, byteCount: Int, url: URL? = nil,
                 paneSessionName: String? = nil, browserOwnerDeviceID: RemoteDeviceID? = nil,
-                previewKind: String? = nil, previewOwnerDeviceID: RemoteDeviceID? = nil, previewGroupID: UUID? = nil, createdAt: Date? = nil) {
+                previewKind: String? = nil, previewOwnerDeviceID: RemoteDeviceID? = nil, previewGroupID: UUID? = nil, createdAt: Date? = nil, contentRevision: Int? = nil) {
         self.id = id
         self.filename = filename
         self.byteCount = byteCount
@@ -32,6 +35,16 @@ public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
         self.previewKind = previewKind
         self.previewOwnerDeviceID = previewOwnerDeviceID
         self.createdAt = createdAt
+        self.contentRevision = contentRevision
+    }
+
+    /// The same offer identity carrying newer bytes, so clients that already consumed
+    /// this offer refresh it rather than treat it as a new request to open.
+    public func revised(byteCount: Int, contentRevision: Int) -> RemoteOpenOffer {
+        RemoteOpenOffer(id: id, filename: filename, byteCount: byteCount, url: url,
+                        paneSessionName: paneSessionName, browserOwnerDeviceID: browserOwnerDeviceID,
+                        previewKind: previewKind, previewOwnerDeviceID: previewOwnerDeviceID,
+                        previewGroupID: previewGroupID, createdAt: createdAt, contentRevision: contentRevision)
     }
 }
 
@@ -58,6 +71,7 @@ public struct WorktreePreviewCollection: Identifiable, Sendable, Equatable {
         return offers.count > 1 ? "\(first) + \(offers.count - 1) more" : first
     }
     public var createdAt: Date? { offers.first?.createdAt }
+    public var contentRevision: Int { offers.first?.contentRevision ?? 0 }
     public var menuTitle: String { Self.menuTitle(title, createdAt: createdAt) }
 
     public static func menuTitle(_ title: String, createdAt: Date?) -> String {

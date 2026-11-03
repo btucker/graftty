@@ -53,7 +53,7 @@ struct FilePreviewWindowTests {
         #expect(!moved.isPreviewOpen)
     }
 
-    @Test("@spec PREVIEW-1.6: When a Mac preview arrives, the application shall retain the latest 32 requests as immutable session history grouped by worktree, including replaced and closed previews.")
+    @Test("@spec PREVIEW-1.6: When a Mac preview arrives, the application shall retain the latest 32 requests as session history grouped by worktree, including replaced and closed previews, whose snapshots change only as PREVIEW-1.17 follows a latest preview.")
     func retainsBoundedWorktreeHistory() throws {
         let history = FilePreviewHistory()
         let pane = PaneSlotID(id: UUID())

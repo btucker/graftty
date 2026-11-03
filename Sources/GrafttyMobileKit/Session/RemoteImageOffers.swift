@@ -24,13 +24,23 @@ enum RemoteImageOffers {
         }
     }
 
+    /// The collection holding `offer` when the host has revised its content, whether or
+    /// not it is still a pending delivery. Library entries carry no recipient.
+    static func revisedCollection(of offer: RemoteOpenOffer, in offers: [RemoteOpenOffer]) -> [RemoteOpenOffer]? {
+        let group = offer.previewGroupID ?? offer.id
+        guard let collection = RemoteOpenOffer.previewCollections(in: offers).first(where: { $0.id == group }),
+              collection.contentRevision != (offer.contentRevision ?? 0) else { return nil }
+        return collection.offers
+    }
+
     /// Retains the route selected by the user's tap across asynchronous downloads.
     struct Request: Equatable {
         let offer: RemoteOpenOffer
         let scope: TerminalBrowserRequest.Scope
 
         func isCurrent(latest: RemoteOpenOffer?, scope: TerminalBrowserRequest.Scope, isReady: Bool) -> Bool {
-            isReady && self.scope == scope && offer == latest
+            // Compare identity: a revised offer is the same request with newer content.
+            isReady && self.scope == scope && offer.id == latest?.id
         }
     }
 }

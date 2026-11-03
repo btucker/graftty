@@ -177,12 +177,19 @@ final class NativeFilePreviewTray: NSView {
     }
 
     func update(_ preview: ImagePreviewStore.Preview) {
-        guard !isTornDown, preview.id != self.preview.id else { return }
-        self.preview = preview
-        selectedIndex = 0
-        openErrorMessage = nil
-        errorLabel.isHidden = true
-        loadSelection()
+        guard !isTornDown else { return }
+        let isRevision = preview.id == self.preview.id
+        guard !isRevision || preview.files.map(\.url) != self.preview.files.map(\.url) else { return }
+        // Quick Look may still be reading the old snapshot until it gets the new item.
+        withExtendedLifetime(self.preview) {
+            self.preview = preview
+            if !isRevision || !preview.files.indices.contains(selectedIndex) {
+                selectedIndex = 0
+                openErrorMessage = nil
+                errorLabel.isHidden = true
+            }
+            loadSelection()
+        }
     }
 
     func configure(theme: GhosttyTheme, navigation: FilePreviewNavigation?) {

@@ -17,6 +17,7 @@ final class FilePreviewWindows: ObservableObject {
         let pane: PaneSlotID?
     }
     private var hiddenPreviews: [HiddenPreview] = []
+    private var syncing: Set<UUID> = []
 
     func hiddenEntry(for path: String) -> FilePreviewHistory.Entry? {
         hiddenPreviews.first { $0.entry.worktreePath == path }?.entry
@@ -125,6 +126,52 @@ final class FilePreviewWindows: ObservableObject {
         inlineTarget = InlineTarget(worktreePath: path, pane: target)
     }
 
+    /// Updates every place holding this preview without changing what is selected
+    /// or where it is shown.
+    func applyRevision(previewID: UUID, worktreePath: String, files: [FilePreviewFile], contentRevision: Int) {
+        objectWillChange.send()
+        history.applyRevision(of: previewID, worktreePath: worktreePath, files: files, contentRevision: contentRevision)
+        inline.applyRevision(of: previewID, files: files, contentRevision: contentRevision)
+        hiddenPreviews = hiddenPreviews.map { hidden in
+            guard hidden.entry.id == previewID, hidden.entry.worktreePath == worktreePath else { return hidden }
+            return HiddenPreview(entry: hidden.entry.revised(files: files, contentRevision: contentRevision), pane: hidden.pane)
+        }
+        if let model = controllers[worktreePath]?.model, model.entry.id == previewID {
+            model.applyRevision(files: files, contentRevision: contentRevision)
+        }
+    }
+
+    /// Catches up displayed previews with revisions made by another host. Polling
+    /// callers can repeat this freely: one download runs per preview at a time.
+    func syncCatalog(_ catalog: [WorktreePreviewCollection], worktreePath: String,
+                     request: @escaping (RemoteOpenRequest) async throws -> RemoteOpenResponse) {
+        for collection in catalog where !syncing.contains(collection.id) {
+            // Only forward: a local revision can overtake a listing or a download.
+            guard let displayed = displayedPreview(of: collection.id, worktreePath: worktreePath),
+                  displayed.contentRevision < collection.contentRevision else { continue }
+            syncing.insert(collection.id)
+            let sources = displayed.files.map(\.sourceURL)
+            Task { [weak self] in
+                defer { self?.syncing.remove(collection.id) }
+                // A failed download keeps the current content; the next poll retries.
+                guard let files = try? await FilePreviewCollectionLoader.load(collection, sourceURLs: sources, request: request),
+                      let self, let current = self.displayedPreview(of: collection.id, worktreePath: worktreePath),
+                      current.contentRevision < collection.contentRevision else { return }
+                self.applyRevision(previewID: collection.id, worktreePath: worktreePath, files: files,
+                                   contentRevision: collection.contentRevision)
+            }
+        }
+    }
+
+    private func displayedPreview(of id: UUID, worktreePath: String) -> ImagePreviewStore.Preview? {
+        let open = controllers[worktreePath]?.model.entry
+        if open?.id == id { return open?.preview }
+        if let hidden = hiddenPreviews.first(where: { $0.entry.id == id && $0.entry.worktreePath == worktreePath }) {
+            return hidden.entry.preview
+        }
+        return inline.previews.values.first { $0.id == id }
+    }
+
     func closeAll() {
         for controller in Array(controllers.values) { controller.close() }
     }
@@ -149,6 +196,14 @@ final class FilePreviewWindowModel: ObservableObject {
     var canShowInline: Bool { targetWorktreePath != nil }
     init(entry: FilePreviewHistory.Entry) { self.entry = entry }
 
+    /// New content for the selected preview is not a new selection, so it must not
+    /// invalidate a library download the user has in flight.
+    func applyRevision(files: [FilePreviewFile], contentRevision: Int) {
+        let revision = selectionRevision
+        entry = entry.revised(files: files, contentRevision: contentRevision)
+        selectionRevision = revision
+    }
+
     func configureInline(pane: PaneSlotID?, resolveWorktree: ((PaneSlotID) -> String?)?,
                          onShow: @escaping (FilePreviewHistory.Entry, PaneSlotID, String) -> Void) {
         objectWillChange.send()
@@ -165,7 +220,7 @@ final class FilePreviewWindowModel: ObservableObject {
         // A newer agent delivery or user selection wins over this download.
         guard selectionRevision == revision, isCurrent() else { return }
         entry = history.record(files: files, pane: entry.pane, worktreePath: entry.worktreePath,
-            id: collection.id, createdAt: collection.createdAt)
+            id: collection.id, createdAt: collection.createdAt, contentRevision: collection.contentRevision)
     }
 
     func showInline() {
@@ -246,6 +301,7 @@ private struct FilePreviewWindowContent: View {
                         if case .offers(let offers) = try await request(.list) {
                             try Task.checkCancellation()
                             catalog = RemoteOpenOffer.previewCollections(in: offers)
+                            windows.syncCatalog(catalog, worktreePath: model.entry.worktreePath) { try await self.request($0) }
                         }
                     } catch { if Task.isCancelled { return } }
                     do { try await Task.sleep(for: .seconds(5)) } catch { return }
