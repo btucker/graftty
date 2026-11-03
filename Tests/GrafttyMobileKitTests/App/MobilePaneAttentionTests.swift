@@ -264,6 +264,22 @@ struct TerminalBackNavigationTests {
         #expect(view.terminalBackSwipeAction == nil)
     }
 
+    @Test("@spec IOS-4.59: When a mobile terminal displays a Back badge, the application shall count pending requests only in the worktree list that Back opens, respecting its project scope and search query.", arguments: [false, true], ["", "current", "other"])
+    func backBadgeUsesDestinationProject(showsProjectRail: Bool, query: String) {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let current = worktree("current", pending: false)
+        let other = worktree("other", pending: true, projectID: "other-project")
+        let navigation = SidebarNavigationState(prefix: "terminal-back-scope.\(UUID())")
+        navigation.query = query
+        let project = SidebarProjection.projects([current])[0]
+        let view = SingleSessionView(step: .init(host: host, worktreePath: current.path,
+            sessionName: "s", title: "Shell", worktreeProject: project), navigationPath: .constant(NavigationPath()),
+            showsProjectRail: showsProjectRail, sidebarNavigation: navigation, attentionWorktrees: [current, other])
+        let hasPending = query == "other" || (!showsProjectRail && query.isEmpty)
+        #expect(view.backAccessibilityLabel == (hasPending
+            ? "Back to worktrees, 1 pending worktree" : "Back to worktrees"))
+    }
+
     @Test(arguments: [false, true], [false, true])
     func returnsToProjectWorktrees(hasPendingWork: Bool, throughPaneDetail: Bool) {
         let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
@@ -272,7 +288,7 @@ struct TerminalBackNavigationTests {
         let navigation = SidebarNavigationState(prefix: "terminal-back.\(UUID())")
         let project = SidebarProjection.projects([current, other])[0]
         navigation.showProject(project.id)
-        navigation.query = "keep this search"
+        navigation.query = "Project"
         let step = SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell",
                                worktreeProject: project)
         var pickerPath = NavigationPath()
@@ -288,7 +304,7 @@ struct TerminalBackNavigationTests {
 
         #expect(path == pickerPath)
         #expect(MobilePaneAttention.pendingRoute(for: navigation) == nil)
-        #expect(navigation.query == "keep this search")
+        #expect(navigation.query == "Project")
         #expect(navigation.rememberedWorktrees[project.id] == nil)
         #expect(view.backAccessibilityLabel == (hasPendingWork
             ? "Back to worktrees, 1 pending worktree" : "Back to worktrees"))

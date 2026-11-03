@@ -401,6 +401,7 @@ private struct ImageControlsFixture: View {
 @MainActor
 private struct RecentPaneFixture: View {
     @State private var model = RecentPaneFixtureModel()
+    @State private var keyboardTop: CGFloat = 0
     /// The agent workspace's top-right controls need a coordinator.
     @State private var coordinator: RemoteConnectionCoordinator? =
         ProcessInfo.processInfo.arguments.contains("--agent-workspace") ? RemoteConnectionCoordinator() : nil
@@ -429,6 +430,9 @@ private struct RecentPaneFixture: View {
                                     + (model.clients[key]?.session.readViewportText() ?? ""))
                                     .font(.caption2).accessibilityIdentifier("Recent pane rendered target")
                             }.allowsHitTesting(false)
+                            Text(String(Double(keyboardTop)))
+                                .font(.caption2).accessibilityIdentifier("Recent pane keyboard top")
+                                .allowsHitTesting(false)
                         }
                 }
         }
@@ -438,6 +442,11 @@ private struct RecentPaneFixture: View {
         .environment(\.remoteConnectionCoordinator, coordinator)
         // Prevent unrelated live dialing in this deterministic fixture.
         .environment(\.scenePhase, .inactive)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            if let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
+                keyboardTop = value.cgRectValue.minY
+            }
+        }
         .alert("Could not open pane", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }

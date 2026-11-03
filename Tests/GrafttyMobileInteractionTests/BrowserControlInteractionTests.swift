@@ -223,7 +223,7 @@ final class RecentPaneInteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["Hide terminal"].waitForExistence(timeout: 5), "Terminal did not open the sheet")
     }
 
-    /// @spec IPAD-2.26: While a compact agent workspace shows the software keyboard, the application shall keep the terminal and its key accessory bar above the keyboard.
+    /// @spec IPAD-2.26: While a compact agent workspace shows the software keyboard, the application shall keep the terminal above the keyboard and place its key accessory bar directly against the keyboard.
     func testAgentWorkspaceTerminalStaysAboveKeyboard() throws {
         for arguments in [["--empty-agent-list"], ["--agent-workspace"]] {
             let app = XCUIApplication()
@@ -244,10 +244,16 @@ final class RecentPaneInteractionTests: XCTestCase {
             attachment.name = "Keyboard over alpha \(arguments)"
             attachment.lifetime = .keepAlways
             add(attachment)
-            XCTAssertLessThanOrEqual(terminal.frame.maxY, keyboard.frame.minY + 1,
-                "\(arguments): terminal \(terminal.frame) extends behind keyboard \(keyboard.frame)")
-            XCTAssertLessThanOrEqual(submit.frame.maxY, keyboard.frame.minY + 1,
-                "\(arguments): accessory bar \(submit.frame) is behind keyboard \(keyboard.frame)")
+            // The accessibility keyboard frame excludes its rounded top edge.
+            // Use the system's full keyboard frame to measure the actual gap.
+            let keyboardTop = try XCTUnwrap(Double(app.staticTexts["Recent pane keyboard top"].label))
+            XCTAssertGreaterThan(keyboardTop, 0)
+            XCTAssertLessThanOrEqual(terminal.frame.maxY, keyboardTop + 1,
+                "\(arguments): terminal \(terminal.frame) extends behind keyboard top \(keyboardTop)")
+            XCTAssertLessThanOrEqual(submit.frame.maxY, keyboardTop + 1,
+                "\(arguments): accessory bar \(submit.frame) is behind keyboard top \(keyboardTop)")
+            XCTAssertLessThanOrEqual(keyboardTop - submit.frame.maxY, 17,
+                "\(arguments): accessory bar \(submit.frame) leaves a gap above keyboard top \(keyboardTop)")
         }
     }
 }
