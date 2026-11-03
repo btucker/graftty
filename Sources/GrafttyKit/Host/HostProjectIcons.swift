@@ -17,6 +17,7 @@ struct HostProjectIcon {
 
 extension HeadlessHostRuntime {
     func refreshProjectIcons() async {
+        await refreshOriginKeys()
         let ids = Set(state.repos.map(\.id))
         projectIcons = projectIcons.filter { ids.contains($0.key) }
         projectIconLoads = projectIconLoads.filter { ids.contains($0.key) }
@@ -45,6 +46,23 @@ extension HeadlessHostRuntime {
         }
     }
 
+    /// An origin rarely changes, so look again every few minutes.
+    private func refreshOriginKeys() async {
+        if let checked = originKeysCheckedAt, Date().timeIntervalSince(checked) < 300,
+           !state.repos.contains(where: { $0.isGitTracked && $0.originKey == nil && $0.projectRank == nil }) { return }
+        originKeysCheckedAt = Date()
+        var keys: [String: String] = [:]
+        for repo in state.repos where repo.isGitTracked {
+            if let origin = try? await GitRepositoryOrigin.detect(repoPath: repo.path) { keys[repo.path] = origin.identityKey }
+        }
+        var candidate = state
+        SidebarHostNavigation.applyOriginKeys(keys, in: &candidate.repos)
+        SidebarHostNavigation.seedRanks(in: &candidate.repos, projectOrder: candidate.repos.map(\.id))
+        guard candidate != state else { return }
+        state = candidate
+        try? state.save(to: configuration.stateDirectory)
+    }
+
     func currentProjectIcon(for repo: RepoEntry) -> HostProjectIcon? {
         guard let cached = projectIcons[repo.id], cached.path == repo.path, cached.override == repo.iconOverride else { return nil }
         return cached
@@ -64,7 +82,8 @@ extension HeadlessHostRuntime {
             if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
             return SidebarProject(id: repo.path, repositoryID: repo.path, name: repo.displayName,
                 owner: origin, iconRevision: currentProjectIcon(for: repo)?.revision, initials: initials,
-                supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil)
+                supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil,
+                originKey: repo.originKey, rank: repo.projectRank, rankChangedAt: repo.projectRankChangedAt)
         }, hostResources: hostResources))
     }
 }

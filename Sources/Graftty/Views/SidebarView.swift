@@ -197,6 +197,7 @@ struct SidebarView: View {
         return result
     }
     private func refreshNavigation() async {
+        await iconStore.refreshOriginKeys(state: $appState)
         let remote = await remoteMacsModel.sidebarRelaySnapshot()
         let snapshot = iconStore.snapshot(state: $appState, owner: owner, remote: remote.projects,
             authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))

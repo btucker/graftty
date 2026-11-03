@@ -24,6 +24,7 @@ public final class HeadlessHostRuntime {
     var portBindingSessions: [PaneSlotID: String] = [:]
     var portBindingsByPane: [PaneSlotID: [PortBinding]] = [:]
     var projectIconRefreshTask: Task<Void, Never>?
+    var originKeysCheckedAt: Date?
     var projectIcons: [UUID: HostProjectIcon] = [:]
     var projectIconLoads: [UUID: HostProjectIconLoad] = [:]
     var busyPaths: Set<String> = []

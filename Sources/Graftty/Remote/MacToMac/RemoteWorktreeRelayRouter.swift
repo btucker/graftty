@@ -234,7 +234,8 @@ final class RemoteWorktreeRelayRouter {
                     relayDepth: 1
                 ),
                 defaultBranchStatus: repository.defaultBranchStatus,
-                branches: branches
+                branches: branches,
+                originKey: repository.originKey
             )
         }
     }

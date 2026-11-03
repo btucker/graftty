@@ -86,6 +86,25 @@ struct RemoteMacsModelTests {
         #expect(!model.canSetWorktreeOrder(for: offline))
     }
 
+    @Test("@spec REMOTE-13.34: When a client sets a rank on a relayed project or pinned worktree, the relaying Mac shall forward the write to the owning host using that host's identifiers.")
+    func relayForwardsRankRequestsToOwner() async throws {
+        let remote = try remoteMac()
+        let recorder = RemoteMacsModelManagementRecorder(response: .ok)
+        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", originKey: "k/repo", rank: "b", rankChangedAt: 3)
+        let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
+        #expect(project.originKey == "k/repo")
+        #expect(project.rank == "b")
+        #expect(project.rankChangedAt == 3)
+        _ = await model.sendRelayedWorktreeManagement(.setProjectRank(repositoryID: project.repositoryID, rank: "c", changedAt: 9))
+        let worktree = model.relayRouter.registerCreatedWorktree(identity: RemoteMacIdentity(remote), path: "/repo/w", paneSessionName: "pane")
+        _ = await model.sendRelayedWorktreeManagement(.setPinnedRank(repositoryID: project.repositoryID, worktreeID: worktree.worktreeID, rank: "d"))
+        #expect(await recorder.requests() == [
+            .setProjectRank(repositoryID: "/repo", rank: "c", changedAt: 9),
+            .setPinnedRank(repositoryID: "/repo", worktreeID: "/repo/w", rank: "d"),
+        ])
+    }
+
     @Test func addRepositoryReportsHostErrorsAndMissingRepository() async throws {
         let remote = try remoteMac()
         for response in [WorktreeManagementResponse.repositories([]), .error(code: "denied", message: "Details denied", forceAllowed: false, shortStatus: nil)] {

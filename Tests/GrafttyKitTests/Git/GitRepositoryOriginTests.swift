@@ -75,3 +75,24 @@ struct GitRepositoryOriginTests {
         }
     }
 }
+
+@Suite("@spec PROJECT-4.2: When a host publishes a repository's origin key, the application shall derive it from the normalized origin, so equivalent remote URLs give equal keys and forks give different keys, and it shall exclude credentials.")
+struct GitRepositoryOriginKeyTests {
+    @Test func identityKeyEqualAcrossSSHAndHTTPS() {
+        let ssh = GitRepositoryOrigin.parse("git@github.com:acme/app.git")
+        let https = GitRepositoryOrigin.parse("https://token:secret@GitHub.com/acme/app")
+        #expect(ssh?.identityKey == "github.com/acme/app")
+        #expect(https?.identityKey == "github.com/acme/app")
+    }
+    @Test func identityKeyDiffersForForks() {
+        #expect(GitRepositoryOrigin.parse("git@github.com:acme/app.git")?.identityKey
+            != GitRepositoryOrigin.parse("git@github.com:me/app.git")?.identityKey)
+    }
+    @Test func genericServersKeepUserAndPort() {
+        let key = GitRepositoryOrigin.parse("ssh://deploy@git.example.com:2222/srv/app.git")?.identityKey
+        #expect(key?.contains("deploy") == true)
+        #expect(key?.contains("2222") == true)
+        #expect(GitRepositoryOrigin.parse("ssh://deploy@git.example.com:2222/srv/app.git")?.identityKey
+            != GitRepositoryOrigin.parse("ssh://other@git.example.com:2222/srv/app.git")?.identityKey)
+    }
+}

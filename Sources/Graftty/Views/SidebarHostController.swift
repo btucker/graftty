@@ -9,6 +9,7 @@ import GrafttyCommandUI
 @MainActor
 final class SidebarHostController: ObservableObject {
     static let shared = SidebarHostController()
+    private var originKeysChecked: [String: Date] = [:]
     /// The process-wide origin of local projects (also `GrafttyApp`'s
     /// `localWorktreeOrigin`). It must exist synchronously, so it is the one
     /// caller that still falls back to a non-persisted ID; remote identity
@@ -128,7 +129,8 @@ final class SidebarHostController: ObservableObject {
         if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
         return SidebarProject(id: "\(owner.deviceID.value):\(repo.id.uuidString)", repositoryID: repo.path,
             name: repo.displayName, owner: owner, iconRevision: metadata?.revision,
-            initials: initials, accentHex: metadata?.accentHex, supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil)
+            initials: initials, accentHex: metadata?.accentHex, supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil,
+            originKey: repo.originKey, rank: repo.projectRank, rankChangedAt: repo.projectRankChangedAt)
     }
 
     /// Inout access to a SwiftUI binding writes back even when the snapshot
@@ -151,6 +153,13 @@ final class SidebarHostController: ObservableObject {
         }
         SidebarHostNavigation.migrateLegacyEmojis(in: &state.repos)
         var navigation = state.sidebarNavigation ?? .init()
+        let savedOrder = Dictionary(navigation.order.ids.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        let projectOrder = state.repos.enumerated().sorted {
+            let left = savedOrder["\(owner.deviceID.value):\($0.element.id.uuidString)"] ?? .max
+            let right = savedOrder["\(owner.deviceID.value):\($1.element.id.uuidString)"] ?? .max
+            return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element.id)
+        SidebarHostNavigation.seedRanks(in: &state.repos, projectOrder: projectOrder)
         let local = localProjects(state.repos, owner: owner)
         let localIDs = Set(local.map(\.id))
         let remoteIDs = Set(remote.map(\.id))
@@ -165,6 +174,24 @@ final class SidebarHostController: ObservableObject {
         let projects = navigation.reconcile(local + remote)
         if state.sidebarNavigation != navigation { state.sidebarNavigation = navigation }
         return .init(projects: projects)
+    }
+
+    /// An origin rarely changes, so look again every few minutes, and at once
+    /// for a repository this host hasn't checked yet.
+    func refreshOriginKeys(state: Binding<AppState>, loader: GitRepositoryOrigin.Loader = GitRepositoryOrigin.detect(repoPath:)) async {
+        let now = Date()
+        let due = state.wrappedValue.repos.filter { repo in
+            repo.isGitTracked && now.timeIntervalSince(originKeysChecked[repo.path] ?? .distantPast) > 300
+        }.map(\.path)
+        guard !due.isEmpty else { return }
+        for path in due { originKeysChecked[path] = now }
+        var keys: [String: String] = [:]
+        for path in due {
+            if let origin = try? await loader(path) { keys[path] = origin.identityKey }
+        }
+        var repos = state.wrappedValue.repos
+        SidebarHostNavigation.applyOriginKeys(keys, in: &repos)
+        if repos != state.wrappedValue.repos { state.wrappedValue.repos = repos }
     }
 
     func chooseIcon(for repoID: UUID, state: inout AppState) {

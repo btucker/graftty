@@ -99,8 +99,70 @@ public enum SidebarHostNavigation {
     }
 
     private static func pinnedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
-        repo.worktrees.filter { $0.path == repo.path }
-            + repo.worktrees.filter { $0.path != repo.path && $0.isPinned }
+        let linked = repo.worktrees.filter { $0.path != repo.path && $0.isPinned }
+        return repo.worktrees.filter { $0.path == repo.path }
+            + linked.filter { $0.pinnedRank != nil }.sorted { $0.pinnedRank! < $1.pinnedRank! }
+            + linked.filter { $0.pinnedRank == nil }
+    }
+
+    /// Gives unranked projects and pins a rank after those already ranked,
+    /// following current order. A seeded rank has no change time, so it loses
+    /// to any rank set by a drag.
+    public static func seedRanks(in repos: inout [RepoEntry], projectOrder: [UUID]) {
+        let positions = Dictionary(projectOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        let ordered = repos.indices.sorted {
+            positions[repos[$0].id, default: .max] == positions[repos[$1].id, default: .max]
+                ? $0 < $1 : positions[repos[$0].id, default: .max] < positions[repos[$1].id, default: .max]
+        }
+        var last = repos.compactMap(\.projectRank).max()
+        var next = 0
+        for index in ordered where repos[index].projectRank == nil {
+            let rank = last.map { FractionalRank.between($0, nil) } ?? FractionalRank.seed(index: next)
+            repos[index].projectRank = rank
+            next += 1
+            if last != nil { last = rank }
+        }
+        for index in repos.indices {
+            let repoPath = repos[index].path
+            var lastPin = repos[index].worktrees.filter { $0.path != repoPath && $0.isPinned }.compactMap(\.pinnedRank).max()
+            var nextPin = 0
+            for row in repos[index].worktrees.indices {
+                let worktree = repos[index].worktrees[row]
+                guard worktree.path != repoPath, worktree.isPinned, worktree.pinnedRank == nil else { continue }
+                let rank = lastPin.map { FractionalRank.between($0, nil) } ?? FractionalRank.seed(index: nextPin)
+                repos[index].worktrees[row].pinnedRank = rank
+                nextPin += 1
+                if lastPin != nil { lastPin = rank }
+            }
+        }
+    }
+
+    @discardableResult
+    public static func setPinnedRank(_ rank: String, worktreeID: String, repositoryID: String, in state: inout AppState) -> Bool {
+        guard FractionalRank.isValid(rank),
+              let ri = state.repos.firstIndex(where: { $0.path == repositoryID }),
+              let wi = state.repos[ri].worktrees.firstIndex(where: { $0.path == worktreeID }),
+              worktreeID != repositoryID, state.repos[ri].worktrees[wi].isPinned else { return false }
+        state.repos[ri].worktrees[wi].pinnedRank = rank
+        return true
+    }
+
+    /// A repeated or older write is accepted and ignored: the newest change wins.
+    @discardableResult
+    public static func setProjectRank(_ rank: String, changedAt: Double, repositoryID: String, in state: inout AppState) -> Bool {
+        guard FractionalRank.isValid(rank), changedAt.isFinite,
+              let ri = state.repos.firstIndex(where: { $0.path == repositoryID }) else { return false }
+        guard (state.repos[ri].projectRankChangedAt ?? -.infinity) < changedAt else { return true }
+        state.repos[ri].projectRank = rank
+        state.repos[ri].projectRankChangedAt = changedAt
+        return true
+    }
+
+    /// `keys` holds successful lookups only, so a failed git call keeps the old key.
+    public static func applyOriginKeys(_ keys: [String: String], in repos: inout [RepoEntry]) {
+        for index in repos.indices {
+            if let key = keys[repos[index].path], repos[index].originKey != key { repos[index].originKey = key }
+        }
     }
 
     /// Recent activity re-ranks only temporary worktrees. Never written back,
@@ -132,6 +194,8 @@ public enum SidebarHostNavigation {
                   !pinned || worktree.state.hasOnDiskWorktree,
                   worktree.isPinned != pinned else { return false }
             repos[repoIndex].worktrees[index].isPinned = pinned
+            // A later pin starts at the end of the list again.
+            if !pinned { repos[repoIndex].worktrees[index].pinnedRank = nil }
             return true
         }
         return false
@@ -200,7 +264,8 @@ public enum SidebarHostNavigation {
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
                      attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop, lastAgentStop: worktree.lastAgentStop, brief: worktree.brief, history: worktree.history,
-                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.path == repositoryPath ? nil : worktree.emoji, isPinned: worktree.isPinned)
+                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.path == repositoryPath ? nil : worktree.emoji, isPinned: worktree.isPinned,
+                     activityTime: worktree.lastActivity?.timeIntervalSinceReferenceDate, pinnedRank: worktree.isPinned ? worktree.pinnedRank : nil)
     }
 
     /// Sets only the display mode; saved worktree order and pin state survive.
@@ -245,6 +310,14 @@ public enum SidebarHostNavigation {
               let moved = WorktreeOrdering.move(siblings, movingIDs: [rows[source].id], toIndex: destination),
               moved != siblings else { return false }
         for (index, worktree) in zip(indices, moved) { state.repos[ri].worktrees[index] = worktree }
+        // Older clients still move pins with this request. Keep the rank true
+        // so every other device sees the same order.
+        if let position = moved.firstIndex(where: { $0.id == rows[source].id }), rows[source].isPinned,
+           let index = state.repos[ri].worktrees.firstIndex(where: { $0.id == rows[source].id }) {
+            let lower = position > 0 ? moved[position - 1].pinnedRank : nil
+            let upper = position + 1 < moved.count ? moved[position + 1].pinnedRank : nil
+            state.repos[ri].worktrees[index].pinnedRank = FractionalRank.between(lower, upper)
+        }
         return true
     }
 

@@ -121,7 +121,7 @@ public extension HeadlessHostRuntime {
                     mountedWorktreeID: repo.branchMountedPath(branch.name), pullRequest: nil)
             }
             return RemoteRepositoryInfo(id: repo.path, displayName: repo.displayName, origin: origin,
-                defaultBranchStatus: nil, branches: branches)
+                defaultBranchStatus: nil, branches: branches, originKey: repo.originKey)
         }
     }
 

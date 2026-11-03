@@ -362,8 +362,20 @@ extension GrafttyApp {
                         return .ok
                     }
                 }
-            case .setPinnedRank, .setProjectRank:
-                return .error(code: "unsupported", message: "Update Graftty on this host to change this order.", forceAllowed: false, shortStatus: nil)
+            case let .setPinnedRank(repositoryID, worktreeID, rank):
+                return await MainActor.run {
+                    GrafttyApp.persistingChanges(to: appStateBinding) {
+                        SidebarHostNavigation.setPinnedRank(rank, worktreeID: worktreeID, repositoryID: repositoryID, in: &appStateBinding.wrappedValue)
+                            ? .ok : .error(code: "invalid-rank", message: "This pinned agent is no longer available.", forceAllowed: false, shortStatus: nil)
+                    }
+                }
+            case let .setProjectRank(repositoryID, rank, changedAt):
+                return await MainActor.run {
+                    GrafttyApp.persistingChanges(to: appStateBinding) {
+                        SidebarHostNavigation.setProjectRank(rank, changedAt: changedAt, repositoryID: repositoryID, in: &appStateBinding.wrappedValue)
+                            ? .ok : .error(code: "invalid-rank", message: "This project is no longer available.", forceAllowed: false, shortStatus: nil)
+                    }
+                }
             case let .setWorktreeOrder(repositoryID, mode):
                 return await MainActor.run {
                     GrafttyApp.applyRemoteWorktreeOrder(mode, repositoryID: repositoryID, appState: appStateBinding)
