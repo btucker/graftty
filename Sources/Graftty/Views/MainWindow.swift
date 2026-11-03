@@ -1202,7 +1202,7 @@ struct MainWindow: View {
         pendingRemoteNotificationActivation = event
         Task { @MainActor in
             do {
-                _ = try await remoteMacsModel.connect(to: remoteMac)
+                _ = try await remoteMacsModel.connect(to: remoteMac, allowsWake: true)
                 switch activateRemoteNotificationIfAvailable(
                     event,
                     remoteMac: remoteMac

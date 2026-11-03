@@ -59,6 +59,25 @@ struct RemoteConnectionCoordinatorTests {
         #expect(offers.count == 2, "Retry must issue a fresh signed offer immediately")
     }
 
+    @Test("@spec REMOTE-2.34: When an interaction needs a host inside its post-failure cooldown, the client shall dial immediately, while background connections keep honoring the cooldown.")
+    func wakeRequestBypassesFailureCooldown() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: Curve25519.Signing.PrivateKey())
+        let dials = CallCounter()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { _, _ in dials.increment(); throw URLError(.cannotConnectToHost) }),
+            now: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+        #expect(await coordinator.connection(for: host, allowsWake: false) == nil)
+        let quiet = dials.count
+        #expect(quiet > 0)
+        #expect(await coordinator.connection(for: host, allowsWake: false) == nil)
+        #expect(dials.count == quiet, "a background connection keeps the cooldown")
+        #expect(await coordinator.connection(for: host, allowsWake: true) == nil)
+        #expect(dials.count > quiet, "an interaction dials at once")
+    }
+
     // MARK: - Fast-nil for unpaired hosts
 
     @Test(.timeLimit(.minutes(1)))

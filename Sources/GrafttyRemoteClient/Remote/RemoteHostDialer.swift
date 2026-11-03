@@ -36,6 +36,9 @@ public enum RemoteHostDialer {
     /// caller's actor after each step so a superseded attempt stops before its
     /// next network round trip.
     ///
+    /// `allowsWake` has no default: only something that needs this host may wake
+    /// it, so a background connection can't start a sleeping machine by accident.
+    ///
     /// Returns the pin refreshed with the routes, winning route and
     /// wake-on-LAN details the host just signed. Nothing is persisted; see
     /// `persistRefreshedPin`.
@@ -47,6 +50,7 @@ public enum RemoteHostDialer {
         clientKey: Curve25519.Signing.PrivateKey,
         clientDeviceID: RemoteDeviceID,
         replacingExistingConnection: Bool,
+        allowsWake: Bool,
         connectedAt now: () -> Date,
         isolation: isolated (any Actor)? = #isolation,
         checkpoint: () throws -> Void = {}
@@ -61,7 +65,7 @@ public enum RemoteHostDialer {
             clientKey: clientKey,
             sdp: offerSDP,
             replacesExistingConnection: replacingExistingConnection,
-            wakeOnLAN: pinnedHost.wakeOnLAN
+            wakeOnLAN: allowsWake ? pinnedHost.wakeOnLAN : nil
         )
         try checkpoint()
         try await link.applyAnswerSDP(exchange.answer.sdp)

@@ -105,6 +105,56 @@ struct RemoteMacsModelTests {
         ])
     }
 
+    private func wakeRecordingModel(gate: AsyncStream<Void>? = nil) async throws -> (RemoteMacsModel, RemoteMac, RemoteMacsModelWakeRecorder) {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let recorder = RemoteMacsModelWakeRecorder()
+        let registry = RemoteMacConnectionRegistry(wakeAwareFactory: { remoteMac, identity, _, allowsWake in
+            recorder.dials.append(allowsWake)
+            if let failure = recorder.failures.first {
+                recorder.failures.removeFirst()
+                throw failure
+            }
+            if !allowsWake, let gate { for await _ in gate { break } }
+            try Task.checkCancellation()
+            return RemoteMacConnectionRegistry.Entry(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        })
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        return (model, remote, recorder)
+    }
+
+    @Test func launchReconnectDoesNotWake() async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        _ = try await model.connect(to: remote)
+        #expect(recorder.dials == [false])
+    }
+
+    @Test func userSelectionWakes() async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        _ = try await model.connectFromUserSelection(to: remote)
+        #expect(recorder.dials == [true])
+    }
+
+    @Test func interactionWakesWithoutReplacingConnection() async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        _ = try await model.connect(to: remote, allowsWake: true)
+        #expect(recorder.dials == [true])
+    }
+
+    @Test func wakeRequestDuringQuietAttemptDialsAgainWithWake() async throws {
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let (model, remote, recorder) = try await wakeRecordingModel(gate: gate)
+        let quiet = Task { try? await model.connect(to: remote) }
+        while recorder.dials.isEmpty { await Task.yield() }
+        _ = try await model.connect(to: remote, allowsWake: true)
+        open.finish()
+        _ = await quiet.value
+        #expect(recorder.dials == [false, true])
+    }
+
     @Test func addRepositoryReportsHostErrorsAndMissingRepository() async throws {
         let remote = try remoteMac()
         for response in [WorktreeManagementResponse.repositories([]), .error(code: "denied", message: "Details denied", forceAllowed: false, shortStatus: nil)] {
@@ -2425,4 +2475,11 @@ private final class ModelRecoveryPanesDriver: PanesStateSubscriptionDriver, Side
     }
     func open() async throws { lock.withLock { opens += 1 }; await lock.withLock { snapshot }(rows) }
     func close() {}
+}
+
+
+@MainActor
+final class RemoteMacsModelWakeRecorder {
+    var dials: [Bool] = []
+    var failures: [Error] = []
 }

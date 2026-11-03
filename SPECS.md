@@ -3358,6 +3358,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.32** When a mobile connection request spans an access suspension and resume before starting its dial, the application shall reject that stale request without evicting a newer connection and allow a fresh request to negotiate.
 
+**REMOTE-2.33** While a client connects in the background, it shall not send a wake to the host; it shall send one only when an interaction needs that host.
+
+**REMOTE-2.34** When an interaction needs a host inside its post-failure cooldown, the client shall dial immediately, while background connections keep honoring the cooldown.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.

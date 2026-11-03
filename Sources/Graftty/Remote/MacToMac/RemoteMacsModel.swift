@@ -54,11 +54,16 @@ final class RemoteMacsModel: ObservableObject {
     private let paneFeedRetryDelay: @Sendable () async throws -> Void
     private enum ConnectionIntent: Int {
         case ordinary
+        /// Something the user did needs this host, so it may wake.
+        case interaction
         case selectionRecovery
         case forcedReconnect
 
+        /// Background connections never wake a host.
+        var allowsWake: Bool { self != .ordinary }
+
         var replacesExistingHostConnection: Bool {
-            self != .ordinary
+            self == .selectionRecovery || self == .forcedReconnect
         }
 
         var disconnectsLocalConnection: Bool {
@@ -375,8 +380,8 @@ final class RemoteMacsModel: ObservableObject {
     }
 
     @discardableResult
-    func connect(to remoteMac: RemoteMac) async throws -> RemoteMacConnectionRegistry.Entry {
-        try await connectionTask(to: remoteMac).value
+    func connect(to remoteMac: RemoteMac, allowsWake: Bool = false) async throws -> RemoteMacConnectionRegistry.Entry {
+        try await connectionTask(to: remoteMac, intent: allowsWake ? .interaction : .ordinary).value
     }
 
     func reconnectAfterMaintenance(_ remote: RemoteMac) async throws {
@@ -439,7 +444,8 @@ final class RemoteMacsModel: ObservableObject {
                     identity: identity,
                     attemptID: attemptID,
                     replacingExistingHostConnection:
-                        intent.replacesExistingHostConnection
+                        intent.replacesExistingHostConnection,
+                    allowsWake: intent.allowsWake
                 )
             } catch {
                 // Teardown can suspend and be cancelled before performConnect
@@ -473,12 +479,14 @@ final class RemoteMacsModel: ObservableObject {
         to remoteMac: RemoteMac,
         identity: RemoteMacIdentity,
         attemptID: UUID,
-        replacingExistingHostConnection: Bool
+        replacingExistingHostConnection: Bool,
+        allowsWake: Bool
     ) async throws -> RemoteMacConnectionRegistry.Entry {
         do {
             let entry = try await connectionRegistry.connect(
                 to: remoteMac,
-                replacingExistingHostConnection: replacingExistingHostConnection
+                replacingExistingHostConnection: replacingExistingHostConnection,
+                allowsWake: allowsWake
             )
             try Task.checkCancellation()
             guard connectAttemptIDs[identity] == attemptID else {
@@ -671,7 +679,8 @@ final class RemoteMacsModel: ObservableObject {
             }
             if let remoteMac {
                 do {
-                    _ = try await self.connect(to: remoteMac)
+                    // Pane input is the user acting on this host.
+                    _ = try await self.connect(to: remoteMac, allowsWake: true)
                 } catch {
                     guard !Task.isCancelled,
                           self.paneControlEpochs[identity, default: 0]
