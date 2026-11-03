@@ -19,6 +19,7 @@ struct WorktreePreviewMenu: View {
     @State private var download: Task<Void, Never>?
     @State private var downloadID: UUID?
     @State private var error: String?
+    @State private var refresh: Task<Void, Never>?
 
     private var collections: [WorktreePreviewCollection] { RemoteOpenOffer.previewCollections(in: offers) }
     private var ready: Bool { LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) }
@@ -48,13 +49,16 @@ struct WorktreePreviewMenu: View {
                 do {
                     let response = try await coordinator.sendWorktreeManagement(.openResource(worktreeID: worktree, request: .list), to: host)
                     guard !Task.isCancelled else { return }
-                    if case .openResource(.offers(let incoming)) = response { offers = incoming }
+                    if case .openResource(.offers(let incoming)) = response {
+                        offers = incoming
+                        refreshPresented()
+                    }
                     if case .error = response { return }
                 } catch { if Task.isCancelled { return } }
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
-        .sheet(item: $presented) { item in
+        .sheet(item: $presented, onDismiss: { refresh?.cancel() }) { item in
             NativeImagePreview(urls: item.files, dismiss: { presented = nil })
         }
         .onChange(of: scope) { _, _ in cancelDownload(); presented = nil }
@@ -86,6 +90,22 @@ struct WorktreePreviewMenu: View {
         }
     }
 
+    /// Keeps an open library preview current. Reusing its identity updates the sheet
+    /// in place; a failed attempt leaves its content showing until the next poll.
+    private func refreshPresented() {
+        guard refresh == nil, let item = presented, let coordinator,
+              let collection = RemoteImageOffers.revisedCollection(of: item.offer, in: offers),
+              let offer = collection.first(where: { $0.id == item.offer.id }) else { return }
+        refresh = Task { @MainActor in
+            defer { refresh = nil }
+            guard let files = try? await FilePreviewDownload.download(collection, read: { offer, offset in
+                try await readChunk(offer, offset: offset, coordinator: coordinator)
+            }) else { return }
+            guard presented?.id == item.id else { files.forEach(FilePreviewDownload.remove); return }
+            presented = DownloadedPreview(id: item.id, files: files, offer: offer)
+        }
+    }
+
     private func open(_ collection: [RemoteOpenOffer]) {
         guard !loading, ready, let coordinator else { return }
         loading = true
@@ -95,26 +115,36 @@ struct WorktreePreviewMenu: View {
             defer { if downloadID == id { loading = false; download = nil; downloadID = nil } }
             do {
                 let files = try await FilePreviewDownload.download(collection) { offer, offset in
-                    let response = try await coordinator.sendWorktreeManagement(
-                        .openResource(worktreeID: worktree, request: .read(id: offer.id, offset: offset)), to: host)
-                    guard case .openResource(.chunk(let data)) = response else { throw FilePreviewDownload.Failure.invalidChunk }
-                    return data
+                    try await readChunk(offer, offset: offset, coordinator: coordinator)
                 }
                 guard ready, !Task.isCancelled else { files.forEach(FilePreviewDownload.remove); return }
-                presented = DownloadedPreview(files: files)
+                presented = DownloadedPreview(files: files, offer: collection[0])
             } catch is CancellationError {} catch { if downloadID == id { self.error = error.localizedDescription } }
         }
     }
 
+    private func readChunk(_ offer: RemoteOpenOffer, offset: Int, coordinator: RemoteConnectionCoordinator) async throws -> Data {
+        let response = try await coordinator.sendWorktreeManagement(
+            .openResource(worktreeID: worktree, request: .read(id: offer.id, offset: offset)), to: host)
+        guard case .openResource(.chunk(let data)) = response else { throw FilePreviewDownload.Failure.invalidChunk }
+        return data
+    }
+
     private func cancelDownload() {
         download?.cancel(); download = nil; downloadID = nil; loading = false; error = nil
+        refresh?.cancel()
     }
 }
 
 private final class DownloadedPreview: Identifiable {
-    let id = UUID()
+    let id: UUID
     let files: [URL]
-    init(files: [URL]) { self.files = files }
+    let offer: RemoteOpenOffer
+    init(id: UUID = UUID(), files: [URL], offer: RemoteOpenOffer) {
+        self.id = id
+        self.files = files
+        self.offer = offer
+    }
     deinit { files.forEach(FilePreviewDownload.remove) }
 }
 #endif

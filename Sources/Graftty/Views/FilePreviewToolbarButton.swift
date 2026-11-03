@@ -114,6 +114,7 @@ struct FilePreviewToolbarButton: View {
                     if case .offers(let offers) = try await request(.list) {
                         guard !Task.isCancelled else { return }
                         catalog = RemoteOpenOffer.previewCollections(in: offers)
+                        windows.syncCatalog(catalog, worktreePath: worktreePath) { try await self.request($0) }
                     }
                 } catch { if Task.isCancelled { return } }
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
@@ -146,7 +147,7 @@ struct FilePreviewToolbarButton: View {
                 let files = try await FilePreviewCollectionLoader.load(collection) { try await request($0) }
                 try Task.checkCancellation()
                 let entry = history.record(files: files, pane: inlinePane ?? PaneSlotID(), worktreePath: worktreePath,
-                    id: collection.id, createdAt: collection.createdAt)
+                    id: collection.id, createdAt: collection.createdAt, contentRevision: collection.contentRevision)
                 show(entry)
             } catch is CancellationError {} catch { if downloadID == id { self.error = error.localizedDescription } }
         }

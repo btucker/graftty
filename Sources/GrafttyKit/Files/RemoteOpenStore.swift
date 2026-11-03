@@ -2,7 +2,8 @@ import Foundation
 import GrafttyProtocol
 
 /// Holds explicit file offers, never a remotely supplied filesystem path.
-/// Bytes are snapshotted so edits on the host cannot corrupt an in-flight preview.
+/// Bytes are snapshotted so edits on the host cannot corrupt an in-flight preview;
+/// a followed preview takes new bytes only through an explicit revision.
 public actor RemoteOpenStore {
     public static let shared = RemoteOpenStore(previewDirectory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Graftty/WorktreePreviews", isDirectory: true))
     private struct Entry {
@@ -37,6 +38,19 @@ public actor RemoteOpenStore {
                 expires: now.addingTimeInterval(900), previewRevision: previewRevision))
         }
         return deliveries
+    }
+
+    /// Updates a stored collection whose source files changed. A pending delivery
+    /// keeps its recipient and expiry, and tracks the new bytes.
+    public func revisePreview(group: UUID, snapshots: [FilePreviewLoader.Snapshot], worktree: String) throws -> [RemoteOpenOffer] {
+        let revised = try catalog.revise(group: group, snapshots: snapshots, worktree: worktree)
+        let offers = Dictionary(uniqueKeysWithValues: revised.map { ($0.id, $0) })
+        entries = entries.map { entry in
+            guard entry.worktree == worktree, let offer = offers[entry.offer.id] else { return entry }
+            return Entry(offer: entry.offer.revised(byteCount: offer.byteCount, contentRevision: offer.contentRevision ?? 0),
+                         worktree: worktree, bytes: entry.bytes, expires: entry.expires, previewRevision: entry.previewRevision)
+        }
+        return revised
     }
 
     public enum Failure: LocalizedError {

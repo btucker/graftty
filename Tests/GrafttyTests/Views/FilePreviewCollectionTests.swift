@@ -76,7 +76,7 @@ struct FilePreviewCollectionTests {
         }
     }
 
-    @Test("@spec PREVIEW-1.3: When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain immutable snapshot files until the tray releases them.")
+    @Test("@spec PREVIEW-1.3: When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain its private snapshot files until the tray releases them.")
     func navigatesCollectionAndRetainsSnapshots() async throws {
         _ = NSApplication.shared
         let files = try ["one.html", "two.csv"].map {

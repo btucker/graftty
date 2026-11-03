@@ -26,6 +26,29 @@ struct RemoteImageOffersTests {
         #expect(RemoteImageOffers.collection(in: files + [unrelated], scope: scope) == [unrelated])
     }
 
+    @Test("@spec PREVIEW-2.13: When the host revises a mobile preview being viewed, the application shall download the new content and show it in the open preview without closing it, and shall not reopen a preview the user dismissed.")
+    func revisionKeepsPreviewCurrentWithoutReopening() {
+        let group = UUID()
+        let offer = RemoteOpenOffer(id: UUID(), filename: "plan.html", byteCount: 4, paneSessionName: "pane",
+                                    previewKind: "file", previewOwnerDeviceID: scope.ownerDeviceID, previewGroupID: group)
+        let revised = offer.revised(byteCount: 9, contentRevision: 1)
+        let other = RemoteOpenOffer(id: UUID(), filename: "other.html", byteCount: 4, paneSessionName: "pane",
+                                    previewKind: "file", previewOwnerDeviceID: scope.ownerDeviceID, previewGroupID: UUID())
+        // New content is not a new request: an open preview stays open.
+        #expect(RemoteImageOffers.Request(offer: offer, scope: scope).isCurrent(latest: revised, scope: scope, isReady: true))
+        #expect(!RemoteImageOffers.Request(offer: offer, scope: scope).isCurrent(latest: other, scope: scope, isReady: true))
+        // Only a differing revision of the viewed collection asks for a download.
+        #expect(RemoteImageOffers.revisedCollection(of: offer, in: [revised, other]) == [revised])
+        #expect(RemoteImageOffers.revisedCollection(of: revised, in: [revised, other]) == nil)
+        #expect(RemoteImageOffers.revisedCollection(of: offer, in: [other]) == nil)
+        // A consumed offer is not presented again when its content is revised.
+        var autoOpen = RemotePreviewAutoOpen()
+        let opened = autoOpen.take(offer, isReady: true, canPresent: true)
+        autoOpen.complete(offer.id)
+        let reopened = autoOpen.take(revised, isReady: true, canPresent: true)
+        #expect(opened && !reopened)
+    }
+
     private let scope = TerminalBrowserRequest.Scope(hostID: UUID(), worktree: "/project", sessionName: "pane", ownerDeviceID: .init(value: "phone"))
 
     private func image(_ name: String = "image.png", pane: String = "pane", owner: String = "phone") -> RemoteOpenOffer {

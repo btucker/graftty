@@ -37,7 +37,7 @@ struct FilePreviewNavigation {
 
 @MainActor
 enum FilePreviewCollectionLoader {
-    static func load(_ collection: WorktreePreviewCollection,
+    static func load(_ collection: WorktreePreviewCollection, sourceURLs: [URL?] = [],
                      request: (RemoteOpenRequest) async throws -> RemoteOpenResponse) async throws -> [FilePreviewFile] {
         guard (1...20).contains(collection.offers.count),
               collection.offers.allSatisfy({ (0...RemoteOpenOffer.maxBytes).contains($0.byteCount) }),
@@ -45,7 +45,7 @@ enum FilePreviewCollectionLoader {
             throw FilePreviewLoader.Failure.tooLarge
         }
         var files: [FilePreviewFile] = []
-        for offer in collection.offers {
+        for (index, offer) in collection.offers.enumerated() {
             var bytes = Data()
             while bytes.count < offer.byteCount {
                 try Task.checkCancellation()
@@ -55,7 +55,8 @@ enum FilePreviewCollectionLoader {
                 bytes.append(chunk)
             }
             let snapshot = FilePreviewLoader.Snapshot(filename: offer.filename, bytes: bytes)
-            files.append(try await Task.detached { try FilePreviewFile(snapshot) }.value)
+            let source = sourceURLs.indices.contains(index) ? sourceURLs[index] : nil
+            files.append(try await Task.detached { try FilePreviewFile(snapshot, sourceURL: source) }.value)
         }
         try Task.checkCancellation()
         return files

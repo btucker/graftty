@@ -50,6 +50,27 @@ struct FilePreviewDownloadTests {
         FilePreviewDownload.remove(file)
         #expect(!FileManager.default.fileExists(atPath: file.deletingLastPathComponent().path))
     }
+    @Test("A save that shrinks a file mid-download moves the download to the host's newer revision.")
+    func staleOffsetsRetryTheRevisedCollection() async throws {
+        let offer = RemoteOpenOffer(id: UUID(), filename: "plan.html", byteCount: 8, previewKind: "file", previewGroupID: UUID())
+        let revised = offer.revised(byteCount: 2, contentRevision: 1)
+        // The host now holds two bytes, whatever size the client asks for.
+        let result = try await FilePreviewDownload.downloadLatest([offer], read: { _, offset in
+            offset == 0 ? Data("ok".utf8) : Data()
+        }, list: { [revised] })
+        defer { result.files.forEach(FilePreviewDownload.remove) }
+        #expect(result.offers == [revised])
+        #expect(try Data(contentsOf: try #require(result.files.first)) == Data("ok".utf8))
+    }
+
+    @Test("A download failure the host has not revised past is still reported.")
+    func unrevisedFailureIsReported() async {
+        let offer = RemoteOpenOffer(id: UUID(), filename: "plan.html", byteCount: 8, previewKind: "file", previewGroupID: UUID())
+        await #expect(throws: FilePreviewDownload.Failure.self) {
+            try await FilePreviewDownload.downloadLatest([offer], read: { _, _ in Data() }, list: { [offer] })
+        }
+    }
+
     @Test func downloadsWithoutChangingBytesOrExtension() async throws {
         let bytes = Data("<html><body>Hello</body></html>".utf8)
         let offer = RemoteOpenOffer(id: UUID(), filename: "report.html", byteCount: bytes.count)

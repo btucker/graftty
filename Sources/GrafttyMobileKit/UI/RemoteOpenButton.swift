@@ -43,6 +43,7 @@ struct RemoteOpenButton: View {
     @State private var download: Task<Void, Never>?
     @State private var isDownloading = false
     @State private var imageDownload: RemoteImageOffers.Request?
+    @State private var previewRefresh: Task<Void, Never>?
     @State private var preview: Preview?
     @State private var showingPreview = false
     @State private var cachedFiles: [URL] = []
@@ -167,6 +168,7 @@ struct RemoteOpenButton: View {
                                                                            canPresent: isPaneFocused && isPaneOwner() && preview == nil && chromePresentation.canPresent && !isDownloading && error == nil && canPresentAuthentication())
                         if let authentication { open(authentication, automatically: true) }
                         autoOpenPreviewIfReady()
+                        refreshMountedPreview()
                     }
                     // Older hosts reject the new operation. Do not keep polling them.
                     if case .error = response { return }
@@ -419,6 +421,7 @@ struct RemoteOpenButton: View {
 
     private func finishPresentation(_ id: UUID) {
         guard chromePresentation.presentationID == id else { return }
+        previewRefresh?.cancel()
         apply(chromePresentation.finishDismissal(id))
         preview = nil; showingPreview = false
         removeCachedFile()
@@ -427,6 +430,7 @@ struct RemoteOpenButton: View {
 
     private func cancelPresentation(abandon: Bool = false) {
         guard let id = chromePresentation.presentationID else { return }
+        previewRefresh?.cancel()
         if let request = preview?.imageRequest { coordinator.deferPreviewAutoOpen(request.offer.id) }
         if let offerID = chromePresentation.deferCurrent() { coordinator.deferAuthenticationOffer(offerID) }
         showingPreview = false
@@ -450,6 +454,45 @@ struct RemoteOpenButton: View {
         guard let offer = remoteImageOffer,
               coordinator.reservePreviewAutoOpen(offer, isReady: imageReady, canPresent: canPresent) else { return }
         open(offer, automatically: true)
+    }
+
+    /// Swaps newer bytes into the open sheet. A failed attempt leaves the current
+    /// content on screen, and the next poll tries again.
+    private func refreshMountedPreview() {
+        guard previewRefresh == nil, let item = preview, let request = item.imageRequest, chromePresentation.isMounted,
+              let collection = RemoteImageOffers.revisedCollection(of: request.offer, in: allOffers),
+              let offer = collection.first(where: { $0.id == request.offer.id }) else { return }
+        previewRefresh = Task { @MainActor in
+            defer { previewRefresh = nil }
+            guard let files = try? await FilePreviewDownload.download(collection, read: readChunk) else { return }
+            guard self.preview?.id == item.id, chromePresentation.isMounted,
+                  files.allSatisfy({ QLPreviewController.canPreview($0 as NSURL) }) else {
+                files.forEach(FilePreviewDownload.remove)
+                return
+            }
+            let retained = coordinator.previewHistory.record(offer: offer, scope: request.scope, files: files,
+                                                             byteCount: collection.reduce(0) { $0 + $1.byteCount })
+            self.preview?.imageRequest = RemoteImageOffers.Request(offer: offer, scope: request.scope)
+            self.preview?.files = files
+            self.preview?.retainedFiles = retained
+        }
+    }
+
+    private func readChunk(_ item: RemoteOpenOffer, offset: Int) async throws -> Data {
+        let response = try await sendWorktreeManagement(
+            .openResource(worktreeID: worktree, request: .read(id: item.id, offset: offset)), to: host
+        )
+        switch response {
+        case .openResource(.chunk(let data)): return data
+        case .error(_, let message, _, _): throw PreviewError(message: message)
+        default: throw FilePreviewDownload.Failure.invalidChunk
+        }
+    }
+
+    private func listOffers() async throws -> [RemoteOpenOffer] {
+        let response = try await sendWorktreeManagement(.openResource(worktreeID: worktree, request: .list), to: host)
+        guard case .openResource(.offers(let offers)) = response else { throw FilePreviewDownload.Failure.invalidChunk }
+        return offers
     }
 
     private func checkOwnership() {
@@ -544,17 +587,8 @@ struct RemoteOpenButton: View {
         download = Task { @MainActor in
             defer { if operationID == currentOperation { isDownloading = false; imageDownload = nil } }
             do {
-                let collection = imageRequest == nil ? [offer] : RemoteImageOffers.collection(in: allOffers, scope: browserScope)
-                let files = try await FilePreviewDownload.download(collection) { item, offset in
-                    let response = try await sendWorktreeManagement(
-                        .openResource(worktreeID: worktree, request: .read(id: item.id, offset: offset)), to: host
-                    )
-                    switch response {
-                    case .openResource(.chunk(let data)): return data
-                    case .error(_, let message, _, _): throw PreviewError(message: message)
-                    default: throw FilePreviewDownload.Failure.invalidChunk
-                    }
-                }
+                let requested = imageRequest == nil ? [offer] : RemoteImageOffers.collection(in: allOffers, scope: browserScope)
+                let (files, collection) = try await FilePreviewDownload.downloadLatest(requested, read: readChunk, list: listOffers)
                 func removeFiles() { files.forEach(FilePreviewDownload.remove) }
                 guard isActive, !Task.isCancelled, operationID == currentOperation else { removeFiles(); return }
                 if let imageRequest {
@@ -691,7 +725,7 @@ struct NativeFilePreview: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 
     final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        let urls: [URL]
+        var urls: [URL]
         init(url: URL) { self.urls = [url] }
         init(urls: [URL]) { self.urls = urls }
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int { urls.count }
@@ -710,7 +744,16 @@ struct NativeImagePreview: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UINavigationController {
         Self.makeController(coordinator: context.coordinator)
     }
-    func updateUIViewController(_ controller: UINavigationController, context: Context) {}
+    func updateUIViewController(_ controller: UINavigationController, context: Context) {
+        Self.apply(urls, to: context.coordinator, in: controller)
+    }
+
+    /// Quick Look keeps showing the mounted controller and its file position.
+    static func apply(_ urls: [URL], to coordinator: Coordinator, in controller: UINavigationController) {
+        guard coordinator.source.urls != urls else { return }
+        coordinator.source.urls = urls
+        (controller.viewControllers.first as? QLPreviewController)?.reloadData()
+    }
 
     static func makeController(coordinator: Coordinator) -> UINavigationController {
         let preview = QLPreviewController()

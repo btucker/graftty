@@ -1,7 +1,8 @@
 import Foundation
 import GrafttyKit
 
-/// Owns an immutable local copy until the last tray using it is released.
+/// Owns a local copy until the last tray using it is released. Revisions make a new
+/// copy, so a file Quick Look is displaying never changes underneath it.
 final class FilePreviewFile: Sendable {
     let url: URL
     let sourceURL: URL?

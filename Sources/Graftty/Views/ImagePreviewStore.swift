@@ -13,14 +13,20 @@ final class ImagePreviewStore: ObservableObject {
         let createdAt: Date?
         let createdInstant = ContinuousClock.now
         let files: [FilePreviewFile]
+        let contentRevision: Int
         var filename: String { files.first?.url.lastPathComponent ?? "Preview" }
         var sourceURL: URL? { files.first?.sourceURL }
 
-        init(files: [FilePreviewFile], id: UUID = UUID(), createdAt: Date? = Date()) {
+        init(files: [FilePreviewFile], id: UUID = UUID(), createdAt: Date? = Date(), contentRevision: Int = 0) {
             self.createdAt = createdAt
+            self.contentRevision = contentRevision
             self.id = id
             precondition(!files.isEmpty)
             self.files = files
+        }
+
+        func revised(files: [FilePreviewFile], contentRevision: Int) -> Preview {
+            Preview(files: files, id: id, createdAt: createdAt, contentRevision: contentRevision)
         }
     }
 
@@ -60,6 +66,13 @@ final class ImagePreviewStore: ObservableObject {
 
     func previews(forWorktreePath path: String) -> [PaneSlotID: Preview] {
         previews.filter { worktreePaths[$0.key] == path }
+    }
+
+    /// Keeps each pane's placement and eviction order while replacing its content.
+    func applyRevision(of previewID: UUID, files: [FilePreviewFile], contentRevision: Int) {
+        for (pane, preview) in previews where preview.id == previewID {
+            previews[pane] = preview.revised(files: files, contentRevision: contentRevision)
+        }
     }
 
     func dismiss(previewID: UUID) {

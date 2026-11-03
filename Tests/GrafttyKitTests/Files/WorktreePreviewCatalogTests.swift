@@ -4,7 +4,7 @@ import Testing
 import GrafttyProtocol
 
 struct WorktreePreviewCatalogTests {
-    @Test("@spec IMAGE-2.12: When files are previewed in a worktree, the host shall retain their immutable collections for all authorized clients of that worktree, independently of the originating pane, display owner, and temporary delivery expiry.")
+    @Test("@spec IMAGE-2.12: When files are previewed in a worktree, the host shall retain their collections for all authorized clients of that worktree, independently of the originating pane, display owner, and temporary delivery expiry.")
     func sharedCollectionsSurviveNewRequestsAndRestart() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

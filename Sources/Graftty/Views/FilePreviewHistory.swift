@@ -4,6 +4,7 @@ import GrafttyKit
 import GrafttyProtocol
 
 /// Session history owns snapshots independently of pane and window lifetime.
+/// Only a pane's latest preview takes revisions; earlier requests stay frozen.
 @MainActor
 final class FilePreviewHistory: ObservableObject {
     static let shared = FilePreviewHistory()
@@ -21,6 +22,10 @@ final class FilePreviewHistory: ObservableObject {
         var title: String {
             preview.files.count == 1 ? preview.filename : "\(preview.filename) + \(preview.files.count - 1) more"
         }
+
+        func revised(files: [FilePreviewFile], contentRevision: Int) -> Entry {
+            Entry(preview: preview.revised(files: files, contentRevision: contentRevision), pane: pane, worktreePath: worktreePath)
+        }
     }
 
     @Published private(set) var entries: [Entry] = []
@@ -37,11 +42,18 @@ final class FilePreviewHistory: ObservableObject {
     }
 
     @discardableResult
-    func record(files: [FilePreviewFile], pane: PaneSlotID, worktreePath: String, id: UUID = UUID(), createdAt: Date? = Date()) -> Entry {
-        let entry = Entry(preview: .init(files: files, id: id, createdAt: createdAt), pane: pane, worktreePath: worktreePath)
+    func record(files: [FilePreviewFile], pane: PaneSlotID, worktreePath: String, id: UUID = UUID(), createdAt: Date? = Date(),
+                contentRevision: Int = 0) -> Entry {
+        let entry = Entry(preview: .init(files: files, id: id, createdAt: createdAt, contentRevision: contentRevision), pane: pane, worktreePath: worktreePath)
         entries.removeAll { $0.id == id && $0.worktreePath == worktreePath }
         entries.insert(entry, at: 0)
         if entries.count > Self.maximumEntries { entries.removeLast(entries.count - Self.maximumEntries) }
         return entry
+    }
+
+    /// A revision is the same request with newer content, so it keeps its place.
+    func applyRevision(of id: UUID, worktreePath: String, files: [FilePreviewFile], contentRevision: Int) {
+        guard let index = entries.firstIndex(where: { $0.id == id && $0.worktreePath == worktreePath }) else { return }
+        entries[index] = entries[index].revised(files: files, contentRevision: contentRevision)
     }
 }

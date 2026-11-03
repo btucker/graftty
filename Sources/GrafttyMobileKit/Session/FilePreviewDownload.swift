@@ -64,6 +64,19 @@ enum FilePreviewDownload {
         }
     }
 
+    /// A host revision can shrink a file beneath a download, failing its stale offsets.
+    /// If the host has revised the collection since, this downloads that revision instead.
+    static func downloadLatest(_ offers: [RemoteOpenOffer], read: (RemoteOpenOffer, Int) async throws -> Data,
+                               list: () async throws -> [RemoteOpenOffer]) async throws -> (files: [URL], offers: [RemoteOpenOffer]) {
+        do { return (try await download(offers, read: read), offers) }
+        catch is CancellationError { throw CancellationError() }
+        catch {
+            guard let first = offers.first, let listed = try? await list(),
+                  let revised = RemoteImageOffers.revisedCollection(of: first, in: listed) else { throw error }
+            return (try await download(revised, read: read), revised)
+        }
+    }
+
     static func remove(_ file: URL) {
         try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
     }
