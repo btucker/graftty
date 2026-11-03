@@ -44,11 +44,20 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var supportsWorktreeEditing: Bool?
     /// A missing mode means the host does not support changing worktree order.
     public var worktreeOrderMode: WorktreeOrderMode?
+    /// Normalized git origin; equal keys on different hosts are one project.
+    /// Nil for no origin and for hosts that predate merging.
+    public var originKey: String?
+    /// Fractional order shared across devices. Nil on older hosts.
+    public var rank: String?
+    /// When a drag last set `rank`. Nil for a rank seeded from host order.
+    public var rankChangedAt: Double?
 
     public init(id: String, repositoryID: String, name: String, owner: WorktreeOrigin? = nil,
-                iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil, worktreeOrderMode: WorktreeOrderMode? = nil) {
+                iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil, worktreeOrderMode: WorktreeOrderMode? = nil,
+                originKey: String? = nil, rank: String? = nil, rankChangedAt: Double? = nil) {
         self.id = id; self.repositoryID = repositoryID; self.name = name; self.owner = owner
         self.iconRevision = iconRevision; self.initials = initials; self.accentHex = accentHex; self.isAvailable = isAvailable; self.supportsWorktreeEditing = supportsWorktreeEditing; self.worktreeOrderMode = worktreeOrderMode
+        self.originKey = originKey; self.rank = rank; self.rankChangedAt = rankChangedAt
     }
 
     public var displayInitials: String {
@@ -224,7 +233,13 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var emoji: String?
     /// Nil for hosts that predate the temporary / pinned distinction.
     public var isPinned: Bool?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, brief: WorktreeBrief? = nil, history: WorktreeHistory? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
+    /// Latest activity, seconds since the reference date, so clients can merge
+    /// recency across hosts. Nil when idle since creation or on older hosts.
+    public var activityTime: Double?
+    /// Fractional order among pinned rows on every device. Nil on older hosts.
+    public var pinnedRank: String?
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, brief: WorktreeBrief? = nil, history: WorktreeHistory? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil, activityTime: Double? = nil, pinnedRank: String? = nil) {
+        self.activityTime = activityTime; self.pinnedRank = pinnedRank
         self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.lastAgentStop = lastAgentStop; self.brief = brief; self.history = history; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
         self.isPinned = isPinned
     }

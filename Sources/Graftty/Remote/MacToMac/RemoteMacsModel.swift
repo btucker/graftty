@@ -1116,6 +1116,16 @@ final class RemoteMacsModel: ObservableObject {
                   repo.identity == worktree.identity, repo.identity == target.identity else { return nil }
             return await forwardManagement(identity: repo.identity, request: .moveWorktree(repositoryID: repo.repositoryID, worktreeID: worktree.path, relativeTo: target.path, after: after))
 
+        case let .setPinnedRank(repositoryID, worktreeID, rank):
+            guard let repo = relayRouter.resolveRepository(repositoryID),
+                  let worktree = relayRouter.resolveWorktree(worktreeID),
+                  repo.identity == worktree.identity else { return nil }
+            return await forwardManagement(identity: repo.identity, request: .setPinnedRank(repositoryID: repo.repositoryID, worktreeID: worktree.path, rank: rank))
+
+        case let .setProjectRank(repositoryID, rank, changedAt):
+            guard let repo = relayRouter.resolveRepository(repositoryID) else { return nil }
+            return await forwardManagement(identity: repo.identity, request: .setProjectRank(repositoryID: repo.repositoryID, rank: rank, changedAt: changedAt))
+
         case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
             var downstreamPane: String?

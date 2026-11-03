@@ -29,7 +29,8 @@ import GrafttyRemoteClient
             return false
         case .create(let repositoryID, _, _, _, _, _),
              .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
-             .moveWorktree(let repositoryID, _, _, _), .setWorktreeOrder(let repositoryID, _):
+             .moveWorktree(let repositoryID, _, _, _), .setWorktreeOrder(let repositoryID, _),
+             .setPinnedRank(let repositoryID, _, _), .setProjectRank(let repositoryID, _, _):
             return repositoryID.hasPrefix("relay-repository-")
         case .addAgent(let worktreeID, _, _), .agentConversation(let worktreeID, _, _), .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
@@ -361,6 +362,8 @@ extension GrafttyApp {
                         return .ok
                     }
                 }
+            case .setPinnedRank, .setProjectRank:
+                return .error(code: "unsupported", message: "Update Graftty on this host to change this order.", forceAllowed: false, shortStatus: nil)
             case let .setWorktreeOrder(repositoryID, mode):
                 return await MainActor.run {
                     GrafttyApp.applyRemoteWorktreeOrder(mode, repositoryID: repositoryID, appState: appStateBinding)

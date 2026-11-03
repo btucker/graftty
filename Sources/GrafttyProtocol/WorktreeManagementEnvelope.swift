@@ -136,14 +136,18 @@ public struct RemoteRepositoryInfo: Codable, Sendable, Hashable {
     public let origin: WorktreeOrigin?
     public let defaultBranchStatus: DefaultBranchStatus?
     public let branches: [Branch]
+    /// Normalized git origin. Matches `SidebarProject.originKey`.
+    public var originKey: String?
 
     public init(
         id: String,
         displayName: String,
         origin: WorktreeOrigin?,
         defaultBranchStatus: DefaultBranchStatus?,
-        branches: [Branch]
+        branches: [Branch],
+        originKey: String? = nil
     ) {
+        self.originKey = originKey
         self.id = id
         self.displayName = displayName
         self.origin = origin
@@ -176,6 +180,8 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     case moveProject(id: String, relativeTo: String, after: Bool)
     case moveWorktree(repositoryID: String, worktreeID: String, relativeTo: String, after: Bool)
     case setWorktreeOrder(repositoryID: String, mode: WorktreeOrderMode)
+    case setPinnedRank(repositoryID: String, worktreeID: String, rank: String)
+    case setProjectRank(repositoryID: String, rank: String, changedAt: Double)
     case projectIcon(repositoryID: String, revision: String)
     case acknowledgeOccurrence(worktreeID: String, paneID: String?, occurrence: SidebarAttentionOccurrence)
 }
@@ -184,7 +190,7 @@ extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case openResource, placement, agentSkills, agentID, action, conversation, provider, operationID, launchDefaultAgent, agent
         case type, repositoryID, worktreeID, worktreeName, branchName,
-             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode
+             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode, rank, changedAt
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -230,6 +236,16 @@ extension WorktreeManagementRequest: Codable {
             try c.encode("set_worktree_order", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
             try c.encode(mode, forKey: .mode)
+        case let .setPinnedRank(repositoryID, worktreeID, rank):
+            try c.encode("set_pinned_rank", forKey: .type)
+            try c.encode(repositoryID, forKey: .repositoryID)
+            try c.encode(worktreeID, forKey: .worktreeID)
+            try c.encode(rank, forKey: .rank)
+        case let .setProjectRank(repositoryID, rank, changedAt):
+            try c.encode("set_project_rank", forKey: .type)
+            try c.encode(repositoryID, forKey: .repositoryID)
+            try c.encode(rank, forKey: .rank)
+            try c.encode(changedAt, forKey: .changedAt)
         case let .projectIcon(repositoryID, revision):
             try c.encode("project_icon", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
@@ -300,6 +316,10 @@ extension WorktreeManagementRequest: Codable {
             self = .moveWorktree(repositoryID: try c.decode(String.self, forKey: .repositoryID), worktreeID: try c.decode(String.self, forKey: .worktreeID), relativeTo: try c.decode(String.self, forKey: .relativeTo), after: try c.decode(Bool.self, forKey: .after))
         case "set_worktree_order":
             self = .setWorktreeOrder(repositoryID: try c.decode(String.self, forKey: .repositoryID), mode: try c.decode(WorktreeOrderMode.self, forKey: .mode))
+        case "set_pinned_rank":
+            self = .setPinnedRank(repositoryID: try c.decode(String.self, forKey: .repositoryID), worktreeID: try c.decode(String.self, forKey: .worktreeID), rank: try c.decode(String.self, forKey: .rank))
+        case "set_project_rank":
+            self = .setProjectRank(repositoryID: try c.decode(String.self, forKey: .repositoryID), rank: try c.decode(String.self, forKey: .rank), changedAt: try c.decode(Double.self, forKey: .changedAt))
         case "project_icon":
             self = .projectIcon(repositoryID: try c.decode(String.self, forKey: .repositoryID), revision: try c.decode(String.self, forKey: .revision))
         case "acknowledge_occurrence":
