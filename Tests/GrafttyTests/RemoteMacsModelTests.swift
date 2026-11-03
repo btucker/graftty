@@ -61,7 +61,7 @@ struct RemoteMacsModelTests {
         await #expect(throws: (any Error).self) { try await model.addWorktreeRepository(for: project) }
     }
 
-    @Test("@spec REMOTE-13.34: When a client sets a rank on a relayed project or pinned worktree, the relaying Mac shall forward the write to the owning host using that host's identifiers.")
+    @Test("@spec REMOTE-13.44: When a client sets a rank on a relayed project or pinned worktree, the relaying Mac shall forward the write to the owning host using that host's identifiers.")
     func relayForwardsRankRequestsToOwner() async throws {
         let remote = try remoteMac()
         let recorder = RemoteMacsModelManagementRecorder(response: .ok)

@@ -166,7 +166,7 @@ struct SidebarMergedMoveTests {
     }
 }
 
-@Suite("@spec REMOTE-13.38: While a host is asleep, the application shall keep its rows visible and dim with the last reported text, and shall name it asleep, and shall list other unreachable hosts on one offline line.")
+@Suite("@spec REMOTE-13.48: While a host is asleep, the application shall keep its rows visible and dim with the last reported text, and shall name it asleep, and shall list other unreachable hosts on one offline line.")
 struct SidebarSleepingRowsTests {
     private let local = WorktreeOrigin(deviceID: .init(value: "mac"), deviceLabel: "MacBook", relayDepth: 0)
     private let mini = WorktreeOrigin(deviceID: .init(value: "mini"), deviceLabel: "mini-m1", relayDepth: 1)

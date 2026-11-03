@@ -1,7 +1,7 @@
 import Testing
 @testable import GrafttyProtocol
 
-@Suite("@spec REMOTE-13.35: When a project is on several hosts, Add Worktree shall offer the hosts that have it, defaulting to the last one used unless that host is asleep and another is awake, so opening the sheet wakes nothing while any host is awake.")
+@Suite("@spec REMOTE-13.45: When a project is on several hosts, Add Worktree shall offer the hosts that have it, defaulting to the last one used unless that host is asleep and another is awake, so opening the sheet wakes nothing while any host is awake.")
 struct AddWorktreeHostChoiceTests {
     private func choice(_ id: String, _ availability: HostAvailability = .reachable, host: String? = nil, path: String? = nil) -> AddWorktreeHostChoice {
         AddWorktreeHostChoice(id: id, host: host ?? id, path: path, availability: availability)

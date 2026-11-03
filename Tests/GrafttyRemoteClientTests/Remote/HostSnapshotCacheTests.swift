@@ -3,7 +3,7 @@ import Testing
 import GrafttyProtocol
 @testable import GrafttyRemoteClient
 
-@Suite("@spec REMOTE-13.37: While a paired host has saved wake addresses, the client shall keep its last reported projects and worktrees across launches, and shall delete them when the host is forgotten.")
+@Suite("@spec REMOTE-13.47: While a paired host has saved wake addresses, the client shall keep its last reported projects and worktrees across launches, and shall delete them when the host is forgotten.")
 struct HostSnapshotCacheTests {
     private func cache() throws -> HostSnapshotCache {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyProtocol
 
-@Suite("@spec REMOTE-13.32: When a host publishes a project or worktree, the application shall carry its origin key, activity time, and ranks as optional fields, so payloads from older hosts decode with those fields absent.")
+@Suite("@spec REMOTE-13.42: When a host publishes a project or worktree, the application shall carry its origin key, activity time, and ranks as optional fields, so payloads from older hosts decode with those fields absent.")
 struct MultiHostWireTests {
     @Test func olderPayloadDecodesNewFieldsAsNil() throws {
         let project = try JSONDecoder().decode(SidebarProject.self, from: Data(#"{"id":"p","repositoryID":"r","name":"n","isAvailable":true}"#.utf8))

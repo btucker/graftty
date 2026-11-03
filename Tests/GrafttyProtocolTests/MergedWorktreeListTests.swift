@@ -99,7 +99,7 @@ struct MergedWorktreeListTests {
     }
 }
 
-@Suite("@spec REMOTE-13.33: When a host's worktree is reachable both directly and through another host, the application shall list it once, using the direct route.")
+@Suite("@spec REMOTE-13.43: When a host's worktree is reachable both directly and through another host, the application shall list it once, using the direct route.")
 struct MergedWorktreeDedupTests {
     private func row(depth: Int, path: String) -> WorktreePanes {
         WorktreePanes(path: path, displayName: "w", repoDisplayName: "app", displayBranch: "w", state: .running, isMainCheckout: false,

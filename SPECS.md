@@ -776,6 +776,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.53** When a mobile checkpoint arrives before its terminal surface mounts, the application shall install the checkpoint after the first mount and then parse live output at the checkpoint grid without requiring navigation.
 
+**TERM-12.54** If applying a terminal source grid stalls, then the application shall fail the attachment within its restore deadline and release the wait on disconnect or cancellation so recovery can replace the stalled renderer.
+
+**TERM-12.55** When a checkpoint installation completes or fails in the current attachment, the application shall retain only its latest elapsed installation duration and outcome for diagnosis without retaining snapshot contents.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
@@ -2354,6 +2358,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.58** While an iPhone agent terminal shows resource controls, the application shall order Preview, Browser, and Context from left to right in one top-right capsule, use the right-sidebar glyph for Context, retain at least 44-point targets, and keep the group stable when no latest pane preview exists.
 
+**IOS-4.59** When a mobile terminal displays a Back badge, the application shall count pending requests only in the worktree list that Back opens, respecting its project scope and search query.
+
+**IOS-4.60** While a mobile terminal's parser is behind by its backlog threshold, the application shall pace further terminal output with waits bounded to one second, while continuing to apply control frames that arrive ahead of that output.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2488,7 +2496,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
-**IOS-7.10** If a mobile checkpoint restore exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
+**IOS-7.10** If a mobile checkpoint restore or source-grid update exceeds its deadline, then the application shall retain its latest checkpoint diagnostic, replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 
@@ -2740,7 +2748,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.25** While a compact worktree has no agent with a presentable session, the application shall present its terminal panes full screen without the agent bar, the Terminal sheet, or the agent placeholder.
 
-**IPAD-2.26** While a compact agent workspace shows the software keyboard, the application shall keep the terminal and its key accessory bar above the keyboard.
+**IPAD-2.26** While a compact agent workspace shows the software keyboard, the application shall keep the terminal above the keyboard and place its key accessory bar directly against the keyboard.
 
 **IPAD-2.27** While a compact agent workspace is shown, the application shall open its shells from Terminal in the agent-selection dropdown instead of reserving a button in the top-right controls or a bottom bar.
 
@@ -3454,6 +3462,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.15** When an SSH terminal attachment closes or is canceled before shell acknowledgement, the application shall fail the pending connection and close its child channel without disconnecting the shared transport.
 
+**REMOTE-9.16** When consecutive small SSH terminal writes accumulate, the application shall coalesce them within bounded receive batches so packet fragmentation alone does not exhaust the frame budget and disconnect the pane.
+
+**REMOTE-9.17** While an SSH terminal consumer has not taken its received output, the application shall stop reading that channel so SSH flow control pauses the host, keeping the terminal attached and delivering every byte in order once the consumer resumes.
+
+**REMOTE-9.18** When a terminal exits while its output is paused, the application shall deliver all of that output before reporting the exit status.
+
+**REMOTE-9.19** While a terminal client has negotiated an output window, the host shall hold back terminal bytes beyond that window of unconsumed output, so ownership, takeover and recovery messages reach the client behind no more than that window.
+
+**REMOTE-9.20** If a terminal client does not negotiate an output window, then the host shall forward its output under SSH flow control alone.
+
+**REMOTE-9.21** If a host does not support negotiated output windows, then a paused terminal client shall remain attached under SSH flow control and receive all of its output once it resumes.
+
+**REMOTE-9.22** When an auxiliary history channel closes before the terminal channel, the application shall preserve terminal output and apply the terminal channel's eventual exit status.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -3614,7 +3636,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.26** When a relayed session has never had a display owner, the application shall preserve its reported source grid rather than publish the ownerless hello's echoed client dimensions.
 
-**REMOTE-13.27** If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.
+**REMOTE-13.27** While a relay's mobile receiver is stalled, the application shall stop taking output from the upstream terminal once the relay's bounded queue is full, without closing the attachment or dropping terminal events, and shall resume in order when the receiver drains the queue.
 
 **REMOTE-13.28** When a paged relay receives process exit while its bounded output queue is full, the application shall retain and deliver the exit status after the queued terminal events.
 
@@ -3624,19 +3646,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.31** When a client sends a worktree-management request over a remote host link, it shall open a dedicated worktree-management channel for that request and close the channel whether the open, the send, or neither fails.
 
-**REMOTE-13.32** When a host publishes a project or worktree, the application shall carry its origin key, activity time, and ranks as optional fields, so payloads from older hosts decode with those fields absent.
+**REMOTE-13.32** When a paged relay reports checkpoint or grid dimensions, the application shall publish the size callback only after earlier output events have been consumed.
 
-**REMOTE-13.33** When a host's worktree is reachable both directly and through another host, the application shall list it once, using the direct route.
+**REMOTE-13.42** When a host publishes a project or worktree, the application shall carry its origin key, activity time, and ranks as optional fields, so payloads from older hosts decode with those fields absent.
 
-**REMOTE-13.34** When a client sets a rank on a relayed project or pinned worktree, the relaying Mac shall forward the write to the owning host using that host's identifiers.
+**REMOTE-13.43** When a host's worktree is reachable both directly and through another host, the application shall list it once, using the direct route.
 
-**REMOTE-13.35** When a project is on several hosts, Add Worktree shall offer the hosts that have it, defaulting to the last one used unless that host is asleep and another is awake, so opening the sheet wakes nothing while any host is awake.
+**REMOTE-13.44** When a client sets a rank on a relayed project or pinned worktree, the relaying Mac shall forward the write to the owning host using that host's identifiers.
 
-**REMOTE-13.36** When the user changes host in Add Worktree, the application shall keep the typed name and clear a selected branch that doesn't exist on the new host.
+**REMOTE-13.45** When a project is on several hosts, Add Worktree shall offer the hosts that have it, defaulting to the last one used unless that host is asleep and another is awake, so opening the sheet wakes nothing while any host is awake.
 
-**REMOTE-13.37** While a paired host has saved wake addresses, the client shall keep its last reported projects and worktrees across launches, and shall delete them when the host is forgotten.
+**REMOTE-13.46** When the user changes host in Add Worktree, the application shall keep the typed name and clear a selected branch that doesn't exist on the new host.
 
-**REMOTE-13.38** While a host is asleep, the application shall keep its rows visible and dim with the last reported text, and shall name it asleep, and shall list other unreachable hosts on one offline line.
+**REMOTE-13.47** While a paired host has saved wake addresses, the client shall keep its last reported projects and worktrees across launches, and shall delete them when the host is forgotten.
+
+**REMOTE-13.48** While a host is asleep, the application shall keep its rows visible and dim with the last reported text, and shall name it asleep, and shall list other unreachable hosts on one offline line.
 
 ### REMOTE-14.x — Shared project navigation
 
@@ -4456,7 +4480,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-2.11** When the mobile pane lacks horizontal room for Preview and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.
 
-**IMAGE-2.12** When files are previewed in a worktree, the host shall retain their immutable collections for all authorized clients of that worktree, independently of the originating pane, display owner, and temporary delivery expiry.
+**IMAGE-2.12** When files are previewed in a worktree, the host shall retain their collections for all authorized clients of that worktree, independently of the originating pane, display owner, and temporary delivery expiry.
 
 **IMAGE-2.13** When a preview's automatic delivery expires or is withdrawn, the host shall retain it in the worktree library without automatically reopening it on a device.
 
@@ -4470,13 +4494,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.2** When files are requested for native preview, the application shall snapshot readable regular files of any type in order and reject empty collections, more than 20 files, files over 20 MB, or collections over 50 MB.
 
-**PREVIEW-1.3** When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain immutable snapshot files until the tray releases them.
+**PREVIEW-1.3** When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain its private snapshot files until the tray releases them.
 
 **PREVIEW-1.4** When a preview file snapshot is released, the application shall remove its private temporary directory without deleting the original file.
 
 **PREVIEW-1.5** When a native macOS preview is dismantled before attachment, after window closure, or more than once, the application shall close Quick Look safely, reject subsequent preview updates, and retain its snapshots until native teardown completes.
 
-**PREVIEW-1.6** When a Mac preview arrives, the application shall retain the latest 32 requests as immutable session history grouped by worktree, including replaced and closed previews.
+**PREVIEW-1.6** When a Mac preview arrives, the application shall retain the latest 32 requests as session history grouped by worktree, including replaced and closed previews, whose snapshots change only as PREVIEW-1.17 follows a latest preview.
 
 **PREVIEW-1.7** When a Mac preview arrives, the application shall reuse one resizable standard window per worktree without taking terminal focus, and closing that window shall retain its history for reopening.
 
@@ -4497,6 +4521,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PREVIEW-1.15** When a remote preview window is hidden or closed and reopened, the application shall retain its remote catalog transport for browsing and downloading history.
 
 **PREVIEW-1.16** When a library download is superseded before task cancellation is observed, the application shall discard its result without changing the selected preview or appending discarded history.
+
+**PREVIEW-1.17** When a source file of the latest preview from a pane changes, whether written in place or atomically replaced, the application shall update that preview and its stored collection without adding a history entry.
+
+**PREVIEW-1.18** When a newer preview replaces a pane's latest preview, the application shall stop following the earlier preview so that it remains an unchanged snapshot in history.
+
+**PREVIEW-1.19** If a followed source file is removed, unreadable, or too large, then the application shall keep showing the last good content and resume updating when the file becomes readable again.
+
+**PREVIEW-1.20** When a preview revision reaches an open native preview, the application shall show the new content in the same preview, keeping the selected file of its collection and the retained old snapshot until Quick Look has switched.
+
+**PREVIEW-1.21** When a remote host's catalog reports a newer revision of a displayed preview, the application shall download it and update that preview in place.
 
 ### PREVIEW-2.x
 
@@ -4521,6 +4555,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PREVIEW-2.10** While a native preview covers a mobile terminal, the application shall preserve its live terminal channel and mounted session through presentation and dismissal, and perform normal pane cleanup only when the pane is actually removed.
 
 **PREVIEW-2.11** When clients browse preview history, the application shall use the first filename and remaining file count as the collection title, preserve optional creation times across connections, and omit unknown times from legacy offers.
+
+**PREVIEW-2.12** When a followed preview's source files change, the host shall revise its stored collection in place, keeping its collection and offer identities and raising its content revision so that clients can refresh without treating it as a new request.
+
+**PREVIEW-2.13** When the host revises a mobile preview being viewed, the application shall download the new content and show it in the open preview without closing it, and shall not reopen a preview the user dismissed.
 
 ### PREVIEW-3.x
 
@@ -5693,6 +5731,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.7** When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
 
 **SSH-1.8** When the NIO channel of an SSH-over-DataChannel transport closes, the host and the client shall close the underlying WebRTC DataChannel at once rather than wait for the transport owner to observe the closure.
+
+**SSH-1.9** While an SSH-over-WebRTC transport is active or closed, the application shall expose bounded numeric send diagnostics for queued bytes, WebRTC buffering, completed and failed writes, and local write-admission delay without retaining payloads.
+
+**SSH-1.10** When a transport latency probe reports percentiles, the application shall include the sample count and nearest-rank p50, p95, p99, and maximum latency without retaining terminal contents.
 
 ## TEST — TEST
 

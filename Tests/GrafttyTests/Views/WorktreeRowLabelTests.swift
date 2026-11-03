@@ -30,7 +30,7 @@ struct WorktreeRowLabelTests {
     }
 }
 
-@Suite("@spec REMOTE-13.36: When the user changes host in Add Worktree, the application shall keep the typed name and clear a selected branch that doesn't exist on the new host.")
+@Suite("@spec REMOTE-13.46: When the user changes host in Add Worktree, the application shall keep the typed name and clear a selected branch that doesn't exist on the new host.")
 struct AddWorktreeHostSwitchTests {
     private func entry(_ name: String) -> BranchPickerEntry {
         BranchPickerEntry(name: name, source: .local, lastCommitDate: Date(timeIntervalSince1970: 1), mountedWorktreePath: nil, pr: nil)
