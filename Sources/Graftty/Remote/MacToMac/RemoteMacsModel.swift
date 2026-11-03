@@ -32,6 +32,11 @@ final class RemoteMacsModel: ObservableObject {
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
     @Published private(set) var trustedLinuxHosts: [RemoteDeviceID: PinnedHost] = [:]
     private let maintenancePins: PinnedHostStore
+    private let hostSnapshotCache: HostSnapshotCache
+    private let wakeableHostIDsProvider: @Sendable () -> Set<RemoteDeviceID>
+    @Published private var wakeableHostIDs: Set<RemoteDeviceID> = []
+    @Published private var hostSnapshots: [RemoteDeviceID: HostSnapshotCache.Snapshot] = [:]
+    private var hostSnapshotSavedAt: [RemoteDeviceID: Date] = [:]
     private var linuxPinGeneration: UInt64 = 0
     @Published private(set) var discoveryCandidates: [GrafttyBonjourCandidate] = []
     @Published private(set) var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
@@ -104,10 +109,16 @@ final class RemoteMacsModel: ObservableObject {
         connectionRegistry: RemoteMacConnectionRegistry? = nil,
         relayRouter: RemoteWorktreeRelayRouter? = nil,
         paneFeedRetryDelay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
-        maintenancePins: PinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
+        maintenancePins: PinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory),
+        hostSnapshotCache: HostSnapshotCache = HostSnapshotCache(),
+        wakeableHostIDs: (@Sendable () -> Set<RemoteDeviceID>)? = nil
     ) {
         self.store = store ?? RemoteMacStore()
         self.maintenancePins = maintenancePins
+        self.hostSnapshotCache = hostSnapshotCache
+        self.wakeableHostIDsProvider = wakeableHostIDs ?? {
+            Set(((try? maintenancePins.list()) ?? []).filter { $0.wakeOnLAN != nil }.map(\.id))
+        }
         self.paneFeedRetryDelay = paneFeedRetryDelay
         let registry = connectionRegistry ?? RemoteMacConnectionRegistry()
         self.connectionRegistry = registry
@@ -185,6 +196,16 @@ final class RemoteMacsModel: ObservableObject {
             linuxPinGeneration &+= 1
         }
         savedRemoteMacs = store.remoteMacs
+        let provider = wakeableHostIDsProvider
+        wakeableHostIDs = await Task.detached { provider() }.value
+        let savedIDs = Set(savedRemoteMacs.map(\.id))
+        for id in hostSnapshots.keys where !savedIDs.contains(id) {
+            hostSnapshots[id] = nil
+            hostSnapshotCache.remove(hostID: id)
+        }
+        for remoteMac in savedRemoteMacs where hostSnapshots[remoteMac.id] == nil && wakeableHostIDs.contains(remoteMac.id) {
+            hostSnapshots[remoteMac.id] = hostSnapshotCache.load(hostID: remoteMac.id)
+        }
         for remoteMac in savedRemoteMacs {
             let identity = RemoteMacIdentity(remoteMac)
             if let candidate = candidatesByIdentity[identity] {
@@ -950,11 +971,66 @@ final class RemoteMacsModel: ObservableObject {
             }
             snapshots[identity] = rows
             let projects = sidebar?.projects ?? SidebarProjection.projects(rows)
-            result.projects += relayRouter.promoteProjects(projects, from: mac)
+            let promoted = relayRouter.promoteProjects(projects, from: mac)
+            result.projects += promoted
+            rememberSnapshot(of: mac, projects: promoted, rows: rows.filter { ($0.origin?.relayDepth ?? 0) == 0 })
             if sidebar != nil { result.authoritativeOwnerIDs.insert(mac.id) }
         }
         result.worktrees = relayRouter.promotedWorktrees(snapshots: snapshots, remoteMacs: savedRemoteMacs)
         return result
+    }
+
+    struct SleepingSnapshot {
+        var hostIDs: Set<RemoteDeviceID> = []
+        var projects: [SidebarProject] = []
+        var rows: [WorktreePanes] = []
+    }
+
+    /// The last report from each unreachable host that can be woken. Its rows
+    /// have to stay visible, or there would be nothing to open to wake it.
+    /// Deliberately separate from `worktreePanesByRemote`, so they're never relayed.
+    func sleepingSnapshot() -> SleepingSnapshot {
+        var result = SleepingSnapshot()
+        for mac in savedRemoteMacs where wakeableHostIDs.contains(mac.id) {
+            guard connectionState(for: RemoteMacIdentity(mac)) != .connected,
+                  let snapshot = hostSnapshots[mac.id] else { continue }
+            let origin = WorktreeOrigin(deviceID: mac.id, deviceLabel: mac.label, relayDepth: 0)
+            result.hostIDs.insert(mac.id)
+            result.rows += snapshot.rows.map { $0.with(origin: origin) }
+            result.projects += snapshot.projects.map { project in
+                var project = project
+                project.isAvailable = false
+                project.owner = WorktreeOrigin(deviceID: mac.id, deviceLabel: mac.label, relayDepth: 1)
+                return project
+            }
+        }
+        return result
+    }
+
+    /// Connects for something the user asked of this host, sending a wake if
+    /// it has wake details, and registers the routes its project rows use.
+    func wake(_ remoteMac: RemoteMac) async throws {
+        _ = try await connect(to: remoteMac, allowsWake: true)
+        _ = await sidebarRelaySnapshot()
+    }
+
+    func forgetSnapshot(of remoteMac: RemoteMac) {
+        hostSnapshots[remoteMac.id] = nil
+        hostSnapshotSavedAt[remoteMac.id] = nil
+        hostSnapshotCache.remove(hostID: remoteMac.id)
+    }
+
+    /// Reports arrive often, and sleeping rows only need to be roughly current.
+    private func rememberSnapshot(of mac: RemoteMac, projects: [SidebarProject], rows: [WorktreePanes]) {
+        guard wakeableHostIDs.contains(mac.id) else { return }
+        let snapshot = HostSnapshotCache.Snapshot(projects: projects, rows: rows)
+        guard hostSnapshots[mac.id] != snapshot else { return }
+        hostSnapshots[mac.id] = snapshot
+        let now = Date()
+        guard now.timeIntervalSince(hostSnapshotSavedAt[mac.id] ?? .distantPast) > 30 else { return }
+        hostSnapshotSavedAt[mac.id] = now
+        let cache = hostSnapshotCache
+        Task.detached(priority: .utility) { try? cache.save(hostID: mac.id, projects: projects, rows: rows) }
     }
 
     func notificationProjectIdentity(for event: RemoteNotificationEvent) async -> (SidebarProject, Data?)? {

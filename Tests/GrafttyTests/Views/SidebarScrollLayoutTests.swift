@@ -49,7 +49,7 @@ private struct HostedSidebarScrollView: View {
                     harness.selections.append($0)
                     harness.state.selectedWorktreePath = $0
                 },
-                onSelectPane: { _, _ in }, onSelectRemoteMac: { _ in }, onSelectRemoteWorktree: { _, _ in },
+                onSelectPane: { _, _ in }, onSelectRemoteMac: { _ in }, onSelectRemoteWorktree: { _, _ in }, onWakeRemoteWorktree: { _, _ in },
                 onSelectRemotePane: { _, _, _ in }, onAddRemoteWorktree: { _, _ in }, onAddRemoteWorktreeWithHost: { _, _, _, _, _ in }, onDeleteRemoteWorktree: { _, _ in },
                 onAddRemoteMac: {}, onAddRepo: {}, onAddPath: { _ in }, onRemoveRepo: { _ in }, onInitializeGit: { _ in },
                 onStopWorktree: { _ in }, onDeleteWorktree: { harness.deleteRequests.append(($0, $1)) },

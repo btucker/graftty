@@ -49,6 +49,7 @@ struct MainWindow: View {
     @State private var pendingHostMaintenance: LinuxHostMaintenanceRequest?
     @State private var linuxHostSetupClient: LinuxHostTrustRequest?
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
+    @State private var wakeFlow: WakeFlow?
     @State private var worktreeHistory = WorktreeNavigationHistory()
     @State private var attentionOpenGeneration: UInt64 = 0
     @StateObject private var voiceDictation = VoiceDictationController()
@@ -160,6 +161,7 @@ struct MainWindow: View {
                 onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
+                onWakeRemoteWorktree: wakeAndOpen,
                 onSelectRemotePane: selectRemotePane,
                 onAddRemoteWorktree: { beginAddRemoteWorktree($0, repository: $1) },
                 onAddRemoteWorktreeWithHost: { mac, repository, context, name, branch in
@@ -201,7 +203,11 @@ struct MainWindow: View {
                 background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
                 breadcrumbBar
             } content: {
-                if let selectedRemoteMac {
+                if let wakeFlow {
+                    WakingWorktreeView(flow: wakeFlow, theme: terminalManager.theme, onTryAgain: {
+                        wakeAndOpen(wakeFlow.remoteMac, worktreePath: wakeFlow.worktreePath)
+                    })
+                } else if let selectedRemoteMac {
                     if let row = selectedRemoteWorktreeSnapshot, row.showsCreationProgress,
                        let progress = row.creationProgress {
                         WorktreeCreationDetailView(progress: progress,
@@ -1152,7 +1158,30 @@ struct MainWindow: View {
         selectRemoteWorktree(remoteMac, worktreePath: worktreePath, acknowledging: true)
     }
 
+    /// Opens a worktree on a sleeping host. It waits on screen, since waking
+    /// takes a moment and can fail when the host isn't on this network.
+    private func wakeAndOpen(_ remoteMac: RemoteMac, worktreePath: String) {
+        let flow = WakeFlow(remoteMac: remoteMac, worktreePath: worktreePath, phase: .waking)
+        wakeFlow = flow
+        Task { @MainActor in
+            do {
+                try await remoteMacsModel.wake(remoteMac)
+                let identity = RemoteMacIdentity(remoteMac)
+                for _ in 0..<50 where remoteMacsModel.worktreePanesByRemote[identity]?.contains(where: { $0.path == worktreePath }) != true {
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                guard wakeFlow?.id == flow.id else { return }
+                wakeFlow = nil
+                selectRemoteWorktree(remoteMac, worktreePath: worktreePath)
+            } catch {
+                guard wakeFlow?.id == flow.id else { return }
+                wakeFlow = WakeFlow(remoteMac: remoteMac, worktreePath: worktreePath, phase: .failed)
+            }
+        }
+    }
+
     private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool) {
+        wakeFlow = nil
         guard remoteViewer.canSelectRemoteWorktree(remoteMac, worktreePath: worktreePath) else { return }
         leaveLocalSelectionForRemote()
         remoteViewer.selectRemoteWorktree(remoteMac, worktreePath: worktreePath, acknowledging: acknowledging)

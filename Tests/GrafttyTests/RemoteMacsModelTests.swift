@@ -129,6 +129,48 @@ struct RemoteMacsModelTests {
         #expect(recorder.dials == [false, true])
     }
 
+    private func sleepingModel(wakeAddresses: Bool) async throws -> (RemoteMacsModel, RemoteMac, HostSnapshotCache) {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let cache = HostSnapshotCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let row = WorktreePanes(path: "/repo/w", displayName: "w", repoDisplayName: "Repo", displayBranch: "w", state: .running,
+                                isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        try cache.save(hostID: remote.id, projects: [SidebarProject(id: "project", repositoryID: "/repo", name: "Repo")], rows: [row])
+        let model = RemoteMacsModel(store: store, connectionRegistry: RemoteMacConnectionRegistry(factory: { _, _ in throw URLError(.cannotConnectToHost) }),
+                                    hostSnapshotCache: cache, wakeableHostIDs: { wakeAddresses ? [remote.id] : [] })
+        await model.loadSavedRemotes()
+        return (model, remote, cache)
+    }
+
+    @Test func sleepingRowsKeptOnlyWithWakeAddresses() async throws {
+        let (awake, remote, _) = try await sleepingModel(wakeAddresses: true)
+        #expect(awake.sleepingSnapshot().rows.map(\.path) == ["/repo/w"])
+        #expect(awake.sleepingSnapshot().rows.first?.origin?.deviceID == remote.id)
+        #expect(awake.sleepingSnapshot().hostIDs == [remote.id])
+        let (plain, _, _) = try await sleepingModel(wakeAddresses: false)
+        #expect(plain.sleepingSnapshot().rows.isEmpty)
+    }
+
+    @Test func cachedRowsNotRelayed() async throws {
+        let (model, _, _) = try await sleepingModel(wakeAddresses: true)
+        #expect(!model.sleepingSnapshot().rows.isEmpty)
+        #expect(await model.sidebarRelaySnapshot().worktrees.isEmpty)
+        #expect(model.promotedWorktreesForRelay().isEmpty)
+    }
+
+    @Test func wakeReportsFailure() async throws {
+        let (model, remote, _) = try await sleepingModel(wakeAddresses: true)
+        await #expect(throws: (any Error).self) { try await model.wake(remote) }
+    }
+
+    @Test func forgetDeletesSnapshot() async throws {
+        let (model, remote, cache) = try await sleepingModel(wakeAddresses: true)
+        model.forgetSnapshot(of: remote)
+        #expect(cache.load(hostID: remote.id) == nil)
+        #expect(model.sleepingSnapshot().rows.isEmpty)
+    }
+
     @Test func addRepositoryReportsHostErrorsAndMissingRepository() async throws {
         let remote = try remoteMac()
         for response in [WorktreeManagementResponse.repositories([]), .error(code: "denied", message: "Details denied", forceAllowed: false, shortStatus: nil)] {

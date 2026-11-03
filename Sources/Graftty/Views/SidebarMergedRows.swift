@@ -8,6 +8,7 @@ struct SidebarMergedRows {
     private let memberToMerged: [String: String]
     private let rowsByProject: [String: [WorktreePanes]]
     private let availabilityByRow: [String: HostAvailability]
+    private let availabilityByMember: [String: HostAvailability]
 
     /// `remoteRows` holds each connected host's rows. Rows a host relays from a
     /// third machine are left out: the Mac only lists hosts it's paired with.
@@ -28,7 +29,37 @@ struct SidebarMergedRows {
             rowAvailability[MergedWorktreeList.identity(row)] = byID[member].map(availability) ?? .reachable
         }
         return SidebarMergedRows(projects: merged, memberToMerged: memberToMerged, rowsByProject: grouped,
-                                 availabilityByRow: rowAvailability)
+                                 availabilityByRow: rowAvailability, availabilityByMember: byID.mapValues(availability))
+    }
+
+    /// What a row says after its name. Sleeping temporary rows don't name the
+    /// host, in keeping with hosts not mattering while scanning the list.
+    static func hostText(_ row: MergedWorktreeRow, isLocal: Bool) -> String? {
+        let host = isLocal ? "This Mac" : row.hostLabel
+        if row.availability == .asleep { return row.showsHostLabel ? "\(host) · asleep" : "asleep" }
+        return row.showsHostLabel ? host : nil
+    }
+
+    static func removeTitle(hostLabel: String, isOnSeveralHosts: Bool) -> String {
+        isOnSeveralHosts ? "Remove from \(hostLabel)…" : "Remove Repository"
+    }
+
+    static func pullTitle(hostLabel: String, isOnSeveralHosts: Bool) -> String {
+        isOnSeveralHosts ? "Pull Default Branch on \(hostLabel)" : "Pull Default Branch"
+    }
+
+    /// Hosts of this project that can't be reached or woken, whose rows are hidden.
+    func offlineHosts(for projectID: String) -> [String] {
+        var seen: Set<String> = []
+        return (project(id: projectID)?.members ?? []).compactMap { member -> String? in
+            guard availabilityByMember[member.id] == .offline, let label = member.owner?.deviceLabel,
+                  seen.insert(label).inserted else { return nil }
+            return label
+        }
+    }
+
+    func availability(ofMember id: String) -> HostAvailability {
+        availabilityByMember[id] ?? .offline
     }
 
     func project(id: String?) -> MergedProject? {

@@ -314,6 +314,8 @@ struct RemoteMacsSection: View {
         let remoteMac: RemoteMac
         let displayName: String
         let hostLabel: String?
+        let isAsleep: Bool
+        let onOpen: () -> Void
         let onDrop: (WorktreeRowDrop, Bool) -> Bool
     }
     /// Renders one row for the merged sidebar instead of whole sections.
@@ -518,7 +520,8 @@ struct RemoteMacsSection: View {
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
         let context = contextForWorktree(worktree)
-        let status = SidebarRowStatus.resolve(context: context, worktree: worktree, isAsleep: false)
+        let isAsleep = singleRow?.isAsleep == true
+        let status = SidebarRowStatus.resolve(context: context, worktree: worktree, isAsleep: isAsleep)
         let counts = SidebarActivityCounts(items: context.pending)
         let projectID = SidebarProjection.projectID(worktree)
         let project = projects.first { $0.id == projectID }
@@ -552,7 +555,7 @@ struct RemoteMacsSection: View {
         )
         VStack(spacing: 0) {
             Button {
-                onSelectRemoteWorktree(remoteMac, worktree.path)
+                if let singleRow { singleRow.onOpen() } else { onSelectRemoteWorktree(remoteMac, worktree.path) }
             } label: {
                 heading
             }
@@ -579,6 +582,7 @@ struct RemoteMacsSection: View {
 
             statusLine
         }
+        .opacity(isAsleep ? 0.55 : 1)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.highlightedWorktreeBackground : .clear)

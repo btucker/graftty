@@ -3654,6 +3654,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.36** When the user changes host in Add Worktree, the application shall keep the typed name and clear a selected branch that doesn't exist on the new host.
 
+**REMOTE-13.37** While a paired host has saved wake addresses, the client shall keep its last reported projects and worktrees across launches, and shall delete them when the host is forgotten.
+
+**REMOTE-13.38** While a host is asleep, the application shall keep its rows visible and dim with the last reported text, and shall name it asleep, and shall list other unreachable hosts on one offline line.
+
 ### REMOTE-14.x — Shared project navigation
 
 **REMOTE-14.1** When a host publishes sidebar metadata, the application shall preserve the original worktree snapshot fields and decode older snapshots without navigation metadata.
