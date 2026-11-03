@@ -396,6 +396,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.205** When the user right-clicks a terminal while the web server is listening, the application shall offer Copy web URL for that pane.
 
+**LAYOUT-2.206** When a user drags a pinned row or a project, the application shall write the new rank to the hosts that own it, so the same order appears on every device, and shall keep older hosts' moves on their existing request.
+
+**LAYOUT-2.207** While a worktree is open, the application shall name its host when it's remote, and name this Mac only when the project also lives on another host.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -5352,7 +5356,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### PORTS-3.x
 
-**PORTS-3.1** @spec PORTS-3.2 @spec PORTS-3.5 @spec PORTS-3.6 @spec PORTS-3.7
+**PORTS-3.1** While the selected worktree's panes listen on ports, the application shall show one chip per port in the header, covering every pane, and collapse extras into a menu.
 
 **PORTS-3.2** PortChip icon name is `personalhotspot` for .loopback, `globe` for .lan
 

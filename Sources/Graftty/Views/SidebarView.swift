@@ -210,6 +210,8 @@ struct SidebarView: View {
         let selected = merged.selectedProjectID(for: navigation.selectedProjectID)
         let fallback = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } })
             .map { merged.mergedID(forMember: localProjectID($0)) } ?? merged.projects.first?.id
+        let shared = Set(merged.projects.filter(\.isOnSeveralHosts).compactMap(\.representative.originKey))
+        if iconStore.multiHostOriginKeys != shared { iconStore.multiHostOriginKeys = shared }
         let next = selected ?? fallback
         if navigation.selectedProjectID != next { navigation.selectedProjectID = next }
         write(rankRepairs.due(ProjectMerge.repairs(merged.projects, isReachable: { $0.isAvailable && isReachable(host: $0.owner?.deviceID) })))

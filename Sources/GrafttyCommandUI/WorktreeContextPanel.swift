@@ -17,12 +17,14 @@ public struct WorktreeContextPanel: View {
     @State private var dragStartBriefHeight: CGFloat?
 
     private static let latestID = "worktree.context.timeline.latest"
+    private let hostLabel: String?
 
-    public init(context: SidebarWorktreeContext, theme: GhosttyThemeColors = .fallback, foreground: Color? = nil,
+    public init(context: SidebarWorktreeContext, theme: GhosttyThemeColors = .fallback, hostLabel: String? = nil, foreground: Color? = nil,
                 secondary: Color? = nil, collapsesBrief: Bool = false,
                 readTranscript: (@MainActor (String) async -> String?)? = nil, showAgent: ((String) -> Void)? = nil, onClose: @escaping () -> Void) {
         self.context = context
         self.theme = theme
+        self.hostLabel = hostLabel
         self.foreground = foreground ?? theme.foreground
         self.secondary = secondary ?? theme.foreground.opacity(0.68)
         self.onClose = onClose
@@ -112,6 +114,9 @@ public struct WorktreeContextPanel: View {
         HStack {
             Label("Context", systemImage: "sidebar.right")
                 .font(.callout).fontWeight(.semibold)
+            if let hostLabel {
+                Text(hostLabel).font(.callout).foregroundStyle(secondary).lineLimit(1)
+            }
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())

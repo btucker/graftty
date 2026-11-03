@@ -10,6 +10,8 @@ import GrafttyCommandUI
 final class SidebarHostController: ObservableObject {
     static let shared = SidebarHostController()
     private var originKeysChecked: [String: Date] = [:]
+    /// Origins whose project lives on more than one host right now.
+    @Published var multiHostOriginKeys: Set<String> = []
     /// The process-wide origin of local projects (also `GrafttyApp`'s
     /// `localWorktreeOrigin`). It must exist synchronously, so it is the one
     /// caller that still falls back to a non-persisted ID; remote identity
