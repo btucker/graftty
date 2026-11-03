@@ -33,12 +33,13 @@ struct SSHTerminalLoopbackTests {
     }
 
     @Test("@spec SSH-1.5: While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.",
-          .timeLimit(.minutes(3)), arguments: LatencyScenario.allCases)
+          .timeLimit(.minutes(10)), arguments: LatencyScenario.allCases)
     func interactiveLatencyWithSiblingTraffic(scenario: LatencyScenario) async throws {
-        // Twenty 4 MiB transfers can legitimately take longer than 45 seconds
-        // on the shared connection. Include setup in the deadline and reserve
-        // the final 30 seconds of the three-minute case budget for teardown.
-        let deadline = ContinuousClock.now.advanced(by: .seconds(150))
+        let sampleCount = min(100, max(1, Int(ProcessInfo.processInfo.environment["GRAFTTY_WEBRTC_LATENCY_SAMPLES"] ?? "20") ?? 20))
+        // Keep the ordinary probe's 150-second deadline, and allow five
+        // seconds per sample in larger manual runs. The ten-minute test
+        // limit leaves at least 100 seconds for teardown at the maximum.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(max(150, sampleCount * 5)))
         let bulkBytes = scenario == .idle ? 0 : 4 * 1024 * 1024
         let bulkStream = EchoStream()
         let connection = try await makeLoopbackConnection { channel, type in
@@ -88,22 +89,36 @@ struct SSHTerminalLoopbackTests {
         do {
             try await interactive.connect()
             try await bulk.connect()
+            for _ in 0..<5 {
+                try await interactive.send(.binary(Data([0])))
+                #expect(try await interactive.receive() == .binary(Data([0])))
+            }
             var samples: [Double] = []
-            for index in 0..<20 {
+            var probesDuringBulk = 0
+            for index in 0..<sampleCount {
+                let progress = BulkProgress()
                 let drain = Task {
                     var received = 0
                     while received < bulkBytes {
                         if case .binary(let data) = try await bulk.receive() {
                             received += data.count
+                            progress.received = received
                         }
                     }
                     #expect(received == bulkBytes)
                 }
                 if bulkBytes > 0 {
+                    let before = await bulkConnection.serverTransport.sendDiagnostics().submittedBytes
                     try await bulkStream.send(Data(repeating: 120, count: bulkBytes))
-                    await Task.yield()
+                    // Wait for actual submission rather than assuming one
+                    // Task.yield started the sibling's forwarding task.
+                    while await bulkConnection.serverTransport.sendDiagnostics().submittedBytes == before {
+                        guard ContinuousClock.now < deadline else { throw LoopbackError.timedOut }
+                        try await Task.sleep(for: .milliseconds(1))
+                    }
+                    if progress.received < bulkBytes { probesDuringBulk += 1 }
                 }
-                let byte = Data([UInt8(65 + index)])
+                let byte = Data([UInt8(truncatingIfNeeded: index)])
                 let start = ContinuousClock.now
                 try await interactive.send(.binary(byte))
                 #expect(try await interactive.receive() == .binary(byte))
@@ -112,8 +127,20 @@ struct SSHTerminalLoopbackTests {
                 try await drain.value
             }
             guard ContinuousClock.now < deadline else { throw LoopbackError.timedOut }
-            samples.sort()
-            print("[terminal-latency] scenario=\(scenario.rawValue) siblingBytes=\(bulkBytes) samples=\(samples.count) p50_ms=\(samples[10]) p95_ms=\(samples[18]) max_ms=\(samples[19])")
+            let report = LatencyProbeReport(
+                scenario: scenario.rawValue,
+                environment: ProcessInfo.processInfo.environment["SIMULATOR_UDID"] == nil ? "ios-device-loopback" : "ios-simulator-loopback",
+                siblingBytesPerSample: bulkBytes, probesDuringBulk: probesDuringBulk,
+                echo: try #require(TransportLatencySummary(milliseconds: samples)),
+                primaryClientSend: await connection.clientTransport.sendDiagnostics(),
+                primaryServerSend: await connection.serverTransport.sendDiagnostics(),
+                siblingServerSend: await separateConnection?.serverTransport.sendDiagnostics()
+            )
+            #expect(report.primaryClientSend.failedWrites == 0)
+            #expect(report.primaryServerSend.failedWrites == 0)
+            #expect(report.siblingServerSend?.failedWrites ?? 0 == 0)
+            let json = try JSONEncoder().encode(report)
+            print("[terminal-latency] \(String(decoding: json, as: UTF8.self))")
         } catch {
             // A deadline close can make the next send throw outputClosed.
             // Report the actual timeout instead of blaming the SSH transport.
@@ -950,6 +977,26 @@ struct SSHTerminalLoopbackTests {
 }
 
 // MARK: - Fakes / helpers
+
+private struct LatencyProbeReport: Encodable {
+    let scenario: String
+    let environment: String
+    let siblingBytesPerSample: Int
+    let probesDuringBulk: Int
+    let echo: TransportLatencySummary
+    let primaryClientSend: WebRTCSendDiagnostics
+    let primaryServerSend: WebRTCSendDiagnostics
+    let siblingServerSend: WebRTCSendDiagnostics?
+}
+
+private final class BulkProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bytes = 0
+    var received: Int {
+        get { lock.withLock { bytes } }
+        set { lock.withLock { bytes = newValue } }
+    }
+}
 
 /// Result of `SSHTerminalLoopbackTests.makeLoopbackConnection`: everything a
 /// `run*Loopback` driver needs to open its own channel(s) on top of an

@@ -950,7 +950,7 @@ struct SessionClientTests {
         #expect(first.closed)
     }
 
-    @Test("@spec IOS-7.10: If a mobile checkpoint restore or source-grid update exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.", arguments: ["checkpoint", "grid"])
+    @Test("@spec IOS-7.10: If a mobile checkpoint restore or source-grid update exceeds its deadline, then the application shall retain its latest checkpoint diagnostic, replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.", arguments: ["checkpoint", "grid"])
     func restoreTimeoutReplacesNativeSession(operation: String) async throws {
         let first = DelayedReceiveWS(paged: true)
         let second = DelayedReceiveWS(paged: true)
@@ -978,6 +978,9 @@ struct SessionClientTests {
         try await waitUntil("replacement receive") { second.receiveCalls == 1 }
         #expect(first.closed)
         #expect(client.session !== failedSession)
+        if operation == "checkpoint" {
+            #expect(client.lastRestoreDiagnostic?.outcome == .timedOut)
+        }
         try await waitUntil("retained surface rebound") {
             guard case .inMemory(let mountedSession) = container.terminalView.configuration.backend else { return false }
             return mountedSession === client.session && container.scrollbackSession === client.session
@@ -987,6 +990,7 @@ struct SessionClientTests {
         second.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
         try await waitUntil("replacement checkpoint") { second.receiveCalls == 2 }
         #expect(client.paging?.status == .complete)
+        #expect(client.lastRestoreDiagnostic?.outcome == .installed)
         let hello = try #require(second.sent.compactMap { frame -> WebControlEnvelope? in
             guard case .text(let text) = frame else { return nil }
             return try? WebControlEnvelope.parse(Data(text.utf8))

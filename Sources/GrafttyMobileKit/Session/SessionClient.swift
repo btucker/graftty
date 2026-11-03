@@ -77,6 +77,11 @@ public final class SessionClient {
     @ObservationIgnored private var nativeCallbacks: NativeCallbacks
     private let rendererOverride: (any PagedTerminalRenderer)?
     public private(set) var paging: PagedTerminalCoordinator?
+    @ObservationIgnored private var previousRestoreDiagnostic: PagedTerminalCoordinator.RestoreDiagnostic?
+    /// Preserve timeout evidence when recovery replaces the coordinator.
+    public var lastRestoreDiagnostic: PagedTerminalCoordinator.RestoreDiagnostic? {
+        paging?.lastRestoreDiagnostic ?? previousRestoreDiagnostic
+    }
     @ObservationIgnored
     internal var additionalHistoryRowCapacity: (() -> UInt32)?
     private var historyPollTask: Task<Void, Never>?
@@ -456,6 +461,7 @@ public final class SessionClient {
     /// session's output queue. Replacing the observable session also makes the
     /// mounted or retained view tear down that surface before using the new one.
     private func replaceTimedOutTerminal() {
+        previousRestoreDiagnostic = lastRestoreDiagnostic
         let box = NativeCallbacks()
         nativeCallbacks = box
         session = Self.makeSession(callbacks: box)

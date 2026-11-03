@@ -10,6 +10,66 @@ import WebRTC
 
 @Suite("SSHNIOTransport unit tests — partial-write closes channel.")
 struct SSHNIOTransportUnitTests {
+    @Test("Diagnostic snapshots retain an SDK buffer peak after it drains")
+    func snapshotsRetainObservedBufferedPeak() async throws {
+        let sink = BufferedSink()
+        let relay = OutboundRelayHandler(sink: sink, mtu: 4, bufferedByteLimit: 8)
+        let loop = NIOAsyncTestingEventLoop()
+        try await loop.submit {
+            sink.sinkBufferedAmount = 12
+            #expect(relay.sendDiagnostics.peakBufferedBytes == 12)
+            sink.sinkBufferedAmount = 0
+            #expect(relay.sendDiagnostics.peakBufferedBytes == 12)
+        }.get()
+    }
+
+    @Test("@spec SSH-1.9: While an SSH-over-WebRTC transport is active or closed, the application shall expose bounded numeric send diagnostics for queued bytes, WebRTC buffering, completed and failed writes, and local write-admission delay without retaining payloads.")
+    func sendDiagnosticsMeasureAdmissionAndReleaseFailures() async throws {
+        let sink = BufferedSink()
+        let clock = ProbeClock()
+        let loop = NIOAsyncTestingEventLoop()
+        let channel = NIOAsyncTestingChannel(loop: loop)
+        let relay = OutboundRelayHandler(sink: sink, mtu: 4, bufferedByteLimit: 8,
+                                        pendingByteLimit: 32, diagnosticNow: { clock.now })
+        try await loop.submit { try channel.pipeline.syncOperations.addHandler(relay) }.get()
+        try await channel.connect(to: .init(unixDomainSocketPath: "diagnostics")).get()
+        defer { channel.close(promise: nil) }
+        let first: EventLoopFuture<Void> = channel.writeAndFlush(channel.allocator.buffer(bytes: [UInt8](repeating: 1, count: 12)))
+        try await loop.submit { clock.now = 10_000_000 }.get()
+        let second: EventLoopFuture<Void> = channel.writeAndFlush(channel.allocator.buffer(bytes: [UInt8](repeating: 2, count: 2)))
+        try await loop.submit {
+            let blocked = relay.sendDiagnostics
+            #expect(blocked.acceptedBytes == 14)
+            #expect(blocked.submittedBytes == 8)
+            #expect(blocked.pendingBytes == 6)
+            #expect(blocked.peakPendingBytes == 12)
+            #expect(blocked.bufferedBytes == 8)
+            #expect(blocked.peakBufferedBytes == 8)
+            #expect(blocked.completedWrites == 0)
+            #expect(blocked.meanAdmissionMilliseconds == nil)
+            clock.now = 30_000_000
+            sink.sinkBufferedAmount = 0
+            relay.resumeSending()
+            let drained = relay.sendDiagnostics
+            #expect(drained.pendingBytes == 0)
+            #expect(drained.submittedBytes == 14)
+            #expect(drained.completedWrites == 2)
+            #expect(drained.meanAdmissionMilliseconds == 25)
+            #expect(drained.maxAdmissionMilliseconds == 30)
+            sink.sinkBufferedAmount = 8
+        }.get()
+        try await first.get()
+        try await second.get()
+        let pending: EventLoopFuture<Void> = channel.writeAndFlush(channel.allocator.buffer(bytes: [UInt8(3)]))
+        try await channel.close().get()
+        await #expect(throws: (any Error).self) { try await pending.get() }
+        try await loop.submit {
+            #expect(relay.sendDiagnostics.failedWrites == 1)
+            #expect(relay.sendDiagnostics.pendingBytes == 0)
+            #expect(relay.sendDiagnostics.completedWrites == 2)
+        }.get()
+    }
+
 
     @Test("@spec SSH-1.3: While the WebRTC send buffer is full, the SSH transport shall defer ordered writes, resume them after draining, and fail pending writes on close.")
     func boundedSendingResumesInOrder() async throws {
@@ -221,4 +281,13 @@ private final class BufferedSink: DataChannelSink, @unchecked Sendable {
         return true
     }
     func sinkClose() { closed = true }
+}
+
+private final class ProbeClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ticks: UInt64 = 0
+    var now: UInt64 {
+        get { lock.withLock { ticks } }
+        set { lock.withLock { ticks = newValue } }
+    }
 }

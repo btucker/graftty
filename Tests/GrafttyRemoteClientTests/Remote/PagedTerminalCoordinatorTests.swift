@@ -5,6 +5,24 @@ import Testing
 
 @MainActor
 struct PagedTerminalCoordinatorTests {
+    @Test("@spec TERM-12.55: When a checkpoint installation completes or fails in the current attachment, the application shall retain only its latest elapsed installation duration and outcome for diagnosis without retaining snapshot contents.")
+    func checkpointDiagnosticsReplacePreviousMeasurement() async throws {
+        struct InvalidSnapshot: Error { }
+        let surface = Surface()
+        var ticks: UInt64 = 0
+        surface.onInstall = { ticks += 5_000_000 }
+        let coordinator = PagedTerminalCoordinator(renderer: surface, diagnosticNow: { ticks }) { _ in }
+        #expect(coordinator.lastRestoreDiagnostic == nil)
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        #expect(coordinator.lastRestoreDiagnostic?.outcome == .installed)
+        #expect(coordinator.lastRestoreDiagnostic?.elapsedMilliseconds == 5)
+        surface.installError = InvalidSnapshot()
+        await #expect(throws: InvalidSnapshot.self) { try await coordinator.handle(.checkpoint(checkpoint(2))) }
+        #expect(coordinator.lastRestoreDiagnostic?.outcome == .failed)
+        #expect(coordinator.lastRestoreDiagnostic?.elapsedMilliseconds == 5)
+        coordinator.disconnect()
+    }
+
     @Test("@spec TERM-12.23: When a Mac attachment prefetches older history, the application shall install the current screen first and fetch at most one bounded history page at a time, including history on the inactive screen.")
     func backgroundHistoryFollowsScreen() async throws {
         let surface = Surface()
@@ -241,6 +259,7 @@ struct PagedTerminalCoordinatorTests {
         await deadline.value
         await #expect(throws: PagedTerminalCoordinator.RestoreError.timedOut) { try await installation.value }
         #expect(coordinator.status == .requiresRecovery)
+        #expect(coordinator.lastRestoreDiagnostic?.outcome == .timedOut)
         surface.holdInstall = false
         try await coordinator.handle(.checkpoint(checkpoint(2)))
         surface.installContinuation?.resume()
@@ -304,6 +323,7 @@ struct PagedTerminalCoordinatorTests {
         installation.cancel()
         await #expect(throws: CancellationError.self) { try await installation.value }
         #expect(coordinator.status == .requiresRecovery)
+        #expect(coordinator.lastRestoreDiagnostic?.outcome == .cancelled)
         coordinator.disconnect()
         #expect(coordinator.status == .inactive)
     }
@@ -364,12 +384,14 @@ struct PagedTerminalCoordinatorTests {
         var installError: (any Error)?
         var holdInstall = false
         var installContinuation: CheckedContinuation<Void, Never>?
+        var onInstall: (() -> Void)?
         var holdGrid = false
         var gridContinuation: CheckedContinuation<Void, Never>?
         func setSourceGrid(cols: UInt16, rows: UInt16) async throws {
             if holdGrid { await withCheckedContinuation { gridContinuation = $0 } }
         }
         func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
+            onInstall?()
             if let installError { throw installError }
             if holdInstall { await withCheckedContinuation { installContinuation = $0 } }
             installed.append(checkpoint.id)

@@ -30,6 +30,16 @@ public extension PagedTerminalRenderer {
 @MainActor
 public final class PagedTerminalCoordinator {
     public enum RestoreError: Error, Equatable, Sendable { case timedOut }
+    /// @spec TERM-12.55
+    /// When a checkpoint installation completes or fails in the current attachment, the application shall retain only its latest elapsed installation duration and outcome for diagnosis without retaining snapshot contents.
+    public struct RestoreDiagnostic: Codable, Equatable, Sendable {
+        public enum Outcome: String, Codable, Sendable { case installed, failed, timedOut, cancelled }
+        public let elapsedNanoseconds: UInt64
+        public let outcome: Outcome
+        public var elapsedMilliseconds: Double { Double(elapsedNanoseconds) / 1_000_000 }
+    }
+    @ObservationIgnored public private(set) var lastRestoreDiagnostic: RestoreDiagnostic?
+    private let diagnosticNow: @MainActor () -> UInt64
     public enum Status: Equatable, Sendable {
         case inactive, installing, available, loading, complete, requiresRecovery, unavailable, limit, pageTooLarge
     }
@@ -65,9 +75,11 @@ public final class PagedTerminalCoordinator {
 #endif
 
     public init(renderer: any PagedTerminalRenderer, requestTimeout: Duration = .seconds(15),
+                diagnosticNow: @escaping @MainActor () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
                 send: @escaping @MainActor (PagedTerminalRequest) async throws -> Void) {
         self.renderer = renderer
         self.requestTimeout = requestTimeout
+        self.diagnosticNow = diagnosticNow
         self.send = send
     }
 
@@ -94,6 +106,7 @@ public final class PagedTerminalCoordinator {
             generation &+= 1
             let installingGeneration = generation
             status = .installing
+            let started = diagnosticNow()
             do {
                 try await performRendererOperation { [renderer] in
                     try await renderer.install(value, generation: installingGeneration)
@@ -101,10 +114,16 @@ public final class PagedTerminalCoordinator {
             } catch {
                 // TERM-12.51: an unmounted or cancelled restore must not leave
                 // the banner spinning; offer recovery from the live screen.
-                if generation == installingGeneration { status = .requiresRecovery }
+                if generation == installingGeneration {
+                    status = .requiresRecovery
+                    let outcome: RestoreDiagnostic.Outcome = error is CancellationError ? .cancelled
+                        : error as? RestoreError == .timedOut ? .timedOut : .failed
+                    lastRestoreDiagnostic = RestoreDiagnostic(elapsedNanoseconds: diagnosticNow() &- started, outcome: outcome)
+                }
                 throw error
             }
             guard generation == installingGeneration else { return nil }
+            lastRestoreDiagnostic = RestoreDiagnostic(elapsedNanoseconds: diagnosticNow() &- started, outcome: .installed)
             // Do not retain the READY bytes after the renderer has imported them.
             checkpoint = .init(incarnation: value.incarnation, id: value.id, codec: value.codec,
                                cols: value.cols, rows: value.rows, ready: Data(),

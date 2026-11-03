@@ -784,6 +784,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.54** If applying a terminal source grid stalls, then the application shall fail the attachment within its restore deadline and release the wait on disconnect or cancellation so recovery can replace the stalled renderer.
 
+**TERM-12.55** When a checkpoint installation completes or fails in the current attachment, the application shall retain only its latest elapsed installation duration and outcome for diagnosis without retaining snapshot contents.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
@@ -2506,7 +2508,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
-**IOS-7.10** If a mobile checkpoint restore or source-grid update exceeds its deadline, then the application shall replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
+**IOS-7.10** If a mobile checkpoint restore or source-grid update exceeds its deadline, then the application shall retain its latest checkpoint diagnostic, replace its native terminal session before reconnecting, rebind retained surfaces to the replacement, and ignore callbacks from the failed session.
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 
@@ -5695,6 +5697,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.7** When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
 
 **SSH-1.8** When the NIO channel of an SSH-over-DataChannel transport closes, the host and the client shall close the underlying WebRTC DataChannel at once rather than wait for the transport owner to observe the closure.
+
+**SSH-1.9** While an SSH-over-WebRTC transport is active or closed, the application shall expose bounded numeric send diagnostics for queued bytes, WebRTC buffering, completed and failed writes, and local write-admission delay without retaining payloads.
+
+**SSH-1.10** When a transport latency probe reports percentiles, the application shall include the sample count and nearest-rank p50, p95, p99, and maximum latency without retaining terminal contents.
 
 ## TEST — TEST
 
