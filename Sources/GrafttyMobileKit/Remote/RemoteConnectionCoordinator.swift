@@ -40,6 +40,17 @@ public typealias RemoteWorktreeLoadProgress =
 /// methods on.
 @MainActor
 public final class RemoteConnectionCoordinator {
+    public enum WakePolicy: Sendable {
+        /// Background connections, so opening the app doesn't start sleeping machines.
+        case never
+        /// Today's single-host path: the user chose this host, and automatic
+        /// retries still honor the failure cooldown.
+        case whileDialing
+        /// An interaction needs this host: skips the cooldown, and redials with
+        /// a wake if it finds a quiet dial in flight.
+        case now
+    }
+
     public enum ConnectionError: LocalizedError {
         case pairingRequired
         case unavailable
@@ -126,7 +137,7 @@ public final class RemoteConnectionCoordinator {
     /// closed pair with no shared outer state to leak between attempts.
     private struct Attempt {
         let id: UUID
-        let allowsWake: Bool
+        let wake: WakePolicy
         let task: Task<RemoteHostConnection?, Never>
     }
 
@@ -267,15 +278,11 @@ public final class RemoteConnectionCoordinator {
     /// this device's stale host connection. Automatic refreshes keep the
     /// cooldown and never request replacement.
     ///
-    /// `allowsWake` is false for a connection no interaction asked for, so opening
-    /// the app doesn't start sleeping machines. It defaults to true because every
-    /// current caller follows the user choosing this host; the multi-host feed
-    /// passes false. A wake also skips the cooldown, and retries a quiet dial it
-    /// finds in flight.
+    /// `wake` says whether this dial may wake a sleeping host: see `WakePolicy`.
     public func connection(
         for host: Host,
         replacingExistingConnection: Bool = false,
-        allowsWake: Bool = true
+        wake: WakePolicy = .whileDialing
     ) async -> RemoteHostConnection? {
         guard desiredConnectionsAllowed else { return nil }
         let generation = connectionGeneration
@@ -291,9 +298,9 @@ public final class RemoteConnectionCoordinator {
         if let inFlight = inFlightAttempts[host.id] {
             let result = await inFlight.task.value
             guard permitsConnections(in: generation) else { return nil }
-            if result != nil || !allowsWake || inFlight.allowsWake { return result }
+            if result != nil || wake != .now || inFlight.wake != .never { return result }
             failureCooldowns[host.id] = nil
-            return await connection(for: host, allowsWake: true)
+            return await connection(for: host, wake: .now)
         }
         if let live = liveConnections[host.id] {
             return live
@@ -301,7 +308,7 @@ public final class RemoteConnectionCoordinator {
         let routes = routingRoutes(for: host, pinnedHost: pinnedHost)
         let route = routes.first?.baseURL ?? host.baseURL
         if let cooldown = failureCooldowns[host.id] {
-            if !allowsWake, cooldown.route == route, now() < cooldown.until {
+            if wake != .now, cooldown.route == route, now() < cooldown.until {
                 return nil
             }
             failureCooldowns[host.id] = nil
@@ -315,10 +322,10 @@ public final class RemoteConnectionCoordinator {
                 attemptID: attemptID,
                 generation: generation,
                 replacingExistingConnection: replacingExistingConnection,
-                allowsWake: allowsWake
+                allowsWake: wake != .never
             )
         }
-        inFlightAttempts[host.id] = Attempt(id: attemptID, allowsWake: allowsWake, task: task)
+        inFlightAttempts[host.id] = Attempt(id: attemptID, wake: wake, task: task)
         let result = await task.value
         // Clear only if the slot still holds THIS attempt: while it does,
         // every OTHER concurrent caller takes the `inFlight.task.value`

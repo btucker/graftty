@@ -69,12 +69,12 @@ struct RemoteConnectionCoordinatorTests {
             signaling: SignalingClient(transport: { _, _ in dials.increment(); throw URLError(.cannotConnectToHost) }),
             now: { Date(timeIntervalSince1970: 1_800_000_000) }
         )
-        #expect(await coordinator.connection(for: host, allowsWake: false) == nil)
+        #expect(await coordinator.connection(for: host, wake: .never) == nil)
         let quiet = dials.count
         #expect(quiet > 0)
-        #expect(await coordinator.connection(for: host, allowsWake: false) == nil)
+        #expect(await coordinator.connection(for: host, wake: .never) == nil)
         #expect(dials.count == quiet, "a background connection keeps the cooldown")
-        #expect(await coordinator.connection(for: host, allowsWake: true) == nil)
+        #expect(await coordinator.connection(for: host, wake: .now) == nil)
         #expect(dials.count > quiet, "an interaction dials at once")
     }
 
