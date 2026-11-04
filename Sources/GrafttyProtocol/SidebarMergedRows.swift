@@ -114,16 +114,8 @@ public struct SidebarMergedRows: Sendable {
 
     /// Displayed order, with folders flattened.
     public func flattenedRows(for projectID: String) -> [MergedWorktreeRow] {
-        func flatten(_ nodes: [MergedWorktreeNode]) -> [MergedWorktreeRow] {
-            nodes.flatMap { node -> [MergedWorktreeRow] in
-                switch node {
-                case .row(let row): return [row]
-                case .folder(_, _, let children): return flatten(children)
-                }
-            }
-        }
         let section = sections(for: projectID)
-        return flatten(section.pinned) + section.temporary
+        return section.pinned.flattenedRows + section.temporary
     }
 
     public enum PinnedMove: Equatable, Sendable {

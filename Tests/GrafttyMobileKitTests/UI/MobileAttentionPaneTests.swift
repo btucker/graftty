@@ -18,7 +18,39 @@ struct MobileAttentionPaneTests {
         #expect(DivergenceGutter.aheadColor(nil) == .secondary)
     }
 
-    @Test("@spec IOS-9.14: While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.", arguments: [320.0, 393.0, 540.0])
+    @Test("@spec IOS-13.11: While a worktree is open on mobile, the application shall show how far it is ahead of and behind its base there, rather than on its list row.")
+    func openWorktreeCarriesDivergence() {
+        func worktree(_ stats: WorktreeWireStats?) -> WorktreePanes {
+            WorktreePanes(path: "/w", displayName: "w", repoDisplayName: "r", displayBranch: "w", state: .running, isMainCheckout: false,
+                          prBadge: nil, stats: stats, attentionText: nil, layout: nil)
+        }
+        func text(_ stats: WorktreeWireStats?) -> String? {
+            let row = worktree(stats)
+            return IPadWorktreeSubtitle.text(for: row, context: SidebarWorktreeContext(worktree: row))
+        }
+        #expect(text(WorktreeWireStats(ahead: 3, behind: 1, hasUncommittedChanges: true, baseRef: nil)) == "↑3+ ↓1")
+        #expect(text(WorktreeWireStats(ahead: 0, behind: 2, hasUncommittedChanges: false, baseRef: nil)) == "↓2")
+        #expect(text(WorktreeWireStats(ahead: 0, behind: 0, hasUncommittedChanges: false, baseRef: nil)) == nil)
+    }
+
+    @Test func identityHeaderLeavesNoGapWithoutABadgeOrDivergence() {
+        func worktree(_ stats: WorktreeWireStats?) -> WorktreePanes {
+            WorktreePanes(path: "/w", displayName: "w", repoDisplayName: "r", displayBranch: "w", state: .running, isMainCheckout: false,
+                          prBadge: nil, stats: stats, attentionText: nil, layout: nil)
+        }
+        let available = CGSize(width: 390, height: 600)
+        func height(_ stats: WorktreeWireStats?) -> CGFloat {
+            UIHostingController(rootView: MobileWorktreeIdentityHeader(worktree: worktree(stats), purpose: nil, theme: .fallback))
+                .sizeThatFits(in: available).height
+        }
+        let stats = WorktreeWireStats(ahead: 3, behind: 1, hasUncommittedChanges: false, baseRef: nil)
+        let gutter = UIHostingController(rootView: DivergenceGutter(stats: stats, theme: .fallback)).sizeThatFits(in: available).height
+        // The row's own top padding comes and goes with the row, not just its content.
+        #expect(height(stats) - height(nil) >= gutter + 2)
+        #expect(height(WorktreeWireStats(ahead: 0, behind: 0, hasUncommittedChanges: false, baseRef: nil)) == height(nil))
+    }
+
+    @Test("@spec IOS-9.14: While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and its time.", arguments: [320.0, 393.0, 540.0])
     func longNamesDoNotInflateRows(width: Double) {
         func size(name: String) -> CGSize {
             let row = WorktreePanes(path: "/repo/feature", displayName: name, repoDisplayName: "graftty",
@@ -26,7 +58,8 @@ struct MobileAttentionPaneTests {
                 prBadge: .init(number: 405, state: .open, checks: .success,
                     url: URL(string: "https://github.com/btucker/graftty/pull/405")!),
                 stats: .init(ahead: 12, behind: 25, hasUncommittedChanges: true, baseRef: "main"),
-                attentionText: nil, layout: nil)
+                attentionText: nil, layout: nil,
+                sidebar: .init(id: "feature", projectID: "graftty", activityTime: Date().addingTimeInterval(-3600).timeIntervalSinceReferenceDate))
             let hosted = UIHostingController(rootView: WorktreeBlock(worktree: row,
                 theme: nil, isActive: false, isOpening: false,
                 projectColumn: true, context: SidebarWorktreeContext(worktree: row),
@@ -38,6 +71,45 @@ struct MobileAttentionPaneTests {
         #expect(long.width <= width)
         #expect(long.height == short.height)
         #expect(long.height >= 44)
+    }
+
+    @Test("@spec IOS-13.12: While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one and its time at the trailing edge.")
+    func rowShowsItsNameThenItsPRThenItsTime() async throws {
+        let row = WorktreePanes(path: "/repo/Fix-Row", displayName: "Fix-Row", repoDisplayName: "graftty",
+            displayBranch: "Fix-Row", state: .running, isMainCheckout: false,
+            prBadge: .init(number: 405, state: .open, checks: .success,
+                url: URL(string: "https://github.com/btucker/graftty/pull/405")!),
+            stats: nil, attentionText: nil, layout: nil)
+        let time = Date().addingTimeInterval(-300)
+        func labelled(_ time: Date?) async throws -> [String: CGRect] {
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 100))
+            window.rootViewController = UIHostingController(rootView: WorktreeRowContent(worktree: row, theme: nil,
+                isActive: false, isOpening: false, attentionCount: 0, time: time)
+                .frame(width: 360).accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
+            window.makeKeyAndVisible()
+            defer { window.isHidden = true; window.rootViewController = nil }
+            var labels: [String: CGRect] = [:]
+            for _ in 0..<100 {
+                window.rootViewController?.view.layoutIfNeeded()
+                labels = [:]
+                for object in accessibilityObjects(in: window.rootViewController!.view) {
+                    if let label = object.accessibilityLabel { labels[label] = object.accessibilityFrame }
+                }
+                if labels["Fix-Row"] != nil, time == nil || labels.count > 2 { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            return labels
+        }
+        let labels = try await labelled(time)
+        let name = try #require(labels["Fix-Row"])
+        let badge = try #require(labels.first { $0.key.contains("405") }?.value)
+        let shown = try #require(labels[time.formatted(.relative(presentation: .named))])
+        #expect(name.maxX <= badge.minX)
+        #expect(badge.maxX <= shown.minX)
+        #expect(shown.maxX > 300)
+        // IOS-13.8: a row with no known time shows none.
+        let timeless = try await labelled(nil)
+        #expect(!timeless.keys.contains(time.formatted(.relative(presentation: .named))))
     }
 
     @Test("@spec IOS-9.13: When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.")

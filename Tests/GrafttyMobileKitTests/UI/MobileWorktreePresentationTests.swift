@@ -5,7 +5,7 @@ import Testing
 @testable import GrafttyMobileKit
 
 struct MobileWorktreePresentationTests {
-    @Test("@spec IOS-9.11: While the mobile worktree list is not searching, the application shall display pinned agents across projects before temporary worktrees, preserving host order within each region and retaining a flat list for hosts without pin metadata.")
+    @Test("@spec IOS-9.11: While moving between mobile worktrees outside the worktree list, the application shall order pinned agents across projects before temporary worktrees, preserving host order within each region and retaining a flat list for hosts without pin metadata.")
     func membershipRegionsPreserveHostOrder() {
         let rows = [row("task-a", project: "a", pinned: false),
                     row("pin-a", project: "a", pinned: true),

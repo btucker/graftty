@@ -20,7 +20,8 @@ struct WorktreeBlock: View {
     let onSelect: () -> Void
     /// A row from a sleeping host's last report: dim, and tapping wakes it.
     var isAsleep = false
-    /// Text after the name: see `SidebarMergedRows.hostText`.
+    /// Text after the name: see `SidebarMergedRows.hostText`. The Projects
+    /// screen also names the project here.
     var hostText: String? = nil
     let onReport: () -> Void
     var onRemove: (() -> Void)? = nil
@@ -77,18 +78,12 @@ struct WorktreeBlock: View {
     private var worktreeRow: some View {
         if worktree.state == .creating, worktree.showsCreationProgress {
             Button(action: onSelect) {
-                HStack(spacing: 0) {
-                    rowIdentity
-                    DivergenceGutter(stats: worktree.stats, theme: theme)
-                }
+                rowIdentity
             }.buttonStyle(.plain)
         } else if worktree.state.isInFlight {
             // Non-tappable: on-disk path may not exist yet
             // (`.creating`) or is about to vanish (`.deleting`).
-            HStack(spacing: 0) {
-                rowIdentity
-                DivergenceGutter(stats: worktree.stats, theme: theme)
-            }
+            rowIdentity
         } else {
             HStack(spacing: 0) {
                 MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { rowIdentity }
@@ -99,11 +94,6 @@ struct WorktreeBlock: View {
                     }.buttonStyle(.borderless)
                         .foregroundStyle(theme?.sidebarSecondaryText ?? .secondary)
                         .accessibilityLabel("Remove worktree \(worktree.displayName)")
-                } else {
-                    MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
-                        DivergenceGutter(stats: worktree.stats, theme: theme)
-                            .frame(minHeight: 24)
-                    }
                 }
             }
             .disabled(isOpening)
@@ -113,7 +103,8 @@ struct WorktreeBlock: View {
     private var rowIdentity: some View {
         WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
             theme: theme, isActive: isActive, isOpening: isOpening,
-            attentionCount: isAsleep ? 0 : max(context.pending.count, status.needsAttention ? 1 : 0), hostText: hostText)
+            attentionCount: isAsleep ? 0 : max(context.pending.count, status.needsAttention ? 1 : 0), hostText: hostText,
+            time: WorktreeActivitySections.rowDate(worktree, context: context))
             .frame(minHeight: 24)
             .contentShape(Rectangle())
     }
@@ -141,6 +132,7 @@ private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
 }
 
 /// Compact worktree heading with its name and forge reference on one line.
+/// @spec IOS-13.12: While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one and its time at the trailing edge.
 struct WorktreeRowContent: View {
     let worktree: WorktreePanes
     var project: SidebarProject? = nil
@@ -154,6 +146,10 @@ struct WorktreeRowContent: View {
     let isOpening: Bool
     let attentionCount: Int
     var hostText: String? = nil
+    /// When it asked or was last active.
+    var time: Date? = nil
+
+    private static let titleSize: CGFloat = 15
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -161,12 +157,12 @@ struct WorktreeRowContent: View {
             typeIcon
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    primaryText.accessibilityLabel(worktree.displayName)
-                        .font(.system(size: 11, weight: .semibold)).tracking(0.3)
+                    primaryText
+                        .font(.system(size: Self.titleSize, weight: .semibold))
                         .lineLimit(1).truncationMode(.tail)
                     if let hostText {
                         Text(hostText)
-                            .font(.system(size: 10.5))
+                            .font(.caption)
                             .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
                             .lineLimit(1)
                             .layoutPriority(-1)
@@ -176,9 +172,18 @@ struct WorktreeRowContent: View {
                     WorktreeCreationProgressView(progress: progress)
                         .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }
             if let badge = worktree.prBadge { SidebarPRBadge(badge: badge).fixedSize() }
             Spacer(minLength: 0)
+            if let time {
+                TimelineView(.periodic(from: .now, by: 60)) { timeline in
+                    Text(WorktreeActivitySections.ageText(since: time, now: timeline.date))
+                        .font(.caption)
+                        .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
+                        .accessibilityLabel(time.formatted(.relative(presentation: .named)))
+                }
+                .fixedSize()
+            }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -189,7 +194,7 @@ struct WorktreeRowContent: View {
         // An emoji's intrinsic text metrics must not move the title when
         // the slot changes to a progress indicator.
         Text(" ")
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: Self.titleSize, weight: .semibold))
             .hidden()
             .frame(width: 18, height: 18)
             .overlay {
@@ -209,7 +214,7 @@ struct WorktreeRowContent: View {
                 }
             }
             .alignmentGuide(.firstTextBaseline) { dimensions in
-                let font = UIFont.systemFont(ofSize: 11, weight: .semibold)
+                let font = UIFont.systemFont(ofSize: Self.titleSize, weight: .semibold)
                 return dimensions[VerticalAlignment.center] + (font.ascender + font.descender) / 2
             }
     }
@@ -238,15 +243,15 @@ struct WorktreeRowContent: View {
     private var primaryText: some View {
         let primary = theme?.sidebarPrimaryText(isActive: isActive)
         if worktree.state == .stale {
-            Text(worktree.displayName.uppercased())
+            Text(worktree.displayName)
                 .strikethrough()
                 .foregroundStyle(themedOrSecondary(theme?.sidebarStaleText))
         } else if worktree.isMainCheckout {
-            Text(worktree.displayName.uppercased())
+            Text(worktree.displayName)
                 .italic()
                 .foregroundColor(primary)
         } else {
-            Text(worktree.displayName.uppercased())
+            Text(worktree.displayName)
                 .foregroundColor(primary)
         }
     }
@@ -254,7 +259,7 @@ struct WorktreeRowContent: View {
 
 }
 
-/// Trailing `↑X[+] ↓Y`, shared with the Mac worktree row. Without a theme
+/// `↑X[+] ↓Y`, shared with the Mac worktree row. Without a theme
 /// (compact) the ahead side stays on the system secondary color.
 struct DivergenceGutter: View {
     let stats: WorktreeWireStats?
