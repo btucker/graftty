@@ -531,7 +531,7 @@ struct RemoteMacsSection: View {
             stats: sidebarStats(for: worktree),
             baseRef: worktree.stats?.baseRef,
             prBadge: worktree.prBadge,
-            attentionCount: isAsleep ? 0 : max(counts.attentionByWorktree[worktree.path, default: 0], status.needsAttention ? 1 : 0),
+            attentionCount: isAsleep ? 0 : status.headingAttentionCount(counts.attentionByWorktree[worktree.path, default: 0]),
             project: project, projectIconData: projectIcons[projectID], hostLabel: hostLabel,
             brief: context.brief,
             onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) }

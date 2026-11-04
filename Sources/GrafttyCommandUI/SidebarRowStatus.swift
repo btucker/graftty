@@ -18,6 +18,13 @@ public enum SidebarRowStatus: Equatable, Sendable {
         }
     }
 
+    /// How much attention the row's heading should show. A line that needs
+    /// attention carries the hand itself, so the heading only speaks for
+    /// attention this line doesn't represent.
+    public func headingAttentionCount(_ attention: Int) -> Int {
+        needsAttention ? 0 : attention
+    }
+
     /// Clicking the line goes to the pane that spoke, not just the worktree.
     public var opensPane: Bool {
         switch self {

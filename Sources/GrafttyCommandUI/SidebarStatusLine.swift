@@ -5,6 +5,8 @@ import SwiftUI
 public struct SidebarStatusLine: View {
     /// Lines the text up under the worktree's name on mobile rows.
     public static let mobileLeadingInset: CGFloat = 28
+    private static let handWidth: CGFloat = 16
+    private static let handGap: CGFloat = 5
 
     public let status: SidebarRowStatus
     public let secondary: Color
@@ -28,10 +30,26 @@ public struct SidebarStatusLine: View {
         }
     }
 
+    private var isQuestion: Bool {
+        if case .question = status { return true }
+        return false
+    }
+
     private func line(_ text: String, label: String) -> some View {
         Text(text).font(.caption).lineLimit(2).help(text)
+            // On the text alone: on the whole line it would also replace the hand's label.
+            .accessibilityLabel(label)
+            // Hangs in the caller's leading inset, so the text stays under the name.
+            .overlay(alignment: Alignment(horizontal: .leading, vertical: .firstTextBaseline)) {
+                if status.needsAttention {
+                    SidebarActivityBadge(1)
+                        .frame(width: Self.handWidth, alignment: .trailing)
+                        .offset(x: -(Self.handWidth + Self.handGap))
+                        // A question's label already says it needs input.
+                        .accessibilityHidden(isQuestion)
+                }
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 2)
-            .accessibilityLabel(label)
     }
 }

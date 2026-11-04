@@ -1081,7 +1081,7 @@ struct SidebarView: View {
                 repoPath: repo.path
             ),
             prBadge: prBadge,
-            attentionCount: max(activityCounts.attentionByWorktree[worktree.path, default: 0], status.needsAttention ? 1 : 0),
+            attentionCount: status.headingAttentionCount(activityCounts.attentionByWorktree[worktree.path, default: 0]),
             project: project, projectIconData: iconStore.iconData(for: repo), hostLabel: hostLabel,
             identityMenu: worktree.path == repo.path ? nil : { anchor in
                 WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,

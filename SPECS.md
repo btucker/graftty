@@ -398,6 +398,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.207** While a worktree is open, the application shall name its host when it's remote, and name this Mac only when the project also lives on another host.
 
+**LAYOUT-2.208** While a worktree row's status line needs attention, the application shall show the waiting hand immediately before that line rather than on the row heading, and shall keep the hand on the heading only when attention is pending and the status line does not carry it.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

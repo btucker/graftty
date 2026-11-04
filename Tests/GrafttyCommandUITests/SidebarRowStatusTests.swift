@@ -29,6 +29,17 @@ struct SidebarRowStatusTests {
         #expect(!SidebarRowStatus.whereWeAre("w", isUnread: true).opensPane)
     }
 
+    @Test("@spec LAYOUT-2.208: While a worktree row's status line needs attention, the application shall show the waiting hand immediately before that line rather than on the row heading, and shall keep the hand on the heading only when attention is pending and the status line does not carry it.")
+    func handSitsOnTheLineThatNeedsAttention() {
+        for line in [SidebarRowStatus.question("q", paneID: nil), .notification("n", paneID: nil), .whereWeAre("w", isUnread: true)] {
+            #expect(line.headingAttentionCount(3) == 0)
+        }
+        for line in [SidebarRowStatus.working("w"), .whereWeAre("w", isUnread: false), .none] {
+            #expect(line.headingAttentionCount(2) == 2)
+            #expect(line.headingAttentionCount(0) == 0)
+        }
+    }
+
     @Test func questionBeatsNotification() {
         let row = worktree(layout: leaf("a", attention: "Which image?", source: .agentStop), attention: "Build done", source: .userNotify)
         guard case .question("Which image?", "a") = status(row) else { Issue.record("\(status(row))"); return }

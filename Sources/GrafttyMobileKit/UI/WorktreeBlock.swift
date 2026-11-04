@@ -103,7 +103,7 @@ struct WorktreeBlock: View {
     private var rowIdentity: some View {
         WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
             theme: theme, isActive: isActive, isOpening: isOpening,
-            attentionCount: isAsleep ? 0 : max(context.pending.count, status.needsAttention ? 1 : 0), hostText: hostText,
+            attentionCount: isAsleep ? 0 : status.headingAttentionCount(context.pending.count), hostText: hostText,
             time: WorktreeActivitySections.rowDate(worktree, context: context))
             .frame(minHeight: 24)
             .contentShape(Rectangle())
