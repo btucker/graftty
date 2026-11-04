@@ -8,6 +8,43 @@ import GrafttyProtocol
 
 @MainActor
 struct ProjectIconCacheTests {
+    @Test("A reset drops loaded images and abandons a fetch in flight")
+    func resetDropsImagesAndAbandonsFetches() async throws {
+        let pixels = [UInt8](repeating: 128, count: 4 * 4 * 4)
+        let provider = try #require(CGDataProvider(data: Data(pixels) as CFData))
+        let image = try #require(CGImage(width: 4, height: 4, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: 16, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+        let bytes = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(bytes, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        let data = bytes as Data
+        let project = SidebarProject(id: "project", repositoryID: "/project", name: "Project",
+            iconRevision: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+        let cache = ProjectIconCache()
+        cache.reconcile([project])
+        await cache.load(for: project) { data }
+        #expect(cache.icons[project.id] != nil)
+
+        cache.reset()
+        #expect(cache.icons.isEmpty)
+
+        // Nothing is expected until the next host's projects are reconciled.
+        await cache.load(for: project) { data }
+        #expect(cache.icons.isEmpty)
+
+        cache.reconcile([project])
+        await cache.load(for: project) {
+            cache.reset()
+            cache.reconcile([project])
+            return data
+        }
+        #expect(cache.icons.isEmpty, "A fetch that began before the reset must not repopulate the cache")
+        await cache.load(for: project) { data }
+        #expect(cache.icons[project.id] != nil)
+    }
+
     @Test("@spec REMOTE-22.19: When a headless host sends a bounded source image, the application shall verify its revision and cache a thumbnail no larger than 64 pixels while rejecting invalid or oversized images.")
     func sourceImagesBecomeThumbnails() async throws {
         // Valid large PNG with an uncompressed ancillary payload to exceed the old 64 KiB wire limit.
