@@ -2382,6 +2382,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.60** While a mobile terminal's parser is behind by its backlog threshold, the application shall pace further terminal output with waits bounded to one second, while continuing to apply control frames that arrive ahead of that output.
 
+**IOS-4.61** While a mobile worktree header shows a home checkout whose project image has loaded, the application shall draw that image instead of the project initials, without applying it to another project or to a linked worktree's emoji.
+
+**IOS-4.62** When a project image has loaded into the shared icon cache, the application shall draw it in the phone terminal header wash for the home checkout.
+
+**IOS-4.63** When the selected host changes, the application shall discard the project images loaded from the previous host, whose project identifiers another host may reuse.
+
+**IOS-4.64** If the user leaves the worktree list while a project image is loading, then the application shall still finish loading it so the screens above the list can draw it.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.

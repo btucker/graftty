@@ -1,3 +1,4 @@
+import GrafttyCommandUI
 import GrafttyProtocol
 import GrafttyRemoteClient
 import SwiftUI
@@ -25,6 +26,10 @@ struct RemoteWorktreeUpdatesProvider: Sendable {
     }
 }
 
+private struct ProjectIconCacheKey: EnvironmentKey {
+    static let defaultValue: ProjectIconCache? = nil
+}
+
 private struct RemoteWorktreeUpdatesKey: EnvironmentKey {
     static let defaultValue: RemoteWorktreeUpdatesProvider? = nil
 }
@@ -34,6 +39,11 @@ private struct MobileNotificationPaneActivationKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
+    /// The list loads project images and every mobile header draws from it.
+    var projectIconCache: ProjectIconCache? {
+        get { self[ProjectIconCacheKey.self] }
+        set { self[ProjectIconCacheKey.self] = newValue }
+    }
     var mobileNotificationPaneActivation: MobileNotificationPaneActivation? {
         get { self[MobileNotificationPaneActivationKey.self] }
         set { self[MobileNotificationPaneActivationKey.self] = newValue }

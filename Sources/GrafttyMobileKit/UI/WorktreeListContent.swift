@@ -1,7 +1,10 @@
 #if canImport(UIKit)
 import GrafttyProtocol
 import GrafttyCommandUI
+import OSLog
 import SwiftUI
+
+private let projectIconLogger = Logger(subsystem: "com.quotably.graftty", category: "project-icon")
 
 struct SidebarWorktreeViewportRow: Equatable {
     var id: String
@@ -49,8 +52,8 @@ public struct WorktreeListContent: View {
 
     @Bindable private var navigation: SidebarNavigationState
     @State private var sidebarSnapshot: SidebarSnapshot?
-    @State private var projectIconCache = ProjectIconCache()
-    private var projectIcons: [String: Data] { projectIconCache.icons }
+    @Environment(\.projectIconCache) private var projectIconCache
+    private var projectIcons: [String: Data] { projectIconCache?.icons ?? [:] }
     @State private var listEditMode: EditMode = .inactive
     @State private var reportWorktreeID: String?
     @State private var reportOrder: SidebarWorktreeReportOrder?
@@ -438,7 +441,7 @@ public struct WorktreeListContent: View {
             case let .frame(.snapshot(list, metadata)):
                 appliedPushCount &+= 1
                 applyLoadedList(list)
-                await applyNavigationMetadata(list, metadata: metadata, requestHostID: requestHostID)
+                applyNavigationMetadata(list, metadata: metadata, requestHostID: requestHostID)
             }
         }
     }
@@ -782,10 +785,10 @@ public struct WorktreeListContent: View {
         guard appliedPushCount == pushes,
               Self.shouldApplyNavigationSnapshot(snapshot, matching: list),
               case let .snapshot(_, metadata)? = snapshot else { return }
-        await applyNavigationMetadata(list, metadata: metadata, requestHostID: requestHostID)
+        applyNavigationMetadata(list, metadata: metadata, requestHostID: requestHostID)
     }
 
-    private func applyNavigationMetadata(_ list: [WorktreePanes], metadata: SidebarSnapshot?, requestHostID: UUID) async {
+    private func applyNavigationMetadata(_ list: [WorktreePanes], metadata: SidebarSnapshot?, requestHostID: UUID) {
         guard presentedHostID == requestHostID else { return }
         if sidebarSnapshot != metadata { sidebarSnapshot = metadata }
         let projects = metadata?.projects ?? SidebarProjection.projects(list)
@@ -793,17 +796,37 @@ public struct WorktreeListContent: View {
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = list.first(where: { $0.path == selectedWorktreePath }).map(SidebarProjection.projectID) ?? projects.first?.id
         }
+        guard let projectIconCache else { return }
         projectIconCache.reconcile(projects)
-        for project in projects where project.isAvailable {
-            guard let revision = project.iconRevision else { continue }
-            await projectIconCache.load(for: project) {
-                let response = try? await RelayedWorktreeManagementClient.send(
-                    .projectIcon(repositoryID: project.repositoryID, revision: revision), using: remoteConnectionProvider)
-                guard presentedHostID == requestHostID else { return nil }
-                if case .icon(let data) = response { return data }
-                return nil
+        Self.loadProjectIcons(projects, into: projectIconCache) { project, revision in
+            await fetchProjectIcon(project, revision: revision, requestHostID: requestHostID)
+        }
+    }
+
+    /// Headers on the screens pushed above this list draw from the same cache,
+    /// and a push cancels this view's tasks, so the fetches run outside them.
+    /// That also keeps a slow fetch from holding up the pushed frames behind it.
+    static func loadProjectIcons(_ projects: [SidebarProject], into cache: ProjectIconCache,
+                                 fetch: @escaping @MainActor (SidebarProject, String) async -> Data?) {
+        Task {
+            for project in projects where project.isAvailable {
+                guard let revision = project.iconRevision else { continue }
+                await cache.load(for: project) { await fetch(project, revision) }
             }
         }
+    }
+
+    private func fetchProjectIcon(_ project: SidebarProject, revision: String, requestHostID: UUID) async -> Data? {
+        do {
+            let response = try await RelayedWorktreeManagementClient.send(
+                .projectIcon(repositoryID: project.repositoryID, revision: revision), using: remoteConnectionProvider)
+            guard presentedHostID == requestHostID else { return nil }
+            if case .icon(let data) = response { return data }
+            projectIconLogger.error("project icon refused for \(project.name, privacy: .private): \(String(describing: response), privacy: .public)")
+        } catch {
+            projectIconLogger.error("project icon fetch failed for \(project.name, privacy: .private): \(String(describing: error), privacy: .public)")
+        }
+        return nil
     }
 
     private func worktreeList(_ worktrees: [WorktreePanes]) -> some View {

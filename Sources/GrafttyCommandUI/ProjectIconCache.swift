@@ -23,6 +23,14 @@ public final class ProjectIconCache {
         }
     }
 
+    /// Drops every image and abandons any fetch in flight.
+    public func reset() {
+        icons = [:]
+        expectedRevisions = [:]
+        resolvedRevisions = [:]
+        requests = [:]
+    }
+
     public func load(for project: SidebarProject, fetch: () async -> Data?) async {
         guard let revision = project.iconRevision, expectedRevisions[project.id] == revision,
               resolvedRevisions[project.id] != revision, requests[project.id] == nil else { return }

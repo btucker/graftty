@@ -32,6 +32,7 @@ public struct RootView: View {
         connectionsAllowedInitially: false
     )
     @State private var nearbyMacBrowser = NearbyMacBrowser()
+    @State private var projectIconCache = ProjectIconCache()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     struct NotificationIO {
         let fetch: @MainActor (Host) async throws -> [WorktreePanes]
@@ -47,7 +48,8 @@ public struct RootView: View {
     init(hostStore: HostStore, gate: BiometricGate, notifications: MobileAgentNotifications,
         appState: IPadAppState, notificationIO: NotificationIO,
         connectionProvider: RemoteConnectionProvider? = nil,
-        retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil) {
+        retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil,
+        projectIconCache: ProjectIconCache? = nil) {
         _hostStore = State(initialValue: hostStore)
         _gate = State(initialValue: gate)
         _notifications = State(initialValue: notifications)
@@ -55,6 +57,7 @@ public struct RootView: View {
         self.notificationIO = notificationIO
         self.notificationConnectionProvider = connectionProvider
         if let retainedPanes { _retainedPanes = State(initialValue: retainedPanes) }
+        if let projectIconCache { _projectIconCache = State(initialValue: projectIconCache) }
     }
 
     public var body: some View {
@@ -76,6 +79,7 @@ public struct RootView: View {
         .environment(\.biometricGate, gate)
         .environment(\.retainedMobilePanes, retainedPanes)
         .environment(\.remoteConnectionCoordinator, coordinator)
+        .environment(\.projectIconCache, projectIconCache)
         .environment(\.remoteWorktreeUpdates, RemoteWorktreeUpdatesProvider { [coordinator] host in
             coordinator.isPaired(host) ? coordinator.worktreeUpdates(for: host) : nil
         })
@@ -112,7 +116,11 @@ public struct RootView: View {
             recordSelectedPane()
         }
         .onChange(of: iPadAppState.latestWorktrees) { _, _ in recordSelectedPane() }
-        .onChange(of: iPadAppState.selectedHostId) { _, _ in retainedPanes.stopAll() }
+        .onChange(of: iPadAppState.selectedHostId) { _, _ in
+            retainedPanes.stopAll()
+            // Project IDs are unique only within a host: a headless host's are repo paths.
+            projectIconCache.reset()
+        }
         .onChange(of: horizontalSizeClass) { previous, current in
             guard previous == .regular, current != .regular else { return }
             syncCompactNavigationToSelection()
