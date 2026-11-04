@@ -22,8 +22,12 @@ struct MobileWorktreeIdentityHeader: View {
                 }
                 Text(worktree.displayName).font(.title3.weight(.semibold)).lineLimit(1).truncationMode(.middle)
             }
-            if let badge = worktree.prBadge {
-                SidebarPRBadge(badge: badge).padding(.top, 2)
+            if worktree.prBadge != nil || worktree.stats?.isEmpty == false {
+                HStack(spacing: 8) {
+                    if let badge = worktree.prBadge { SidebarPRBadge(badge: badge) }
+                    DivergenceGutter(stats: worktree.stats, theme: theme)
+                }
+                .padding(.top, 2)
             }
             if let purpose {
                 Text(purpose).font(.subheadline).foregroundStyle(theme.foreground.opacity(0.82))

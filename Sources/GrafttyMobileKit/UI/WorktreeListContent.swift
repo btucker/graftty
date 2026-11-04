@@ -21,6 +21,54 @@ private struct SidebarWorktreeViewportPreference: PreferenceKey {
     }
 }
 
+/// Names a part of the worktree list. Pinned can fold away.
+private struct WorktreeListSectionTitle: View {
+    let title: String
+    let count: Int?
+    let color: Color
+    let isCollapsed: Binding<Bool>?
+
+    init(_ title: String, count: Int? = nil, color: Color, isCollapsed: Binding<Bool>? = nil) {
+        self.title = title
+        self.count = count
+        self.color = color
+        self.isCollapsed = isCollapsed
+    }
+
+    var body: some View {
+        Group {
+            if let isCollapsed {
+                Button { isCollapsed.wrappedValue.toggle() } label: {
+                    HStack(spacing: 6) {
+                        label
+                        Spacer(minLength: 0)
+                        Image(systemName: isCollapsed.wrappedValue ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(isCollapsed.wrappedValue ? "Collapsed" : "Expanded")
+            } else {
+                HStack { label; Spacer(minLength: 0) }
+            }
+        }
+        .foregroundStyle(color)
+        .padding(.top, 10)
+        .padding(.horizontal, 8)
+        .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .moveDisabled(true)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var label: some View {
+        Text(count.map { "\(title) · \($0)" } ?? title)
+            .font(.footnote.weight(.semibold))
+    }
+}
+
 public struct WorktreeListContent: View {
     public static let iPadRowTrailingInset: CGFloat = 2
     static let iPadRowLeadingInset: CGFloat = 10
@@ -43,15 +91,20 @@ public struct WorktreeListContent: View {
     @State private var listEditMode: EditMode = .inactive
     /// A row's merged identity: paths alone can repeat across hosts.
     @State private var reportWorktreeID: String?
-    /// Holds rows still while a report is open, so one doesn't move out from
-    /// under its popover when activity arrives.
-    @State private var frozenMergedOrder: [String: [String]] = [:]
+    /// Holds rows still while someone is reaching for one, so a row doesn't
+    /// move out from under a finger or a report when activity arrives.
+    @State private var rowHold: WorktreeActivitySections.Hold?
+    @State private var isTouchingList = false
+    @State private var showsAllProjectsNeedingYou = false
     @State private var orderMutationID: UUID?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var worktreeScrollSpace = UUID()
     @State private var restoringWorktreeScroll = false
     @State private var restoredWorktreeProjectID: String?
     private var orderMutationInFlight: Bool { orderMutationID != nil }
+    /// The iPad sidebar paints a themed background that system colors don't follow.
+    var sectionTitleColor: Color { theme?.sidebarSecondaryText ?? .secondary }
+    private var isHoldingRows: Bool { isTouchingList || reportWorktreeID != nil || listEditMode.isEditing }
     // NavigationSplitView gives its narrow sidebar a compact size class even
     // when RootView chose the iPad layout. Follow the navigation container.
     private let isSidebar: Bool
@@ -193,6 +246,7 @@ public struct WorktreeListContent: View {
                 rememberWorktree(worktree)
             }
         }
+        .onChange(of: isHoldingRows) { _, holding in rowHold = holding ? activitySections(merged, holding: nil).hold : nil }
         .onChange(of: navigation.query) { _, _ in closeReport() }
         .onChange(of: navigation.selectedProjectID) { _, _ in closeReport() }
         .onDisappear {
@@ -386,11 +440,7 @@ public struct WorktreeListContent: View {
         if !isSidebar, let projectID = destinationProjectID(in: merged) {
             projectDetail(merged: merged, projectID: projectID)
         } else if !showsProjectRail {
-            VStack(spacing: 0) {
-                TextField("Find any project or worktree", text: $navigation.query)
-                    .textFieldStyle(.roundedBorder).padding(.horizontal, 12)
-                worktreeList(merged: merged, projectIDs: merged.projects.map(\.id))
-            }
+            worktreeList(merged: merged, projectIDs: merged.projects.map(\.id))
         } else if isSidebar {
             HStack(spacing: 0) {
                 ProjectNavigationRail(projects: projects, counts: counts, workingCounts: working, icons: icons,
@@ -411,27 +461,78 @@ public struct WorktreeListContent: View {
         } else {
             List {
                 pendingCreationRows()
-                ForEach(projects) { project in
-                    NavigationLink(value: ProjectStep(project: project)) {
-                        HStack(spacing: 10) {
-                            ProjectIdentityView(project: project, imageData: icons[project.id])
-                            Text(project.name)
-                            Spacer()
-                            if let status = project.ownerSubtitle(localDeviceID: nil) { Text(status).font(.caption) }
-                            HStack(spacing: 4) {
-                                SidebarActivityBadge(working[project.id, default: 0], kind: .working)
-                                SidebarActivityBadge(counts[project.id, default: 0])
-                            }
-                        }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                }.onMove { offsets, destination in
-                    guard let source = offsets.first, source != destination, source + 1 != destination else { return }
-                    let target = destination > source ? destination - 1 : destination
-                    guard projects.indices.contains(target) else { return }
-                    moveProject(projects[source].id, projects[target].id, destination > source)
-                }.moveDisabled(orderMutationInFlight)
-            }.toolbar { EditButton() }
+                let needingYou = activitySections(merged, holding: rowHold).needsYou
+                if !needingYou.isEmpty {
+                    let preview = WorktreeActivitySections.preview(needingYou, showsAll: showsAllProjectsNeedingYou)
+                    Section {
+                        ForEach(preview.rows) { row in worktreeRow(row, merged: merged, namesProject: true) }
+                        if preview.hidden > 0 {
+                            Button("\(preview.hidden) more") { showsAllProjectsNeedingYou = true }
+                                .font(.caption).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                    } header: {
+                        // A header, not a row: this list's rows sit in a card that
+                        // only rounds the corners of its first and last rows.
+                        WorktreeListSectionTitle("Needs you", count: needingYou.count, color: .orange).padding(.bottom, 4)
+                    }
+                }
+                Section {
+                    ForEach(projects) { project in
+                        NavigationLink(value: ProjectStep(project: project)) {
+                            HStack(spacing: 10) {
+                                ProjectIdentityView(project: project, imageData: icons[project.id])
+                                Text(project.name)
+                                Spacer()
+                                if let status = project.ownerSubtitle(localDeviceID: nil) { Text(status).font(.caption) }
+                                HStack(spacing: 4) {
+                                    SidebarActivityBadge(working[project.id, default: 0], kind: .working)
+                                    SidebarActivityBadge(counts[project.id, default: 0])
+                                }
+                            }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }.onMove { offsets, destination in
+                        guard let source = offsets.first, source != destination, source + 1 != destination else { return }
+                        let target = destination > source ? destination - 1 : destination
+                        guard projects.indices.contains(target) else { return }
+                        moveProject(projects[source].id, projects[target].id, destination > source)
+                    }.moveDisabled(orderMutationInFlight)
+                } header: {
+                    if !needingYou.isEmpty { WorktreeListSectionTitle("All projects", color: sectionTitleColor).padding(.bottom, 4) }
+                }
+            }
+            .background(ListTouchTracker(isTouching: $isTouchingList))
+            .toolbar { listOptions }
+            // This screen has no search of its own. A query left behind would
+            // filter the next list opened, with that list's search field hidden.
+            .onAppear { navigation.query = "" }
         }
+    }
+
+    /// Reordering is occasional, so it stays out of the way until asked for.
+    /// While it's on, its way out has to be visible.
+    @ToolbarContentBuilder
+    private var listOptions: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            if listEditMode.isEditing {
+                Button("Done") { withAnimation { listEditMode = .inactive } }
+            } else {
+                Menu {
+                    Button("Edit", systemImage: "pencil") { withAnimation { listEditMode = .active } }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+            }
+        }
+    }
+
+    /// Row identity is unique across projects, so one set of sections covers a
+    /// project screen, the Projects screen, and a hold shared between them.
+    private func activitySections(_ merged: SidebarMergedRows, projectIDs: [String]? = nil,
+                                  holding hold: WorktreeActivitySections.Hold?) -> WorktreeActivitySections {
+        let parts = (projectIDs ?? merged.projects.map(\.id)).map { merged.sections(for: $0) }
+        return WorktreeActivitySections.make(pinned: parts.flatMap(\.pinned), temporary: parts.flatMap(\.temporary),
+                                             context: { navigation.worktreeContext($0) }, holding: hold)
     }
 
     private func mergedIcons(_ merged: SidebarMergedRows) -> [String: Data] {
@@ -452,7 +553,6 @@ public struct WorktreeListContent: View {
             if let selected = merged.project(id: selectedProjectID), !selected.representative.isAvailable {
                 Text("Every host for this project is offline.").font(.caption).foregroundStyle(.secondary)
             }
-            TextField("Find any project or worktree", text: $navigation.query).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
             worktreeList(merged: merged, projectIDs: selectedProjectID.map { [$0] } ?? [])
         }
     }
@@ -546,7 +646,6 @@ public struct WorktreeListContent: View {
     private func showReport(_ worktree: WorktreePanes) {
         guard reportWorktreeID == nil, case .loaded = state else { return }
         selectionIntentGeneration &+= 1
-        frozenMergedOrder = merged.temporaryOrder()
         reportWorktreeID = MergedWorktreeList.identity(worktree)
     }
 
@@ -554,7 +653,6 @@ public struct WorktreeListContent: View {
         guard reportWorktreeID != nil else { return }
         selectionIntentGeneration &+= 1
         reportWorktreeID = nil
-        frozenMergedOrder = [:]
     }
 
     private func openReportTarget(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) async -> Bool {
@@ -692,20 +790,25 @@ public struct WorktreeListContent: View {
                             }
                         } else {
                             ForEach(projectIDs, id: \.self) { projectID in
-                                let sections = merged.sections(for: projectID, frozenOrder: frozenMergedOrder[projectID])
+                                let sections = activitySections(merged, projectIDs: [projectID], holding: rowHold)
                                 Section {
+                                    if !sections.needsYou.isEmpty {
+                                        WorktreeListSectionTitle("Needs you", count: sections.needsYou.count, color: .orange)
+                                        ForEach(sections.needsYou) { row in worktreeRow(row, merged: merged).moveDisabled(true) }
+                                    }
                                     if !sections.pinned.isEmpty {
-                                        SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: pinnedCollapsed(projectID), separatesPrecedingRows: false)
-                                            .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
+                                        WorktreeListSectionTitle("Pinned", color: sectionTitleColor, isCollapsed: pinnedCollapsed(projectID))
                                         if !pinnedCollapsed(projectID).wrappedValue {
                                             pinnedNodes(sections.pinned, projectID: projectID, merged: merged)
                                         }
                                     }
-                                    if !sections.pinned.isEmpty, !sections.temporary.isEmpty {
-                                        Divider().listRowSeparator(.hidden).listRowBackground(Color.clear)
+                                    if !sections.working.isEmpty {
+                                        WorktreeListSectionTitle("Working", count: sections.working.count, color: sectionTitleColor)
+                                        ForEach(sections.working) { row in worktreeRow(row, merged: merged).moveDisabled(true) }
                                     }
-                                    ForEach(sections.temporary) { row in
-                                        worktreeRow(row, merged: merged).moveDisabled(true)
+                                    if !sections.recent.isEmpty {
+                                        WorktreeListSectionTitle("Recent", color: sectionTitleColor)
+                                        ForEach(sections.recent) { row in worktreeRow(row, merged: merged).moveDisabled(true) }
                                     }
                                     ForEach(merged.offlineHosts(for: projectID), id: \.self) { host in
                                         Text("\(host) is offline").font(.caption).italic().foregroundStyle(.secondary)
@@ -723,7 +826,10 @@ public struct WorktreeListContent: View {
                     .modifier(SidebarWorktreeListStyle(projectColumn: true))
                     .scrollContentBackground(.hidden)
                     .refreshable { await feed.refresh() }
-                    .toolbar { EditButton() }
+                    .searchable(text: $navigation.query, placement: .navigationBarDrawer(displayMode: .automatic),
+                                prompt: "Find any project or worktree")
+                    .toolbar { listOptions }
+                    .background(ListTouchTracker(isTouching: $isTouchingList))
                     .coordinateSpace(name: worktreeScrollSpace)
                     .onPreferenceChange(SidebarWorktreeViewportPreference.self) { positions in
                         guard !restoringWorktreeScroll, let scrollKey, restoredWorktreeProjectID == scrollKey,
@@ -804,7 +910,7 @@ public struct WorktreeListContent: View {
     }
 
     @ViewBuilder
-    private func worktreeRow(_ row: MergedWorktreeRow, merged: SidebarMergedRows) -> some View {
+    private func worktreeRow(_ row: MergedWorktreeRow, merged: SidebarMergedRows, namesProject: Bool = false) -> some View {
         let wt = row.row
         let memberID = SidebarProjection.projectID(wt)
         let reportID = MergedWorktreeList.identity(wt)
@@ -820,7 +926,10 @@ public struct WorktreeListContent: View {
             context: navigation.worktreeContext(wt),
             onSelect: { beginSelectingWorktree(wt) },
             isAsleep: row.availability == .asleep,
-            hostText: SidebarMergedRows.hostText(row, isLocal: false),
+            hostText: namesProject
+                ? [merged.project(id: merged.mergedID(forMember: memberID))?.name, SidebarMergedRows.hostText(row, isLocal: false)]
+                    .compactMap { $0 }.joined(separator: " · ")
+                : SidebarMergedRows.hostText(row, isLocal: false),
             onReport: { showReport(wt) },
             onRemove: { pendingDelete = PendingDelete(worktree: wt, action: .delete) }
         )

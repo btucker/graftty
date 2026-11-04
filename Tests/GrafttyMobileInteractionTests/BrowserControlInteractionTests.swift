@@ -13,7 +13,7 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         }
     }
 
-    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name and, on iPadOS 26, its PR and summary as the subtitle, on its emoji wash, offer its agents from the title menu, keep the summary and tabs directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
+    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name and, on iPadOS 26, its PR, Git divergence, and summary as the subtitle, on its emoji wash, offer its agents from the title menu, keep the summary and tabs directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
     func testWorkspaceLeadsWithIdentityAndOneControlGroup() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
         let app = XCUIApplication()

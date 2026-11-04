@@ -25,6 +25,18 @@ public indirect enum MergedWorktreeNode: Sendable, Equatable, Identifiable {
     }
 }
 
+extension Array where Element == MergedWorktreeNode {
+    /// Every row in displayed order, with folders flattened.
+    public var flattenedRows: [MergedWorktreeRow] {
+        flatMap { node -> [MergedWorktreeRow] in
+            switch node {
+            case .row(let row): return [row]
+            case .folder(_, _, let children): return children.flattenedRows
+            }
+        }
+    }
+}
+
 public enum MergedWorktreeList {
     /// Stable across routes: a relayed row's path is an alias, its metadata id isn't.
     public static func identity(_ row: WorktreePanes) -> String {

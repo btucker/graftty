@@ -146,8 +146,80 @@ struct WorktreeListContentTests {
         try await waitUntilRendered(hosted, ["first", "second"])
     }
 
+    @Test("@spec IOS-13.14: When the compact Projects screen appears, the application shall clear any worktree search, because a list opened afterwards would filter by it with its search field hidden.", .timeLimit(.minutes(1)))
+    func projectsScreenClearsALeftoverSearch() async throws {
+        let suite = "worktree-projects-search-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: SidebarLayoutPolicy.projectRailSettingKey)
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true)
+        navigation.query = "left over"
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        frames.continuation.yield(.frame(.snapshot([sampleWorktree(path: "/repo/first")])))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 700))
+        window.rootViewController = UIHostingController(rootView: rendered(WorktreeListContent(
+            feed: makeFeed(frames.stream), onSelect: { _, _ in }, onSelectPane: { _, _, _ in }, navigation: navigation
+        ), defaults: defaults))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        for _ in 0..<150 where !navigation.query.isEmpty {
+            window.rootViewController?.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(navigation.query.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aProjectListKeepsItsSearch() async throws {
+        let suite = "worktree-project-search-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let member = SidebarProject(id: "member", repositoryID: "/repo", name: "repo")
+        let row = WorktreePanes(path: "/repo/first", displayName: "first", repoDisplayName: "repo", displayBranch: "main", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: SidebarWorktreeMetadata(id: "member:first", projectID: member.id))
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true)
+        navigation.selectedProjectID = member.id
+        navigation.query = "first"
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        frames.continuation.yield(.frame(.snapshot([row], sidebar: SidebarSnapshot(projects: [member]))))
+        let hosted = try host(WorktreeListContent(
+            feed: makeFeed(frames.stream), onSelect: { _, _ in }, onSelectPane: { _, _, _ in },
+            navigation: navigation, project: member
+        ), defaults: defaults)
+        defer { hosted.isHidden = true }
+        try await waitUntilRendered(hosted, ["first"])
+        #expect(navigation.query == "first")
+    }
+
+    @Test("@spec IOS-13.13: While a mobile worktree list is shown, the application shall offer Edit from a More menu, replace that menu with Done while editing, and reveal search when the list is pulled down.", .timeLimit(.minutes(1)))
+    func listOffersMoreAndSearch() async throws {
+        let suite = "worktree-list-options-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: SidebarLayoutPolicy.projectRailSettingKey)
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        frames.continuation.yield(.frame(.snapshot([sampleWorktree(path: "/repo/first")])))
+        let list = WorktreeListContent(feed: makeFeed(frames.stream), onSelect: { _, _ in }, onSelectPane: { _, _, _ in },
+            navigation: SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 700))
+        window.rootViewController = UIHostingController(rootView: NavigationStack { rendered(list, defaults: defaults) })
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        try await waitUntilRendered(window, ["first"])
+        func navigationItems(_ controller: UIViewController) -> [UINavigationItem] {
+            [controller.navigationItem] + controller.children.flatMap(navigationItems)
+        }
+        let items = navigationItems(try #require(window.rootViewController))
+        let buttons = items.flatMap { ($0.rightBarButtonItems ?? []) + $0.trailingItemGroups.flatMap(\.barButtonItems) }
+        #expect(buttons.contains { $0.title == "More" && $0.menu != nil })
+        #expect(!buttons.contains { $0.title == "Edit" })
+        let searching = try #require(items.first { $0.searchController != nil })
+        #expect(searching.hidesSearchBarWhenScrolling)
+    }
+
     @Test("""
-@spec IPAD-1.19: While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
+@spec IPAD-1.19: While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so a row's time sits near the sidebar edge.
 """)
     func tightTrailingInset() {
         #expect(WorktreeListContent.iPadRowTrailingInset <= 4)
