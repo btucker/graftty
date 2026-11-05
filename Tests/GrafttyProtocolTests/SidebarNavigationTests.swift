@@ -319,6 +319,7 @@ struct SidebarNavigationTests {
             .moveProject(id: "stable", relativeTo: "other", after: true),
             .moveWorktree(repositoryID: "repo-route", worktreeID: "route", relativeTo: "target", after: false),
             .projectIcon(repositoryID: "repo-route", revision: "hash"),
+            .worktreeIcon(worktreeID: "route", revision: "hash:25"),
             .acknowledgeOccurrence(worktreeID: "route", paneID: "pane", occurrence: .init(timestamp: nil, text: "Review", source: .agentStop))
         ]
         for request in requests {

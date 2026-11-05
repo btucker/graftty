@@ -17,8 +17,10 @@ public struct WorktreeIdentityView: View {
             switch identity {
             case .project:
                 ProjectIdentityView(project: project, imageData: imageData, size: size)
-            case .emoji(let emoji):
+            case .emoji(let emoji), .drawing(_, let emoji?):
                 Text(emoji).font(.system(size: size * 0.8)).frame(width: size, height: size)
+            case .drawing(_, nil):
+                EmptyView()
             case .none:
                 EmptyView()
             }

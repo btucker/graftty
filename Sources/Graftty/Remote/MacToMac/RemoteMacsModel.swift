@@ -1101,6 +1101,10 @@ final class RemoteMacsModel: ObservableObject {
             }
             return response
 
+        case let .worktreeIcon(worktreeID, revision):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
+            return await forwardManagement(identity: route.identity, request: .worktreeIcon(worktreeID: route.path, revision: revision))
+
         case let .projectIcon(repositoryID, revision):
             guard let route = relayRouter.resolveRepository(repositoryID) else { return nil }
             return await forwardManagement(identity: route.identity, request: .projectIcon(repositoryID: route.repositoryID, revision: revision))
