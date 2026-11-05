@@ -42,6 +42,9 @@ extension HeadlessHostRuntime {
                   current.path == repo.path, current.iconOverride == repo.iconOverride else { continue }
             projectIcons[repo.id] = HostProjectIcon(path: repo.path, override: repo.iconOverride,
                 checked: Date(), data: data, revision: data.map(ProjectIconDiscovery.revision))
+            #if canImport(AppKit)
+            ProjectHueRegistry.shared.set(data.flatMap(WorktreeDrawingRenderer.dominantHue(ofImage:)), for: repo.id)
+            #endif
         }
     }
 

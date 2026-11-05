@@ -70,7 +70,7 @@ public extension AppState {
         guard recap.icon != nil else { return recap }
         let repo = repos.first { repo in repo.worktrees.contains { $0.path == callerPath } }
         SidebarHostNavigation.adoptReportedDrawing(recap, worktreePath: callerPath,
-            projectHue: repo.flatMap { SidebarHostNavigation.projectHueProvider?($0) }, in: &repos)
+            projectHue: repo.flatMap { ProjectHueRegistry.shared.hue(for: $0.id) }, in: &repos)
         var stripped = recap
         stripped.icon = nil
         return stripped

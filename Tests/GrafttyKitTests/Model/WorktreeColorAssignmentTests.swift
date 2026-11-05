@@ -1,3 +1,5 @@
+import Foundation
+import GrafttyProtocol
 import Testing
 @testable import GrafttyKit
 
@@ -17,5 +19,17 @@ struct WorktreeColorAssignmentTests {
 
     @Test func distanceWraps() {
         #expect(WorktreeColorAssignment.hueDistance(350, 10) == 20)
+    }
+
+    @Test func projectIconHueIsAvoided() {
+        let repo = RepoEntry(path: "/repo", displayName: "Repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main"), WorktreeEntry(path: "/repo/parser-cache", branch: "parser-cache")])
+        ProjectHueRegistry.shared.set(250, for: repo.id)
+        defer { ProjectHueRegistry.shared.set(nil, for: repo.id) }
+        var state = AppState(repos: [repo])
+        var recap = AttentionRecap(title: "Parser cache", completed: "Cached.", next: "Measure.", emoji: "🗃️")
+        recap.icon = WorktreeDrawingSVGTests.svg("<circle cx=\"32\" cy=\"32\" r=\"9\" fill=\"primary\"/>")
+        state.recordAgentRecap(recap, callerPath: "/repo/parser-cache", reportedAt: Date())
+        #expect(state.repos[0].worktrees[1].drawingHue == 70)
     }
 }

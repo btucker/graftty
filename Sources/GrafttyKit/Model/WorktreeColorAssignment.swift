@@ -1,3 +1,5 @@
+import Foundation
+
 /// @spec LAYOUT-2.199
 /// Picks a worktree drawing's OKLCH hue. OKLCH hue spacing matches what the
 /// eye sees, so evenly spaced hues stay distinguishable at icon size.
@@ -19,5 +21,24 @@ public enum WorktreeColorAssignment {
     public static func hueDistance(_ a: Double, _ b: Double) -> Double {
         let difference = abs(a - b).truncatingRemainder(dividingBy: 360)
         return min(difference, 360 - difference)
+    }
+}
+
+/// The dominant hue of each project's icon, recorded by whichever host
+/// decoded that icon. Drawing colors avoid it so a worktree stands apart
+/// from the project icon shown on the row above it.
+public final class ProjectHueRegistry: @unchecked Sendable {
+    public static let shared = ProjectHueRegistry()
+    private let lock = NSLock()
+    private var hues: [UUID: Double] = [:]
+
+    public func set(_ hue: Double?, for repositoryID: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        hues[repositoryID] = hue
+    }
+
+    public func hue(for repositoryID: UUID) -> Double? {
+        lock.lock(); defer { lock.unlock() }
+        return hues[repositoryID]
     }
 }

@@ -374,8 +374,9 @@ extension GrafttyApp {
                         return .ok
                     }
                 }
-            case .worktreeIcon:
-                return .icon(nil)
+            case let .worktreeIcon(worktreeID, revision):
+                let repos = await MainActor.run { appStateBinding.wrappedValue.repos }
+                return .icon(WorktreeDrawingRenderer.iconResponse(for: repos, worktreeID: worktreeID, revision: revision))
             case let .projectIcon(repositoryID, revision):
                 return await MainActor.run {
                     guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == repositoryID }),

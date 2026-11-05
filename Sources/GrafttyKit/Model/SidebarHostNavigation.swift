@@ -68,9 +68,6 @@ public enum SidebarHostNavigation {
         }
     }
 
-    /// Supplies the project icon's dominant OKLCH hue where the host can decode icons.
-    nonisolated(unsafe) public static var projectHueProvider: (@Sendable (RepoEntry) -> Double?)?
-
     /// @spec AGENT-3.34
     /// A linked worktree adopts its first valid drawing. A later drawing
     /// replaces it only when the same recap says the purpose changed, so

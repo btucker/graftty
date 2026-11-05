@@ -30,7 +30,15 @@ final class SidebarHostController: ObservableObject {
             return RemoteDeviceID.generate()
         }
     }
-    @Published private(set) var icons: [String: Data] = [:]
+    @Published private(set) var icons: [String: Data] = [:] {
+        didSet {
+            // Drawing colors avoid the project icon's hue (LAYOUT-2.199).
+            for key in Set(icons.keys).union(oldValue.keys) where icons[key] != oldValue[key] {
+                guard let id = UUID(uuidString: key) else { continue }
+                ProjectHueRegistry.shared.set(icons[key].flatMap(WorktreeDrawingRenderer.dominantHue(ofImage:)), for: id)
+            }
+        }
+    }
     let remoteIconCache = ProjectIconCache()
     var remoteIcons: [String: Data] { remoteIconCache.icons }
     private var resolvedSignatures: [UUID: IconSignature] = [:]
