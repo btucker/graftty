@@ -10,6 +10,8 @@ public enum WorktreeDrawingRenderer {
     public static let pixels = 256
     public static let maxPNGBytes = 262_144
     private static let cache = NSCache<NSString, NSData>()
+    /// Agents often single-quote attributes so the SVG fits in recap JSON.
+    private static let paintToken = try? NSRegularExpression(pattern: #"(fill|stroke|stop-color)=(["'])([a-z-]+)\2"#)
 
     /// Palette tokens as sRGB hex. The accent is the primary hue rotated 40°.
     public static func palette(hue: Double) -> [String: String] {
@@ -28,11 +30,9 @@ public enum WorktreeDrawingRenderer {
 
     public static func png(svg: String, hue: Double, pixels: Int = pixels) -> Data? {
         let colors = palette(hue: hue)
-        // Agents often single-quote attributes so the SVG fits in recap JSON.
-        let painted = try? NSRegularExpression(pattern: #"(fill|stroke|stop-color)=(["'])([a-z-]+)\2"#)
         let range = NSRange(svg.startIndex..., in: svg)
         var filled = svg
-        for match in (painted?.matches(in: svg, range: range) ?? []).reversed() {
+        for match in (paintToken?.matches(in: svg, range: range) ?? []).reversed() {
             guard let attribute = Range(match.range(at: 1), in: svg), let token = Range(match.range(at: 3), in: svg),
                   let color = colors[String(svg[token])], let whole = Range(match.range, in: filled) else { continue }
             filled.replaceSubrange(whole, with: "\(svg[attribute])=\"\(color)\"")
@@ -62,12 +62,19 @@ public enum WorktreeDrawingRenderer {
         for repo in repos where repo.path != worktreeID {
             guard let worktree = repo.worktrees.first(where: { $0.path == worktreeID }),
                   let drawing = worktree.drawing, drawing.revision == revision, let hue = worktree.drawingHue else { continue }
-            if let cached = cache.object(forKey: revision as NSString) { return cached as Data }
-            guard let data = png(svg: drawing.svg, hue: hue) else { return nil }
-            cache.setObject(data as NSData, forKey: revision as NSString)
-            return data
+            return png(for: drawing, hue: hue)
         }
         return nil
+    }
+
+    /// Renders each revision once. A failed render is remembered as empty, so
+    /// a drawing the renderer rejects is not re-rendered on every request.
+    public static func png(for drawing: WorktreeDrawing, hue: Double) -> Data? {
+        let key = drawing.revision as NSString
+        if let cached = cache.object(forKey: key) { return cached.length > 0 ? cached as Data : nil }
+        let data = png(svg: drawing.svg, hue: hue)
+        cache.setObject((data ?? Data()) as NSData, forKey: key)
+        return data
     }
 
     /// The chroma-weighted OKLCH hue of an image, or nil for a gray image.

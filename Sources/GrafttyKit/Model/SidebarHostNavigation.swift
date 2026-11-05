@@ -220,7 +220,10 @@ public enum SidebarHostNavigation {
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
                      attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop, lastAgentStop: worktree.lastAgentStop, brief: worktree.brief, history: worktree.history,
                      agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.path == repositoryPath ? nil : worktree.emoji, isPinned: worktree.isPinned)
+        #if canImport(AppKit)
+        // A host without the renderer could never serve the image (LAYOUT-2.204).
         metadata.drawingRevision = worktree.path == repositoryPath ? nil : worktree.drawing?.revision
+        #endif
         metadata.emojiChosenByUser = worktree.emojiChosenByUser ? true : nil
         return metadata
     }

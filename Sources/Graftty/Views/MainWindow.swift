@@ -578,8 +578,8 @@ struct MainWindow: View {
     }
 
     private var selectedIdentityImageData: Data? {
-        guard case .drawing(let revision, _) = selectedIdentity, let path = selectedWorktree?.path else { return selectedProjectIconData }
-        return WorktreeDrawingRenderer.iconResponse(for: appState.repos, worktreeID: path, revision: revision)
+        guard case .drawing = selectedIdentity, let worktree = selectedWorktree else { return selectedProjectIconData }
+        return iconStore.drawingData(for: worktree)
     }
 
     private var selectedProjectIconData: Data? {

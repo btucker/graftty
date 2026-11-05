@@ -29,12 +29,18 @@ extension HeadlessHostRuntime {
             if let cached = projectIcons[repo.id], cached.path != repo.path || cached.override != repo.iconOverride {
                 projectIcons[repo.id] = nil
             }
-            let data = await Task.detached(priority: .utility) {
-                switch repo.iconOverride {
-                case .initials: return nil as Data?
-                case .image(let data): return data.count <= 2 * 1024 * 1024 ? data : nil
-                case nil: return ProjectIconDiscovery.discoverSource(at: URL(fileURLWithPath: repo.path))
+            let (data, hue) = await Task.detached(priority: .utility) { () -> (Data?, Double?) in
+                let data: Data? = switch repo.iconOverride {
+                case .initials: nil
+                case .image(let data): data.count <= 2 * 1024 * 1024 ? data : nil
+                case nil: ProjectIconDiscovery.discoverSource(at: URL(fileURLWithPath: repo.path))
                 }
+                // Decoding a full-size source icon must stay off the runtime's main actor.
+                #if canImport(AppKit)
+                return (data, data.flatMap(WorktreeDrawingRenderer.dominantHue(ofImage:)))
+                #else
+                return (data, nil)
+                #endif
             }.value
             guard projectIconLoads[repo.id]?.token == token else { continue }
             projectIconLoads[repo.id] = nil
@@ -42,9 +48,7 @@ extension HeadlessHostRuntime {
                   current.path == repo.path, current.iconOverride == repo.iconOverride else { continue }
             projectIcons[repo.id] = HostProjectIcon(path: repo.path, override: repo.iconOverride,
                 checked: Date(), data: data, revision: data.map(ProjectIconDiscovery.revision))
-            #if canImport(AppKit)
-            ProjectHueRegistry.shared.set(data.flatMap(WorktreeDrawingRenderer.dominantHue(ofImage:)), for: repo.id)
-            #endif
+            ProjectHueRegistry.shared.set(hue, for: repo.id)
         }
     }
 

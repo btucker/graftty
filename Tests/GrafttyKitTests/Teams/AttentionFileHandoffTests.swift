@@ -387,4 +387,32 @@ struct AttentionFileHandoffTests {
         ) == .queued)
         #expect(try handoff.consumeStops { _ in } == 1)
     }
+
+    @Test("@spec AGENT-3.38: When an agent reports a recap carrying a drawing of up to 16384 bytes, the application shall deliver that recap and its stopped turn through the file handoff.")
+    func largestDrawingSurvivesHandoff() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-attention-drawing-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        let element = "<path d='M8 8h48' stroke='ink'/>"
+        let open = "<svg viewBox='0 0 64 64'>", close = "</svg>"
+        let icon = open + String(repeating: element, count: (WorktreeDrawingSVG.maxBytes - open.utf8.count - close.utf8.count)
+            / element.utf8.count) + close
+        #expect(try WorktreeDrawingSVG.validate(icon) == icon)
+        var recap = AttentionRecap(title: "Parser cache", context: "Parsing dominates cold starts.",
+                                   completed: "Cached parsed pages.", next: "Measure the warm path.", emoji: "🗃️")
+        recap.icon = icon
+
+        try handoff.publish(recap, worktree: "/repo/one", agentID: "codex-1")
+        var published: [AttentionRecap] = []
+        #expect(try handoff.consumeActivities { if case .recap(let event) = $0 { published.append(event.recap) } } == 1)
+        #expect(published.first?.icon == icon)
+
+        try handoff.stage(recap, worktree: "/repo/two", agentID: "codex-2")
+        #expect(try handoff.stop(worktree: "/repo/two", agentID: "codex-2", runtime: .codex,
+                                 sessionID: "thread-2", paneSessionName: nil, stopHookActive: false) == .queued)
+        var stops: [AttentionFileStopEvent] = []
+        #expect(try handoff.consumeStops { stops.append($0) } == 1)
+        #expect(stops.first?.recap?.icon == icon)
+    }
 }

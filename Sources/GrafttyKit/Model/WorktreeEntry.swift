@@ -279,9 +279,14 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         attention != nil || !paneAttention.isEmpty || unseenAgentStop != nil
     }
 
+    /// Only a recap newer than the brief may change it or the worktree's drawing.
+    public func isNewerThanBrief(_ reportedAt: Date) -> Bool {
+        brief.map { $0.updatedAt < reportedAt.timeIntervalSinceReferenceDate } ?? true
+    }
+
     /// Report content persists independently of unread completion attention.
     public mutating func recordAgentRecap(_ recap: AttentionRecap, at reportedAt: Date) {
-        guard brief.map({ $0.updatedAt < reportedAt.timeIntervalSinceReferenceDate }) ?? true else { return }
+        guard isNewerThanBrief(reportedAt) else { return }
         if brief == nil { brief = WorktreeBrief(recap: recap, at: reportedAt) }
         else {
             let boundary = history?.inputs.last(where: { $0.timestamp <= reportedAt.timeIntervalSinceReferenceDate })

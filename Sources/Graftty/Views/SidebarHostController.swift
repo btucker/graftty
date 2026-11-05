@@ -39,6 +39,25 @@ final class SidebarHostController: ObservableObject {
             }
         }
     }
+    /// Rendered worktree drawings by revision. A render takes milliseconds, so
+    /// it runs off the main actor and rows show the emoji until it lands.
+    @Published private(set) var drawings: [String: Data] = [:]
+    private var requestedDrawings = Set<String>()
+
+    func drawingData(for worktree: WorktreeEntry) -> Data? {
+        guard let drawing = worktree.drawing, let hue = worktree.drawingHue else { return nil }
+        if let data = drawings[drawing.revision] { return data }
+        // A failed render stays requested, so view updates do not retry it.
+        guard requestedDrawings.insert(drawing.revision).inserted else { return nil }
+        Task {
+            let data = await Task.detached(priority: .userInitiated) {
+                WorktreeDrawingRenderer.png(for: drawing, hue: hue)
+            }.value
+            if let data { drawings[drawing.revision] = data }
+        }
+        return nil
+    }
+
     let remoteIconCache = ProjectIconCache()
     var remoteIcons: [String: Data] { remoteIconCache.icons }
     private var resolvedSignatures: [UUID: IconSignature] = [:]

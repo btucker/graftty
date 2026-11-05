@@ -21,8 +21,28 @@ private func repos() -> [RepoEntry] {
     ])]
 }
 
-@Suite("@spec AGENT-3.34: When a valid recap carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only when the same recap sets purposeChanged, keep its assigned hue across redraws, and ignore drawings for the home checkout.")
+@Suite("@spec AGENT-3.34: When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only when the same recap sets purposeChanged, keep its assigned hue across redraws, and ignore drawings for the home checkout.")
 struct WorktreeDrawingAdoptionTests {
+    @Test func staleRecapKeepsNewerDrawing() {
+        var state = AppState(repos: repos())
+        let now = Date()
+        state.recordAgentRecap(recap(icon: secondDrawing), callerPath: "/repo/parser-cache", reportedAt: now)
+        state.recordAgentRecap(recap(icon: firstDrawing, purposeChanged: true), callerPath: "/repo/parser-cache",
+                               reportedAt: now.addingTimeInterval(-60))
+        #expect(state.repos[0].worktrees[1].drawing?.svg == secondDrawing)
+    }
+
+    @Test func droppedStopKeepsNewerDrawing() {
+        var state = AppState(repos: repos())
+        let now = Date()
+        for (icon, stoppedAt) in [(secondDrawing, now), (firstDrawing, now.addingTimeInterval(-60))] {
+            _ = state.recordStoppedTurn(callerPath: "/repo/parser-cache", runtime: .codex, callerAgentID: "agent",
+                                        sessionID: "session", paneSessionName: nil, recap: recap(icon: icon, purposeChanged: true),
+                                        stoppedAt: stoppedAt, paneTitle: { _, _ in nil })
+        }
+        #expect(state.repos[0].worktrees[1].drawing?.svg == secondDrawing)
+    }
+
     @Test func adoptsFirstDrawing() throws {
         var repos = repos()
         SidebarHostNavigation.adoptReportedDrawing(recap(icon: firstDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
@@ -86,6 +106,21 @@ struct WorktreeDrawingAdoptionTests {
         #expect(repos[0].worktrees[1].emojiChosenByUser)
         SidebarHostNavigation.clearEmoji(worktreeID: id, in: &repos)
         #expect(!repos[0].worktrees[1].emojiChosenByUser)
+    }
+}
+
+@Suite("@spec LAYOUT-2.204: If a host cannot render worktree drawings, then the application shall not advertise their revisions, so clients keep showing the emoji instead of requesting images the host cannot serve.")
+struct WorktreeDrawingAdvertisingTests {
+    @Test func metadataAdvertisesOnlyRenderableDrawings() {
+        var worktree = WorktreeEntry(path: "/repo/parser-cache", branch: "parser-cache")
+        worktree.drawingHue = 25
+        worktree.drawing = WorktreeDrawing(svg: firstDrawing, hue: 25)
+        let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: "repo", folders: [], repositoryPath: "/repo")
+        #if canImport(AppKit)
+        #expect(metadata.drawingRevision == worktree.drawing?.revision)
+        #else
+        #expect(metadata.drawingRevision == nil)
+        #endif
     }
 }
 

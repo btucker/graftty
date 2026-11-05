@@ -75,5 +75,6 @@ struct WorktreeDrawingSVGTests {
 
     @Test func rejectionsExplainThemselves() {
         #expect(WorktreeDrawingSVG.Rejection.element("script").description.contains("script"))
+        #expect(WorktreeDrawingSVG.Rejection.malformed.description.contains("comments"))
     }
 }

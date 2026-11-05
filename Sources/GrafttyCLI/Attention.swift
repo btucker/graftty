@@ -42,19 +42,20 @@ struct AttentionReport: ParsableCommand {
     }
 
     static func decodeRecap(_ data: Data) throws -> AttentionRecap {
-        let recap: AttentionRecap
+        var recap: AttentionRecap
         do {
             recap = try JSONDecoder().decode(AttentionRecap.self, from: data)
         } catch {
-            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, icon, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+        }
+        // Checked first so an oversized drawing reports its own reason, not the brief-text error.
+        if let icon = recap.icon {
+            do { recap.icon = try WorktreeDrawingSVG.validate(icon) } catch {
+                throw ValidationError("the worktree drawing in \"icon\" was rejected: \(error)")
+            }
         }
         guard recap.isValid else {
             throw ValidationError("recap fields must be brief text, and emoji choices must be single glyphs")
-        }
-        if let icon = recap.icon {
-            do { _ = try WorktreeDrawingSVG.validate(icon) } catch {
-                throw ValidationError("the worktree drawing in \"icon\" was rejected: \(error)")
-            }
         }
         guard recap.emoji != nil else {
             throw ValidationError("include a task-specific \"emoji\" in the recap JSON and retry; optionally add up to three distinct \"emojiAlternatives\". Older cached skills may omit this requirement.")

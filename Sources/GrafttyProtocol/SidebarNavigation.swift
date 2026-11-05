@@ -124,6 +124,7 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     /// An optional SVG drawing of the worktree. The host adopts and removes it
     /// before the recap is stored or broadcast.
     public var icon: String?
+    public static let maxIconBytes = 16_384
 
     public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil,
                 emoji: String? = nil, emojiAlternatives: [String]? = nil,
@@ -169,7 +170,7 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
         let historyValid = historyEntry.map {
             validText($0.headline, limit: 160) && ($0.detail.map { validText($0, limit: 300) } ?? true)
         } ?? true
-        let iconValid = icon.map { $0.utf8.count <= 16_384 } ?? true
+        let iconValid = icon.map { $0.utf8.count <= Self.maxIconBytes } ?? true
         return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid && historyValid && iconValid
     }
 }

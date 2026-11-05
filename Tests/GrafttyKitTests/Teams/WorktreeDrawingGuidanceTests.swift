@@ -26,6 +26,7 @@ struct WorktreeDrawingGuidanceTests {
             #expect(text.contains("`primary`"))
             #expect(text.contains("purposeChanged"))
             #expect(text.contains("`emoji`"))
+            #expect(text.components(separatedBy: "- Optional `icon`").count == 2, "The drawing guidance appears once")
         }
     }
 

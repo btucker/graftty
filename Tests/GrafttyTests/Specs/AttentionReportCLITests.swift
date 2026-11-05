@@ -31,6 +31,13 @@ struct AttentionReportCLITests {
         } catch {
             #expect(String(describing: error).contains("script"))
         }
+        recap.icon = "<svg viewBox=\"0 0 64 64\"><g>\(String(repeating: " ", count: WorktreeDrawingSVG.maxBytes))</g></svg>"
+        do {
+            _ = try AttentionReport.decodeRecap(JSONEncoder().encode(recap))
+            Issue.record("An oversized drawing was accepted")
+        } catch {
+            #expect(String(describing: error).contains("exceeds"))
+        }
         recap.icon = "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"9\" fill=\"primary\"/></svg>"
         #expect(try AttentionReport.decodeRecap(JSONEncoder().encode(recap)).icon == recap.icon)
     }

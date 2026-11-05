@@ -38,7 +38,7 @@ public struct WorktreeHeaderWash: Equatable {
         case .emoji(let emoji) where !emoji.isEmpty:
             glyph = .emoji(emoji)
         case .drawing(_, let emoji):
-            if let iconData, iconData.count <= 262_144, PlatformImage.decode(iconData) != nil {
+            if let iconData, DrawingImage.decode(iconData) != nil {
                 glyph = .drawing(iconData)
             } else if let emoji, !emoji.isEmpty {
                 glyph = .emoji(emoji)
@@ -133,7 +133,7 @@ private struct WorktreeHeaderWashGlyph: View {
                     .clipShape(RoundedRectangle(cornerRadius: size * 0.18))
             }
         case .drawing(let data):
-            if let image = PlatformImage.decode(data) {
+            if let image = DrawingImage.decode(data) {
                 image.resizable().scaledToFit().frame(width: size, height: size)
             }
         case .initials(let initials, let accent):
@@ -145,7 +145,7 @@ private struct WorktreeHeaderWashGlyph: View {
     }
 }
 
-private enum PlatformImage {
+enum PlatformImage {
     static func decode(_ data: Data) -> Image? {
         #if canImport(AppKit)
         return NSImage(data: data).map { Image(nsImage: $0) }

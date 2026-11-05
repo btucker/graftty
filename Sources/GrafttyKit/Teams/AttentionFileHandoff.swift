@@ -335,9 +335,8 @@ public struct AttentionFileHandoff: Sendable {
         var events: [(URL, AttentionFileActivityEvent)] = []
         for file in files {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            let hasCapturedContent = file.lastPathComponent.hasPrefix("response-") || file.lastPathComponent.hasPrefix("progress-")
-            let maximumSize = hasCapturedContent ? 65_536 : 16_384
-            guard values.isRegularFile == true, (values.fileSize ?? 0) <= maximumSize else {
+            // Recaps and stops can carry a JSON-escaped 16 KB worktree drawing (AGENT-3.38).
+            guard values.isRegularFile == true, (values.fileSize ?? 0) <= 65_536 else {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }

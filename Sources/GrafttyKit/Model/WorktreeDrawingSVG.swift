@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 #if canImport(FoundationXML)
 import FoundationXML
 #endif
@@ -25,7 +26,7 @@ public struct WorktreeDrawing: Codable, Sendable, Equatable {
 /// subset passes: shapes, groups, gradients and text, painted with palette
 /// tokens that the host fills from the worktree's assigned color.
 public enum WorktreeDrawingSVG {
-    public static let maxBytes = 16_384
+    public static let maxBytes = AttentionRecap.maxIconBytes
     public static let tokens: Set<String> = ["primary", "primary-light", "primary-dark", "accent", "accent-light", "ink", "white", "none"]
 
     public enum Rejection: Error, Equatable, CustomStringConvertible {
@@ -35,7 +36,7 @@ public enum WorktreeDrawingSVG {
         public var description: String {
             switch self {
             case .tooLarge: "the drawing exceeds \(WorktreeDrawingSVG.maxBytes) bytes"
-            case .malformed: "the drawing must be well-formed SVG with viewBox=\"0 0 64 64\""
+            case .malformed: "the drawing must be one well-formed <svg viewBox=\"0 0 64 64\"> element without comments, CDATA, DOCTYPE or processing instructions"
             case .element(let name): "<\(name)> is not allowed in a drawing; use path, rect, circle, ellipse, line, polyline, polygon, g, text and gradients"
             case .attribute(let name): "the \(name) attribute is not allowed in a drawing"
             case .paint(let value): "paint \(value) is not a palette token; use \(WorktreeDrawingSVG.tokens.sorted().joined(separator: ", ")) or url(#gradient)"

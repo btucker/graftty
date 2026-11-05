@@ -1,10 +1,5 @@
 import SwiftUI
 import GrafttyProtocol
-#if canImport(AppKit)
-import AppKit
-#elseif canImport(UIKit)
-import UIKit
-#endif
 
 /// Renders the effective identity without storing a copy of the project's icon.
 public struct WorktreeIdentityView: View {
@@ -42,13 +37,6 @@ public struct WorktreeIdentityView: View {
 /// Decodes a rendered worktree drawing for display at identity size.
 enum DrawingImage {
     static func decode(_ data: Data) -> Image? {
-        guard data.count <= 262_144 else { return nil }
-        #if canImport(AppKit)
-        return NSImage(data: data).map { Image(nsImage: $0) }
-        #elseif canImport(UIKit)
-        return UIImage(data: data).map { Image(uiImage: $0) }
-        #else
-        return nil
-        #endif
+        data.count <= WorktreeDrawingCache.maxBytes ? PlatformImage.decode(data) : nil
     }
 }
