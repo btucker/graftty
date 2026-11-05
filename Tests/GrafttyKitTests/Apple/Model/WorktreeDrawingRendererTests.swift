@@ -39,6 +39,13 @@ struct WorktreeDrawingRendererTests {
         #expect(WorktreeDrawingRenderer.palette(hue: 25)["ink"] == "#24242c")
     }
 
+    @Test func singleQuotedTokensAreColored() throws {
+        let quoted = WorktreeDrawingSVGTests.svg("<rect x='16' y='16' width='32' height='32' fill='primary'/>")
+        let single = try pixels(#require(WorktreeDrawingRenderer.png(svg: quoted, hue: 25)))
+        let double = try pixels(#require(WorktreeDrawingRenderer.png(svg: square, hue: 25)))
+        #expect(pixel(single, x: 128, y: 128) == pixel(double, x: 128, y: 128))
+    }
+
     @Test func whiteEdgeSurroundsShape() throws {
         let image = try pixels(#require(WorktreeDrawingRenderer.png(svg: square, hue: 25)))
         let edge = pixel(image, x: 196, y: 128)

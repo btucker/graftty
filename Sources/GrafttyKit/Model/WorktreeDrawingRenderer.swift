@@ -28,11 +28,12 @@ public enum WorktreeDrawingRenderer {
 
     public static func png(svg: String, hue: Double, pixels: Int = pixels) -> Data? {
         let colors = palette(hue: hue)
-        let painted = try? NSRegularExpression(pattern: #"(fill|stroke|stop-color)="([a-z-]+)""#)
+        // Agents often single-quote attributes so the SVG fits in recap JSON.
+        let painted = try? NSRegularExpression(pattern: #"(fill|stroke|stop-color)=(["'])([a-z-]+)\2"#)
         let range = NSRange(svg.startIndex..., in: svg)
         var filled = svg
         for match in (painted?.matches(in: svg, range: range) ?? []).reversed() {
-            guard let attribute = Range(match.range(at: 1), in: svg), let token = Range(match.range(at: 2), in: svg),
+            guard let attribute = Range(match.range(at: 1), in: svg), let token = Range(match.range(at: 3), in: svg),
                   let color = colors[String(svg[token])], let whole = Range(match.range, in: filled) else { continue }
             filled.replaceSubrange(whole, with: "\(svg[attribute])=\"\(color)\"")
         }
