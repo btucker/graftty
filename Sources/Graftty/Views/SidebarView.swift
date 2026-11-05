@@ -822,6 +822,9 @@ struct SidebarView: View {
             attentionCount: max(0, activityCounts.attentionByWorktree[worktree.path, default: 0]
                 - agentSessions.reduce(0) { $0 + activityCounts.attentionByPane[$1, default: 0] }),
             project: project, projectIconData: iconStore.iconData(for: repo),
+            drawingData: worktree.drawing.flatMap {
+                WorktreeDrawingRenderer.iconResponse(for: appState.repos, worktreeID: worktree.path, revision: $0.revision)
+            },
             identityMenu: worktree.path == repo.path ? nil : { anchor in
                 WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
                                         onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
