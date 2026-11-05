@@ -67,6 +67,16 @@ A result that technically works but fails the user:
 - **Notifications keep the emoji text.** Notification subtitles (`AgentStopNotification.swift`, used by `AgentNotificationRouter` on Mac and by `MobileAgentNotifications` on iOS) stay as they are. The emoji is still reported with every recap, so it is always available there. PNG notification attachments are out of scope.
 - **Graftty enforces the redraw rule.** Once a worktree has a drawing, Graftty rejects a replacement unless the agent's latest recap set `purposeChanged: true`, the same way `WorktreeBrief` gates title changes. Rejections give an error the agent can act on. This rule gets its own EARS spec and test.
 
+### Settled during implementation
+
+These replace the matching statements above.
+
+- **Submission:** the drawing travels as an optional `icon` field on the Attention recap. The CLI validates it and reports the specific reason when it rejects one. The host adopts it and removes it before the recap is stored or broadcast.
+- **Redraws without `purposeChanged`:** they are ignored, not rejected. A recap is a one-way file handoff, so the host cannot send an error back to the agent. The agent guidance states the rule.
+- **Color timing:** the hue is assigned when a worktree first receives a drawing, not when it is created. Color only appears on drawings, so the result looks the same, and a worktree without a drawing never takes a hue from a sibling.
+- **Project icon hue:** the Mac host and the headless host record each project icon's dominant OKLCH hue in `ProjectHueRegistry`. Drawings made before the icon loads ignore it.
+- **Remote Macs:** worktrees on another Mac keep their emoji on the local Mac's header and breadcrumb. Mobile shows drawings from any host.
+
 ## Behavior
 
 ### Drawing
