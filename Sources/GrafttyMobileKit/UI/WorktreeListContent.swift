@@ -53,6 +53,7 @@ public struct WorktreeListContent: View {
     @Bindable private var navigation: SidebarNavigationState
     @State private var sidebarSnapshot: SidebarSnapshot?
     @Environment(\.projectIconCache) private var projectIconCache
+    @Environment(\.worktreeDrawingCache) private var worktreeDrawingCache
     private var projectIcons: [String: Data] { projectIconCache?.icons ?? [:] }
     @State private var listEditMode: EditMode = .inactive
     @State private var reportWorktreeID: String?
@@ -796,6 +797,11 @@ public struct WorktreeListContent: View {
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = list.first(where: { $0.path == selectedWorktreePath }).map(SidebarProjection.projectID) ?? projects.first?.id
         }
+        if let worktreeDrawingCache {
+            Self.loadDrawings(list, into: worktreeDrawingCache) { worktree, revision in
+                await fetchDrawing(worktree, revision: revision, requestHostID: requestHostID)
+            }
+        }
         guard let projectIconCache else { return }
         projectIconCache.reconcile(projects)
         Self.loadProjectIcons(projects, into: projectIconCache) { project, revision in
@@ -814,6 +820,34 @@ public struct WorktreeListContent: View {
                 await cache.load(for: project) { await fetch(project, revision) }
             }
         }
+    }
+
+    /// Like project icons, drawings load outside the list's tasks (IOS-4.65).
+    static func loadDrawings(_ worktrees: [WorktreePanes], into cache: WorktreeDrawingCache,
+                             fetch: @escaping @MainActor (WorktreePanes, String) async -> Data?) {
+        let pending = worktrees.compactMap { worktree -> (WorktreePanes, String)? in
+            guard case .drawing(let revision, _) = worktree.iconIdentity, cache.images[revision] == nil else { return nil }
+            return (worktree, revision)
+        }
+        guard !pending.isEmpty else { return }
+        Task {
+            for (worktree, revision) in pending {
+                await cache.load(revision: revision) { await fetch(worktree, revision) }
+            }
+        }
+    }
+
+    private func fetchDrawing(_ worktree: WorktreePanes, revision: String, requestHostID: UUID) async -> Data? {
+        do {
+            let response = try await RelayedWorktreeManagementClient.send(
+                .worktreeIcon(worktreeID: worktree.path, revision: revision), using: remoteConnectionProvider)
+            guard presentedHostID == requestHostID else { return nil }
+            if case .icon(let data) = response { return data }
+            projectIconLogger.error("worktree drawing refused for \(worktree.displayName, privacy: .private): \(String(describing: response), privacy: .public)")
+        } catch {
+            projectIconLogger.error("worktree drawing fetch failed for \(worktree.displayName, privacy: .private): \(String(describing: error), privacy: .public)")
+        }
+        return nil
     }
 
     private func fetchProjectIcon(_ project: SidebarProject, revision: String, requestHostID: UUID) async -> Data? {
@@ -861,7 +895,7 @@ public struct WorktreeListContent: View {
                                         WorktreeBlock(
                                             worktree: wt,
                                             project: projects.first { $0.id == SidebarProjection.projectID(wt) },
-                                            projectIconData: projectIcons[SidebarProjection.projectID(wt)],
+                                            projectIconData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache?.images),
                                             theme: theme,
                                             isActive: wt.path == selectedWorktreePath,
                                             isOpening: openingWorktrees.contains(

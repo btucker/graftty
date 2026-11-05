@@ -30,6 +30,10 @@ private struct ProjectIconCacheKey: EnvironmentKey {
     static let defaultValue: ProjectIconCache? = nil
 }
 
+private struct WorktreeDrawingCacheKey: EnvironmentKey {
+    static let defaultValue: WorktreeDrawingCache? = nil
+}
+
 private struct RemoteWorktreeUpdatesKey: EnvironmentKey {
     static let defaultValue: RemoteWorktreeUpdatesProvider? = nil
 }
@@ -43,6 +47,11 @@ extension EnvironmentValues {
     var projectIconCache: ProjectIconCache? {
         get { self[ProjectIconCacheKey.self] }
         set { self[ProjectIconCacheKey.self] = newValue }
+    }
+    /// The list loads worktree drawings and every mobile header draws from it.
+    var worktreeDrawingCache: WorktreeDrawingCache? {
+        get { self[WorktreeDrawingCacheKey.self] }
+        set { self[WorktreeDrawingCacheKey.self] = newValue }
     }
     var mobileNotificationPaneActivation: MobileNotificationPaneActivation? {
         get { self[MobileNotificationPaneActivationKey.self] }

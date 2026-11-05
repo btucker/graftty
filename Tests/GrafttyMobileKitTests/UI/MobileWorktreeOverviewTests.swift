@@ -41,6 +41,22 @@ struct MobileWorktreeIdentityTests {
         #expect(glyph(row(main: false, emoji: "🧪"), icons: ["repo": image]) == .emoji("🧪"))
     }
 
+    @Test("@spec IOS-4.66: While a mobile worktree list row, header or header wash shows a linked worktree whose drawing has loaded, the application shall draw that drawing, and show the emoji until it loads.")
+    func headersUseLoadedDrawing() throws {
+        let drawing = try solidPNG(.green, side: 8)
+        var metadata = SidebarWorktreeMetadata(id: "wt", projectID: "repo", emoji: "🗃️")
+        metadata.drawingRevision = "r:25"
+        let worktree = WorktreePanes(path: "/repo/wt", displayName: "wt", repoDisplayName: "repo", displayBranch: "wt",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "s", title: "zsh", attentionText: nil, isBusy: false, attentionSource: nil),
+            sidebar: metadata)
+        #expect(MobileWorktreeIdentity.iconData(for: worktree, in: [:], drawings: ["r:25": drawing]) == drawing)
+        #expect(MobileWorktreeIdentity.wash(for: worktree, icons: [:], drawings: ["r:25": drawing],
+                                            background: .black, isDark: true)?.glyph == .drawing(drawing))
+        #expect(MobileWorktreeIdentity.wash(for: worktree, icons: [:], drawings: [:],
+                                            background: .black, isDark: true)?.glyph == .emoji("🗃️"))
+    }
+
     @Test("@spec IOS-4.62: When a project image has loaded into the shared icon cache, the application shall draw it in the phone terminal header wash for the home checkout.")
     func terminalWashDrawsCachedProjectImage() async throws {
         let image = try solidPNG(.systemPink, side: 64)
