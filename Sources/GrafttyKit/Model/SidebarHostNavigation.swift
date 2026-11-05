@@ -68,6 +68,28 @@ public enum SidebarHostNavigation {
         }
     }
 
+    /// Supplies the project icon's dominant OKLCH hue where the host can decode icons.
+    nonisolated(unsafe) public static var projectHueProvider: (@Sendable (RepoEntry) -> Double?)?
+
+    /// @spec AGENT-3.34
+    /// A linked worktree adopts its first valid drawing. A later drawing
+    /// replaces it only when the same recap says the purpose changed, so
+    /// icons stay stable enough to remember. The hue is assigned once.
+    public static func adoptReportedDrawing(_ recap: AttentionRecap?, worktreePath: String, projectHue: Double?, in repos: inout [RepoEntry]) {
+        guard let recap, recap.isValid, let icon = recap.icon, let svg = try? WorktreeDrawingSVG.validate(icon) else { return }
+        for repoIndex in repos.indices {
+            guard worktreePath != repos[repoIndex].path,
+                  let index = repos[repoIndex].worktrees.firstIndex(where: { $0.path == worktreePath }) else { continue }
+            let current = repos[repoIndex].worktrees[index]
+            guard current.drawing == nil || recap.purposeChanged == true else { return }
+            let hue = current.drawingHue ?? WorktreeColorAssignment.hue(
+                avoiding: repos[repoIndex].worktrees.compactMap(\.drawingHue) + [projectHue].compactMap { $0 })
+            repos[repoIndex].worktrees[index].drawingHue = hue
+            repos[repoIndex].worktrees[index].drawing = WorktreeDrawing(svg: svg, hue: hue)
+            return
+        }
+    }
+
     static func assignLegacyEmojis(in repos: inout [RepoEntry]) {
         var used = Set(repos.flatMap(\.worktrees).compactMap(\.emoji))
         for index in repos.indices { assignLegacyEmojis(in: &repos[index].worktrees, used: &used) }
@@ -175,12 +197,12 @@ public enum SidebarHostNavigation {
         let emoji = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard AttentionRecap.isSingleEmoji(emoji),
               !repos.flatMap(\.worktrees).contains(where: { $0.id != worktreeID && $0.emoji == emoji }) else { return false }
-        return updateWorktree(worktreeID, in: &repos) { $0.emoji = emoji; $0.emojiSource = .manual }
+        return updateWorktree(worktreeID, in: &repos) { $0.emoji = emoji; $0.emojiSource = .manual; $0.emojiChosenByUser = true }
     }
 
     @discardableResult
     public static func clearEmoji(worktreeID: UUID, in repos: inout [RepoEntry]) -> Bool {
-        updateWorktree(worktreeID, in: &repos) { $0.emoji = nil; $0.emojiSource = nil }
+        updateWorktree(worktreeID, in: &repos) { $0.emoji = nil; $0.emojiSource = nil; $0.emojiChosenByUser = false }
     }
 
     private static func updateWorktree(_ worktreeID: UUID, in repos: inout [RepoEntry],

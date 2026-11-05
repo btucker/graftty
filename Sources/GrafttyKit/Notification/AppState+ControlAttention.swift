@@ -63,10 +63,24 @@ public extension AppState {
         repos[index.repo].worktrees[index.worktree].attention = nil
     }
 
+    /// @spec AGENT-3.35
+    /// Adopts a recap's drawing, then returns the recap without it so stored
+    /// stops, briefs and broadcasts never carry agent SVG.
+    mutating func adoptingDrawing(from recap: AttentionRecap, callerPath: String) -> AttentionRecap {
+        guard recap.icon != nil else { return recap }
+        let repo = repos.first { repo in repo.worktrees.contains { $0.path == callerPath } }
+        SidebarHostNavigation.adoptReportedDrawing(recap, worktreePath: callerPath,
+            projectHue: repo.flatMap { SidebarHostNavigation.projectHueProvider?($0) }, in: &repos)
+        var stripped = recap
+        stripped.icon = nil
+        return stripped
+    }
+
     /// Publishes retained context without marking the agent stopped.
     mutating func recordAgentRecap(_ recap: AttentionRecap, callerPath: String, reportedAt: Date) {
         guard let index = indices(forWorktreePath: callerPath) else { return }
         SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos)
+        let recap = adoptingDrawing(from: recap, callerPath: callerPath)
         repos[index.repo].worktrees[index.worktree].recordAgentRecap(recap, at: reportedAt)
     }
 
@@ -92,7 +106,7 @@ public extension AppState {
         // A recovered duplicate is a no-op. A distinct provider turn still
         // completes, but cannot reuse the old recap or its pending question.
         if isConsumed, turnID == nil || consumed?.turnID == turnID { return nil }
-        let effectiveRecap = isConsumed ? nil : recap
+        let effectiveRecap = isConsumed ? nil : recap.map { adoptingDrawing(from: $0, callerPath: callerPath) }
         let paneSlot = paneSessionName.flatMap { worktree?.paneSlot(forSessionName: $0) }
         let stop = SidebarAgentStop(
             agentName: runtime.displayName,

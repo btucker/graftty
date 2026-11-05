@@ -90,6 +90,13 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var emoji: String?
     /// Nil for pre-migration state. Current identities record their source.
     public var emojiSource: WorktreeEmojiSource?
+    /// An agent drawing that identifies this linked worktree ahead of its agent emoji.
+    public var drawing: WorktreeDrawing?
+    /// The OKLCH hue assigned with the first drawing; it never changes afterwards.
+    public var drawingHue: Double?
+    /// True only for an emoji the user picked after drawings shipped. Legacy
+    /// migration also marks emojis `.manual`, so the source alone can't say.
+    public var emojiChosenByUser: Bool = false
     /// Explicit sidebar pin; instruction files alone do not imply it.
     public var isPinned: Bool = false
     /// Pull origin in the main checkout; merge the local default in pinned agents.
@@ -205,7 +212,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
+        case id, path, branch, emoji, emojiSource, drawing, drawingHue, emojiChosenByUser, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID, agents, workspaceLayout
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -219,6 +226,9 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.branch = try container.decode(String.self, forKey: .branch)
         self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
         self.emojiSource = try container.decodeIfPresent(WorktreeEmojiSource.self, forKey: .emojiSource)
+        self.drawing = try container.decodeIfPresent(WorktreeDrawing.self, forKey: .drawing)
+        self.drawingHue = try container.decodeIfPresent(Double.self, forKey: .drawingHue)
+        self.emojiChosenByUser = try container.decodeIfPresent(Bool.self, forKey: .emojiChosenByUser) ?? false
         self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         self.autoTrackEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoTrackEnabled) ?? false
         self.autoTrackLastAttempt = try container.decodeIfPresent(GitAutoTracking.Target.self, forKey: .autoTrackLastAttempt)

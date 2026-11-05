@@ -2,6 +2,23 @@ import Foundation
 #if canImport(FoundationXML)
 import FoundationXML
 #endif
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+
+/// A validated agent drawing. The revision changes with the drawing or its
+/// hue, so clients refetch exactly when the rendered image changes.
+public struct WorktreeDrawing: Codable, Sendable, Equatable {
+    public var svg: String
+    public var revision: String
+
+    public init(svg: String, hue: Double) {
+        self.svg = svg
+        self.revision = SHA256.hash(data: Data(svg.utf8)).map { String(format: "%02x", $0) }.joined() + ":\(Int(hue.rounded()))"
+    }
+}
 
 /// @spec AGENT-3.33
 /// An agent's worktree drawing is untrusted input. Only a small, inert SVG

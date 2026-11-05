@@ -121,6 +121,9 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     public var historyEntry: HistoryEntry?
     /// The current accumulated decisions; nil preserves previously reported decisions.
     public var decisions: [String]?
+    /// An optional SVG drawing of the worktree. The host adopts and removes it
+    /// before the recap is stored or broadcast.
+    public var icon: String?
 
     public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil,
                 emoji: String? = nil, emojiAlternatives: [String]? = nil,
@@ -166,7 +169,8 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
         let historyValid = historyEntry.map {
             validText($0.headline, limit: 160) && ($0.detail.map { validText($0, limit: 300) } ?? true)
         } ?? true
-        return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid && historyValid
+        let iconValid = icon.map { $0.utf8.count <= 16_384 } ?? true
+        return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid && historyValid && iconValid
     }
 }
 
