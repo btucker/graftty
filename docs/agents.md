@@ -34,7 +34,6 @@ Instruction files can also apply to temporary worktrees without pinning them.
 
 ## Agent instructions
 
-
 Graftty can give the agents running in your worktrees durable, per-worktree
 instructions. Files use the same relative layout in any instruction root:
 
