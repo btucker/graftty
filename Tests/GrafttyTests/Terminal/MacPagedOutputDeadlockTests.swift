@@ -24,8 +24,13 @@ struct MacPagedOutputDeadlockTests {
         try await runChild(method)
     }
 
+    @Test("@spec TERM-12.59: When a Mac paged surface retires after native grid completion but before its renderer resumes, the application shall reject pending presentation callbacks.")
+    func completedGridCannotPublishAfterRetirement() async throws {
+        try await runChild("testGridCompletionRetirement")
+    }
+
     private func runChild(_ method: String) async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("paged-output-\(UUID().uuidString)")
+        let directory = URL(fileURLWithPath: "/private/tmp/paged-output-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let log = directory.appendingPathComponent("child.log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
@@ -41,7 +46,17 @@ struct MacPagedOutputDeadlockTests {
         child.standardOutput = output
         child.standardError = output
         try child.run()
-        defer { if child.isRunning { kill(child.processIdentifier, SIGKILL) } }
+        var succeeded = false
+        defer {
+            if child.isRunning { kill(child.processIdentifier, SIGKILL) }
+            // SIGKILL bypasses the child's defers. The parent owns the daemon
+            // identity too, so a RED probe cannot leave a persistent shell.
+            let launcher = ZmxLauncher(executable: PagedOutputProbePaths.executable,
+                                      zmxDir: directory.appendingPathComponent("daemon"))
+            launcher.kill(sessionName: "probe")
+            try? FileManager.default.removeItem(at: launcher.zmxDir)
+            if succeeded { try? FileManager.default.removeItem(at: directory) }
+        }
         let deadline = ContinuousClock.now + .seconds(15)
         while child.isRunning, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         if child.isRunning {
@@ -63,7 +78,7 @@ struct MacPagedOutputDeadlockTests {
         let diagnostics = try String(contentsOf: log, encoding: .utf8)
         #expect(child.terminationReason == .exit && child.terminationStatus == 0, "Native probe failed: \(diagnostics)")
         #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("completed").path))
-        if child.terminationStatus == 0 { try? FileManager.default.removeItem(at: directory) }
+        succeeded = child.terminationReason == .exit && child.terminationStatus == 0
     }
 }
 
@@ -110,21 +125,34 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         let before = try XCTUnwrap(visible.range(of: "before-grid"))
         let after = try XCTUnwrap(visible.range(of: "after-grid"))
         XCTAssertLessThan(before.lowerBound, after.lowerBound)
-        let requestFrame = try XCTUnwrap(client.sentFrames.first)
-        guard case .text(let text) = requestFrame,
-              case .history(let request)? = try PagedTerminalEnvelope.parse(text).request else {
-            XCTFail("Missing history request"); return
+        XCTAssertFalse(canvas.oldestHistoryRow().contains("seed-row-0"))
+        var received = 6
+        for ordinal in 0..<100 {
+            try await waitUntil { client.sentFrames.count > ordinal }
+            guard case .text(let text) = client.sentFrames[ordinal],
+                  case .history(let request)? = try PagedTerminalEnvelope.parse(text).request else {
+                XCTFail("Missing history request"); return
+            }
+            try await stream.requestHistory(request)
+            guard case .page(let page) = await events.next() else { XCTFail("Missing PAGE"); return }
+            XCTAssertFalse(page.data.isEmpty)
+            client.deliver(.binary(titleOutput))
+            client.deliver(.text(try PagedTerminalEnvelope(event: .page(page)).encoded()))
+            client.deliver(.binary(Data("after-page\r\n".utf8)))
+            received += 3
+            try await waitUntil { client.receiveCount >= received }
+            if page.complete { break }
         }
-        try await stream.requestHistory(request)
-        guard case .page(let page) = await events.next() else { XCTFail("Missing PAGE"); return }
-        XCTAssertFalse(page.data.isEmpty)
-        client.deliver(.binary(titleOutput))
-        client.deliver(.text(try PagedTerminalEnvelope(event: .page(page)).encoded()))
-        client.deliver(.binary(Data("after-page\r\n".utf8)))
-        try await waitUntil { client.receiveCount >= 9 }
+        XCTAssertTrue(canvas.oldestHistoryRow().contains("seed-row-0"))
         XCTAssertTrue(canvas.text().contains("after-page"))
         XCTAssertTrue(canvas.text().contains("after-grid"))
         XCTAssertEqual(canvas.titles.last, "paged-title-255")
+        // A distinct grid must apply before the following VT cursor query.
+        // At 40 columns, x at column 40 wraps Y to row 2, column 2.
+        client.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 40, rows: 24)).encoded()))
+        client.deliver(.binary(Data("\u{1b}[2J\u{1b}[H\u{1b}[40GxY\u{1b}[6n".utf8)))
+        try await waitUntil { client.sentFrames.contains(.binary(Data("\u{1b}[2;2R".utf8))) }
+        XCTAssertTrue(ghostty_surface_grid_matches(canvas.surface, 40, 24))
         try complete(directory)
     }
 
@@ -147,7 +175,7 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         // The shell waits for another input after its final bytes so reading
         // text is safe only once the last title reaches main via app.tick.
         try await waitUntil { canvas.titles.last == "paged-title-255" }
-        XCTAssertTrue(canvas.text().contains("local-output-finished"), canvas.text())
+        try await waitUntil { canvas.text().contains("local-output-finished") }
         try session.write(Data("exit\n".utf8))
         try await waitUntil { ghostty_surface_process_exited(canvas.surface) }
         XCTAssertTrue(canvas.text().contains("local-output-finished"))
@@ -156,6 +184,31 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
 
     func testPagedRetirement() async throws { try await retirement(paged: true) }
     func testLegacyRetirement() async throws { try await retirement(paged: false) }
+
+    func testGridCompletionRetirement() async throws {
+        let directory = try probeDirectory()
+        let canvas = try PagedOutputCanvas()
+        defer { canvas.close() }
+        let owner = PagedSurfaceOwner()
+        let access = MacPagedSurface(canvas.surface, scheduleOnMain: { work in
+            DispatchQueue.main.async {
+                work()
+                // Finish C, then retire in the same main turn, before the
+                // renderer continuation has a chance to publish its grid.
+                owner.access?.close()
+            }
+        })
+        owner.access = access
+        let renderer = MacPagedTerminalRenderer(surface: access, prepareGrid: { _ in
+            XCTFail("A retired native grid must not publish presentation")
+        })
+        do {
+            try await renderer.resize(cols: 80, rows: 24)
+            XCTFail("A retired renderer operation must fail")
+        } catch { }
+        access.close()
+        try complete(directory)
+    }
 
     private func retirement(paged: Bool) async throws {
         let directory = try probeDirectory()
@@ -193,6 +246,13 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         // close barrier or a polling read waiting on its Swift lock hangs.
         XCTAssertEqual(finished.wait(timeout: .now() + 0.1), .timedOut)
         XCTAssertFalse(renderer?.isNearHistoryTop(screen: 0, generation: 1) ?? false)
+        // Unlike the host's Swift calls lock, the pinned native parser drops
+        // its renderer mutex before waiting on a full app mailbox.
+        XCTAssertTrue(ghostty_surface_grid_matches(canvas.surface,
+            ghostty_surface_size(canvas.surface).columns, ghostty_surface_size(canvas.surface).rows))
+        var history = ghostty_text_s()
+        _ = ghostty_surface_read_history(canvas.surface, 1, 1, &history)
+        ghostty_surface_free_text(canvas.surface, &history)
         backend.close()
         backend.close()
         XCTAssertEqual(finished.wait(timeout: .now() + 1), .success)
@@ -220,7 +280,20 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
     }
 }
 
+private enum PagedOutputProbePaths {
+    static var executable: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/zmx-binary/zmx")
+    }
+}
+
 private struct ProbeTimeout: Error {}
+
+@MainActor
+private final class PagedSurfaceOwner {
+    var access: MacPagedSurface?
+}
 
 @MainActor
 private final class PagedOutputCanvas {
@@ -266,6 +339,13 @@ private final class PagedOutputCanvas {
         ghostty_surface_set_size(surface, UInt32(clamping: width), UInt32(clamping: height))
     }
 
+    func oldestHistoryRow() -> String {
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_history(surface, 1, 1, &text) else { return "" }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return text.text.map { String(decoding: Data(bytes: $0, count: Int(text.text_len)), as: UTF8.self) } ?? ""
+    }
+
     func text() -> String {
         var text = ghostty_text_s()
         let selection = ghostty_selection_s(
@@ -304,11 +384,10 @@ private final class PagedOutputDaemon {
     private let output = PagedOutputSeed()
 
     private init() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let directory = URL(fileURLWithPath: "/private/tmp/paged-probe-\(UUID().uuidString.prefix(8))")
+        let parent = try XCTUnwrap(ProcessInfo.processInfo.environment["GRAFTTY_PAGED_OUTPUT_PROBE"])
+        let directory = URL(fileURLWithPath: parent).appendingPathComponent("daemon")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        launcher = ZmxLauncher(executable: root.appendingPathComponent("Resources/zmx-binary/zmx"), zmxDir: directory)
+        launcher = ZmxLauncher(executable: PagedOutputProbePaths.executable, zmxDir: directory)
         let output = output
         let shell = "i=0; while [ $i -lt 1000 ]; do printf 'seed-row-%s\\n' $i; i=$((i+1)); done; printf 'seed-ready\\n'; while read value; do if [ \"$value\" = exit ]; then exit 0; fi; i=0; while [ $i -lt 256 ]; do printf '\\033]2;paged-title-%s\\007' $i; i=$((i+1)); done; printf 'local-output-finished\\n'; done"
         seed = NativePtySession(argv: [launcher.executable.path, "attach", "probe", "/bin/sh", "-c", shell],

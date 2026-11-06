@@ -8,6 +8,7 @@ import GrafttyRemoteClient
 /// joins only admitted C calls while main drains the mailbox.
 final class MacPagedSurface: @unchecked Sendable {
     typealias WriteBuffer = (ghostty_surface_t, Data) -> Void
+    typealias MainScheduler = @Sendable (@escaping @Sendable () -> Void) -> Void
     private let calls = NSRecursiveLock()
     private let condition = NSCondition()
     private let queue = DispatchQueue(label: "com.graftty.paged-output", qos: .userInitiated)
@@ -15,15 +16,17 @@ final class MacPagedSurface: @unchecked Sendable {
     private var retiringSurface: ghostty_surface_t?
     private var activeCalls = 0
     private let writeBuffer: WriteBuffer
+    private let scheduleOnMain: MainScheduler
 
     init(_ surface: ghostty_surface_t, writeBuffer: @escaping WriteBuffer = { surface, data in
         data.withUnsafeBytes { bytes in
             guard let base = bytes.baseAddress else { return }
             ghostty_surface_write_buffer(surface, base.assumingMemoryBound(to: UInt8.self), UInt(bytes.count))
         }
-    }) {
+    }, scheduleOnMain: @escaping MainScheduler = { DispatchQueue.main.async(execute: $0) }) {
         self.surface = surface
         self.writeBuffer = writeBuffer
+        self.scheduleOnMain = scheduleOnMain
     }
 
     private func withSurface<T>(_ body: (ghostty_surface_t) -> T) -> T? {
@@ -41,6 +44,8 @@ final class MacPagedSurface: @unchecked Sendable {
         }
         return body(surface)
     }
+
+    var isOpen: Bool { condition.withLock { surface != nil } }
 
     /// Polls never wait on the writer's Swift lock or native renderer mutex.
     /// A later viewport poll retries when the current operation has finished.
@@ -72,7 +77,7 @@ final class MacPagedSurface: @unchecked Sendable {
                         // Acquire the lease on main, so close never joins a
                         // worker that is waiting for a queued main block.
                         let finished = DispatchSemaphore(value: 0)
-                        DispatchQueue.main.async { run(); finished.signal() }
+                        scheduleOnMain { run(); finished.signal() }
                         finished.wait()
                     } else { run() }
                 }
@@ -150,7 +155,7 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
                     bytes.baseAddress!.assumingMemoryBound(to: UInt8.self), bytes.count)
             }
         }
-        try Task.checkCancellation()
+        try checkActive()
         guard installed == true else { throw Error.invalidSnapshot }
         #else
         throw Error.invalidSnapshot
@@ -159,6 +164,7 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
 
     func resize(cols: UInt16, rows: UInt16) async throws {
         try await setSourceGrid(cols: cols, rows: rows)
+        try checkActive()
         prepareGrid(try DisplayGrid(cols: cols, rows: rows))
         try Task.checkCancellation()
     }
@@ -172,7 +178,7 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
         // Live acknowledgments update parser dimensions only. Preparing a restore
         // grid here briefly gives an owner the follower's fitted frame and shadow,
         // then removes them again when MacPagedAttachment finishes the grid event.
-        try Task.checkCancellation()
+        try checkActive()
         #else
         throw Error.invalidSnapshot
         #endif
@@ -184,7 +190,7 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
             throw Error.gridUnavailable
         }
         #endif
-        try Task.checkCancellation()
+        try checkActive()
     }
 
     func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult {
@@ -196,7 +202,7 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
                     bytes.baseAddress!.assumingMemoryBound(to: UInt8.self), bytes.count, &rows)
             }
         }
-        guard !Task.isCancelled else { return .stale }
+        guard !Task.isCancelled, surface.isOpen else { return .stale }
         switch result {
         case 1: return .applied
         case 2: return .requiresRecovery
@@ -217,6 +223,11 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
         #endif
     }
 
+    private func checkActive() throws {
+        try Task.checkCancellation()
+        guard surface.isOpen else { throw CancellationError() }
+    }
+
     enum Error: Swift.Error { case invalidSnapshot, gridUnavailable }
 }
 
@@ -228,6 +239,7 @@ final class MacPagedAttachment {
     private let finishGrid: () -> Void
     private let sourceGrid: (DisplayGrid?) -> Void
     private var restoringGrid = false
+    private var closed = false
 
     init(renderer: any PagedTerminalRenderer, sourceGrid: @escaping (DisplayGrid?) -> Void = { _ in }, finishGrid: @escaping () -> Void,
          send: @escaping @MainActor (PagedTerminalRequest) async throws -> Void) {
@@ -239,7 +251,12 @@ final class MacPagedAttachment {
     private static let trace = Logger(subsystem: "com.graftty.app", category: "paged-trace")
 
     func handle(_ event: PagedTerminalEvent) async throws {
-        if let appliedGrid = try await coordinator.handle(event) {
+        try Task.checkCancellation()
+        guard !closed else { throw CancellationError() }
+        let appliedGrid = try await coordinator.handle(event)
+        try Task.checkCancellation()
+        guard !closed else { throw CancellationError() }
+        if let appliedGrid {
             if case .checkpoint = event { restoringGrid = true }
             sourceGrid(appliedGrid)
         }
@@ -264,6 +281,7 @@ final class MacPagedAttachment {
     }
 
     private func finishGridIfNeeded() {
+        guard !closed else { return }
         switch coordinator.status {
         case .complete, .limit, .pageTooLarge, .requiresRecovery, .unavailable:
             poll?.cancel()
@@ -274,6 +292,7 @@ final class MacPagedAttachment {
     }
 
     func close() {
+        closed = true
         poll?.cancel()
         poll = nil
         coordinator.disconnect()

@@ -129,15 +129,28 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         }
         guard !Task.isCancelled else { await stream.close(); return }
 
-        let prepare = lock.withLock { prepareGrid }
+        let prepare: (DisplayGrid?) -> Void = { [weak self] grid in
+            guard let self else { return }
+            let handler = self.lock.withLock { self.closed ? nil : self.prepareGrid }
+            handler?(grid)
+        }
         let renderer = MacPagedTerminalRenderer(surface: surface, prepareGrid: prepare)
-        let sourceGrid = lock.withLock { sourceGridHandler }
+        let sourceGrid: (DisplayGrid?) -> Void = { [weak self] grid in
+            guard let self else { return }
+            let handler = self.lock.withLock { self.closed ? nil : self.sourceGridHandler }
+            handler?(grid)
+        }
         let attachment = MacPagedAttachment(renderer: renderer, sourceGrid: sourceGrid, finishGrid: { [weak self] in
+            guard let self else { return }
             prepare(nil)
             // Completion is durable even when startup input fills the queue.
             // The marker only wakes an otherwise idle sender.
-            self?.lock.withLock { self?.restored = true }
-            self?.commandSink.yield(.restored)
+            let active = self.lock.withLock {
+                guard !self.closed else { return false }
+                self.restored = true
+                return true
+            }
+            if active { self.commandSink.yield(.restored) }
         }) { request in
             switch request {
             case .history(let page): try await stream.requestHistory(page)

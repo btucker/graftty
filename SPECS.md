@@ -820,6 +820,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.58** When a Mac remote attachment closes during native parsing, the application shall stop admitting surface calls, drain the mailbox while joining parsing, and reject cancelled or late output before the surface is freed.
 
+**TERM-12.59** When a Mac paged surface retires after native grid completion but before its renderer resumes, the application shall reject pending presentation callbacks.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
