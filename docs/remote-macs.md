@@ -13,8 +13,9 @@ Graftty advertises its dedicated local remote-access service with Bonjour
 while it is running. To add another Mac:
 
 1. Open Graftty on both Macs and allow Local Network access when macOS asks.
-2. On the Mac you want to work from, click **Add Remote Mac…** in the
-   **Remote Macs** sidebar section.
+2. On the Mac you want to work from, click the **Manage Remote Hosts**
+   button (the computer icon at the bottom of the sidebar), then
+   **Add Remote Mac…**.
 3. Select the discovered Mac. If Bonjour/mDNS is unavailable on the
    network, enter its LAN listener URL instead.
 4. Click **Pair** and compare the verification code shown on both Macs.
@@ -23,11 +24,11 @@ while it is running. To add another Mac:
 
 The client saves the paired Mac by its stable device ID, full public key,
 and signed LAN/Tailscale routes—not by one changeable hostname or IP address.
-Only paired Macs become persistent sidebar rows; nearby, unpaired Bonjour
-results remain inside the Add Remote Mac sheet.
+Only paired Macs are saved in the **Remote Hosts** list; nearby, unpaired
+Bonjour results remain inside the Add Remote Mac sheet.
 
-Select a saved Mac to connect on demand. Once connected, its worktrees and
-panes appear beneath it in the sidebar. Selecting a remote pane opens an
+Click **Connect** beside a saved Mac to connect on demand. Once connected, its
+worktrees and panes appear in the sidebar. Selecting a remote pane opens an
 interactive terminal attached to that pane's persistent `zmx` session.
 Graftty keeps one client connection per saved Mac and carries terminal,
 pane-list, and pane-control traffic through an encrypted WebRTC DataChannel
@@ -41,9 +42,9 @@ To request a reconnect from any directory, run:
 graftty remote reconnect "Studio Mac"
 ```
 
-Use the exact saved name from the **Remote Macs** sidebar or a device ID.
+Use the exact saved name from the **Remote Hosts** list or a device ID.
 Graftty must be running locally. The command confirms that the request was
-accepted; check the sidebar for connection status. If a name matches multiple
+accepted; check the **Remote Hosts** list for connection status. If a name matches multiple
 Macs, the error lists their device IDs. Macs that need pairing must be paired
 again in the app.
 
@@ -72,8 +73,8 @@ single-use.
 
 Every later connection verifies the host's SSH key against the fingerprint
 pinned during pairing. If the key does not match, Graftty fails closed and
-shows the saved Mac with a key icon (`needsPairing`). A later Bonjour
-announcement does not clear that warning. Use **Add Remote Mac…** to pair
+marks the saved Mac **Pairing required** in the **Remote Hosts** list. A later
+Bonjour announcement does not clear that warning. Use **Pair…** to pair
 again only after confirming why the host identity changed—for example,
 after the other Mac's Graftty identity data was intentionally reset.
 

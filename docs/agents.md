@@ -32,6 +32,9 @@ override it, Graftty reports the overriding path instead of creating an
 ineffective role file. Pinning does not create or change instructions.
 Instruction files can also apply to temporary worktrees without pinning them.
 
+## Agent instructions
+
+
 Graftty can give the agents running in your worktrees durable, per-worktree
 instructions. Files use the same relative layout in any instruction root:
 
@@ -141,7 +144,7 @@ event and inter-agent message for the focused worktree's team.
 
 ### Message agents on another Mac
 
-Add the other Mac under **Remote Macs** and connect it. Both Macs must run a
+Pair and connect the other Mac as described in [Remote Macs](remote-macs.md). Both Macs must run a
 version of Graftty that supports remote team messaging. One pairing provides
 messaging in both directions while that connection is open.
 

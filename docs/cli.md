@@ -1,8 +1,6 @@
 # The graftty CLI
 
-Reference for the `graftty` command that ships with the app.
-
-The bundled `graftty` CLI lets a process inside a Graftty pane drive the app, and lets one agent control panes in another worktree.
+The bundled `graftty` CLI lets a process inside a Graftty pane drive the app, and lets one agent control panes in another worktree. This page covers the common commands; run `graftty --help` or `graftty <command> --help` for the full list.
 
 ```sh
 graftty project add ../my-project             # register a local Git project in the Mac app
@@ -10,6 +8,8 @@ graftty notify "tests passing"               # set a sidebar attention badge
 graftty pane list                            # panes in the current worktree
 graftty pane add --command "claude"          # split + run a command
 graftty pane close 2                         # close pane 2
+graftty preview report.html chart.png        # Quick Look preview on the device leading this pane
+graftty open https://example.com             # open a file or URL on the device leading this pane
 
 # Launch an agent in a new worktree, then message that worktree's inbox:
 graftty worktree add fix-auth --agent codex
@@ -24,6 +24,8 @@ printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin /
 graftty worktree remove fix-auth
 # Dirty or untracked files require an explicit forced removal:
 graftty worktree remove fix-auth --force
+# Pinned worktrees also require --pinned; --force alone is not enough:
+graftty worktree remove release-agent --pinned
 
 # Cross-worktree pane control:
 graftty pane list drag-files                 # list panes in another worktree
@@ -45,8 +47,10 @@ The command does not initialize Git. For a directory without Git, use **Add Repo
 
 `graftty worktree add` returns once Graftty accepts the request, with a pending operation ID and stable message address. Keep the app running while it waits for Git and its hooks, then opens the pane and launches the agent. Use `--wait` to block until the pane accepts the launch command, or `--async` to explicitly select the default. `--timeout` bounds the CLI's wait; it does not cancel accepted creation. Check `graftty team list --json` for agent reachability before treating a delegation as complete.
 
-`graftty worktree remove <worktree>` accepts an absolute tracked path, `.` for the current worktree, or a worktree name from `graftty team list`. It runs the same removal flow as the sidebar's Delete Worktree action: Git deletes the linked checkout but preserves its branch, Graftty tears down its panes and removes it from the UI, and modified, staged, or untracked files cause a non-zero exit with `git status --short` details. Pass `--force` to mirror the UI's Force Delete action.
+`graftty worktree remove <worktree>` accepts an absolute tracked path, `.` for the current worktree, or a worktree name from `graftty team list`. It runs the same removal flow as the sidebar's Delete Worktree action: Git deletes the linked checkout but preserves its branch, Graftty tears down its panes and removes it from the UI, and modified, staged, or untracked files cause a non-zero exit with `git status --short` details. Pass `--force` to mirror the UI's Force Delete action. A pinned linked worktree also requires `--pinned`, independently of `--force`, and the main checkout cannot be removed.
 
 `graftty worktree add --agent` prints a canonical worktree-path address. The app accepts prompt text up to 128 KiB and stages it in an owner-only temporary file, so multiline prompts, heredoc examples, shell syntax, and substantial task descriptions are not typed through the new pane's interactive shell. Before starting Git, Graftty also saves the exact initial prompt in that runtime's durable inbox. The inbox copy survives a failed launch and reaches a later agent session as a labeled recovery copy. The CLI verifies staging support before creating anything; if the app was already running during an upgrade, quit and relaunch it before retrying. When no prompt is supplied, Graftty starts one short bootstrap turn; that lets the runtime finish initialization and establish idle inbox delivery instead of remaining in a pre-turn state that queued messages cannot wake. Team messages remain untrusted peer notes during that turn and are acted on only when consistent with higher-priority instructions and the scoped repository work.
 
 Agent-authored messages carry an exact canonical `agent` address and a provider-scoped `fallback-agent` address. Reply to the exact address while `graftty team list --json` reports that session as reachable; otherwise send to the fallback address (for example, `/path/to/worktree#codex`) so the reply waits durably for that provider's next agent. Native provider sender labels are display-only and may be truncated.
+
+For team messaging, inbox reads, and pinning, see [Agents in Graftty](agents.md). For `graftty remote reconnect`, see [Remote Macs](remote-macs.md).
