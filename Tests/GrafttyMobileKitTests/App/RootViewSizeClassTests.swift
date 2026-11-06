@@ -27,7 +27,7 @@ struct RootViewSizeClassTests {
         #expect(selection.session == nil)
     }
 
-    @Test("@spec IOS-4.61: When an iPhone opens an agent's terminal, the application shall start the terminal screen with the rows it already has for that host, so the terminal is not rebuilt and left blank when the worktree's agents arrive.")
+    @Test("@spec IOS-4.67: When an iPhone opens an agent's terminal, the application shall start the terminal screen with the rows it already has for that host, so the terminal is not rebuilt and left blank when the worktree's agents arrive.")
     func terminalScreenStartsWithKnownRows() throws {
         let state = IPadAppState(defaults: try #require(UserDefaults(suiteName: "session-rows-\(UUID())")))
         let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)

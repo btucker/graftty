@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyKit
 import GrafttyProtocol
 
-@Suite("@spec LAYOUT-2.203: When a host loads repositories and pinned worktrees without ranks, the application shall assign ranks from their current order without a change time and keep existing ranks.")
+@Suite("@spec LAYOUT-2.223: When a host loads repositories and pinned worktrees without ranks, the application shall assign ranks from their current order without a change time and keep existing ranks.")
 struct SidebarRankSeedingTests {
     private func repos() -> [RepoEntry] {
         var one = WorktreeEntry(path: "/one/a", branch: "a"); one.isPinned = true

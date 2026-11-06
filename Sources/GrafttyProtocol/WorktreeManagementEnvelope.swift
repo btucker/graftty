@@ -183,6 +183,8 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     case setPinnedRank(repositoryID: String, worktreeID: String, rank: String)
     case setProjectRank(repositoryID: String, rank: String, changedAt: Double)
     case projectIcon(repositoryID: String, revision: String)
+    /// A linked worktree's rendered drawing, answered only for the current revision.
+    case worktreeIcon(worktreeID: String, revision: String)
     case acknowledgeOccurrence(worktreeID: String, paneID: String?, occurrence: SidebarAttentionOccurrence)
 }
 
@@ -249,6 +251,10 @@ extension WorktreeManagementRequest: Codable {
         case let .projectIcon(repositoryID, revision):
             try c.encode("project_icon", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
+            try c.encode(revision, forKey: .revision)
+        case let .worktreeIcon(worktreeID, revision):
+            try c.encode("worktree_icon", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
             try c.encode(revision, forKey: .revision)
         case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
             try c.encode("acknowledge_occurrence", forKey: .type)
@@ -320,6 +326,8 @@ extension WorktreeManagementRequest: Codable {
             self = .setPinnedRank(repositoryID: try c.decode(String.self, forKey: .repositoryID), worktreeID: try c.decode(String.self, forKey: .worktreeID), rank: try c.decode(String.self, forKey: .rank))
         case "set_project_rank":
             self = .setProjectRank(repositoryID: try c.decode(String.self, forKey: .repositoryID), rank: try c.decode(String.self, forKey: .rank), changedAt: try c.decode(Double.self, forKey: .changedAt))
+        case "worktree_icon":
+            self = .worktreeIcon(worktreeID: try c.decode(String.self, forKey: .worktreeID), revision: try c.decode(String.self, forKey: .revision))
         case "project_icon":
             self = .projectIcon(repositoryID: try c.decode(String.self, forKey: .repositoryID), revision: try c.decode(String.self, forKey: .revision))
         case "acknowledge_occurrence":

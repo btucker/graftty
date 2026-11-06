@@ -18,7 +18,7 @@ struct WorktreeRowLabelTests {
         #expect(size.width <= 160)
     }
 
-    @Test("@spec LAYOUT-2.204: When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.")
+    @Test("@spec LAYOUT-2.224: When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.")
     func hostLabelStaysOnOneLine() {
         let row = WorktreeRow(entry: .init(path: "/repo/load-team-skill", branch: "main"),
             isActive: false, displayName: "load-team-skill", isMainCheckout: false,

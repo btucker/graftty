@@ -17,6 +17,12 @@ public struct WorktreeIdentityView: View {
             switch identity {
             case .project:
                 ProjectIdentityView(project: project, imageData: imageData, size: size)
+            case .drawing(_, let emoji):
+                if let image = imageData.flatMap(DrawingImage.decode) {
+                    image.resizable().scaledToFit().frame(width: size, height: size)
+                } else if let emoji {
+                    Text(emoji).font(.system(size: size * 0.8)).frame(width: size, height: size)
+                }
             case .emoji(let emoji):
                 Text(emoji).font(.system(size: size * 0.8)).frame(width: size, height: size)
             case .none:
@@ -24,5 +30,13 @@ public struct WorktreeIdentityView: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// @spec LAYOUT-2.202
+/// Decodes a rendered worktree drawing for display at identity size.
+enum DrawingImage {
+    static func decode(_ data: Data) -> Image? {
+        data.count <= WorktreeDrawingCache.maxBytes ? PlatformImage.decode(data) : nil
     }
 }

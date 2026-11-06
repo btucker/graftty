@@ -32,6 +32,8 @@ public struct RootView: View {
     @State private var feed: MultiHostFeed
     @State private var showsHosts = false
     @State private var nearbyMacBrowser = NearbyMacBrowser()
+    @State private var projectIconCache = ProjectIconCache()
+    @State private var worktreeDrawingCache = WorktreeDrawingCache()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     struct NotificationIO {
         let fetch: @MainActor (Host) async throws -> [WorktreePanes]
@@ -52,7 +54,8 @@ public struct RootView: View {
         appState: IPadAppState, notificationIO: NotificationIO,
         connectionProvider: RemoteConnectionProvider? = nil,
         retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil,
-        hostsNeedPins: Bool = false) {
+        hostsNeedPins: Bool = false,
+        projectIconCache: ProjectIconCache? = nil) {
         _hostStore = State(initialValue: hostStore)
         _gate = State(initialValue: gate)
         _notifications = State(initialValue: notifications)
@@ -71,6 +74,7 @@ public struct RootView: View {
         self.notificationIO = notificationIO
         self.notificationConnectionProvider = connectionProvider
         if let retainedPanes { _retainedPanes = State(initialValue: retainedPanes) }
+        if let projectIconCache { _projectIconCache = State(initialValue: projectIconCache) }
     }
 
     public var body: some View {
@@ -100,6 +104,8 @@ public struct RootView: View {
         .environment(\.biometricGate, gate)
         .environment(\.retainedMobilePanes, retainedPanes)
         .environment(\.remoteConnectionCoordinator, coordinator)
+        .environment(\.projectIconCache, projectIconCache)
+        .environment(\.worktreeDrawingCache, worktreeDrawingCache)
         .environment(\.remoteWorktreeUpdates, RemoteWorktreeUpdatesProvider { [coordinator] host in
             coordinator.isPaired(host) ? coordinator.worktreeUpdates(for: host) : nil
         })
@@ -136,6 +142,12 @@ public struct RootView: View {
             recordSelectedPane()
         }
         .onChange(of: iPadAppState.latestWorktrees) { _, _ in recordSelectedPane() }
+        .onChange(of: iPadAppState.selectedHostId) { _, _ in
+            // IOS-4.63: project IDs are unique only within a host (a headless
+            // host's are repo paths), so images from another host can't be reused.
+            projectIconCache.reset()
+            worktreeDrawingCache.reset()
+        }
         .onChange(of: horizontalSizeClass) { previous, current in
             guard previous == .regular, current != .regular else { return }
             syncCompactNavigationToSelection()
@@ -588,7 +600,7 @@ public struct RootView: View {
         }
     }
 
-    /// @spec IOS-4.61
+    /// @spec IOS-4.67
     /// The rows a terminal screen starts with, so it knows its agents on its
     /// first layout instead of rebuilding the terminal when they arrive.
     static func sessionRows(for step: SessionStep, appState: IPadAppState) -> [WorktreePanes] {

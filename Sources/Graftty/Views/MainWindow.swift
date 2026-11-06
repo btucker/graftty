@@ -192,9 +192,8 @@ struct MainWindow: View {
             // same for the breadcrumb.
         } detail: {
             MainWindowDetailLayout(headerWash: WorktreeHeaderWash(
-                identity: .resolve(isMainCheckout: selectedRemoteWorktreeSnapshot?.isMainCheckout ?? isHomeCheckout,
-                    emoji: BreadcrumbBar.selectedWorktreeEmoji(localEmoji: selectedWorktree?.emoji, remoteWorktree: selectedRemoteWorktreeSnapshot)),
-                project: selectedIdentityProject, iconData: selectedProjectIconData,
+                identity: selectedIdentity,
+                project: selectedIdentityProject, iconData: selectedIdentityImageData,
                 background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
                 breadcrumbBar
             } content: {
@@ -535,6 +534,20 @@ struct MainWindow: View {
         return selectedRepo.map { iconStore.project(for: $0, owner: iconStore.owner) }
     }
 
+    /// Remote drawings fall back to their emoji; only local drawings render here.
+    private var selectedIdentity: WorktreeIconIdentity {
+        if let remote = selectedRemoteWorktreeSnapshot {
+            return .resolve(isMainCheckout: remote.isMainCheckout, emoji: remote.effectiveEmoji)
+        }
+        if let worktree = selectedWorktree, let repo = selectedRepo { return worktree.iconIdentity(in: repo) }
+        return .resolve(isMainCheckout: isHomeCheckout, emoji: selectedWorktree?.emoji)
+    }
+
+    private var selectedIdentityImageData: Data? {
+        guard case .drawing = selectedIdentity, let worktree = selectedWorktree else { return selectedProjectIconData }
+        return iconStore.drawingData(for: worktree)
+    }
+
     private var selectedProjectIconData: Data? {
         if selectedRemoteWorktreeSnapshot != nil {
             return selectedIdentityProject.flatMap { iconStore.remoteIcons[$0.id] }
@@ -696,7 +709,8 @@ struct MainWindow: View {
             onGoForward: { navigateWorktreeHistory(forward: true) },
             onSelectHistory: selectHistoryTarget,
             onRefreshPR: refreshPR,
-            project: selectedIdentityProject, projectIconData: selectedProjectIconData,
+            project: selectedIdentityProject, projectIconData: selectedIdentityImageData,
+            worktreeIdentity: selectedIdentity,
             previewWorktreePath: selectedRemoteIdentity.map { "remote-preview:\($0):\(selectedRemoteWorktreeSnapshot?.path ?? "")" } ?? selectedWorktree?.path,
             previewInlinePane: selectedRemoteIdentity != nil ? nil : selectedWorktree.flatMap { worktree in
                 worktree.presentationPane.flatMap { slot in

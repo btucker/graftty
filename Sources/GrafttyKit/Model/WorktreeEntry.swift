@@ -90,6 +90,13 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var emoji: String?
     /// Nil for pre-migration state. Current identities record their source.
     public var emojiSource: WorktreeEmojiSource?
+    /// An agent drawing that identifies this linked worktree ahead of its agent emoji.
+    public var drawing: WorktreeDrawing?
+    /// The OKLCH hue assigned with the first drawing; it never changes afterwards.
+    public var drawingHue: Double?
+    /// True only for an emoji the user picked after drawings shipped. Legacy
+    /// migration also marks emojis `.manual`, so the source alone can't say.
+    public var emojiChosenByUser: Bool = false
     /// Explicit sidebar pin; instruction files alone do not imply it.
     public var isPinned: Bool = false
     /// Fractional order among pinned rows on every device. Nil when not pinned.
@@ -207,7 +214,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isPinned, pinnedRank, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
+        case id, path, branch, emoji, emojiSource, drawing, drawingHue, emojiChosenByUser, isPinned, pinnedRank, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID, agents, workspaceLayout
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -221,6 +228,9 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.branch = try container.decode(String.self, forKey: .branch)
         self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
         self.emojiSource = try container.decodeIfPresent(WorktreeEmojiSource.self, forKey: .emojiSource)
+        self.drawing = try container.decodeIfPresent(WorktreeDrawing.self, forKey: .drawing)
+        self.drawingHue = try container.decodeIfPresent(Double.self, forKey: .drawingHue)
+        self.emojiChosenByUser = try container.decodeIfPresent(Bool.self, forKey: .emojiChosenByUser) ?? false
         self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         self.pinnedRank = try container.decodeIfPresent(String.self, forKey: .pinnedRank)
         self.autoTrackEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoTrackEnabled) ?? false
@@ -272,9 +282,14 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         attention != nil || !paneAttention.isEmpty || unseenAgentStop != nil
     }
 
+    /// Only a recap newer than the brief may change it or the worktree's drawing.
+    public func isNewerThanBrief(_ reportedAt: Date) -> Bool {
+        brief.map { $0.updatedAt < reportedAt.timeIntervalSinceReferenceDate } ?? true
+    }
+
     /// Report content persists independently of unread completion attention.
     public mutating func recordAgentRecap(_ recap: AttentionRecap, at reportedAt: Date) {
-        guard brief.map({ $0.updatedAt < reportedAt.timeIntervalSinceReferenceDate }) ?? true else { return }
+        guard isNewerThanBrief(reportedAt) else { return }
         if brief == nil { brief = WorktreeBrief(recap: recap, at: reportedAt) }
         else {
             let boundary = history?.inputs.last(where: { $0.timestamp <= reportedAt.timeIntervalSinceReferenceDate })
@@ -695,11 +710,11 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
 
 extension WorktreeEntry {
     public func iconIdentity(in repo: RepoEntry) -> WorktreeIconIdentity {
-        .resolve(isMainCheckout: path == repo.path, emoji: emoji)
+        .resolve(isMainCheckout: path == repo.path, emoji: emoji, drawingRevision: drawing?.revision,
+                 emojiChosenByUser: emojiChosenByUser)
     }
 
     public func effectiveEmoji(in repo: RepoEntry) -> String? {
-        if case .emoji(let value) = iconIdentity(in: repo) { return value }
-        return nil
+        iconIdentity(in: repo).fallbackEmoji
     }
 }

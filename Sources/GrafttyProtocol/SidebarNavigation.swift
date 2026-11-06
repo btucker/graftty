@@ -132,6 +132,10 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     public var historyEntry: HistoryEntry?
     /// The current accumulated decisions; nil preserves previously reported decisions.
     public var decisions: [String]?
+    /// An optional SVG drawing of the worktree. The host adopts and removes it
+    /// before the recap is stored or broadcast.
+    public var icon: String?
+    public static let maxIconBytes = 16_384
 
     public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil,
                 emoji: String? = nil, emojiAlternatives: [String]? = nil,
@@ -177,7 +181,8 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
         let historyValid = historyEntry.map {
             validText($0.headline, limit: 160) && ($0.detail.map { validText($0, limit: 300) } ?? true)
         } ?? true
-        return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid && historyValid
+        let iconValid = icon.map { $0.utf8.count <= Self.maxIconBytes } ?? true
+        return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid && historyValid && iconValid
     }
 }
 
@@ -233,6 +238,10 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     /// stopped cards after their agent resumes.
     public var agentProgressTimes: [String: Double]?
     public var emoji: String?
+    /// Changes whenever the worktree's rendered drawing changes; nil without one.
+    public var drawingRevision: String?
+    /// True when the user picked the emoji, which then outranks a drawing.
+    public var emojiChosenByUser: Bool?
     /// Nil for hosts that predate the temporary / pinned distinction.
     public var isPinned: Bool?
     /// Latest activity, seconds since the reference date, so clients can merge
@@ -304,23 +313,35 @@ public struct SidebarAttentionOccurrence: Codable, Sendable, Hashable {
 
 /// @spec LAYOUT-2.124: While a repository's home checkout identity is displayed or serialized, the application shall use its current project icon and project fallback instead of any stored worktree emoji, including after restoration, while retaining linked worktree identities.
 /// A home checkout inherits the current project icon; linked worktrees own their emoji.
+/// @spec LAYOUT-2.200
+/// A drawing keeps its emoji as the fallback for surfaces that cannot show it.
 public enum WorktreeIconIdentity: Equatable, Sendable {
-    case project, emoji(String), none
+    case project, emoji(String), drawing(revision: String, emoji: String?), none
 
-    public static func resolve(isMainCheckout: Bool, emoji: String?) -> Self {
+    public static func resolve(isMainCheckout: Bool, emoji: String?, drawingRevision: String? = nil,
+                               emojiChosenByUser: Bool = false) -> Self {
         if isMainCheckout { return .project }
+        if emojiChosenByUser, let emoji { return .emoji(emoji) }
+        if let drawingRevision { return .drawing(revision: drawingRevision, emoji: emoji) }
         return emoji.map(Self.emoji) ?? .none
+    }
+
+    /// The emoji to show where an image cannot appear, such as notification text.
+    public var fallbackEmoji: String? {
+        switch self {
+        case .emoji(let emoji): emoji
+        case .drawing(_, let emoji): emoji
+        case .project, .none: nil
+        }
     }
 }
 
 extension WorktreePanes {
     public var iconIdentity: WorktreeIconIdentity {
-        .resolve(isMainCheckout: isMainCheckout, emoji: sidebar?.emoji)
+        .resolve(isMainCheckout: isMainCheckout, emoji: sidebar?.emoji, drawingRevision: sidebar?.drawingRevision,
+                 emojiChosenByUser: sidebar?.emojiChosenByUser ?? false)
     }
-    public var effectiveEmoji: String? {
-        if case .emoji(let value) = iconIdentity { return value }
-        return nil
-    }
+    public var effectiveEmoji: String? { iconIdentity.fallbackEmoji }
 }
 
 public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {

@@ -3,12 +3,30 @@ import GrafttyCommandUI
 import GrafttyProtocol
 import SwiftUI
 
+/// The identity every mobile header draws, so none falls back to initials
+/// while the project's image is already loaded.
+enum MobileWorktreeIdentity {
+    /// A drawing worktree draws its loaded drawing; a home checkout its project image.
+    static func iconData(for worktree: WorktreePanes, in icons: [String: Data]?, drawings: [String: Data]? = nil) -> Data? {
+        if case .drawing(let revision, _) = worktree.iconIdentity { return drawings?[revision] }
+        return icons?[SidebarProjection.projectID(worktree)]
+    }
+
+    static func wash(for worktree: WorktreePanes, icons: [String: Data]?, drawings: [String: Data]? = nil,
+                     background: Color, isDark: Bool) -> WorktreeHeaderWash? {
+        WorktreeHeaderWash(identity: worktree.iconIdentity, project: SidebarProjection.projects([worktree]).first,
+                           iconData: iconData(for: worktree, in: icons, drawings: drawings), background: background, isDark: isDark)
+    }
+}
+
 /// The worktree's identity at the top of the phone screen, on the same emoji
 /// wash the Mac draws behind its header.
 struct MobileWorktreeIdentityHeader: View {
     let worktree: WorktreePanes
     let purpose: String?
     let theme: GhosttyThemeColors
+    @Environment(\.projectIconCache) private var projectIconCache
+    @Environment(\.worktreeDrawingCache) private var worktreeDrawingCache
 
     private var project: SidebarProject? { SidebarProjection.projects([worktree]).first }
 
@@ -18,7 +36,9 @@ struct MobileWorktreeIdentityHeader: View {
                 .font(.caption).foregroundStyle(theme.foreground.opacity(0.65))
             HStack(spacing: 8) {
                 if let project {
-                    WorktreeIdentityView(identity: worktree.iconIdentity, project: project, size: 22)
+                    WorktreeIdentityView(identity: worktree.iconIdentity, project: project,
+                        imageData: MobileWorktreeIdentity.iconData(for: worktree, in: projectIconCache?.icons,
+                                                                   drawings: worktreeDrawingCache?.images), size: 22)
                 }
                 Text(worktree.displayName).font(.title3.weight(.semibold)).lineLimit(1).truncationMode(.middle)
             }
@@ -47,10 +67,12 @@ struct MobileWorktreeIdentityHeader: View {
 struct MobileWorktreeHeaderWash: View {
     let worktree: WorktreePanes
     let theme: GhosttyThemeColors
+    @Environment(\.projectIconCache) private var projectIconCache
+    @Environment(\.worktreeDrawingCache) private var worktreeDrawingCache
 
     var body: some View {
-        if let wash = WorktreeHeaderWash(identity: worktree.iconIdentity, project: SidebarProjection.projects([worktree]).first,
-                                         iconData: nil, background: theme.background, isDark: theme.isDark) {
+        if let wash = MobileWorktreeIdentity.wash(for: worktree, icons: projectIconCache?.icons, drawings: worktreeDrawingCache?.images,
+                                                  background: theme.background, isDark: theme.isDark) {
             WorktreeHeaderWashView(wash: wash, fadesToBackground: true)
                 .frame(height: 300)
                 .ignoresSafeArea(edges: .top)
@@ -65,12 +87,14 @@ struct MobileWorktreeHeaderWash: View {
 struct MobileTerminalHeaderWash: View {
     let worktree: WorktreePanes
     let theme: GhosttyThemeColors
+    @Environment(\.projectIconCache) private var projectIconCache
+    @Environment(\.worktreeDrawingCache) private var worktreeDrawingCache
 
     var body: some View {
         ZStack {
             theme.background
-            if let wash = WorktreeHeaderWash(identity: worktree.iconIdentity, project: SidebarProjection.projects([worktree]).first,
-                                             iconData: nil, background: theme.background, isDark: theme.isDark) {
+            if let wash = MobileWorktreeIdentity.wash(for: worktree, icons: projectIconCache?.icons, drawings: worktreeDrawingCache?.images,
+                                                      background: theme.background, isDark: theme.isDark) {
                 WorktreeHeaderWashView(wash: wash)
             }
         }

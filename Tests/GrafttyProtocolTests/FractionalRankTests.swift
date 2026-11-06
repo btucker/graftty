@@ -1,7 +1,7 @@
 import Testing
 @testable import GrafttyProtocol
 
-@Suite("@spec LAYOUT-2.199: When a user reorders pinned agents or projects, the application shall store a sortable fractional rank that always leaves room between two neighbors, so every device agrees on the order from the ranks alone.")
+@Suite("@spec LAYOUT-2.219: When a user reorders pinned agents or projects, the application shall store a sortable fractional rank that always leaves room between two neighbors, so every device agrees on the order from the ranks alone.")
 struct FractionalRankTests {
     @Test func betweenSortsStrictlyBetween() {
         for (low, high) in [("a", "b"), ("a0V", "a1"), ("Z", "a"), ("aV", "aW"), ("a", "a1"), ("0V", "1")] {
@@ -55,7 +55,7 @@ struct FractionalRankTests {
     }
 }
 
-@Suite("@spec LAYOUT-2.200: When a dragged row lands between rows whose ranks tie, the application shall also rewrite the writable tied rows so the row lands exactly at the drop position on every device.")
+@Suite("@spec LAYOUT-2.220: When a dragged row lands between rows whose ranks tie, the application shall also rewrite the writable tied rows so the row lands exactly at the drop position on every device.")
 struct RankPlacementTests {
     private func settled(_ rows: [RankPlacement.Row], _ writes: [RankPlacement.Write]) -> [String] {
         let updates = Dictionary(uniqueKeysWithValues: writes.map { ($0.id, $0.rank) })

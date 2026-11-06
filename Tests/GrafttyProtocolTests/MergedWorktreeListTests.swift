@@ -1,7 +1,7 @@
 import Testing
 @testable import GrafttyProtocol
 
-@Suite("@spec LAYOUT-2.201: While a project is on several hosts, the application shall show its temporary worktrees as one flat list by recent activity across hosts and its pinned agents by shared rank, naming the host on pinned rows always and on temporary rows only when names clash.")
+@Suite("@spec LAYOUT-2.221: While a project is on several hosts, the application shall show its temporary worktrees as one flat list by recent activity across hosts and its pinned agents by shared rank, naming the host on pinned rows always and on temporary rows only when names clash.")
 struct MergedWorktreeListTests {
     private let mac = WorktreeOrigin(deviceID: RemoteDeviceID(value: "mac"), deviceLabel: "MacBook", relayDepth: 0)
     private let box = WorktreeOrigin(deviceID: RemoteDeviceID(value: "box"), deviceLabel: "build-box", relayDepth: 0)

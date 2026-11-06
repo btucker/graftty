@@ -1,7 +1,10 @@
 #if canImport(UIKit)
 import GrafttyProtocol
 import GrafttyCommandUI
+import OSLog
 import SwiftUI
+
+private let projectIconLogger = Logger(subsystem: "com.quotably.graftty", category: "project-icon")
 
 struct SidebarWorktreeViewportRow: Equatable {
     var id: String
@@ -40,7 +43,14 @@ public struct WorktreeListContent: View {
     @State private var collapsedPinned: [String: Bool] = [:]
     @State private var collapsedFolders: Set<String> = []
     @State private var wakeFailure: WakeFailure?
-    @State private var projectIconCache = ProjectIconCache()
+    /// Shared with the screens pushed above the list, so their headers draw
+    /// the same images; a local cache stands in when none is provided.
+    @Environment(\.projectIconCache) private var sharedProjectIconCache
+    @Environment(\.worktreeDrawingCache) private var sharedWorktreeDrawingCache
+    @State private var localProjectIconCache = ProjectIconCache()
+    @State private var localWorktreeDrawingCache = WorktreeDrawingCache()
+    private var projectIconCache: ProjectIconCache { sharedProjectIconCache ?? localProjectIconCache }
+    private var worktreeDrawingCache: WorktreeDrawingCache { sharedWorktreeDrawingCache ?? localWorktreeDrawingCache }
     private var projectIcons: [String: Data] { projectIconCache.icons }
     @State private var listEditMode: EditMode = .inactive
     /// A row's merged identity: paths alone can repeat across hosts.
@@ -366,16 +376,59 @@ public struct WorktreeListContent: View {
         }
         let members = merged.projects.compactMap(\.iconMember)
         projectIconCache.reconcile(members)
-        for member in members where merged.availability(ofMember: member.id) == .reachable {
-            guard let revision = member.iconRevision, let host = feed.host(for: member) else { continue }
-            let provider = feed.provider(for: host, wake: .never)
-            Task { await projectIconCache.load(for: member) {
-                let response = try? await RelayedWorktreeManagementClient.send(
-                    .projectIcon(repositoryID: member.repositoryID, revision: revision), using: provider)
-                if case .icon(let data) = response { return data }
-                return nil
-            } }
+        // Each image comes from the host that reported it, and only a host
+        // that's answering now: a fetch must not wake a sleeping one.
+        let feed = feed
+        Self.loadProjectIcons(members.filter { merged.availability(ofMember: $0.id) == .reachable },
+                              into: projectIconCache) { member, revision in
+            guard let host = feed.host(for: member) else { return nil }
+            return await Self.fetchIcon(.projectIcon(repositoryID: member.repositoryID, revision: revision),
+                                        using: feed.provider(for: host, wake: .never))
         }
+        Self.loadDrawings(rows.filter { feed.state.hostID(for: $0).map(feed.state.isLive) == true },
+                          into: worktreeDrawingCache) { worktree, revision in
+            guard let host = feed.host(for: worktree) else { return nil }
+            return await Self.fetchIcon(.worktreeIcon(worktreeID: worktree.path, revision: revision),
+                                        using: feed.provider(for: host, wake: .never))
+        }
+    }
+
+    /// Image fetches run outside the list's tasks: the screens pushed above it
+    /// draw from the same caches, and a push cancels this view's tasks (IOS-4.64).
+    static func loadProjectIcons(_ projects: [SidebarProject], into cache: ProjectIconCache,
+                                 fetch: @escaping @MainActor (SidebarProject, String) async -> Data?) {
+        Task {
+            for project in projects where project.isAvailable {
+                guard let revision = project.iconRevision else { continue }
+                await cache.load(for: project) { await fetch(project, revision) }
+            }
+        }
+    }
+
+    /// Like project icons, drawings load outside the list's tasks (IOS-4.65).
+    static func loadDrawings(_ worktrees: [WorktreePanes], into cache: WorktreeDrawingCache,
+                             fetch: @escaping @MainActor (WorktreePanes, String) async -> Data?) {
+        let pending = worktrees.compactMap { worktree -> (WorktreePanes, String)? in
+            guard case .drawing(let revision, _) = worktree.iconIdentity, cache.images[revision] == nil else { return nil }
+            return (worktree, revision)
+        }
+        guard !pending.isEmpty else { return }
+        Task {
+            for (worktree, revision) in pending {
+                await cache.load(revision: revision) { await fetch(worktree, revision) }
+            }
+        }
+    }
+
+    private static func fetchIcon(_ request: WorktreeManagementRequest, using provider: RemoteConnectionProvider?) async -> Data? {
+        do {
+            let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
+            if case .icon(let data) = response { return data }
+            projectIconLogger.error("icon refused: \(String(describing: response), privacy: .public)")
+        } catch {
+            projectIconLogger.error("icon fetch failed: \(String(describing: error), privacy: .public)")
+        }
+        return nil
     }
 
     private func rowsChanged() {
@@ -908,7 +961,7 @@ public struct WorktreeListContent: View {
         WorktreeBlock(
             worktree: wt,
             project: member,
-            projectIconData: projectIcons[memberID],
+            projectIconData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
             theme: theme,
             isActive: isSelected(wt),
             isOpening: openingWorktrees.contains(OpeningWorktreeKey(hostID: feed.state.hostID(for: wt), path: wt.path)),

@@ -1334,6 +1334,8 @@ struct IPadTerminalDetailChrome: ViewModifier {
 // MARK: - IPadDetailColumn
 
 struct IPadDetailColumn: View {
+    @Environment(\.projectIconCache) private var projectIconCache
+    @Environment(\.worktreeDrawingCache) private var worktreeDrawingCache
     let host: Host?
     @Bindable var appState: IPadAppState
     /// Still needed after the toolbar splits moved onto
@@ -1536,8 +1538,8 @@ struct IPadDetailColumn: View {
     }
 
     private func washBand(for worktree: WorktreePanes) -> WorktreeHeaderWashBand? {
-        guard let wash = WorktreeHeaderWash(identity: worktree.iconIdentity, project: SidebarProjection.projects([worktree]).first,
-                                            iconData: nil, background: appState.theme.background, isDark: appState.theme.isDark)
+        guard let wash = MobileWorktreeIdentity.wash(for: worktree, icons: projectIconCache?.icons, drawings: worktreeDrawingCache?.images,
+                                                     background: appState.theme.background, isDark: appState.theme.isDark)
         else { return nil }
         // The toolbar and status bar sit above the identity bar.
         let toolbar: CGFloat = 96

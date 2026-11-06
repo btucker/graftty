@@ -1127,6 +1127,7 @@ struct SidebarView: View {
         ) {
             WorktreeRowIdentitySlot(entry: worktree, displayName: displayName, isMainCheckout: worktree.path == repo.path, theme: theme,
                 prBadge: prBadge, status: status, project: project, projectIconData: iconStore.iconData(for: repo),
+                drawingData: iconStore.drawingData(for: worktree),
                 identityMenu: worktree.path == repo.path ? nil : { anchor in
                     WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
                                             onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },

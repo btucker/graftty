@@ -137,20 +137,33 @@ struct WorktreeRowIdentitySlot: View {
     let status: SidebarRowStatus
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
+    /// The rendered agent drawing, shown in place of the emoji (LAYOUT-2.202).
+    var drawingData: Data? = nil
     var identityMenu: ((NSView) -> NSMenu)? = nil
 
     private var resolvedProject: SidebarProject {
         project ?? SidebarProject(id: entry.path, repositoryID: entry.path, name: displayName)
     }
 
+    private var drawingIdentity: WorktreeIconIdentity {
+        .resolve(isMainCheckout: isMainCheckout, emoji: entry.emoji, drawingRevision: entry.drawing?.revision,
+                 emojiChosenByUser: entry.emojiChosenByUser)
+    }
+
     var body: some View {
-        switch WorktreeRow.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil, hasPR: false,
-                                           isInFlight: entry.state.isInFlight)[0] {
+        switch WorktreeRow.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil || drawingData != nil,
+                                           hasPR: false, isInFlight: entry.state.isInFlight)[0] {
         case .projectIcon:
             SidebarWorktreeRowIdentity(identity: .project, project: resolvedProject, imageData: projectIconData, status: status)
         case .emoji:
-            menuTarget(SidebarWorktreeRowIdentity(identity: .emoji(entry.emoji ?? ""), project: resolvedProject, status: status)
-                .accessibilityHidden(true))
+            if case .drawing = drawingIdentity, let drawingData {
+                menuTarget(SidebarWorktreeRowIdentity(identity: drawingIdentity, project: resolvedProject,
+                                                      imageData: drawingData, status: status)
+                    .accessibilityHidden(true))
+            } else {
+                menuTarget(SidebarWorktreeRowIdentity(identity: .emoji(entry.emoji ?? ""), project: resolvedProject, status: status)
+                    .accessibilityHidden(true))
+            }
         default:
             menuTarget(typeIcon)
         }

@@ -3,7 +3,7 @@ import Testing
 import GrafttyProtocol
 @testable import GrafttyCommandUI
 
-@Suite("@spec LAYOUT-2.202: While the sidebar displays a worktree, the application shall show at most one status line, choosing in order an agent question, notification text, a working agent, the where-we-are text, or nothing.")
+@Suite("@spec LAYOUT-2.222: While the sidebar displays a worktree, the application shall show at most one status line, choosing in order an agent question, notification text, a working agent, the where-we-are text, or nothing.")
 struct SidebarRowStatusTests {
     private func leaf(_ name: String, busy: Bool = false, attention: String? = nil, source: AttentionSource? = nil) -> PaneLayoutNode {
         .leaf(sessionName: name, title: "\(name) title", attentionText: attention, isBusy: busy, attentionSource: source)
