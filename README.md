@@ -37,11 +37,15 @@ Graftty organizes persistent terminal sessions by Git worktree. Every project an
 
 ### Take it anywhere
 
+<img align="right" src="docs/screenshots/mobile-terminal.png" alt="Graftty on iPhone attached to a running Codex session on a paired MacBook Pro" width="260" />
+
 - **iPhone and iPad.** GrafttyMobile pairs with your Mac and attaches to the same live sessions. You can type, take control of a pane's size, answer agents, create worktrees, and view previews. On iPad, panes split side by side.
 - **Remote Macs.** Pair two Macs and use one Mac's worktrees and sessions from the other, over the LAN or Tailscale. The connection carries authenticated SSH inside an encrypted WebRTC channel. See [Remote Macs](docs/remote-macs.md).
 - **Linux hosts.** Run Graftty's headless host on Ubuntu 24.04 and connect to it from the Mac app. **Set Up Linux Host…** installs it over SSH and imports projects, including committed work that hasn't been pushed. See [Linux hosts](docs/linux-host.md).
 - **Web access.** An optional HTTPS web client is served only on your Tailscale addresses.
 - **Windows (in progress).** Windows 11 support through WSL2 is under way; see [Windows headless host](docs/windows-host.md).
+
+<br clear="right" />
 
 ### Scriptable
 
