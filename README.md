@@ -37,7 +37,7 @@ Graftty organizes persistent terminal sessions by Git worktree. Every project an
 
 ### Take it anywhere
 
-<img align="right" src="docs/screenshots/mobile-terminal.png" alt="Graftty on iPhone attached to a running Codex session on a paired MacBook Pro" width="260" />
+<img align="right" src="docs/screenshots/mobile-terminal.png" alt="Graftty on iPhone attached to a running Codex session on a paired MacBook Pro" width="300" />
 
 - **iPhone and iPad.** GrafttyMobile pairs with your Mac and attaches to the same live sessions. You can type, take control of a pane's size, answer agents, create worktrees, and view previews. On iPad, panes split side by side.
 - **Remote Macs.** Pair two Macs and use one Mac's worktrees and sessions from the other, over the LAN or Tailscale. The connection carries authenticated SSH inside an encrypted WebRTC channel. See [Remote Macs](docs/remote-macs.md).
