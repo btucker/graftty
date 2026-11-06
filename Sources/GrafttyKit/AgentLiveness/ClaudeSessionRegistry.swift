@@ -14,6 +14,8 @@ public final class ClaudeSessionRegistry {
     public private(set) var livenessBySession: [String: AgentLiveness] = [:]
     @ObservationIgnored private var polledLiveness: [String: AgentLiveness] = [:]
     @ObservationIgnored private var hookLiveness: [String: [String: AgentLiveness]] = [:]
+    @ObservationIgnored private var hookTimes: [String: [String: Date]] = [:]
+    @ObservationIgnored private var paneClearedAt: [String: Date] = [:]
 
     @ObservationIgnored private let executor: CLIExecutor
     @ObservationIgnored private let claudePath: String
@@ -51,7 +53,7 @@ public final class ClaudeSessionRegistry {
 
     public func recordHook(runtime: TeamHookRuntime, event: TeamHookEvent,
                            sessionID: String?, paneSessionName: String,
-                           attentionReason: AgentHookAttentionReason?) {
+                           attentionReason: AgentHookAttentionReason?, occurredAt: Date = Date()) {
         let state: AgentLiveness
         if attentionReason != nil { state = .idle }
         else {
@@ -62,12 +64,48 @@ public final class ClaudeSessionRegistry {
             }
         }
         let key = runtime.rawValue + ":" + (sessionID ?? "unknown")
+        // File events can be drained after newer socket hooks or command exit.
+        guard occurredAt > (hookTimes[paneSessionName]?[key] ?? .distantPast),
+              occurredAt > (paneClearedAt[paneSessionName] ?? .distantPast) else { return }
+        hookTimes[paneSessionName, default: [:]][key] = occurredAt
         hookLiveness[paneSessionName, default: [:]][key] = state == .busy ? .busy : nil
         publishLiveness()
     }
 
+    /// Both hosts consume the same durable activity, including when provider
+    /// hooks cannot connect to the control socket from their sandbox.
+    public func recordFileActivity(_ activity: AttentionFileActivityEvent, in appState: AppState) {
+        let path: String
+        let runtime: TeamHookRuntime
+        let event: TeamHookEvent
+        let sessionID: String?
+        let pane: String?
+        let occurredAt: Date
+        let attentionReason: AgentHookAttentionReason?
+        switch activity {
+        case .progress(let progress):
+            guard let hook = progress.hookEvent else { return }
+            path = progress.worktree; runtime = progress.runtime; event = hook
+            sessionID = progress.sessionID ?? progress.agentID
+            pane = progress.paneSessionName; occurredAt = progress.progressedAt
+            attentionReason = progress.attentionReason
+        case .stop(let stop):
+            path = stop.worktree; runtime = stop.runtime; event = .stop
+            sessionID = stop.sessionID ?? stop.agentID
+            pane = stop.paneSessionName; occurredAt = stop.stoppedAt
+            attentionReason = nil
+        case .recap, .response:
+            return
+        }
+        guard let pane, appState.worktree(forPath: path)?.paneSlot(forSessionName: pane) != nil else { return }
+        recordHook(runtime: runtime, event: event, sessionID: sessionID, paneSessionName: pane,
+                   attentionReason: attentionReason, occurredAt: occurredAt)
+    }
+
     public func removePane(_ sessionName: String) {
         generation += 1 // A poll started before command exit must not restore its busy state.
+        paneClearedAt[sessionName] = Date()
+        hookTimes[sessionName] = nil
         hookLiveness[sessionName] = nil
         polledLiveness[sessionName] = nil
         publishLiveness()

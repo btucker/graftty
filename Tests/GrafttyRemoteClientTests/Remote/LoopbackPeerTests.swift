@@ -2,7 +2,7 @@
 import CryptoKit
 import Foundation
 import GrafttyProtocol
-import GrafttyRemoteTestSupport
+@testable import GrafttyRemoteTestSupport
 import Testing
 import WebRTC
 @testable import GrafttyRemoteClient
@@ -12,6 +12,22 @@ import WebRTC
 /// `RemoteConnectionReconnectTests` covers the same path.
 @Suite("LoopbackPeer — shared in-process WebRTC test peer", .serialized)
 struct LoopbackPeerTests {
+    @Test("@spec TEST-1.18: When a loopback data channel opens during listener attachment, the test fixture shall resolve its open observation without waiting for another state-change callback.", arguments: [false, true])
+    func openingDuringListenerAttachmentIsObserved(alreadyOpen: Bool) async {
+        let tracker = OpenTrackerDelegate()
+        let (events, continuation) = AsyncStream<Void>.makeStream()
+        tracker.onOpen = { continuation.yield(()) }
+        var state: RTCDataChannelState = alreadyOpen ? .open : .connecting
+        tracker.observe(install: { _ in
+            // The channel opens as its old delegate is replaced. No state
+            // callback reaches the new tracker for this transition.
+            state = .open
+        }, readyState: { state })
+        continuation.finish()
+        var iterator = events.makeAsyncIterator()
+        #expect(await iterator.next() != nil)
+    }
+
     /// `RemoteHostConnection` opens its channel as
     /// `GrafttyWebRTC.dataChannelLabel`, so an answerer opposite it must
     /// surface that channel and its inbox rather than wait for

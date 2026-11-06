@@ -1,14 +1,15 @@
 import AppKit
 import SwiftUI
-import Testing
+import XCTest
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
 @testable import Graftty
 
-@Suite(.serialized)
+// Native popovers can stop Swift Testing's async-main run loop before it
+// reports completed results. XCTest owns the AppKit lifecycle for these probes.
 @MainActor
-struct SidebarReportPreviewTests {
+final class SidebarReportPreviewTests: XCTestCase {
     private func context(need: String? = nil, long: Bool = false) -> SidebarWorktreeContext {
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date().addingTimeInterval(-420),
             recap: .init(title: "Worktree reports unified", context: long ? String(repeating: "Report context wraps within the available width. ", count: 100) : "Reports now live alongside the worktree list.",
@@ -17,8 +18,8 @@ struct SidebarReportPreviewTests {
             sidebar: .init(id: "wt", projectID: "p", unseenAgentStop: stop, lastAgentStop: stop)))
     }
 
-    @Test("@spec LAYOUT-2.129: When the user activates the information button beside a worktree name, the application shall show a native Mac report popover without selecting the worktree or acknowledging its request, and hovering shall not open it.")
-    func explicitButtonOpensNativePopover() async throws {
+    /// @spec LAYOUT-2.129: When the user activates the information button beside a worktree name, the application shall show a native Mac report popover without selecting the worktree or acknowledging its request, and hovering shall not open it.
+    func testExplicitButtonOpensNativePopover() async throws {
         let controller = SidebarReportController()
         let context = context(need: "Set auto-merge?")
         var selections = 0
@@ -44,33 +45,33 @@ struct SidebarReportPreviewTests {
         defer { controller.close(); window.close() }
         try await Task.sleep(for: .milliseconds(150))
         host.layoutSubtreeIfNeeded()
-        let button = try #require(findButton(host))
+        let button = try XCTUnwrap(findButton(host))
         let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: host.superview)
-        let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown,
+        let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown,
             location: button.convert(NSPoint(x: 10, y: 10), to: nil), modifierFlags: [], timestamp: 0,
             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
         let dragSources = findDragSources(host)
-        #expect(!dragSources.isEmpty)
+        XCTAssertFalse(dragSources.isEmpty)
         dragSources.forEach { $0.currentEvent = { down } }
         let hit = host.hitTest(point)
         dragSources.forEach { $0.currentEvent = { NSApp.currentEvent } }
-        #expect(hit === button, "Information button must own its hit target")
-        button.mouseEntered(with: try #require(NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
+        XCTAssertTrue(hit === button, "Information button must own its hit target")
+        button.mouseEntered(with: try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
         try await Task.sleep(for: .milliseconds(350))
-        #expect(controller.activeID == nil)
+        XCTAssertNil(controller.activeID)
         button.performClick(nil)
-        #expect(controller.popover?.isShown == true)
-        #expect(controller.popover?.behavior == .transient)
-        #expect(controller.activeID == context.item.worktreeIdentity.id)
-        #expect(selections == 0)
-        #expect(context.pending.count == 1)
+        XCTAssertEqual(controller.popover?.isShown, true)
+        XCTAssertEqual(controller.popover?.behavior, .transient)
+        XCTAssertEqual(controller.activeID, context.item.worktreeIdentity.id)
+        XCTAssertEqual(selections, 0)
+        XCTAssertEqual(context.pending.count, 1)
         try capture(host, name: "report-button-row")
         controller.popover?.performClose(nil)
-        #expect(controller.activeID == nil)
+        XCTAssertNil(controller.activeID)
     }
 
-    @Test("@spec LAYOUT-2.130: While a Mac report popover is visible, the application shall close it when its information button is removed and cap long reports with scrolling.")
-    func removalAndLongReport() throws {
+    /// @spec LAYOUT-2.130: While a Mac report popover is visible, the application shall close it when its information button is removed and cap long reports with scrolling.
+    func testRemovalAndLongReport() throws {
         let window = makeWindow()
         defer { window.close() }
         let button = SidebarReportButtonView()
@@ -79,17 +80,17 @@ struct SidebarReportPreviewTests {
         button.controller = controller
         button.context = context(long: true)
         controller.show(button)
-        let popover = try #require(controller.popover)
-        let scroll = try #require(popover.contentViewController?.view as? NSScrollView)
-        #expect(popover.contentSize.height == 540)
-        #expect((scroll.documentView?.frame.height ?? 0) > 540)
+        let popover = try XCTUnwrap(controller.popover)
+        let scroll = try XCTUnwrap(popover.contentViewController?.view as? NSScrollView)
+        XCTAssertEqual(popover.contentSize.height, 540)
+        XCTAssertGreaterThan(scroll.documentView?.frame.height ?? 0, 540)
         button.removeFromSuperview()
-        #expect(controller.activeID == nil)
-        #expect(!popover.isShown)
+        XCTAssertNil(controller.activeID)
+        XCTAssertFalse(popover.isShown)
     }
 
-    @Test("@spec LAYOUT-2.132: While a Mac worktree report popover is visible, the application shall fit short reports including visible history to their content and use the highlighted worktree background and Ghostty foreground colors in light and dark themes.")
-    func reportFitsContentAndTheme() throws {
+    /// @spec LAYOUT-2.132: While a Mac worktree report popover is visible, the application shall fit short reports including visible history to their content and use the highlighted worktree background and Ghostty foreground colors in light and dark themes.
+    func testReportFitsContentAndTheme() throws {
         let window = makeWindow()
         defer { window.close() }
         let button = SidebarReportButtonView()
@@ -102,15 +103,15 @@ struct SidebarReportPreviewTests {
             controller.close()
             button.theme = theme
             controller.show(button)
-            let popover = try #require(controller.popover)
-            #expect(popover.contentSize.height < 540)
-            let scroll = try #require(popover.contentViewController?.view as? NSScrollView)
-            let document = try #require(scroll.documentView)
-            #expect(abs(popover.contentSize.height - ceil(document.frame.height)) <= 1)
-            #expect(popover.contentSize.height > 100)
-            #expect(popover.appearance?.bestMatch(from: [.darkAqua, .aqua]) == (theme.isDark ? .darkAqua : .aqua))
-            let view = try #require(popover.contentViewController?.view)
-            #expect((view as? NSScrollView)?.backgroundColor == theme.highlightedWorktreeBackgroundNSColor)
+            let popover = try XCTUnwrap(controller.popover)
+            XCTAssertLessThan(popover.contentSize.height, 540)
+            let scroll = try XCTUnwrap(popover.contentViewController?.view as? NSScrollView)
+            let document = try XCTUnwrap(scroll.documentView)
+            XCTAssertLessThanOrEqual(abs(popover.contentSize.height - ceil(document.frame.height)), 1)
+            XCTAssertGreaterThan(popover.contentSize.height, 100)
+            XCTAssertEqual(popover.appearance?.bestMatch(from: [.darkAqua, .aqua]), theme.isDark ? .darkAqua : .aqua)
+            let view = try XCTUnwrap(popover.contentViewController?.view)
+            XCTAssertEqual((view as? NSScrollView)?.backgroundColor, theme.highlightedWorktreeBackgroundNSColor)
             view.layoutSubtreeIfNeeded()
             try capture(view, name: theme.isDark ? "report-dark" : "report-light")
         }
@@ -129,14 +130,14 @@ struct SidebarReportPreviewTests {
 
     private func findButton(_ view: NSView) -> SidebarReportButtonView? {
         if let button = view as? SidebarReportButtonView { return button }
-        return view.subviews.lazy.compactMap { findButton($0) }.first
+        return view.subviews.lazy.compactMap { self.findButton($0) }.first
     }
 
     private func capture(_ view: NSView, name: String) throws {
         guard let directory = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] else { return }
         let url = URL(fileURLWithPath: directory, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)
         try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent(name + ".png"))
     }

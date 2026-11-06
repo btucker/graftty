@@ -43,6 +43,15 @@ public struct AttentionFileProgressEvent: Codable, Sendable {
     public let sessionID: String?
     public let progressedAt: Date
     public let userInput: WorktreeHistory.UserInput?
+    // Optional so older CLIs and transcript-only input remain readable.
+    public var paneSessionName: String? = nil
+    public var hookEvent: TeamHookEvent? = nil
+    public var attentionReason: AgentHookAttentionReason? = nil
+
+    public var clearsAttention: Bool {
+        guard let hookEvent else { return true }
+        return AgentHookAttentionTransition.action(event: hookEvent, reason: attentionReason) == .clear
+    }
 }
 
 public struct AttentionFileResponseEvent: Codable, Sendable {
@@ -71,8 +80,8 @@ public enum AttentionFileHandoffError: Error {
     case invalidRecap
 }
 
-/// Transfers only stopped-turn Attention data through files writable by a
-/// sandboxed agent. Team and worktree commands keep using the control socket.
+/// Transfers Attention and provider hook activity through files writable by
+/// a sandboxed agent. Team and worktree commands keep using the control socket.
 public struct AttentionFileHandoff: Sendable {
     public static var defaultRootDirectory: URL {
         rootDirectory(environment: ProcessInfo.processInfo.environment)
@@ -212,7 +221,10 @@ public struct AttentionFileHandoff: Sendable {
         sessionID: String?,
         progressedAt: Date = Date(),
         userPrompt: String? = nil,
-        startsTurn: Bool = false
+        startsTurn: Bool = false,
+        paneSessionName: String? = nil,
+        hookEvent: TeamHookEvent? = nil,
+        attentionReason: AgentHookAttentionReason? = nil
     ) throws {
         guard !worktree.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
         try ensureDirectory()
@@ -231,7 +243,8 @@ public struct AttentionFileHandoff: Sendable {
         let event = AttentionFileProgressEvent(
             worktree: worktree, agentID: agentID, runtime: runtime,
             sessionID: sessionID, progressedAt: progressedAt,
-            userInput: userPrompt.map { .init(text: $0, at: progressedAt, runtime: runtime.rawValue) }
+            userInput: userPrompt.map { .init(text: $0, at: progressedAt, runtime: runtime.rawValue) },
+            paneSessionName: paneSessionName, hookEvent: hookEvent, attentionReason: attentionReason
         )
         let micros = Int64(progressedAt.timeIntervalSince1970 * 1_000_000)
         let name = "progress-\(micros)-\(UUID().uuidString).json"

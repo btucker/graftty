@@ -4696,6 +4696,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.8** While an agent's turn is busy, the application shall show no spinner on its sidebar row, because the agent's terminal title carries its own activity indicator, while agent tabs keep the spinner.
 
+**AGENT-2.9** When provider activity arrives through the durable file handoff, the application shall update the tracked pane's busy state using the original hook event and attention reason while leaving legacy progress without hook metadata unchanged.
+
 ### AGENT-3.x
 
 **AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.
@@ -5885,3 +5887,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.16** When a Git relay fixture command is cancelled, the test harness shall stop its subprocess and close its output before returning cancellation.
 
 **TEST-1.17** When a Git relay fixture transfer fails or is cancelled, the test harness shall close its channels and stop both subprocess groups before joining the sender, and reap both subprocesses before returning.
+
+**TEST-1.18** When a loopback data channel opens during listener attachment, the test fixture shall resolve its open observation without waiting for another state-change callback.

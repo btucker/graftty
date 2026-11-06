@@ -736,6 +736,7 @@ struct GrafttyApp: App {
         let attentionDrain = AttentionHandoffDrain(
             handoff: attentionHandoff,
             apply: { activity in
+                services.claudeSessionRegistry.recordFileActivity(activity, in: binding.wrappedValue)
                 switch activity {
                 case .recap(let event):
                     binding.wrappedValue.recordAgentRecap(event.recap, callerPath: event.worktree, reportedAt: event.reportedAt)
@@ -747,25 +748,18 @@ struct GrafttyApp: App {
                     if let input = event.userInput {
                         binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
                     }
-                    Self.clearAgentAttention(
-                        callerPath: event.worktree,
-                        callerAgentID: event.agentID,
-                        runtime: event.runtime,
-                        sessionID: event.sessionID,
-                        progressedAt: event.progressedAt,
-                        appState: binding
-                    )
-                case .stop(let event):
-                    guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
-                    if let pane = event.paneSessionName,
-                       binding.wrappedValue.worktree(forPath: event.worktree)?
-                        .paneSlot(forSessionName: pane) != nil {
-                        services.claudeSessionRegistry.recordHook(
-                            runtime: event.runtime, event: .stop,
-                            sessionID: event.sessionID ?? event.agentID,
-                            paneSessionName: pane, attentionReason: nil
+                    if event.clearsAttention {
+                        Self.clearAgentAttention(
+                            callerPath: event.worktree,
+                            callerAgentID: event.agentID,
+                            runtime: event.runtime,
+                            sessionID: event.sessionID,
+                            progressedAt: event.progressedAt,
+                            appState: binding
                         )
                     }
+                case .stop(let event):
+                    guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
                     Self.recordStoppedTurn(
                         callerPath: event.worktree, runtime: event.runtime,
                         callerAgentID: event.agentID, sessionID: event.sessionID,
