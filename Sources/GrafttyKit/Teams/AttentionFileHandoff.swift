@@ -46,6 +46,12 @@ public struct AttentionFileProgressEvent: Codable, Sendable {
     // Optional so older CLIs and transcript-only input remain readable.
     public var paneSessionName: String? = nil
     public var hookEvent: TeamHookEvent? = nil
+    public var attentionReason: AgentHookAttentionReason? = nil
+
+    public var clearsAttention: Bool {
+        guard let hookEvent else { return true }
+        return AgentHookAttentionTransition.action(event: hookEvent, reason: attentionReason) == .clear
+    }
 }
 
 public struct AttentionFileResponseEvent: Codable, Sendable {
@@ -217,7 +223,8 @@ public struct AttentionFileHandoff: Sendable {
         userPrompt: String? = nil,
         startsTurn: Bool = false,
         paneSessionName: String? = nil,
-        hookEvent: TeamHookEvent? = nil
+        hookEvent: TeamHookEvent? = nil,
+        attentionReason: AgentHookAttentionReason? = nil
     ) throws {
         guard !worktree.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
         try ensureDirectory()
@@ -237,7 +244,7 @@ public struct AttentionFileHandoff: Sendable {
             worktree: worktree, agentID: agentID, runtime: runtime,
             sessionID: sessionID, progressedAt: progressedAt,
             userInput: userPrompt.map { .init(text: $0, at: progressedAt, runtime: runtime.rawValue) },
-            paneSessionName: paneSessionName, hookEvent: hookEvent
+            paneSessionName: paneSessionName, hookEvent: hookEvent, attentionReason: attentionReason
         )
         let micros = Int64(progressedAt.timeIntervalSince1970 * 1_000_000)
         let name = "progress-\(micros)-\(UUID().uuidString).json"

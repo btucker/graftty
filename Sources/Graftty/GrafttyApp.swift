@@ -748,14 +748,16 @@ struct GrafttyApp: App {
                     if let input = event.userInput {
                         binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
                     }
-                    Self.clearAgentAttention(
-                        callerPath: event.worktree,
-                        callerAgentID: event.agentID,
-                        runtime: event.runtime,
-                        sessionID: event.sessionID,
-                        progressedAt: event.progressedAt,
-                        appState: binding
-                    )
+                    if event.clearsAttention {
+                        Self.clearAgentAttention(
+                            callerPath: event.worktree,
+                            callerAgentID: event.agentID,
+                            runtime: event.runtime,
+                            sessionID: event.sessionID,
+                            progressedAt: event.progressedAt,
+                            appState: binding
+                        )
+                    }
                 case .stop(let event):
                     guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
                     Self.recordStoppedTurn(

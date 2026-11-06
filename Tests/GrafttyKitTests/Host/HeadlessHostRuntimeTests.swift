@@ -1247,7 +1247,7 @@ struct HeadlessHostRuntimeTests {
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.state == .running)
     }
 
-    @Test("@spec AGENT-2.9: When provider activity arrives through the durable file handoff, the application shall update the tracked pane's busy state using the original hook event while leaving legacy progress without hook metadata unchanged.", arguments: [TeamHookRuntime.codex, .claude])
+    @Test("@spec AGENT-2.9: When provider activity arrives through the durable file handoff, the application shall update the tracked pane's busy state using the original hook event and attention reason while leaving legacy progress without hook metadata unchanged.", arguments: [TeamHookRuntime.codex, .claude])
     func fileProgressUpdatesRunningActivity(provider: TeamHookRuntime) async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1287,6 +1287,44 @@ struct HeadlessHostRuntimeTests {
         runtime.agentLiveness.removePane(pane)
         try progress(.postToolUse, paneSessionName: pane, at: older)
         #expect(runtime.agentLiveness.livenessBySession[pane] == nil)
+    }
+
+    @Test("Waiting hook files remove agents from Running without clearing existing attention", arguments: [AgentHookAttentionReason.question, .planReview, .permission])
+    func fileWaitingUpdatesRunningActivity(reason: AgentHookAttentionReason) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let pane = try await runtime.openWorktree(root.path)
+        let provider: TeamHookRuntime = reason == .permission ? .claude : .codex
+        let event: TeamHookEvent = reason == .permission ? .permissionRequest : .preToolUse
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        try handoff.progress(worktree: root.path, agentID: "agent", runtime: provider,
+            sessionID: "session", paneSessionName: pane, hookEvent: .userPromptSubmit)
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.agentLiveness.livenessBySession[pane] == .busy)
+        _ = runtime.state.recordAgentAttention(callerPath: root.path, callerAgentID: "agent", runtime: provider,
+            reason: reason, sessionID: "session", paneSessionName: pane)
+        let attention = runtime.state.worktree(forPath: root.path)?.paneAttention
+        let waitingAt = Date()
+        let payload: [String: Any] = ["worktree": root.path, "agentID": "agent", "runtime": provider.rawValue,
+            "sessionID": "session", "progressedAt": waitingAt.timeIntervalSinceReferenceDate,
+            "paneSessionName": pane, "hookEvent": event.rawValue, "attentionReason": reason.rawValue]
+        func queueWaiting() throws {
+            try JSONSerialization.data(withJSONObject: payload).write(
+                to: handoff.rootDirectory.appendingPathComponent("progress-\(UUID().uuidString).json"))
+        }
+        try queueWaiting()
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.agentLiveness.livenessBySession[pane] == .idle)
+        #expect(SidebarActivityFilter.running.apply(to: SidebarProjection.activity(runtime.snapshot())).isEmpty)
+        #expect(runtime.state.worktree(forPath: root.path)?.paneAttention == attention)
+        try handoff.progress(worktree: root.path, agentID: "agent", runtime: provider,
+            sessionID: "session", paneSessionName: pane, hookEvent: .postToolUse)
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.agentLiveness.livenessBySession[pane] == .busy)
+        try queueWaiting()
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.agentLiveness.livenessBySession[pane] == .busy)
     }
 
     @Test("@spec REMOTE-22.8: When a headless host consumes a file-based stopped-turn recap, the application shall persist the recap and clear it only after matching provider progress.")

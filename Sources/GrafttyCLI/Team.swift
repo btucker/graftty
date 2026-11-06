@@ -252,7 +252,8 @@ struct TeamHook: ParsableCommand {
                 userPrompt: event == .userPromptSubmit ? WorktreeUserPrompt.text(from: stdinPayload, runtime: runtime.rawValue) : nil,
                 startsTurn: event == .sessionStart || event == .userPromptSubmit,
                 paneSessionName: paneSessionName,
-                hookEvent: event
+                hookEvent: event,
+                attentionReason: attentionReason
             )
         }
         if runtime == .claude,
@@ -275,7 +276,7 @@ struct TeamHook: ParsableCommand {
                 paneSessionName: paneSessionName
             )
         }
-        if event == .sessionStart || event == .userPromptSubmit {
+        if event == .sessionStart || event == .userPromptSubmit || attentionReason != nil {
             stageAttentionProgress()
         }
         let stopTurnID = event == .stop ? AgentStopHookFilter.turnID(stdinJSON: stdinPayload) : nil

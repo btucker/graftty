@@ -144,8 +144,10 @@ public extension HeadlessHostRuntime {
                 if let input = progress.userInput {
                     state.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
                 }
-                state.clearAgentAttention(callerPath: progress.worktree, callerAgentID: progress.agentID,
-                    runtime: progress.runtime, sessionID: progress.sessionID, progressedAt: progress.progressedAt)
+                if progress.clearsAttention {
+                    state.clearAgentAttention(callerPath: progress.worktree, callerAgentID: progress.agentID,
+                        runtime: progress.runtime, sessionID: progress.sessionID, progressedAt: progress.progressedAt)
+                }
             }
             try save()
         }

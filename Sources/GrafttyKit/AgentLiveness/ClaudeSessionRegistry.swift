@@ -81,22 +81,25 @@ public final class ClaudeSessionRegistry {
         let sessionID: String?
         let pane: String?
         let occurredAt: Date
+        let attentionReason: AgentHookAttentionReason?
         switch activity {
         case .progress(let progress):
             guard let hook = progress.hookEvent else { return }
             path = progress.worktree; runtime = progress.runtime; event = hook
             sessionID = progress.sessionID ?? progress.agentID
             pane = progress.paneSessionName; occurredAt = progress.progressedAt
+            attentionReason = progress.attentionReason
         case .stop(let stop):
             path = stop.worktree; runtime = stop.runtime; event = .stop
             sessionID = stop.sessionID ?? stop.agentID
             pane = stop.paneSessionName; occurredAt = stop.stoppedAt
+            attentionReason = nil
         case .recap, .response:
             return
         }
         guard let pane, appState.worktree(forPath: path)?.paneSlot(forSessionName: pane) != nil else { return }
         recordHook(runtime: runtime, event: event, sessionID: sessionID, paneSessionName: pane,
-                   attentionReason: nil, occurredAt: occurredAt)
+                   attentionReason: attentionReason, occurredAt: occurredAt)
     }
 
     public func removePane(_ sessionName: String) {
