@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import GrafttyCommandUI
 import GrafttyProtocol
 import SwiftUI
 import Testing
@@ -40,9 +41,15 @@ struct WorktreeRowAlignmentTests {
                 brief: WorktreeBrief(recap: .init(title: "Fix Mobile worktree creation",
                     context: "Keep the creating indicator beside the worktree title even with a retained two-line brief.",
                     completed: "Traced the row layout.", next: "Verify its alignment."), at: .now), emoji: "📱") : nil)
+        // The row as `WorktreeBlock` composes it: the spinner takes the
+        // identity's slot, so it can't push the name aside.
         func content(_ row: WorktreePanes, opening: Bool) -> some View {
-            WorktreeRowContent(worktree: row, theme: nil,
-                isActive: false, isOpening: opening)
+            SidebarWorktreeRowLayout {
+                WorktreeBlockIdentity(worktree: row, project: nil, projectIconData: nil, theme: nil,
+                                      status: .none, isOpening: opening)
+            } content: {
+                WorktreeRowContent(worktree: row, theme: nil, isActive: false, isOpening: opening)
+            }
                 .background(RowBoundsMarker())
                 .padding(.horizontal, 20).frame(width: 390)
                 .frame(maxHeight: .infinity, alignment: .top)

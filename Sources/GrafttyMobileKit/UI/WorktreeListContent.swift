@@ -610,8 +610,12 @@ public struct WorktreeListContent: View {
             Button { beginSelectingWorktree(worktree) } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(worktree.repoDisplayName).font(.caption).foregroundStyle(.secondary)
-                    WorktreeRowContent(worktree: worktree, theme: theme,
-                        isActive: false, isOpening: false)
+                    SidebarWorktreeRowLayout {
+                        WorktreeBlockIdentity(worktree: worktree, project: nil, projectIconData: nil,
+                                              theme: theme, status: .none, isOpening: false)
+                    } content: {
+                        WorktreeRowContent(worktree: worktree, theme: theme, isActive: false, isOpening: false)
+                    }
                 }
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }

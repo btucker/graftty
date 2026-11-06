@@ -127,17 +127,9 @@ struct WorktreeBlock: View {
             .contentShape(Rectangle())
     }
 
-    @ViewBuilder
     private var identity: some View {
-        if worktree.iconIdentity != .none {
-            SidebarWorktreeRowIdentity(identity: worktree.iconIdentity,
-                project: project ?? SidebarProjection.projects([worktree])[0],
-                imageData: projectIconData, status: status)
-        } else {
-            Image(systemName: WorktreeRowIcon.symbolName(isMainCheckout: worktree.isMainCheckout, hasPR: worktree.prBadge != nil))
-                .font(.system(size: 16))
-                .foregroundStyle(WorktreeRowContent.stateStyle(worktree.state, theme: theme))
-        }
+        WorktreeBlockIdentity(worktree: worktree, project: project, projectIconData: projectIconData,
+                              theme: theme, status: status, isOpening: isOpening)
     }
 
     private var status: SidebarRowStatus {
@@ -150,6 +142,40 @@ struct WorktreeBlock: View {
             MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
                 SidebarStatusLine(status: status, secondary: theme?.sidebarSecondaryText ?? .secondary)
             }
+        }
+    }
+}
+
+/// A row's emoji, image or type icon. While the row is creating, deleting or
+/// opening, a spinner takes its place, level with the name, so the name never
+/// moves (IOS-9.16).
+struct WorktreeBlockIdentity: View {
+    let worktree: WorktreePanes
+    let project: SidebarProject?
+    let projectIconData: Data?
+    let theme: GhosttyThemeColors?
+    let status: SidebarRowStatus
+    let isOpening: Bool
+
+    var body: some View {
+        if worktree.state.isInFlight || isOpening {
+            // A blank line of the title's font, padded like the title, centres
+            // the spinner on the name's line.
+            Text(" ")
+                .font(.system(size: WorktreeRowContent.titleSize, weight: .semibold))
+                .hidden()
+                .frame(maxWidth: .infinity)
+                .overlay { ProgressView().controlSize(.mini) }
+                .padding(.vertical, WorktreeRowContent.verticalPadding)
+                .frame(maxHeight: .infinity, alignment: .top)
+        } else if worktree.iconIdentity != .none {
+            SidebarWorktreeRowIdentity(identity: worktree.iconIdentity,
+                project: project ?? SidebarProjection.projects([worktree])[0],
+                imageData: projectIconData, status: status)
+        } else {
+            Image(systemName: WorktreeRowIcon.symbolName(isMainCheckout: worktree.isMainCheckout, hasPR: worktree.prBadge != nil))
+                .font(.system(size: 16))
+                .foregroundStyle(WorktreeRowContent.stateStyle(worktree.state, theme: theme))
         }
     }
 }
@@ -178,11 +204,11 @@ struct WorktreeRowContent: View {
     /// When it asked or was last active.
     var time: Date? = nil
 
-    private static let titleSize: CGFloat = 15
+    static let titleSize: CGFloat = 15
+    static let verticalPadding: CGFloat = 4
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            if worktree.state.isInFlight || isOpening { progress }
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     primaryText
@@ -213,21 +239,8 @@ struct WorktreeRowContent: View {
                 .fixedSize()
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Self.verticalPadding)
         .contentShape(Rectangle())
-    }
-
-    /// Shares the title's baseline, so showing it doesn't move the title.
-    private var progress: some View {
-        Text(" ")
-            .font(.system(size: Self.titleSize, weight: .semibold))
-            .hidden()
-            .frame(width: 18, height: 18)
-            .overlay { ProgressView().controlSize(.mini) }
-            .alignmentGuide(.firstTextBaseline) { dimensions in
-                let font = UIFont.systemFont(ofSize: Self.titleSize, weight: .semibold)
-                return dimensions[VerticalAlignment.center] + (font.ascender + font.descender) / 2
-            }
     }
 
     /// Themed dim for closed/creating/deleting (falls back to system
