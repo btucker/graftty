@@ -109,6 +109,12 @@ public enum WorktreeDrawingSVG {
 
         func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) { depth -= 1 }
 
+        /// Linux's parser recovers from errors and still returns true from
+        /// parse(), so a reported error must reject the drawing by itself.
+        func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
+            fail(.malformed, parser)
+        }
+
         func parser(_ parser: XMLParser, foundProcessingInstructionWithTarget target: String, data: String?) {
             fail(.malformed, parser)
         }
