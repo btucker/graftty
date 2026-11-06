@@ -207,10 +207,10 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             while let event = await events.next() {
                 try Task.checkCancellation()
                 switch event {
-                case .output(let bytes): surface.write(bytes)
+                case .output(let bytes): try await surface.writeAndWait(bytes)
                 case .ended(let status):
                     receivedExit = true
-                    reportExit(status: status)
+                    await reportExit(status: status)
                     await stream.close()
                     return
                 default: try await attachment.handle(event)
@@ -345,7 +345,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         // Legacy zmx attach returns success for a completed shell, including
         // a shell that exits nonzero. A failed attach can leave no daemon too.
         if status == 0, launcher.isSessionMissing(configuration.sessionName) {
-            reportExit(status: 0)
+            Task { await self.reportExit(status: 0) }
         } else {
             reportFailure("Terminal attachment ended. Reconnect to resume the session.")
         }
@@ -366,7 +366,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         handler(message)
     }
 
-    private func reportExit(status: Int32) {
+    private func reportExit(status: Int32) async {
         // A short command may exit before the receipt poll gets scheduled.
         // Establish acceptance before pane teardown removes the receipt.
         completeStartup(lock.withLock { activeStartupReceipt }.map {
@@ -374,7 +374,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         } ?? false)
         let elapsed = lock.withLock { ProcessInfo.processInfo.systemUptime - startedAt }
         let milliseconds = UInt64(max(0, elapsed) * 1_000)
-        surface.withSurface { ghostty_surface_process_exit($0, UInt32(clamping: status), milliseconds) }
+        _ = await surface.perform { ghostty_surface_process_exit($0, UInt32(clamping: status), milliseconds) }
     }
 
     func close() {
@@ -388,8 +388,8 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             fallback = nil
             return current
         }
-        surface.close()
         current.0?.cancel()
+        surface.close()
         current.1?.close()
         current.2?.close()
     }

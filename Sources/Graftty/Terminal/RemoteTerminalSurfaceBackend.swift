@@ -39,15 +39,10 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private let client: WebSocketClient
     private let writeBuffer: SurfaceWriteBuffer
     private let onUnexpectedClose: () -> Void
-    private let lock = NSCondition()
+    private let lock = NSLock()
 
     private var lifecycle: Lifecycle = .idle
     private var surface: ghostty_surface_t?
-    /// Number of inbound deliveries that claimed the current raw Ghostty
-    /// surface before shutdown. `close()` waits for this to reach zero before
-    /// returning, so `SurfaceHandle.deinit` cannot free the surface under a
-    /// resumed receive task.
-    private var inFlightSurfaceWrites = 0
     private var receiveTask: Task<Void, Never>?
     private var sendTail: Task<Void, Never>?
     private var userdataPointer: UnsafeMutableRawPointer?
@@ -65,7 +60,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private var takeoverRequested = false
     private var takeoverBaseEpoch: UInt64?
     private var didReportUnexpectedClose = false
-    private var pagedSurface: MacPagedSurface?
+    private var surfaceAccess: MacPagedSurface?
     private var attachmentGrid: DisplayGrid?
     private var lastPagedGrid: DisplayGrid?
     private var awaitingInitialCheckpoint = false
@@ -138,8 +133,8 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         case .idle:
             lifecycle = .running
             self.surface = surface
+            surfaceAccess = MacPagedSurface(surface, writeBuffer: writeBuffer)
             if client.supportsPagedHistory {
-                pagedSurface = MacPagedSurface(surface)
                 awaitingInitialCheckpoint = true
             }
         case .running:
@@ -233,13 +228,14 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         let task: Task<Void, Never>?
         lock.lock()
         if case .closed = lifecycle {
+            let access = surfaceAccess
             lock.unlock()
+            access?.close()
             return
         }
         lifecycle = .closed
         surface = nil
-        let pagedSurface = self.pagedSurface
-        self.pagedSurface = nil
+        let surfaceAccess = self.surfaceAccess
         task = receiveTask
         receiveTask = nil
         sendTail?.cancel()
@@ -249,13 +245,10 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         takeoverRequested = false
         takeoverBaseEpoch = nil
         ownershipSnapshot = nil
-        while inFlightSurfaceWrites > 0 {
-            lock.wait()
-        }
         lock.unlock()
 
-        pagedSurface?.close()
         task?.cancel()
+        surfaceAccess?.close()
         client.close()
     }
 
@@ -334,6 +327,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         while !Task.isCancelled {
             do {
                 let frame = try await client.receive()
+                try Task.checkCancellation()
                 switch frame {
                 case .binary(let data) where !data.isEmpty:
                     deliver(data, to: surface)
@@ -351,7 +345,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
 
     @MainActor
     private func receivePagedLoop() async {
-        guard let native = lock.withLock({ pagedSurface }) else { return }
+        guard let native = lock.withLock({ surfaceAccess }) else { return }
         let prepare: (DisplayGrid?) -> Void = { [weak self] grid in
             guard let self else { return }
             self.lock.withLock {
@@ -370,8 +364,10 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         defer { attachment.close() }
         do {
             while !Task.isCancelled {
-                switch try await client.receive() {
-                case .binary(let bytes): native.write(bytes)
+                let frame = try await client.receive()
+                try Task.checkCancellation()
+                switch frame {
+                case .binary(let bytes): try await native.writeAndWait(bytes)
                 case .text(let text):
                     if let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
                         try await attachment.handle(event)
@@ -427,24 +423,16 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
             lock.unlock()
             return
         }
-        inFlightSurfaceWrites += 1
+        let access = surfaceAccess
         refresh = requestRefresh
         lock.unlock()
 
-        writeBuffer(expectedSurface, data)
+        access?.write(data)
 
-        let shouldRefresh: Bool
-        lock.lock()
-        inFlightSurfaceWrites -= 1
-        shouldRefresh = {
+        let shouldRefresh = lock.withLock { () -> Bool in
             if case .running = lifecycle { return true }
             return false
-        }()
-        if inFlightSurfaceWrites == 0 {
-            lock.broadcast()
         }
-        lock.unlock()
-
         if shouldRefresh {
             refresh()
         }

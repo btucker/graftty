@@ -814,6 +814,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.55** When a checkpoint installation completes or fails in the current attachment, the application shall retain only its latest elapsed installation duration and outcome for diagnosis without retaining snapshot contents.
 
+**TERM-12.56** When live output fills the native app mailbox in a Mac paged attachment, the application shall keep main available to drain messages and apply subsequent output and control events in order.
+
+**TERM-12.57** When a local Mac paged attachment receives title output that exceeds the native mailbox capacity, the application shall parse it off main and render its final output before reporting shell exit.
+
+**TERM-12.58** When a Mac remote attachment closes during native parsing, the application shall stop admitting surface calls, drain the mailbox while joining parsing, and reject cancelled or late output before the surface is freed.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.

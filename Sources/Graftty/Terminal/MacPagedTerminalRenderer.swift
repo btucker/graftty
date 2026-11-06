@@ -4,29 +4,122 @@ import os
 import GrafttyProtocol
 import GrafttyRemoteClient
 
-/// Drains native calls before SurfaceHandle frees the borrowed surface.
+/// Borrows the SurfaceHandle's surface. Parsing runs off main; retirement
+/// joins only admitted C calls while main drains the mailbox.
 final class MacPagedSurface: @unchecked Sendable {
-    private let lock = NSRecursiveLock()
+    typealias WriteBuffer = (ghostty_surface_t, Data) -> Void
+    private let calls = NSRecursiveLock()
+    private let condition = NSCondition()
+    private let queue = DispatchQueue(label: "com.graftty.paged-output", qos: .userInitiated)
     private var surface: ghostty_surface_t?
+    private var retiringSurface: ghostty_surface_t?
+    private var activeCalls = 0
+    private let writeBuffer: WriteBuffer
 
-    init(_ surface: ghostty_surface_t) { self.surface = surface }
+    init(_ surface: ghostty_surface_t, writeBuffer: @escaping WriteBuffer = { surface, data in
+        data.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { return }
+            ghostty_surface_write_buffer(surface, base.assumingMemoryBound(to: UInt8.self), UInt(bytes.count))
+        }
+    }) {
+        self.surface = surface
+        self.writeBuffer = writeBuffer
+    }
 
-    func withSurface<T>(_ body: (ghostty_surface_t) throws -> T) rethrows -> T? {
-        try lock.withLock {
-            guard let surface else { return nil }
-            return try body(surface)
+    private func withSurface<T>(_ body: (ghostty_surface_t) -> T) -> T? {
+        calls.lock()
+        defer { calls.unlock() }
+        condition.lock()
+        guard let surface else { condition.unlock(); return nil }
+        activeCalls += 1
+        condition.unlock()
+        defer {
+            condition.lock()
+            activeCalls -= 1
+            condition.broadcast()
+            condition.unlock()
+        }
+        return body(surface)
+    }
+
+    /// Polls never wait on the writer's Swift lock or native renderer mutex.
+    /// A later viewport poll retries when the current operation has finished.
+    func withIdleSurface<T>(_ body: (ghostty_surface_t) -> T) -> T? {
+        guard calls.try() else { return nil }
+        defer { calls.unlock() }
+        return withSurface(body)
+    }
+
+    private final class Cancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() { lock.withLock { cancelled = true } }
+        var isCancelled: Bool { lock.withLock { cancelled } }
+    }
+
+    func perform<T: Sendable>(onMainThread: Bool = false,
+                             _ body: @escaping @Sendable (ghostty_surface_t) -> T) async -> T? {
+        let cancellation = Cancellation()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async { [self] in
+                    let run = { @Sendable in
+                        let result = cancellation.isCancelled ? nil : self.withSurface(body)
+                        continuation.resume(returning: result)
+                    }
+                    if onMainThread {
+                        // Grid and READY APIs also update the native view.
+                        // Acquire the lease on main, so close never joins a
+                        // worker that is waiting for a queued main block.
+                        let finished = DispatchSemaphore(value: 0)
+                        DispatchQueue.main.async { run(); finished.signal() }
+                        finished.wait()
+                    } else { run() }
+                }
+            }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 
-    func close() { lock.withLock { surface = nil } }
-
-    func write(_ data: Data) {
-        withSurface { surface in
-            data.withUnsafeBytes { bytes in
-                guard let base = bytes.baseAddress else { return }
-                ghostty_surface_write_buffer(surface, base.assumingMemoryBound(to: UInt8.self), UInt(bytes.count))
-            }
+    /// Await each live frame before reading the next event. This bounds the
+    /// writer to one frame and fences checkpoint, grid, page and exit events.
+    func writeAndWait(_ data: Data) async throws {
+        try Task.checkCancellation()
+        guard await perform({ [writeBuffer] in writeBuffer($0, data) }) != nil else {
+            throw CancellationError()
         }
+        try Task.checkCancellation()
+    }
+
+    /// The legacy PTY reader already supplies ordering and backpressure.
+    func write(_ data: Data) {
+        precondition(!Thread.isMainThread)
+        withSurface { writeBuffer($0, data) }
+    }
+
+    /// Stop admission before joining C calls. Queued work checks admission
+    /// when it runs and never captures the borrowed pointer. No Swift lock
+    /// spans a tick, and no tick runs inside a native parser callback.
+    func close() {
+        condition.lock()
+        if let surface {
+            retiringSurface = surface
+            self.surface = nil
+        }
+        while activeCalls > 0 {
+            if Thread.isMainThread, let retiringSurface {
+                let app = ghostty_surface_app(retiringSurface)
+                condition.unlock()
+                ghostty_app_tick(app)
+                condition.lock()
+                if activeCalls > 0 {
+                    _ = condition.wait(until: Date(timeIntervalSinceNow: 0.001))
+                }
+            } else { condition.wait() }
+        }
+        retiringSurface = nil
+        condition.unlock()
     }
 }
 
@@ -51,12 +144,13 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
     func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
         #if GRAFTTY_PAGED_HISTORY
         try await resize(cols: checkpoint.cols, rows: checkpoint.rows)
-        let installed = surface.withSurface { surface in
+        let installed = await surface.perform(onMainThread: true) { surface in
             checkpoint.ready.withUnsafeBytes { bytes in
                 ghostty_surface_snapshot_ready(surface, generation,
                     bytes.baseAddress!.assumingMemoryBound(to: UInt8.self), bytes.count)
             }
         }
+        try Task.checkCancellation()
         guard installed == true else { throw Error.invalidSnapshot }
         #else
         throw Error.invalidSnapshot
@@ -72,7 +166,7 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
     func setSourceGrid(cols: UInt16, rows: UInt16) async throws {
         #if GRAFTTY_PAGED_HISTORY
         try Task.checkCancellation()
-        guard surface.withSurface({ ghostty_surface_set_source_grid($0, cols, rows) }) == true else {
+        guard await surface.perform(onMainThread: true, { ghostty_surface_set_source_grid($0, cols, rows) }) == true else {
             throw Error.gridUnavailable
         }
         // Live acknowledgments update parser dimensions only. Preparing a restore
@@ -86,7 +180,7 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
 
     func releaseSourceGrid() async throws {
         #if GRAFTTY_PAGED_HISTORY
-        guard surface.withSurface({ ghostty_surface_clear_source_grid($0) }) == true else {
+        guard await surface.perform(onMainThread: true, { ghostty_surface_clear_source_grid($0) }) == true else {
             throw Error.gridUnavailable
         }
         #endif
@@ -95,13 +189,14 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
 
     func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult {
         #if GRAFTTY_PAGED_HISTORY
-        let result = surface.withSurface { surface in
+        let result = await surface.perform { surface in
             data.withUnsafeBytes { bytes in
                 var rows = 0
                 return ghostty_surface_snapshot_page(surface, generation, screen,
                     bytes.baseAddress!.assumingMemoryBound(to: UInt8.self), bytes.count, &rows)
             }
         }
+        guard !Task.isCancelled else { return .stale }
         switch result {
         case 1: return .applied
         case 2: return .requiresRecovery
@@ -116,7 +211,7 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
 
     func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool {
         #if GRAFTTY_PAGED_HISTORY
-        surface.withSurface { ghostty_surface_snapshot_near_top($0, generation, screen, 20) } == true
+        surface.withIdleSurface { ghostty_surface_snapshot_near_top($0, generation, screen, 20) } == true
         #else
         false
         #endif
