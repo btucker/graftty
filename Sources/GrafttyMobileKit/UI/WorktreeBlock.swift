@@ -23,16 +23,26 @@ struct WorktreeBlock: View {
     /// Text after the name: see `SidebarMergedRows.hostText`. The Projects
     /// screen also names the project here.
     var hostText: String? = nil
+    /// Where this row belongs, on a list that mixes projects. Drawn on its own
+    /// line, so a long worktree name can't push it out.
+    var eyebrow: String? = nil
     let onReport: () -> Void
     var onRemove: (() -> Void)? = nil
+    /// Hides the row's current request on this device (LAYOUT-2.216).
+    var onDismissRequest: () -> Void = {}
 
     var body: some View {
         // IPAD-1.13: pack the worktree row + its status line into a
-        // single List row via a tight VStack so the iOS sidebar-list
-        // style's default per-row padding doesn't compound between
-        // them. A small 3pt spacing gives breathing room without
-        // re-inflating to the sidebar-style's full per-row padding.
-        VStack(alignment: .leading, spacing: 3) {
+        // single List row, so the iOS sidebar-list style's default per-row
+        // padding doesn't compound between them.
+        SidebarWorktreeRowLayout {
+            identity
+        } content: {
+            if let eyebrow {
+                Text(eyebrow).font(.caption2)
+                    .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
+                    .lineLimit(1)
+            }
             worktreeRow
             statusLine
             ForEach((worktree.agents ?? []).filter { $0.status == "failed" && $0.sessionName == nil }) { agent in
@@ -46,13 +56,18 @@ struct WorktreeBlock: View {
         // grouping as the Mac sidebar's `worktreeBlock`.
         .padding(.leading, projectColumn ? 8 : 6)
         .padding(.trailing, projectColumn ? 8 : 2)
-        .padding(.vertical, projectColumn ? 0 : 3)
+        .padding(.vertical, 5)
         .frame(minHeight: 44)
         .opacity(isAsleep ? 0.55 : 1)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(highlightFill)
         )
+        .contextMenu {
+            if !worktree.state.isInFlight {
+                MobileWorktreeRowMenu(context: context, onReport: onReport, onDismiss: onDismissRequest)
+            }
+        }
         .listRowInsets(EdgeInsets(
             top: projectColumn ? 0 : 4,
             leading: projectColumn ? 6 : WorktreeListContent.iPadRowLeadingInset,
@@ -89,9 +104,12 @@ struct WorktreeBlock: View {
                 MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { rowIdentity }
                 if let onRemove, SidebarMergedWorktreeRemoval.isAvailable(
                     prState: worktree.prBadge?.state, isMainCheckout: worktree.isMainCheckout, state: worktree.state) {
+                    // A 44-point target that takes only the heading's height, so the
+                    // row doesn't grow (IOS-13.18); taps above and below still reach it.
                     Button(action: onRemove) {
-                        Image(systemName: "trash").frame(width: 44, height: 44)
+                        Image(systemName: "trash").frame(width: 44, height: 44).contentShape(Rectangle())
                     }.buttonStyle(.borderless)
+                        .padding(.vertical, -10)
                         .foregroundStyle(theme?.sidebarSecondaryText ?? .secondary)
                         .accessibilityLabel("Remove worktree \(worktree.displayName)")
                 }
@@ -103,10 +121,23 @@ struct WorktreeBlock: View {
     private var rowIdentity: some View {
         WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
             theme: theme, isActive: isActive, isOpening: isOpening,
-            attentionCount: isAsleep ? 0 : status.headingAttentionCount(context.pending.count), hostText: hostText,
+            hostText: hostText,
             time: WorktreeActivitySections.rowDate(worktree, context: context))
             .frame(minHeight: 24)
             .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var identity: some View {
+        if worktree.iconIdentity != .none {
+            SidebarWorktreeRowIdentity(identity: worktree.iconIdentity,
+                project: project ?? SidebarProjection.projects([worktree])[0],
+                imageData: projectIconData, status: status)
+        } else {
+            Image(systemName: WorktreeRowIcon.symbolName(isMainCheckout: worktree.isMainCheckout, hasPR: worktree.prBadge != nil))
+                .font(.system(size: 16))
+                .foregroundStyle(WorktreeRowContent.stateStyle(worktree.state, theme: theme))
+        }
     }
 
     private var status: SidebarRowStatus {
@@ -118,7 +149,6 @@ struct WorktreeBlock: View {
         if status != .none {
             MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
                 SidebarStatusLine(status: status, secondary: theme?.sidebarSecondaryText ?? .secondary)
-                    .padding(.leading, SidebarStatusLine.mobileLeadingInset)
             }
         }
     }
@@ -144,7 +174,6 @@ struct WorktreeRowContent: View {
     /// siblings (IPAD-1.16).
     let isActive: Bool
     let isOpening: Bool
-    let attentionCount: Int
     var hostText: String? = nil
     /// When it asked or was last active.
     var time: Date? = nil
@@ -153,8 +182,7 @@ struct WorktreeRowContent: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            SidebarActivityBadge(attentionCount)
-            typeIcon
+            if worktree.state.isInFlight || isOpening { progress }
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     primaryText
@@ -189,30 +217,13 @@ struct WorktreeRowContent: View {
         .contentShape(Rectangle())
     }
 
-    private var typeIcon: some View {
-        // All identity states share the title baseline and an 18pt slot.
-        // An emoji's intrinsic text metrics must not move the title when
-        // the slot changes to a progress indicator.
+    /// Shares the title's baseline, so showing it doesn't move the title.
+    private var progress: some View {
         Text(" ")
             .font(.system(size: Self.titleSize, weight: .semibold))
             .hidden()
             .frame(width: 18, height: 18)
-            .overlay {
-                if worktree.state.isInFlight || isOpening {
-                    ProgressView().controlSize(.mini)
-                } else if worktree.iconIdentity != .none {
-                    WorktreeIdentityView(identity: worktree.iconIdentity,
-                        project: project ?? SidebarProjection.projects([worktree])[0],
-                        imageData: projectIconData, size: 18)
-                } else {
-                    Image(systemName: WorktreeRowIcon.symbolName(
-                        isMainCheckout: worktree.isMainCheckout,
-                        hasPR: worktree.prBadge != nil
-                    ))
-                    .font(.system(size: 11))
-                    .foregroundStyle(typeIconStyle)
-                }
-            }
+            .overlay { ProgressView().controlSize(.mini) }
             .alignmentGuide(.firstTextBaseline) { dimensions in
                 let font = UIFont.systemFont(ofSize: Self.titleSize, weight: .semibold)
                 return dimensions[VerticalAlignment.center] + (font.ascender + font.descender) / 2
@@ -225,14 +236,14 @@ struct WorktreeRowContent: View {
     /// goes through the shared `GhosttyThemeColors.worktreeStateIcon`
     /// accessor so the Mac sidebar uses identical state-to-color
     /// mapping.
-    private var typeIconStyle: AnyShapeStyle {
+    static func stateStyle(_ state: WorktreeWireState, theme: GhosttyThemeColors?) -> AnyShapeStyle {
         if let theme {
-            return AnyShapeStyle(theme.worktreeStateIcon(worktree.state))
+            return AnyShapeStyle(theme.worktreeStateIcon(state))
         }
         // No-theme (compact iPhone) path: keep the system `.secondary`
         // dim for inactive states so the row reads against the system
         // grouped-list background.
-        switch worktree.state {
+        switch state {
         case .closed, .creating, .deleting: return AnyShapeStyle(.secondary)
         case .running: return AnyShapeStyle(Color.green)
         case .stale: return AnyShapeStyle(Color.yellow)

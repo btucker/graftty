@@ -402,7 +402,7 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
     }
 }
 
-/// @spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and identify pending user requests with an orange waiting glyph instead of numeric attention badges, excluding routine recaps and command-finished markers.
+/// @spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and show pending user requests as counts in the attention color, excluding routine recaps and command-finished markers.
 public struct SidebarActivityCounts: Sendable {
     public private(set) var workingByProject: [String: Int] = [:]
     public private(set) var attentionByProject: [String: Int] = [:]

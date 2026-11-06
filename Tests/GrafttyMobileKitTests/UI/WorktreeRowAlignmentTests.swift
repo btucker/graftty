@@ -16,7 +16,7 @@ struct WorktreeRowAlignmentTests {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         let host = UIHostingController(rootView: WorktreeRowContent(worktree: row, theme: nil,
-            isActive: false, isOpening: false, attentionCount: 0)
+            isActive: false, isOpening: false)
             .frame(width: 260).environment(\.accessibilityEnabled, true))
         window.rootViewController = host; window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -42,7 +42,7 @@ struct WorktreeRowAlignmentTests {
                     completed: "Traced the row layout.", next: "Verify its alignment."), at: .now), emoji: "📱") : nil)
         func content(_ row: WorktreePanes, opening: Bool) -> some View {
             WorktreeRowContent(worktree: row, theme: nil,
-                isActive: false, isOpening: opening, attentionCount: 0)
+                isActive: false, isOpening: opening)
                 .background(RowBoundsMarker())
                 .padding(.horizontal, 20).frame(width: 390)
                 .frame(maxHeight: .infinity, alignment: .top)

@@ -1,5 +1,8 @@
 import SwiftUI
 import AppKit
+import GrafttyCommandUI
+import GrafttyKit
+import GrafttyProtocol
 
 extension View {
     /// AppKit-backed right-click menu. Use INSTEAD OF SwiftUI's
@@ -110,4 +113,29 @@ final class ClosureMenuItem: NSMenuItem {
     required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     @objc private func invoke() { runAction() }
+}
+
+/// LAYOUT-2.216: a row's menu leads with dismissing its request.
+enum SidebarAttentionDismissalMenu {
+    static func add(to menu: NSMenu, context: SidebarWorktreeContext,
+                    dismiss: @escaping (SidebarWorktreeContext) -> Void) {
+        guard SidebarAttentionDismissal.isAvailable(context) else { return }
+        menu.addItem(ClosureMenuItem(title: SidebarAttentionDismissal.title) { dismiss(context) })
+        menu.addItem(.separator())
+    }
+
+    /// This Mac owns the worktree, so it retires the requests itself (LAYOUT-2.218).
+    static func acknowledge(_ requests: [WorktreeManagementRequest], in state: inout AppState) {
+        for case let .acknowledgeOccurrence(worktreeID, paneID, occurrence) in requests {
+            _ = SidebarHostNavigation.acknowledge(in: &state, worktreeID: worktreeID, paneID: paneID, occurrence: occurrence)
+        }
+    }
+}
+
+extension NSMenu {
+    /// For a menu that may end right after the dismissal's separator.
+    func droppingTrailingSeparator() -> NSMenu {
+        if items.last?.isSeparatorItem == true { removeItem(at: numberOfItems - 1) }
+        return self
+    }
 }

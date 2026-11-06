@@ -1085,6 +1085,17 @@ final class RemoteMacsModel: ObservableObject {
         return promoted
     }
 
+    /// LAYOUT-2.218: retires one of a remote row's requests on the Mac that owns it.
+    /// A merged-sidebar row reads its relay-promoted context, whose IDs only this
+    /// Mac's router resolves; a raw row's IDs already name the owning Mac's worktree.
+    func retireRequest(_ request: WorktreeManagementRequest, on remoteMac: RemoteMac) async throws -> WorktreeManagementResponse {
+        if case let .acknowledgeOccurrence(worktreeID, _, _) = request, relayRouter.resolveWorktree(worktreeID) != nil {
+            return await sendRelayedWorktreeManagement(request)
+                ?? .error(code: "not-found", message: "This request's pane is no longer available.", forceAllowed: false, shortStatus: nil)
+        }
+        return try await sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac), request: request)
+    }
+
     func sendRelayedWorktreeManagement(
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {

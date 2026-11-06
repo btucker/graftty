@@ -140,7 +140,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
 
-**LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and identify pending user requests with an orange waiting glyph instead of numeric attention badges, excluding routine recaps and command-finished markers.
+**LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and show pending user requests as counts in the attention color, excluding routine recaps and command-finished markers.
 
 **LAYOUT-2.59** When a remote worktree selection changes to another Mac with the same worktree path, the application shall update the selected project and remembered worktree for that Mac.
 
@@ -270,7 +270,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.140** While a mobile worktree report is displayed, the application shall freeze host-published project and worktree positions and folder and pin membership while keeping report and row content live.
 
-**LAYOUT-2.141** When a mobile worktree row recognizes a 500ms hold, the application shall show its report without selecting the worktree, acknowledging its request, or firing its terminal tap action.
+**LAYOUT-2.141** When a mobile worktree row is touched and held, the application shall show a menu offering its report, and Dismiss Request while it needs the user, without selecting the worktree, acknowledging its request, or firing its terminal tap action.
 
 **LAYOUT-2.142** When a mobile worktree search matches a retained report field, the application shall include that worktree without changing host-published order.
 
@@ -398,7 +398,27 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.207** While a worktree is open, the application shall name its host when it's remote, and name this Mac only when the project also lives on another host.
 
-**LAYOUT-2.208** While a worktree row's status line needs attention, the application shall show the waiting hand immediately before that line rather than on the row heading, and shall keep the hand on the heading only when attention is pending and the status line does not carry it.
+**LAYOUT-2.208** While a worktree row's status line asks for input, the application shall show that line on a soft tint in the attention color and shall show no hand on the row, because the color already says so.
+
+**LAYOUT-2.209** While a status line asks for input, the application shall keep its text at 4.5:1 or better against its tint on both light and dark backgrounds.
+
+**LAYOUT-2.210** While a project has worktrees asking for input, the application shall show how many as a count in the attention color rather than a hand.
+
+**LAYOUT-2.211** While a worktree row shows its emoji, the application shall draw it at full strength while the worktree asks for input or works, and fade it otherwise.
+
+**LAYOUT-2.212** While the Mac sidebar shows a project, the application shall keep Needs you and Pinned in its resizable top pane and Working and Recent in the list below it.
+
+**LAYOUT-2.213** While a selected sidebar row shows its question on a tint, the application shall leave the same space between the tint and the selection's bottom edge as between the tint and its trailing edge.
+
+**LAYOUT-2.214** While the sidebar lists worktrees with status lines, the application shall leave at least twice as much space between a status line and the next worktree's name as between a name and its own status line, so each row reads as one group.
+
+**LAYOUT-2.215** While the sidebar shows a worktree row, the application shall draw its name at no less than 80 percent of the theme foreground, and at full foreground when the row is selected, brighter than the status line beneath it.
+
+**LAYOUT-2.216** While a worktree row needs the user, the application shall offer Dismiss Request in that row's menu, and dismissing shall move the row out of Needs You until a later request arrives.
+
+**LAYOUT-2.217** When the user right-clicks a macOS worktree's status line, the application shall open that worktree's row menu.
+
+**LAYOUT-2.218** When the user dismisses a worktree's request on any client, the application shall retire it on the owning host, so no client keeps showing it under Needs You.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1371,6 +1391,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-4.9** When on-device speech recognition completes an utterance before its task ends, the application shall commit that utterance once, preserve it across later previews, and recognize a standalone Send prompt command.
 
 **KEY-4.10** While provisional dictation exceeds the terminal pane width, the application shall wrap its preview within the pane, reflow it on resize, and keep terminal keyboard focus.
+
+**KEY-4.11** When voice dictation shows an error, the application shall hide it after a few seconds.
+
+**KEY-4.12** When the person clicks anywhere while a voice dictation error is showing, the application shall hide the error.
 
 ## MOUSE — Keyboard, Clipboard, and Mouse Integration
 
@@ -2364,6 +2388,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.60** While a mobile terminal's parser is behind by its backlog threshold, the application shall pace further terminal output with waits bounded to one second, while continuing to apply control frames that arrive ahead of that output.
 
+**IOS-4.61** When an iPhone opens an agent's terminal, the application shall start the terminal screen with the rows it already has for that host, so the terminal is not rebuilt and left blank when the worktree's agents arrive.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2478,6 +2504,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.46** When a two-finger trackpad scroll reaches an iPad terminal, the application shall scroll the terminal and shall not start a pointer-drag text selection.
 
+**IOS-6.47** While a non-modifier hardware key is held in a mobile terminal, the application shall repeat it after the same initial delay and interval as a held arrow key, as a Mac does, without repeating a standalone modifier or a Command shortcut.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
@@ -2555,6 +2583,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-10.8** While any terminal session, including a pane preview, has received no output or user interaction for 5 seconds, the application shall reduce that surface's render pace to at most one frame per second while keeping the surface mounted. Quiet-state optimization shall not free and remount a Ghostty surface because QuartzCore may still hold a pending Metal draw for that surface.
 
 **IOS-10.9** When output, input, or a touch arrives while a surface is render-reduced, the application shall restore full render pace immediately.
+
+**IOS-10.10** When a paired host pushes a worktree frame equal to the one the feed already holds, the application shall leave the feed's state unwritten, so views observing it are not redrawn by a repeated frame.
+
+**IOS-10.11** When a view shows a project icon it has already decoded, the application shall reuse the decoded image instead of decoding the icon data again.
+
+**IOS-10.12** While Low Power Mode is on, the application shall draw the worktree header wash without its blurred smear, keeping the watermark and gradient.
 
 ### IOS-11.x
 
@@ -2659,6 +2693,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-13.13** While a mobile worktree list is shown, the application shall offer Edit from a More menu, replace that menu with Done while editing, and reveal search when the list is pulled down.
 
 **IOS-13.14** When the compact Projects screen appears, the application shall clear any worktree search, because a list opened afterwards would filter by it with its search field hidden.
+
+**IOS-13.15** While the Projects screen lists worktrees needing the user, the application shall name each one's project on its own line above the worktree, so a long worktree name can't crowd it out.
+
+**IOS-13.16** When the user taps a worktree with agents on iPhone, the application shall open the agent that most needs them, in the order asking, working, idle, failed, then finished, rather than a list of its agents.
+
+**IOS-13.17** While a terminal is open, the application shall name its worktree and host under the agent's name, because nothing else on that screen says where it is.
+
+**IOS-13.18** While a mobile worktree row offers to remove a merged worktree, the application shall keep the row as tall as it is without that button.
+
+**IOS-13.19** While a terminal is open, the application shall show no activity indicator beside the agent's name, because the terminal itself shows whether the agent is working.
 
 ## IPAD — iPad Layout
 

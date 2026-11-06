@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import GrafttyCommandUI
 import SwiftUI
 
 struct MobileRecentPaneActions {
@@ -19,6 +20,7 @@ extension EnvironmentValues {
 
 /// A native context menu leaves the button's ordinary tap action intact.
 struct MobileTerminalBackButton: View {
+    @Environment(\.colorScheme) private var colorScheme
     let accessibilityLabel: String
     let pendingCount: Int
     let entries: [MobileRecentPanes.Entry]
@@ -39,10 +41,8 @@ struct MobileTerminalBackButton: View {
             }
             .overlay(alignment: .topTrailing) {
                 if pendingCount > 0 {
-                    Image(systemName: "hand.raised.fill")
-                        .font(.caption2).foregroundStyle(.orange)
-                        .frame(width: 20, height: 20)
-                        .background(.regularMaterial, in: Circle()).offset(x: 5, y: -5)
+                    Circle().fill(SidebarAttentionStyle.text(isDark: colorScheme == .dark))
+                        .frame(width: 8, height: 8).offset(x: -6, y: 6)
                         .allowsHitTesting(false).accessibilityHidden(true)
                 }
             }

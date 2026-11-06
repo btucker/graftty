@@ -68,9 +68,70 @@ struct MobileAttentionPaneTests {
         }
         let short = size(name: "feature")
         let long = size(name: "merge-recent-activity-attention-and-unified-worktree-reports")
-        #expect(long.width <= width)
+        // Layout rounds to whole device pixels, which can add a fraction of a point.
+        #expect(long.width <= width + 0.5)
         #expect(long.height == short.height)
         #expect(long.height >= 44)
+    }
+
+    @Test("@spec IOS-13.19: While a terminal is open, the application shall show no activity indicator beside the agent's name, because the terminal itself shows whether the agent is working.")
+    func agentPillShowsNoSpinner() async throws {
+        let row = WorktreePanes(path: "/repo/emoji-clarify", displayName: "emoji-clarify", repoDisplayName: "graftty",
+            displayBranch: "emoji-clarify", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "agent", title: "Worktree emoji selection", attentionText: nil, isBusy: true, attentionSource: nil),
+            agents: [.init(id: "a", name: "Claude", provider: "claude", status: "running", sessionName: "agent")])
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 120))
+        let host = UIHostingController(rootView: CompactAgentBar(worktree: row, session: "agent", onSelect: { _ in }).frame(width: 390))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await Task.sleep(for: .milliseconds(300))
+        host.view.layoutIfNeeded()
+        // The pill drew its name; a spinner, when present, mounts with it.
+        #expect(host.sizeThatFits(in: CGSize(width: 390, height: 120)).width > 100)
+        #expect(!accessibilityObjects(in: host.view).contains { $0 is UIActivityIndicatorView })
+    }
+
+    @Test("@spec IOS-13.18: While a mobile worktree row offers to remove a merged worktree, the application shall keep the row as tall as it is without that button.")
+    func removeButtonDoesNotInflateTheRow() {
+        let row = WorktreePanes(path: "/repo/emoji-clarify", displayName: "emoji-clarify", repoDisplayName: "graftty",
+            displayBranch: "emoji-clarify", state: .running, isMainCheckout: false,
+            prBadge: .init(number: 833, state: .merged, checks: .success,
+                url: URL(string: "https://github.com/btucker/graftty/pull/833")!),
+            stats: nil, attentionText: nil, layout: nil)
+        func height(onRemove: (() -> Void)?) -> CGFloat {
+            UIHostingController(rootView: WorktreeBlock(worktree: row, theme: nil, isActive: false, isOpening: false,
+                projectColumn: true, context: SidebarWorktreeContext(worktree: row), onSelect: {}, eyebrow: "graftty",
+                onReport: {}, onRemove: onRemove)).sizeThatFits(in: CGSize(width: 390, height: 600)).height
+        }
+        #expect(height(onRemove: {}) == height(onRemove: nil))
+    }
+
+    @Test("@spec IOS-13.15: While the Projects screen lists worktrees needing the user, the application shall name each one's project on its own line above the worktree, so a long worktree name can't crowd it out.")
+    func projectNameSitsAboveALongWorktreeName() async throws {
+        let row = WorktreePanes(path: "/repo/long", displayName: "merge-recent-activity-attention-and-unified-worktree-reports",
+            repoDisplayName: "graftty", displayBranch: "long", state: .running, isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        window.rootViewController = UIHostingController(rootView: WorktreeBlock(worktree: row, theme: nil, isActive: false, isOpening: false,
+            projectColumn: true, context: SidebarWorktreeContext(worktree: row), onSelect: {}, eyebrow: "selkie · mini", onReport: {})
+            .frame(width: 320).accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        var labels: [String: CGRect] = [:]
+        for _ in 0..<100 {
+            window.rootViewController?.view.layoutIfNeeded()
+            labels = [:]
+            for object in accessibilityObjects(in: window.rootViewController!.view) {
+                if let label = object.accessibilityLabel { labels[label] = object.accessibilityFrame }
+            }
+            if labels["selkie · mini"] != nil, labels[row.displayName] != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let eyebrow = try #require(labels["selkie · mini"])
+        let name = try #require(labels[row.displayName])
+        #expect(eyebrow.maxY <= name.minY + 1)
+        #expect(eyebrow.width > 40)
     }
 
     @Test("@spec IOS-13.12: While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one and its time at the trailing edge.")
@@ -84,7 +145,7 @@ struct MobileAttentionPaneTests {
         func labelled(_ time: Date?) async throws -> [String: CGRect] {
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 100))
             window.rootViewController = UIHostingController(rootView: WorktreeRowContent(worktree: row, theme: nil,
-                isActive: false, isOpening: false, attentionCount: 0, time: time)
+                isActive: false, isOpening: false, time: time)
                 .frame(width: 360).accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
             window.makeKeyAndVisible()
             defer { window.isHidden = true; window.rootViewController = nil }
@@ -137,24 +198,32 @@ struct MobileAttentionPaneTests {
         #expect(size.height > 0 && size.height <= 640)
     }
 
-    @Test("@spec LAYOUT-2.141: When a mobile worktree row recognizes a 500ms hold, the application shall show its report without selecting the worktree, acknowledging its request, or firing its terminal tap action.")
-    func holdOpensOnlyReport() {
+    @Test("@spec LAYOUT-2.141: When a mobile worktree row is touched and held, the application shall show a menu offering its report, and Dismiss Request while it needs the user, without selecting the worktree, acknowledging its request, or firing its terminal tap action.")
+    func holdOffersReportAndDismissal() {
         let navigation = SidebarNavigationState(prefix: "mobile-hold.\(UUID())")
-        let context = navigation.worktreeContext(worktree())
+        let row = worktree()
+        let context = navigation.worktreeContext(row)
         var selected = false
         var reportShown = false
+        func menu(_ context: SidebarWorktreeContext) -> MobileWorktreeRowMenu {
+            MobileWorktreeRowMenu(context: context, onReport: { reportShown = true },
+                                  onDismiss: { navigation.dismissRequest(in: context) })
+        }
         let target = MobileWorktreeReportTarget(onOpen: {
             selected = true
             navigation.opened(context.item)
         }, onReport: { reportShown = true }) { Text("Worktree") }
-        #expect(MobileWorktreeReportTarget<Text>.holdDuration == 0.5)
-        target.activate(.first(true))
+        #expect(menu(context).actions == [.dismissRequest, .showReport])
+        menu(context).perform(.showReport)
         #expect(reportShown)
-        #expect(!selected)
         #expect(!navigation.hasViewed(context.item))
-        target.activate(.second(()))
+        target.open()
         #expect(selected)
         #expect(navigation.hasViewed(context.item))
+        selected = false
+        menu(context).perform(.dismissRequest)
+        #expect(menu(navigation.worktreeContext(row)).actions == [.showReport])
+        #expect(!selected)
     }
 
     @Test("@spec IOS-4.36: When a mobile worktree report is viewed, the application shall preserve its pending question until the agent resumes and retain the recap as a previous report afterward.")

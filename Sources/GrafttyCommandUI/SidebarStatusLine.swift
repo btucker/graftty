@@ -1,12 +1,22 @@
 import SwiftUI
 
-/// The line under a worktree's name. Attention gets color; ambient states stay
-/// dim, and unread text stays undimmed until the stopped turn is viewed.
+/// The line under a worktree's name. A line asking for input gets the attention
+/// color on a soft tint; ambient states stay dim, and unread text stays undimmed
+/// until the stopped turn is viewed.
 public struct SidebarStatusLine: View {
-    /// Lines the text up under the worktree's name on mobile rows.
-    public static let mobileLeadingInset: CGFloat = 28
-    private static let handWidth: CGFloat = 16
-    private static let handGap: CGFloat = 5
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// @spec LAYOUT-2.213
+    /// Space below a line on the Mac. A tint needs the same inset as its trailing
+    /// edge, so it sits evenly inside the selection.
+    public static func macBottomInset(_ status: SidebarRowStatus) -> CGFloat {
+        status == .none ? 0 : status.needsAttention ? 8 : 3
+    }
+
+    /// @spec LAYOUT-2.214
+    /// Pulls a status line toward its name on the Mac, into the padding of the
+    /// heading's click target.
+    public static var macTopInset: CGFloat { -3 }
 
     public let status: SidebarRowStatus
     public let secondary: Color
@@ -18,37 +28,31 @@ public struct SidebarStatusLine: View {
     public var body: some View {
         switch status {
         case .question(let text, _):
-            line(text, label: "Needs your input: " + text).foregroundStyle(.orange)
+            attention(text, label: "Needs your input: " + text)
         case .notification(let text, _):
-            line(text, label: text).foregroundStyle(.orange)
+            attention(text, label: text)
         case .working(let text):
-            line(text, label: text).italic().foregroundStyle(secondary)
+            line(text).italic().foregroundStyle(secondary)
         case .whereWeAre(let text, let isUnread):
-            line(text, label: text).foregroundStyle(secondary).opacity(isUnread ? 1 : 0.7)
+            line(text).foregroundStyle(secondary).opacity(isUnread ? 1 : 0.7)
         case .none:
             EmptyView()
         }
     }
 
-    private var isQuestion: Bool {
-        if case .question = status { return true }
-        return false
+    private func attention(_ text: String, label: String) -> some View {
+        Text(text).font(.caption).lineLimit(2).help(text)
+            .accessibilityLabel(label)
+            .foregroundStyle(SidebarAttentionStyle.text(isDark: colorScheme == .dark))
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(SidebarAttentionStyle.tint(isDark: colorScheme == .dark),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.top, 2)
     }
 
-    private func line(_ text: String, label: String) -> some View {
+    private func line(_ text: String) -> some View {
         Text(text).font(.caption).lineLimit(2).help(text)
-            // On the text alone: on the whole line it would also replace the hand's label.
-            .accessibilityLabel(label)
-            // Hangs in the caller's leading inset, so the text stays under the name.
-            .overlay(alignment: Alignment(horizontal: .leading, vertical: .firstTextBaseline)) {
-                if status.needsAttention {
-                    SidebarActivityBadge(1)
-                        .frame(width: Self.handWidth, alignment: .trailing)
-                        .offset(x: -(Self.handWidth + Self.handGap))
-                        // A question's label already says it needs input.
-                        .accessibilityHidden(isQuestion)
-                }
-            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 2)
     }

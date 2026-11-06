@@ -152,3 +152,29 @@ struct WorktreeActivitySectionsTests {
         #expect(WorktreeActivitySections.rowDate(unknown, context: SidebarWorktreeContext(worktree: unknown)) == nil)
     }
 }
+
+struct WorktreeActivitySectionPlacementTests {
+    private func row(_ name: String) -> MergedWorktreeRow {
+        MergedWorktreeList.build(rows: [WorktreePanes(path: "/\(name)", displayName: name, repoDisplayName: "app", displayBranch: name, state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)],
+            availability: { _ in .reachable }, projectIsOnSeveralHosts: false).temporary[0]
+    }
+
+    @Test("@spec LAYOUT-2.212: While the Mac sidebar shows a project, the application shall keep Needs you and Pinned in its resizable top pane and Working and Recent in the list below it.")
+    func topPaneHoldsWhatNeedsYouAndWhatIsPinned() {
+        var sections = WorktreeActivitySections()
+        sections.needsYou = [row("asking")]
+        sections.pinned = [.row(row("pinned"))]
+        sections.working = [row("working")]
+        sections.recent = [row("recent")]
+        let top = sections.placed(in: .pinned)
+        #expect(top.needsYou.map(\.row.displayName) == ["asking"])
+        #expect(top.pinned.flattenedRows.map(\.row.displayName) == ["pinned"])
+        #expect(top.working.isEmpty && top.recent.isEmpty)
+        let below = sections.placed(in: .tasks)
+        #expect(below.needsYou.isEmpty && below.pinned.isEmpty)
+        #expect(below.working.map(\.row.displayName) == ["working"])
+        #expect(below.recent.map(\.row.displayName) == ["recent"])
+        #expect(sections.placed(in: .all) == sections)
+    }
+}

@@ -474,6 +474,7 @@ public struct RootView: View {
                                                                 showsProjectRail: showsProjectRail)
                                       },
                                       sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes,
+                                      attentionWorktrees: Self.sessionRows(for: step, appState: iPadAppState),
                                       remoteConnectionProvider: notificationConnectionProvider)
                         .id(step.paneIdentity)
                         .onAppear {
@@ -561,8 +562,13 @@ public struct RootView: View {
             navigationPath.append(WorktreeStep(host: host, worktree: wt, project: project))
             return
         }
-        appState.select(hostID: host.id, worktreePath: wt.path, paneID: wt.layout?.leaves.first?.sessionName)
-        switch MobileNavigationDecision.decide(layout: wt.layout) {
+        let decision = MobileNavigationDecision.decide(worktree: wt, context: appState.sidebarNavigation.worktreeContext(wt))
+        if case let .session(sessionName, _) = decision {
+            appState.select(hostID: host.id, worktreePath: wt.path, paneID: sessionName)
+        } else {
+            appState.select(hostID: host.id, worktreePath: wt.path, paneID: wt.layout?.leaves.first?.sessionName)
+        }
+        switch decision {
         case let .session(sessionName, title):
             navigationPath.append(SessionStep(host: host, worktreePath: wt.path, sessionName: sessionName, title: title,
                 worktreeProject: project ?? SidebarProjection.projects([wt]).first))
@@ -580,6 +586,13 @@ public struct RootView: View {
             navigationPath.append(SessionStep(host: host, worktreePath: worktree.path, sessionName: sessionName,
                 title: title, worktreeProject: project ?? SidebarProjection.projects([worktree]).first))
         }
+    }
+
+    /// @spec IOS-4.61
+    /// The rows a terminal screen starts with, so it knows its agents on its
+    /// first layout instead of rebuilding the terminal when they arrive.
+    static func sessionRows(for step: SessionStep, appState: IPadAppState) -> [WorktreePanes] {
+        appState.selectedHostId == step.host.id ? appState.latestWorktrees : []
     }
 
     static func applyCompactSession(_ step: SessionStep, to appState: IPadAppState) {
@@ -660,7 +673,9 @@ private struct RootFeedObserver: ViewModifier {
             .onChange(of: feed.state) { _, state in
                 // The regular layout's IPadWorktreeFeed does more with each frame.
                 guard !isRegular, let id = appState.selectedHostId, state.isLive(id) else { return }
-                appState.latestWorktrees = state.rawRows(of: id)
+                let rows = state.rawRows(of: id)
+                // Another host's frame leaves this host's rows as they were.
+                if appState.latestWorktrees != rows { appState.latestWorktrees = rows }
             }
     }
 }

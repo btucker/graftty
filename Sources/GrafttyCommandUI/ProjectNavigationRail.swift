@@ -44,13 +44,7 @@ public struct ProjectIdentityView: View {
     }
     private var decodedImage: Image? {
         guard let imageData, imageData.count <= 65536 else { return nil }
-        #if canImport(AppKit)
-        return NSImage(data: imageData).map { Image(nsImage: $0) }
-        #elseif canImport(UIKit)
-        return UIImage(data: imageData).map { Image(uiImage: $0) }
-        #else
-        return nil
-        #endif
+        return ProjectIconImage.image(imageData)
     }
 }
 

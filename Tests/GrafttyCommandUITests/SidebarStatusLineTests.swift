@@ -13,30 +13,27 @@ struct SidebarStatusLineTests {
         let frame: CGRect
     }
 
-    @Test func handKeepsItsOwnLabelBesideTheLine() {
-        #expect(elements(.notification("Build done", paneID: nil)).map(\.text) == ["Input requested", "Build done"])
-    }
-
-    @Test func handHangsImmediatelyBeforeTheText() throws {
-        let line = elements(.notification("Build done", paneID: nil))
-        try #require(line.count == 2)
-        #expect(line[0].frame.maxX <= line[1].frame.minX)
-        #expect(line[1].frame.minX - line[0].frame.maxX < 10)
-    }
-
-    @Test func questionLabelSpeaksForTheHand() {
+    @Test func questionAnnouncesThatItNeedsInput() {
         #expect(elements(.question("Which image?", paneID: "a")).map(\.text) == ["Needs your input: Which image?"])
     }
 
-    @Test(arguments: [SidebarRowStatus.working("w"), .whereWeAre("w", isUnread: false)])
-    func lineThatNeedsNoAttentionHasNoHand(status: SidebarRowStatus) {
+    @Test(arguments: [SidebarRowStatus.notification("w", paneID: nil), .working("w"), .whereWeAre("w", isUnread: true), .whereWeAre("w", isUnread: false)])
+    func otherLinesAnnounceOnlyTheirText(status: SidebarRowStatus) {
         #expect(elements(status).map(\.text) == ["w"])
+    }
+
+    @Test("@spec LAYOUT-2.210: While a project has worktrees asking for input, the application shall show how many as a count in the attention color rather than a hand.")
+    func projectBadgeCountsInsteadOfShowingAHand() {
+        #expect(SidebarActivityBadge(3).text == "3")
+        #expect(SidebarActivityBadge(100).text == "99+")
+        #expect(SidebarActivityBadge(1).label == "1 waiting for you")
+        #expect(SidebarActivityBadge(2).label == "2 waiting for you")
+        #expect(SidebarActivityBadge(2, kind: .working).label == "2 agents working")
     }
 
     /// The line's accessibility leaves, in reading order from the leading edge.
     private func elements(_ status: SidebarRowStatus) -> [Element] {
         let host = NSHostingView(rootView: SidebarStatusLine(status: status, secondary: .secondary)
-            .padding(.leading, SidebarStatusLine.mobileLeadingInset)
             .frame(width: 260)
             .environment(\.accessibilityEnabled, true))
         let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),

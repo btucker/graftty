@@ -9,6 +9,14 @@ public struct WorktreeActivitySections: Sendable, Equatable {
     public var working: [MergedWorktreeRow] = []
     public var recent: [MergedWorktreeRow] = []
 
+    /// The part of these sections a pane of the sidebar shows.
+    public func placed(in section: SidebarWorktreeSection) -> WorktreeActivitySections {
+        var result = self
+        if section == .pinned { result.working = []; result.recent = [] }
+        if section == .tasks { result.needsYou = []; result.pinned = [] }
+        return result
+    }
+
     public struct Hold: Sendable, Equatable {
         fileprivate var placements: [String: Placement] = [:]
         fileprivate var positions: [String: Int] = [:]

@@ -314,10 +314,11 @@ final class MobileTerminalInputView: UITerminalView {
         super.pressesBegan(presses, with: event)
         isHandlingHardwarePress = false
         guard isKeyboardInputEnabled, textContext.markedRange == nil else { return }
+        // IOS-6.47: any held key repeats, as on a Mac, except a bare modifier
+        // or a Command shortcut. The newest press takes over the repeat.
         for press in presses {
             guard let key = press.key, !key.modifierFlags.contains(.command),
-                  [.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow]
-                    .contains(key.keyCode) else { continue }
+                  !Self.modifierKeys.contains(key.keyCode) else { continue }
             startHardwareArrowRepeat(press)
         }
     }
@@ -341,6 +342,11 @@ final class MobileTerminalInputView: UITerminalView {
             stopHardwareArrowRepeat()
         }
     }
+
+    private static let modifierKeys: Set<UIKeyboardHIDUsage> = [
+        .keyboardLeftShift, .keyboardRightShift, .keyboardLeftControl, .keyboardRightControl,
+        .keyboardLeftAlt, .keyboardRightAlt, .keyboardLeftGUI, .keyboardRightGUI, .keyboardCapsLock,
+    ]
 
     private func startHardwareArrowRepeat(_ press: UIPress) {
         stopHardwareArrowRepeat()

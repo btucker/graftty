@@ -5,7 +5,6 @@ import GrafttyProtocol
 import GrafttyCommandUI
 
 private enum WorktreeRowGeometry {
-    static let identityWidth: CGFloat = 18
     static let spacing: CGFloat = 6
     static let horizontalInset: CGFloat = 8
 }
@@ -42,14 +41,8 @@ struct WorktreeRow: View {
     /// deliberately narrower than `PRInfo` so unrelated changes (CI
     /// checks, title, fetchedAt) don't invalidate the row on each poll.
     let prBadge: PRBadge?
-    var attentionCount: Int = 0
-    var project: SidebarProject? = nil
-    var projectIconData: Data? = nil
     /// Set when the host matters for this row: see `MergedWorktreeRow.showsHostLabel`.
     var hostLabel: String? = nil
-    /// Right-click menu for the identity slot (LAYOUT-2.96); nil for rows
-    /// whose identity is not editable.
-    var identityMenu: ((NSView) -> NSMenu)? = nil
     var brief: WorktreeBrief? = nil
     var onRemove: ((NSWindow) -> Void)? = nil
 
@@ -67,20 +60,11 @@ struct WorktreeRow: View {
 
     var body: some View {
         HStack(spacing: WorktreeRowGeometry.spacing) {
-            if attentionCount > 0 { SidebarActivityBadge(attentionCount) }
             ForEach(Self.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil, hasPR: prBadge != nil,
                                          isInFlight: entry.state.isInFlight), id: \.self) { item in
                 switch item {
-                case .projectIcon:
-                    ProjectIdentityView(project: project ?? SidebarProject(id: entry.path, repositoryID: entry.path, name: displayName),
-                                        imageData: projectIconData, size: WorktreeRowGeometry.identityWidth)
-                case .emoji:
-                    if let emoji = entry.emoji {
-                        identityMenuTarget(Text(emoji).font(.system(size: 15))
-                            .frame(width: WorktreeRowGeometry.identityWidth).accessibilityHidden(true))
-                    }
-                case .typeIcon:
-                    identityMenuTarget(typeIcon)
+                case .projectIcon, .emoji, .typeIcon:
+                    EmptyView() // Drawn beside the row by `WorktreeRowIdentitySlot`.
                 case .prBadge:
                     if let prBadge {
                         SidebarPRBadge(badge: prBadge)
@@ -122,13 +106,58 @@ struct WorktreeRow: View {
         }
         .font(.system(size: 11))
         .padding(.vertical, 4)
-        .padding(.horizontal, WorktreeRowGeometry.horizontalInset)
+        .padding(.trailing, WorktreeRowGeometry.horizontalInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
+    /// @spec LAYOUT-2.26
+    /// When a worktree name differs from its branch, the sidebar shall retain both in the heading tooltip while displaying only the uppercase worktree name.
+    private var branchLabel: some View {
+        Text(displayName.uppercased()).accessibilityLabel(displayName)
+            .font(.system(size: 11, weight: .semibold))
+            .tracking(0.3)
+            .strikethrough(entry.state == .stale)
+            // LAYOUT-2.215: brighter than the status line; full when selected.
+            .foregroundColor(entry.state == .stale ? theme.sidebarStaleText : theme.sidebarPrimaryText(isActive: isActive))
+            .lineLimit(1).truncationMode(.tail)
+            .help(entry.displayBranch == displayName ? displayName : "\(displayName)\n\(entry.displayBranch)")
+    }
+
+}
+
+/// A row's identity, beside its name and status line. Clicking it selects the
+/// row like the rest of the block; its menu edits the emoji (LAYOUT-2.96).
+struct WorktreeRowIdentitySlot: View {
+    let entry: WorktreeEntry
+    let displayName: String
+    let isMainCheckout: Bool
+    let theme: GhosttyTheme
+    let prBadge: PRBadge?
+    let status: SidebarRowStatus
+    var project: SidebarProject? = nil
+    var projectIconData: Data? = nil
+    var identityMenu: ((NSView) -> NSMenu)? = nil
+
+    private var resolvedProject: SidebarProject {
+        project ?? SidebarProject(id: entry.path, repositoryID: entry.path, name: displayName)
+    }
+
+    var body: some View {
+        switch WorktreeRow.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil, hasPR: false,
+                                           isInFlight: entry.state.isInFlight)[0] {
+        case .projectIcon:
+            SidebarWorktreeRowIdentity(identity: .project, project: resolvedProject, imageData: projectIconData, status: status)
+        case .emoji:
+            menuTarget(SidebarWorktreeRowIdentity(identity: .emoji(entry.emoji ?? ""), project: resolvedProject, status: status)
+                .accessibilityHidden(true))
+        default:
+            menuTarget(typeIcon)
+        }
+    }
+
     @ViewBuilder
-    private func identityMenuTarget<Content: View>(_ content: Content) -> some View {
+    private func menuTarget<Content: View>(_ content: Content) -> some View {
         if let identityMenu, !entry.state.isInFlight {
             content.rightClickMenu(anchored: identityMenu)
         } else {
@@ -146,34 +175,11 @@ struct WorktreeRow: View {
     @ViewBuilder
     private var typeIcon: some View {
         if entry.state.isInFlight {
-            ProgressView()
-                .controlSize(.mini)
-                .frame(width: WorktreeRowGeometry.identityWidth)
+            ProgressView().controlSize(.mini)
         } else {
-            Image(systemName: WorktreeRowIcon.symbolName(
-                isMainCheckout: isMainCheckout,
-                hasPR: prBadge != nil
-            ))
-                .font(.system(size: 10))
-                .foregroundColor(typeIconColor)
-                .frame(width: WorktreeRowGeometry.identityWidth)
+            Image(systemName: WorktreeRowIcon.symbolName(isMainCheckout: isMainCheckout, hasPR: prBadge != nil))
+                .font(.system(size: 13))
+                .foregroundColor(theme.core.worktreeStateIcon(entry.state.wireState))
         }
     }
-
-    private var typeIconColor: Color {
-        theme.core.worktreeStateIcon(entry.state.wireState)
-    }
-
-    /// @spec LAYOUT-2.26
-    /// When a worktree name differs from its branch, the sidebar shall retain both in the heading tooltip while displaying only the uppercase worktree name.
-    private var branchLabel: some View {
-        Text(displayName.uppercased()).accessibilityLabel(displayName)
-            .font(.system(size: 11, weight: .semibold))
-            .tracking(0.3)
-            .strikethrough(entry.state == .stale)
-            .foregroundColor(theme.sidebarSecondaryText)
-            .lineLimit(1).truncationMode(.tail)
-            .help(entry.displayBranch == displayName ? displayName : "\(displayName)\n\(entry.displayBranch)")
-    }
-
 }

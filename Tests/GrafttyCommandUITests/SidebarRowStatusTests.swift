@@ -29,14 +29,24 @@ struct SidebarRowStatusTests {
         #expect(!SidebarRowStatus.whereWeAre("w", isUnread: true).opensPane)
     }
 
-    @Test("@spec LAYOUT-2.208: While a worktree row's status line needs attention, the application shall show the waiting hand immediately before that line rather than on the row heading, and shall keep the hand on the heading only when attention is pending and the status line does not carry it.")
-    func handSitsOnTheLineThatNeedsAttention() {
-        for line in [SidebarRowStatus.question("q", paneID: nil), .notification("n", paneID: nil), .whereWeAre("w", isUnread: true)] {
-            #expect(line.headingAttentionCount(3) == 0)
+    @Test("@spec LAYOUT-2.208: While a worktree row's status line asks for input, the application shall show that line on a soft tint in the attention color and shall show no hand on the row, because the color already says so.")
+    func onlyAQuestionOrNotificationNeedsAttention() {
+        #expect(SidebarRowStatus.question("q", paneID: nil).needsAttention)
+        #expect(SidebarRowStatus.notification("n", paneID: nil).needsAttention)
+        #expect(!SidebarRowStatus.whereWeAre("w", isUnread: true).needsAttention)
+        #expect(!SidebarRowStatus.working("w").needsAttention)
+        #expect(!SidebarRowStatus.none.needsAttention)
+    }
+
+    @Test("@spec LAYOUT-2.211: While a worktree row shows its emoji, the application shall draw it at full strength while the worktree asks for input or works, and fade it otherwise.")
+    func identityFadesWhenNothingIsHappening() {
+        for live in [SidebarRowStatus.question("q", paneID: nil), .notification("n", paneID: nil), .working("w")] {
+            #expect(live.identityOpacity(isDark: true) == 1)
+            #expect(live.identityOpacity(isDark: false) == 1)
         }
-        for line in [SidebarRowStatus.working("w"), .whereWeAre("w", isUnread: false), .none] {
-            #expect(line.headingAttentionCount(2) == 2)
-            #expect(line.headingAttentionCount(0) == 0)
+        for idle in [SidebarRowStatus.whereWeAre("w", isUnread: true), .whereWeAre("w", isUnread: false), .none] {
+            #expect(idle.identityOpacity(isDark: true) < 1)
+            #expect(idle.identityOpacity(isDark: false) < 1)
         }
     }
 

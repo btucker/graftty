@@ -55,24 +55,31 @@ public struct WorktreeHeaderWashView: View {
     let wash: WorktreeHeaderWash
     /// Phones let the wash dissolve into the screen below the header.
     let fadesToBackground: Bool
+    /// IOS-10.12: Low Power Mode throttles the GPU, so the blurred smear is
+    /// left out and only the crisp watermark and gradient are drawn.
+    let drawsSmear: Bool
 
-    public init(wash: WorktreeHeaderWash, fadesToBackground: Bool = false) {
+    public init(wash: WorktreeHeaderWash, fadesToBackground: Bool = false,
+                isLowPower: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled) {
         self.wash = wash
         self.fadesToBackground = fadesToBackground
+        self.drawsSmear = !isLowPower
     }
 
     public var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .topLeading) {
-                WorktreeHeaderWashGlyph(glyph: wash.glyph, size: 420)
-                    .scaleEffect(x: 2.4, y: 1, anchor: .leading)
-                    .saturation(1.7)
-                    .blur(radius: 44, opaque: false)
-                    .opacity(wash.isDark ? 0.55 : 0.42)
-                    .frame(height: proxy.size.height)
-                    // Emoji glyphs carry side bearing; pull the smear left so
-                    // its color reaches the header's leading edge.
-                    .offset(x: wash.glyph.hasSideBearing ? -110 : -40)
+                if drawsSmear {
+                    WorktreeHeaderWashGlyph(glyph: wash.glyph, size: 420)
+                        .scaleEffect(x: 2.4, y: 1, anchor: .leading)
+                        .saturation(1.7)
+                        .blur(radius: 44, opaque: false)
+                        .opacity(wash.isDark ? 0.55 : 0.42)
+                        .frame(height: proxy.size.height)
+                        // Emoji glyphs carry side bearing; pull the smear left so
+                        // its color reaches the header's leading edge.
+                        .offset(x: wash.glyph.hasSideBearing ? -110 : -40)
+                }
                 watermarkLayer
                     .rotationEffect(.degrees(-12))
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .trailing)
@@ -132,15 +139,7 @@ private struct WorktreeHeaderWashGlyph: View {
 }
 
 private enum PlatformImage {
-    static func decode(_ data: Data) -> Image? {
-        #if canImport(AppKit)
-        return NSImage(data: data).map { Image(nsImage: $0) }
-        #elseif canImport(UIKit)
-        return UIImage(data: data).map { Image(uiImage: $0) }
-        #else
-        return nil
-        #endif
-    }
+    static func decode(_ data: Data) -> Image? { ProjectIconImage.image(data) }
 }
 
 extension WorktreeHeaderWash {

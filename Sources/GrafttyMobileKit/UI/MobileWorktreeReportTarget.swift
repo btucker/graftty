@@ -84,34 +84,54 @@ struct MobileWorktreeReportButton: View {
     }
 }
 
-/// An exclusive gesture keeps a recognized hold from also opening a terminal.
+/// A row's tap target. Touch and hold belongs to the row's menu (LAYOUT-2.141).
 struct MobileWorktreeReportTarget<Content: View>: View {
-    static var holdDuration: Double { 0.5 }
     @Environment(\.editMode) private var editMode
     let onOpen: () -> Void
     let onReport: () -> Void
     @ViewBuilder let content: () -> Content
 
-    func activate(_ value: ExclusiveGesture<LongPressGesture, TapGesture>.Value) {
-        switch value {
-        case .first(true): onReport()
-        case .first(false): break
-        case .second: onOpen()
-        }
-    }
+    func open() { onOpen() }
 
     var body: some View {
         content()
             .contentShape(Rectangle())
-            .gesture(
-                LongPressGesture(minimumDuration: Self.holdDuration, maximumDistance: 10)
-                    .onEnded { activate(.first($0)) }
-                    .exclusively(before: TapGesture().onEnded { activate(.second($0)) }),
-                including: editMode?.wrappedValue.isEditing == true ? .none : .all
-            )
+            .gesture(TapGesture().onEnded { open() },
+                     including: editMode?.wrappedValue.isEditing == true ? .none : .all)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { onOpen() }
             .accessibilityAction(named: "Show report") { onReport() }
+    }
+}
+
+/// What touching and holding a worktree row offers (LAYOUT-2.141).
+struct MobileWorktreeRowMenu: View {
+    enum Action: Equatable { case dismissRequest, showReport }
+
+    let context: SidebarWorktreeContext
+    let onReport: () -> Void
+    let onDismiss: () -> Void
+
+    var actions: [Action] {
+        (SidebarAttentionDismissal.isAvailable(context) ? [.dismissRequest] : []) + [.showReport]
+    }
+
+    func perform(_ action: Action) {
+        switch action {
+        case .dismissRequest: onDismiss()
+        case .showReport: onReport()
+        }
+    }
+
+    var body: some View {
+        ForEach(actions, id: \.self) { action in
+            switch action {
+            case .dismissRequest:
+                Button(SidebarAttentionDismissal.title, systemImage: "bell.slash") { perform(action) }
+            case .showReport:
+                Button("Show Report", systemImage: "doc.text") { perform(action) }
+            }
+        }
     }
 }
 #endif

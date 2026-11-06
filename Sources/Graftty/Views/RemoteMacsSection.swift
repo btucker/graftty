@@ -325,6 +325,7 @@ struct RemoteMacsSection: View {
     /// Renders one row for the merged sidebar instead of whole sections.
     var singleRow: SingleRow? = nil
     var reportController: SidebarReportController? = nil
+    var onDismissRequest: (SidebarWorktreeContext) -> Void = { _ in }
     var contextForWorktree: (WorktreePanes) -> SidebarWorktreeContext = { .init(worktree: $0) }
 
     @ViewBuilder
@@ -518,7 +519,6 @@ struct RemoteMacsSection: View {
         let context = contextForWorktree(worktree)
         let isAsleep = singleRow?.isAsleep == true
         let status = SidebarRowStatus.resolve(context: context, worktree: worktree, isAsleep: isAsleep)
-        let counts = SidebarActivityCounts(items: context.pending)
         let projectID = SidebarProjection.projectID(worktree)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)
@@ -531,24 +531,39 @@ struct RemoteMacsSection: View {
             stats: sidebarStats(for: worktree),
             baseRef: worktree.stats?.baseRef,
             prBadge: worktree.prBadge,
-            attentionCount: isAsleep ? 0 : status.headingAttentionCount(counts.attentionByWorktree[worktree.path, default: 0]),
-            project: project, projectIconData: projectIcons[projectID], hostLabel: hostLabel,
+            hostLabel: hostLabel,
             brief: context.brief,
             onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) }
         )
         .frame(minHeight: 24)
         .contentShape(Rectangle())
         let statusLine = SidebarStatusLine(status: status, secondary: theme.sidebarSecondaryText)
-            .padding(.leading, 33).padding(.trailing, 8).padding(.bottom, status == .none ? 0 : 3)
+            .padding(.top, SidebarStatusLine.macTopInset)
+            .padding(.trailing, 8).padding(.bottom, SidebarStatusLine.macBottomInset(status))
+        let identityView = WorktreeRowIdentitySlot(entry: sidebarEntry(for: worktree), displayName: displayName ?? worktree.displayName,
+            isMainCheckout: worktree.isMainCheckout, theme: theme, prBadge: worktree.prBadge, status: status,
+            project: project, projectIconData: projectIcons[projectID])
         let preview = AnyView(
-            VStack(spacing: 0) {
+            SidebarWorktreeRowLayout { identityView } content: {
                 heading
                 statusLine
             }
+            .padding(.leading, 6)
             .background((isActive ? theme.highlightedWorktreeBackground : .clear), in: RoundedRectangle(cornerRadius: 6))
             .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
         )
-        VStack(spacing: 0) {
+        SidebarWorktreeRowLayout {
+            Button {
+                if let singleRow { singleRow.onOpen() } else { onSelectRemoteWorktree(remoteMac, worktree.path) }
+            } label: {
+                identityView.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .rightClickMenu {
+                remoteWorktreeMenu(worktree, context: context, remoteMac: remoteMac)
+            }
+        } content: {
             Button {
                 if let singleRow { singleRow.onOpen() } else { onSelectRemoteWorktree(remoteMac, worktree.path) }
             } label: {
@@ -557,7 +572,7 @@ struct RemoteMacsSection: View {
             .buttonStyle(.plain)
             .id(worktree.path)
             .rightClickMenu {
-                remoteWorktreeMenu(worktree, remoteMac: remoteMac)
+                remoteWorktreeMenu(worktree, context: context, remoteMac: remoteMac)
             }
             .modifier(RemoteWorktreeDragSource(payload: .init(identity: identity, path: worktree.path), isEnabled: canReorder(worktree, on: remoteMac), preview: preview))
             .dropDestination(for: WorktreeRowDrop.self) { values, location in
@@ -586,13 +601,18 @@ struct RemoteMacsSection: View {
                     statusLine.contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .rightClickMenu {
+                    remoteWorktreeMenu(worktree, context: context, remoteMac: remoteMac)
+                }
             }
         }
+        .padding(.leading, 6)
         .opacity(isAsleep ? 0.55 : 1)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
         )
+        .padding(.vertical, SidebarWorktreeListStyle.macRowOuterInset)
     }
 
     private func groupedRepositories(
@@ -683,11 +703,16 @@ struct RemoteMacsSection: View {
 
     private func remoteWorktreeMenu(
         _ worktree: WorktreePanes,
+        context: SidebarWorktreeContext,
         remoteMac: RemoteMac
     ) -> NSMenu {
         let menu = NSMenu()
+        SidebarAttentionDismissalMenu.add(to: menu, context: context) { context in
+            onDismissRequest(context)
+            dismissOnOwningMac(context, worktree: worktree, remoteMac: remoteMac)
+        }
         guard !worktree.isMainCheckout, !worktree.state.isInFlight else {
-            return menu
+            return menu.droppingTrailingSeparator()
         }
         menu.addItem(ClosureMenuItem(
             title: worktree.state == .stale
@@ -697,6 +722,27 @@ struct RemoteMacsSection: View {
             onDeleteRemoteWorktree(remoteMac, worktree)
         })
         return menu
+    }
+
+    /// LAYOUT-2.218: the owning Mac retires the request, so every client stops showing it.
+    private func dismissOnOwningMac(_ context: SidebarWorktreeContext, worktree: WorktreePanes, remoteMac: RemoteMac) {
+        let requests = SidebarAttentionDismissal.requests(for: context,
+            supportsExactAcknowledgement: editableProjectIDs.contains(SidebarProjection.projectID(worktree)))
+        guard !requests.isEmpty else { return }
+        Task { @MainActor in
+            let alert = NSAlert()
+            do {
+                guard let message = try await SidebarAttentionDismissal.retire(requests, send: {
+                    try await model.retireRequest($0, on: remoteMac)
+                }) else { return }
+                alert.messageText = "Couldn't dismiss this request on \(remoteMac.label)"
+                alert.informativeText = message
+            } catch {
+                alert.messageText = "Couldn't reach the owning Mac"
+                alert.informativeText = error.localizedDescription
+            }
+            alert.runModal()
+        }
     }
 
     private func iconName(for state: RemoteMacConnectionState) -> String {

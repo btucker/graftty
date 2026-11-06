@@ -111,6 +111,37 @@ struct MobileAgentCompletionTests {
         container.terminalView.pressesEnded([letter], with: nil)
     }
 
+    @Test("@spec IOS-6.47: While a non-modifier hardware key is held in a mobile terminal, the application shall repeat it after the same initial delay and interval as a held arrow key, as a Mac does, without repeating a standalone modifier or a Command shortcut.")
+    func heldHardwareKeysRepeat() async throws {
+        let (container, model, _) = setup()
+        let repeats = ManualArrowRepeat()
+        container.terminalView.startArrowRepeat = repeats.start
+        container.terminalView.insertText("%")
+        await model.waitForLoad()
+        // The open picker appends each delivered key to its query, which makes repeats visible.
+        let letter = CompletionPress("m", usage: .keyboardM)
+        container.terminalView.pressesBegan([letter], with: nil)
+        container.terminalView.insertText("m")
+        try #require(repeats.isRepeating)
+        #expect(repeats.initialDelay == 0.4)
+        #expect(repeats.interval == 0.05)
+        repeats.fire()
+        repeats.fire()
+        #expect(model.query == "mmm")
+        container.terminalView.pressesEnded([letter], with: nil)
+        #expect(!repeats.isRepeating)
+
+        let shift = CompletionPress("", usage: .keyboardLeftShift, modifiers: .shift)
+        container.terminalView.pressesBegan([shift], with: nil)
+        #expect(!repeats.isRepeating)
+        container.terminalView.pressesEnded([shift], with: nil)
+        let copy = CompletionPress("c", usage: .keyboardC, modifiers: .command)
+        container.terminalView.pressesBegan([copy], with: nil)
+        #expect(!repeats.isRepeating)
+        container.terminalView.pressesEnded([copy], with: nil)
+        model.cancel(preserveLiteral: false)
+    }
+
     @Test func tappedCandidateUsesTheOriginalTransportOnce() async {
         let (container, model, output) = setup()
         container.terminalView.insertText("%")

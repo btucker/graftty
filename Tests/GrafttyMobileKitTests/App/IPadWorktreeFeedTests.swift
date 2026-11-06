@@ -125,6 +125,27 @@ struct IPadWorktreeFeedTests {
         #expect(changed.isSet)
     }
 
+    @Test("@spec IOS-10.10: When a paired host pushes a worktree frame equal to the one the feed already holds, the application shall leave the feed's state unwritten, so views observing it are not redrawn by a repeated frame.")
+    func repeatedFrameLeavesFeedStateUnwritten() {
+        let host = hostValue("mac")
+        let feed = MultiHostFeed(coordinator: nil, updates: { _ in nil })
+        feed.setHosts([host])
+        feed.receive(.frame(.snapshot(Self.rows)), from: host)
+        func track() -> Flag {
+            let invalidated = Flag()
+            withObservationTracking { _ = feed.state } onChange: { invalidated.set() }
+            return invalidated
+        }
+        let repeated = track()
+        feed.receive(.frame(.snapshot(Self.rows)), from: host)
+        #expect(!repeated.isSet)
+
+        let changed = track()
+        feed.receive(.frame(.snapshot([])), from: host)
+        #expect(changed.isSet)
+        #expect(feed.state.rows.isEmpty)
+    }
+
     private final class Flag: @unchecked Sendable {
         private let lock = NSLock()
         private var value = false

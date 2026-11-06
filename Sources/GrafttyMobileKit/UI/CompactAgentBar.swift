@@ -16,6 +16,12 @@ struct CompactAgentBar: View {
     var host: Host? = nil
     var theme: GhosttyThemeColors = .fallback
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.openWorktreeContext) private var openContext
+
+    /// @spec IOS-13.17: While a terminal is open, the application shall name its worktree and host under the agent's name, because nothing else on that screen says where it is.
+    static func location(worktree: WorktreePanes, hostLabel: String?) -> String {
+        ([worktree.displayName, worktree.origin?.deviceLabel ?? hostLabel].compactMap { $0 }).joined(separator: " · ")
+    }
 
     private var agents: [AgentSessionInfo] { worktree.agents?.filter { $0.presentationSessionName != nil } ?? [] }
     private var selectedAgent: AgentSessionInfo? { agents.first { $0.presentationSessionName == session } }
@@ -55,21 +61,28 @@ struct CompactAgentBar: View {
                 Button("Terminal", systemImage: "apple.terminal", action: onOpenTerminal)
                     .accessibilityIdentifier("workspace.terminal.open")
             }
+            if let openContext {
+                Button("About this worktree", systemImage: "info.circle") { openContext() }
+                    .accessibilityIdentifier("workspace.about.open")
+            }
         }
     }
 
     private var switcherLabel: some View {
         HStack(spacing: 6) {
-            if let selectedAgent {
-                MobileAgentStatusBadge(agent: selectedAgent, hostID: hostID,
-                    needsInput: context.needsInput(session: session),
-                    isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
-            } else {
+            // IOS-13.19: no status beside the open agent; the terminal shows
+            // whether it's working, and the menu keeps each agent's status.
+            if selectedAgent == nil {
                 Image(systemName: "terminal")
             }
             if !dynamicTypeSize.isAccessibilitySize {
-                Text(selectedAgent == nil ? "Agents" : worktree.workspaceSessionTitle(session))
-                    .lineLimit(1).truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(selectedAgent == nil ? "Agents" : worktree.workspaceSessionTitle(session))
+                        .lineLimit(1).truncationMode(.tail)
+                    Text(Self.location(worktree: worktree, hostLabel: host?.label))
+                        .font(.caption2).foregroundStyle(theme.foreground.opacity(0.65))
+                        .lineLimit(1).truncationMode(.middle)
+                }
             }
             Image(systemName: "chevron.down").font(.caption2)
         }
@@ -77,7 +90,7 @@ struct CompactAgentBar: View {
         .padding(.leading, 4).padding(.trailing, 12)
         .frame(minWidth: 44, minHeight: 44)
         .contentShape(Rectangle())
-        .accessibilityLabel("Agents, \(selectedAgent == nil ? worktree.displayName : worktree.workspaceSessionTitle(session))")
+        .accessibilityLabel("Agents, \(selectedAgent == nil ? worktree.displayName : worktree.workspaceSessionTitle(session)), \(Self.location(worktree: worktree, hostLabel: host?.label))")
     }
     private var context: SidebarWorktreeContext { attentionContext ?? SidebarWorktreeContext(worktree: worktree) }
 }

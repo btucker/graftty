@@ -247,6 +247,37 @@ struct RemoteMacsModelTests {
         #expect(RemoteMacIdentity(result.0) == RemoteMacIdentity(remote))
     }
 
+    @Test("Dismissing a merged-sidebar row's request retires it under the owning Mac's own worktree path, not this Mac's relay alias.")
+    func dismissalOfPromotedRowReachesOwningMac() async throws {
+        let remote = try remoteMac()
+        let identity = RemoteMacIdentity(remote)
+        let recorder = RemoteMacsModelManagementRecorder()
+        let (model, registry) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        defer { model.disconnect(identity: identity) }
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: 100),
+            recap: .init(title: "Deploy", completed: "Built it", next: "Ship", need: "Ship it?"))
+        registry.onPaneSnapshot(identity, [
+            WorktreePanes(path: "/repo/wt", displayName: "wt", repoDisplayName: "repo", repositoryID: "/repo",
+                displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil, stats: nil,
+                attentionText: nil, layout: nil,
+                origin: WorktreeOrigin(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0),
+                sidebar: .init(id: "studio:/repo/wt", projectID: "studio:/repo", unseenAgentStop: stop))
+        ])
+        // The merged sidebar reads the relay-promoted row's context.
+        let promoted = try #require(model.promotedWorktreesForRelay().first)
+        #expect(promoted.path != "/repo/wt")
+        let item = try #require(SidebarProjection.activity([promoted]).first)
+        let request = try #require(SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: true))
+
+        #expect(try await model.retireRequest(request, on: remote) == .ok)
+        // A raw row's ID already names the owning Mac's worktree.
+        _ = try await model.retireRequest(.acknowledgeOccurrence(worktreeID: "/repo/wt", paneID: nil, occurrence: stop.occurrence), on: remote)
+        #expect(await recorder.requests() == [
+            .acknowledgeOccurrence(worktreeID: "/repo/wt", paneID: nil, occurrence: stop.occurrence),
+            .acknowledgeOccurrence(worktreeID: "/repo/wt", paneID: nil, occurrence: stop.occurrence),
+        ])
+    }
+
     private func projectControlModel(remotes: [RemoteMac], recorder: RemoteMacsModelManagementRecorder) async throws -> (RemoteMacsModel, RemoteMacConnectionRegistry) {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
         for remote in remotes { try store.add(remote) }

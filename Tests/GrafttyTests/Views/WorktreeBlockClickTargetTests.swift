@@ -53,7 +53,11 @@ private struct WorktreeBlockClickColumn: View {
             appState: Binding(get: { harness.state }, set: { harness.state = $0 }),
             reorderingEnabled: harness.reorderingEnabled,
             onSelect: { harness.selections.append(worktree.path) },
-            menu: { _ in NSMenu() }
+            menu: { _ in
+                let menu = NSMenu()
+                menu.addItem(withTitle: worktree.path, action: nil, keyEquivalent: "")
+                return menu
+            }
         ) {
             WorktreeRow(entry: worktree, isActive: isActive, displayName: worktree.branch,
                         isMainCheckout: worktree.path == repo.path, theme: .fallback,
@@ -195,6 +199,22 @@ struct WorktreeBlockClickTargetTests {
         let outcome = try await hosted.click(at: CGPoint(x: question.midX, y: question.midY))
         #expect(outcome.paneSelections == [requestingPane])
         #expect(outcome.selections.isEmpty)
+    }
+
+    @Test("@spec LAYOUT-2.217: When the user right-clicks a macOS worktree's status line, the application shall open that worktree's row menu.")
+    func statusLineRightClickOpensRowMenu() async throws {
+        let hosted = try await Hosted.make(rowCount: 3)
+        defer { hosted.tearDown() }
+        let path = hosted.harness.repo.worktrees[1].path
+        hosted.harness.state.repos[0].worktrees[1].recordAgentStop(.init(
+            agentName: "Codex", stoppedAt: Date(),
+            recap: .init(title: "Sidebar", completed: "Updated clicks", next: "Review", need: "Dismiss this?")))
+        try await hosted.settle()
+        let frame = try #require(hosted.harness.questionFrames[path])
+        let root = try #require(hosted.window.contentView)
+        let host = try #require(RightClickMenuHostView.innermostHost(
+            at: hosted.hosting.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil), in: root))
+        #expect(host.build?(host).items.map(\.title) == [path])
     }
 
     // MARK: - Hosting
@@ -350,5 +370,61 @@ struct WorktreeBlockClickTargetTests {
             for subview in view.subviews { found += find(type, in: subview) }
             return found
         }
+    }
+}
+
+@MainActor
+private final class IdentityFrames {
+    var byPath: [String: CGRect] = [:]
+}
+
+@MainActor
+struct WorktreeBlockIdentityMenuTests {
+    private static func menu(_ title: String) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
+        return menu
+    }
+
+    @Test("Right-clicking a row's identity opens the row menu unless the identity has a menu of its own.")
+    func identityRightClickOpensRowMenu() async throws {
+        let frames = IdentityFrames()
+        // As in production: the main checkout's project icon has no menu, a linked
+        // worktree's emoji has its own.
+        func block(_ path: String, identityMenu: String?) -> some View {
+            let worktree = WorktreeEntry(path: path, branch: path)
+            return WorktreeBlock(worktree: worktree, repoID: UUID(), isActive: false, theme: .fallback,
+                appState: .constant(AppState()), reorderingEnabled: false, onSelect: {},
+                menu: { _ in Self.menu(path) }) {
+                let identity = Color.gray.frame(width: 20, height: 20)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames.byPath[path] = $0 }
+                if let identityMenu { identity.rightClickMenu { Self.menu(identityMenu) } } else { identity }
+            } heading: {
+                Text(path).frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+            } status: {
+                EmptyView()
+            }
+        }
+        let host = NSHostingView(rootView: VStack(spacing: 3) {
+            block("/repo", identityMenu: nil)
+            block("/repo/feature", identityMenu: "emoji")
+        }.padding(10).frame(width: 300))
+        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        let root = try #require(window.contentView)
+        func menuTitles(at path: String) throws -> [String]? {
+            let frame = try #require(frames.byPath[path], "identities \(frames.byPath)")
+            let menuHost = try #require(RightClickMenuHostView.innermostHost(
+                at: host.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil), in: root))
+            return menuHost.build?(menuHost).items.map(\.title)
+        }
+        #expect(try menuTitles(at: "/repo") == ["/repo"])
+        #expect(try menuTitles(at: "/repo/feature") == ["emoji"])
     }
 }

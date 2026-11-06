@@ -98,10 +98,14 @@ struct RemoteMacsSidebarTests {
             Divider()
             ProjectWorktreeColumn {
                 let entry = WorktreeEntry(path: "/local/feature", branch: "feature")
-                WorktreeRow(entry: entry, isActive: true, displayName: "feature", isMainCheckout: false,
-                    theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
-                    .frame(minHeight: 24)
-                    .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+                SidebarWorktreeRowLayout { Color.clear } content: {
+                    WorktreeRow(entry: entry, isActive: true, displayName: "feature", isMainCheckout: false,
+                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
+                        .frame(minHeight: 24)
+                }
+                .padding(.leading, 6)
+                .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+                .padding(.vertical, SidebarWorktreeListStyle.macRowOuterInset)
             }.frame(width: 260)
         }.frame(height: 400).background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark)
         let hosting = NSHostingView(rootView: content)
@@ -127,7 +131,8 @@ struct RemoteMacsSidebarTests {
                 return (color?.redComponent ?? 0) > 0.2
             })
             #expect(abs(firstHighlight - 6) <= 1)
-            let highlightHeight = try #require((0..<100).first { y in
+            // Starts inside the highlight, below the space a row keeps above it.
+            let highlightHeight = try #require((6..<100).first { y in
                 let color = bitmap.colorAt(x: Int(CGFloat(columnStart + 14) * scale), y: Int(CGFloat(y) * scale))?.usingColorSpace(.deviceRGB)
                 return (color?.redComponent ?? 0) <= 0.2
             })

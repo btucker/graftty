@@ -10,19 +10,22 @@ public enum SidebarRowStatus: Equatable, Sendable {
     case whereWeAre(String, isUnread: Bool)
     case none
 
+    /// A finished turn is unread, not a request: only these ask for something.
     public var needsAttention: Bool {
         switch self {
         case .question, .notification: return true
-        case .whereWeAre(_, let isUnread): return isUnread
-        case .working, .none: return false
+        case .whereWeAre, .working, .none: return false
         }
     }
 
-    /// How much attention the row's heading should show. A line that needs
-    /// attention carries the hand itself, so the heading only speaks for
-    /// attention this line doesn't represent.
-    public func headingAttentionCount(_ attention: Int) -> Int {
-        needsAttention ? 0 : attention
+    /// @spec LAYOUT-2.211
+    /// How strongly to draw the row's identity. Emoji wash out faster against
+    /// a light background, so light schemes fade a little less.
+    public func identityOpacity(isDark: Bool) -> Double {
+        switch self {
+        case .question, .notification, .working: return 1
+        case .whereWeAre, .none: return isDark ? 0.55 : 0.6
+        }
     }
 
     /// Clicking the line goes to the pane that spoke, not just the worktree.

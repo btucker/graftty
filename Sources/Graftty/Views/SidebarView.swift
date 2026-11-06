@@ -103,6 +103,8 @@ struct SidebarView: View {
     @State private var frozenPins: [UUID: Bool] = [:]
     @State private var frozenRemoteRows: [RemoteMacIdentity: [WorktreePanes]] = [:]
     @State private var frozenMergedOrder: [String: [String]] = [:]
+    /// Keeps rows in their sections while a report is open.
+    @State private var frozenActivity: [String: WorktreeActivitySections.Hold] = [:]
     /// The row last selected in each merged project. Paths alone can repeat across hosts.
     @State private var rememberedRowIDs: [String: String] = [:]
     @State private var collapsedMergedFolders: Set<String> = []
@@ -390,7 +392,9 @@ struct SidebarView: View {
                           showsRepositoryHeaders: !query.isEmpty,
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)),
                           projects: projects, projectIcons: projectIcons, section: section, singleRow: singleRow,
-                          reportController: reportController, contextForWorktree: { row in
+                          reportController: reportController,
+                          onDismissRequest: { navigation.dismissRequest(in: $0) },
+                          contextForWorktree: { row in
                               contexts[(row.sidebar?.id ?? row.path) + "\u{0}" + SidebarProjection.projectID(row)] ?? navigation.worktreeContext(row)
                           })
     }
@@ -523,9 +527,14 @@ struct SidebarView: View {
                     frozenPins = Dictionary(uniqueKeysWithValues: appState.repos.flatMap(\.worktrees).map { ($0.id, $0.isPinned) })
                     frozenRemoteRows = remoteMacsModel.worktreePanesByRemote
                     frozenMergedOrder = mergedSidebar.temporaryOrder()
+                    frozenActivity = Dictionary(uniqueKeysWithValues: mergedSidebar.projects.map { project in
+                        let sections = mergedSidebar.sections(for: project.id)
+                        return (project.id, WorktreeActivitySections.make(pinned: sections.pinned, temporary: sections.temporary,
+                            context: { navigation.worktreeContext($0) }, holding: nil).hold)
+                    })
                 }
             } else {
-                frozenWorktreeOrder = [:]; frozenPins = [:]; frozenRemoteRows = [:]; frozenMergedOrder = [:]
+                frozenWorktreeOrder = [:]; frozenPins = [:]; frozenRemoteRows = [:]; frozenMergedOrder = [:]; frozenActivity = [:]
             }
         }
         .onChange(of: navigation.selectedProjectID) { _, _ in reportController.close() }
@@ -742,8 +751,16 @@ struct SidebarView: View {
     private func mergedProjectRows(_ project: MergedProject, merged: SidebarMergedRows, section: SidebarWorktreeSection,
                                    counts: SidebarActivityCounts, remoteContexts: [String: SidebarWorktreeContext]) -> some View {
         let sections = merged.sections(for: project.id, frozenOrder: frozenMergedOrder[project.id])
+        let activity = WorktreeActivitySections.make(pinned: sections.pinned, temporary: sections.temporary,
+            context: { navigation.worktreeContext($0) }, holding: frozenActivity[project.id]).placed(in: section)
         let collapsed = pinnedCollapsed(project)
         if section != .tasks {
+            if !activity.needsYou.isEmpty {
+                WorktreeListSectionTitle("Needs you", count: activity.needsYou.count, tone: .attention)
+                ForEach(activity.needsYou) { row in
+                    mergedRow(row, counts: counts, remoteContexts: remoteContexts)
+                }
+            }
             let header = SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: collapsed, separatesPrecedingRows: false)
                 .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
             if let repo = localRepo(in: project) {
@@ -752,7 +769,7 @@ struct SidebarView: View {
                 header
             }
             if !collapsed.wrappedValue {
-                mergedNodes(sections.pinned, projectID: project.id, depth: 0, counts: counts, remoteContexts: remoteContexts)
+                mergedNodes(activity.pinned, projectID: project.id, depth: 0, counts: counts, remoteContexts: remoteContexts)
                 if sections.pinned.isEmpty {
                     Text("Right-click a worktree to pin it here.")
                         .font(.caption)
@@ -763,8 +780,17 @@ struct SidebarView: View {
             }
         }
         if section != .pinned {
-            ForEach(sections.temporary) { row in
-                mergedRow(row, counts: counts, remoteContexts: remoteContexts)
+            if !activity.working.isEmpty {
+                WorktreeListSectionTitle("Working", count: activity.working.count, tone: .standard(theme.sidebarDimIcon))
+                ForEach(activity.working) { row in
+                    mergedRow(row, counts: counts, remoteContexts: remoteContexts)
+                }
+            }
+            if !activity.recent.isEmpty {
+                WorktreeListSectionTitle("Recent", tone: .standard(theme.sidebarDimIcon))
+                ForEach(activity.recent) { row in
+                    mergedRow(row, counts: counts, remoteContexts: remoteContexts)
+                }
             }
             ForEach(merged.offlineHosts(for: project.id), id: \.self) { host in
                 Text("\(host) is offline")
@@ -1081,13 +1107,7 @@ struct SidebarView: View {
                 repoPath: repo.path
             ),
             prBadge: prBadge,
-            attentionCount: status.headingAttentionCount(activityCounts.attentionByWorktree[worktree.path, default: 0]),
-            project: project, projectIconData: iconStore.iconData(for: repo), hostLabel: hostLabel,
-            identityMenu: worktree.path == repo.path ? nil : { anchor in
-                WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
-                                        onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
-                                        onClear: { SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &appState.repos) })
-            },
+            hostLabel: hostLabel,
             onRemove: { window in onDeleteWorktree(worktree.path, window) }
         )
         .frame(minHeight: 24)
@@ -1100,11 +1120,19 @@ struct SidebarView: View {
             theme: theme, appState: $appState,
             reorderingEnabled: navigation.query.isEmpty,
             onSelect: { onSelect(worktree.path) },
-            menu: { anchor in buildWorktreeMenu(worktree, repo: repo, window: anchor.window) },
+            menu: { anchor in buildWorktreeMenu(worktree, repo: repo, context: context, window: anchor.window) },
             onDrop: { drop, placement in
                 handleRowDrop(drop, target: worktree.path, targetHost: owner.deviceID, after: placement == .after)
             }
         ) {
+            WorktreeRowIdentitySlot(entry: worktree, displayName: displayName, isMainCheckout: worktree.path == repo.path, theme: theme,
+                prBadge: prBadge, status: status, project: project, projectIconData: iconStore.iconData(for: repo),
+                identityMenu: worktree.path == repo.path ? nil : { anchor in
+                    WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
+                                            onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
+                                            onClear: { SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &appState.repos) })
+                })
+        } heading: {
             heading
         } status: {
             SidebarWorktreeStatusTarget(status: status, secondary: theme.sidebarSecondaryText) {
@@ -1118,13 +1146,19 @@ struct SidebarView: View {
     /// `.rightClickMenu` documents. Reordering is drag-only and the
     /// emoji identity has its own menu on the identity slot
     /// (LAYOUT-2.96), so neither appears here.
-    private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry, window: NSWindow?) -> NSMenu {
+    private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry, context: SidebarWorktreeContext,
+                                   window: NSWindow?) -> NSMenu {
         let menu = NSMenu()
+        SidebarAttentionDismissalMenu.add(to: menu, context: context) { context in
+            navigation.dismissRequest(in: context)
+            SidebarAttentionDismissalMenu.acknowledge(
+                SidebarAttentionDismissal.requests(for: context, supportsExactAcknowledgement: true), in: &appState)
+        }
         // In-flight rows have nothing the menu actions can act on
         // safely — Open-in-Finder, Stop, and Delete-Worktree would all
         // either error or race the flow that owns the placeholder.
         if worktree.state.isInFlight {
-            return menu
+            return menu.droppingTrailingSeparator()
         }
         var hasPinnedActions = false
         if worktree.path != repo.path && (worktree.isPinned || worktree.state.hasOnDiskWorktree) {

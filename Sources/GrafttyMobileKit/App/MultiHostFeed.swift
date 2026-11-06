@@ -61,15 +61,27 @@ public final class MultiHostFeed {
         guard let stream else { markSettled(host.id); return }
         for await update in stream {
             guard !Task.isCancelled else { return }
-            markSettled(host.id)
-            switch update {
-            case .unavailable:
-                state.markUnavailable(host.id)
-            case let .frame(.snapshot(rows, metadata)):
-                state.apply(rows: rows, projects: metadata?.projects ?? SidebarProjection.projects(rows), from: host.id)
-                saveSnapshot(of: host)
-            }
+            receive(update, from: host)
         }
+    }
+
+    func receive(_ update: RemoteWorktreeUpdate, from host: Host) {
+        markSettled(host.id)
+        switch update {
+        case .unavailable:
+            updateState { $0.markUnavailable(host.id) }
+        case let .frame(.snapshot(rows, metadata)):
+            updateState { $0.apply(rows: rows, projects: metadata?.projects ?? SidebarProjection.projects(rows), from: host.id) }
+            saveSnapshot(of: host)
+        }
+    }
+
+    /// IOS-10.10: hosts repeat frames while agents work. Writing an equal state
+    /// would still redraw every view that reads it, so only a change is stored.
+    private func updateState(_ change: (inout MultiHostFeedState) -> Void) {
+        var next = state
+        change(&next)
+        if next != state { state = next }
     }
 
     private func markSettled(_ id: UUID) {
@@ -83,7 +95,7 @@ public final class MultiHostFeed {
         savedAt[host.id] = Date()
         // A host signs its wake details when dialed, so check them again here.
         let isWakeable = coordinator?.hasWakeAddresses(host) ?? false
-        state.setWakeable(isWakeable, for: host.id)
+        updateState { $0.setWakeable(isWakeable, for: host.id) }
         guard isWakeable, let device = host.remoteDeviceID, let snapshot = state.snapshot(of: host.id) else { return }
         let cache = cache
         Task.detached(priority: .utility) {
