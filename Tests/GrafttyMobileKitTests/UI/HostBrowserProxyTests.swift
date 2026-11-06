@@ -275,7 +275,9 @@ struct HostBrowserProxyTests {
         // Done closes the production presenter and does not replay its URL when
         // its covered anchor becomes visible again.
         safari.delegate?.safariViewControllerDidFinish?(safari)
-        try await Task.sleep(for: .milliseconds(150))
+        try await waitForBrowserState("Done must clear the Local session and dismiss Safari") {
+            local.session.url == nil && browserSheet.presentedViewController == nil
+        }
         #expect(browserSheet.presentedViewController == nil)
         #expect(anchor.presentedViewController === browserSheet)
         #expect(local.session.url == nil)
