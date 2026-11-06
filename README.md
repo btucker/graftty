@@ -4,13 +4,59 @@
 
 # Graftty
 
-A macOS worktree-aware terminal multiplexer built on [libghostty](https://ghostty.org) & [zmx.sh](https://zmx.sh/).
+A worktree-native terminal for running many coding agents at once, built on [libghostty](https://ghostty.org) and [zmx](https://zmx.sh/).
 
-Graftty organizes persistent terminal sessions by git worktree. Each worktree in your sidebar has its own split layout of terminals that stay alive across worktree switches, and a CLI (`graftty`) lets running processes interact with the Graftty UI.
+Graftty organizes persistent terminal sessions by Git worktree. Every project and worktree gets its own split layout of terminals, and those terminals keep running when you switch away, quit the app, or pick the work up from your phone. Graftty also tracks what each agent is doing, so the sidebar shows which ones need you.
 
 <p align="center">
-  <img src="docs/hero.png" alt="Graftty on macOS in a MacBook Pro frame, with Graftty for iOS in an iPhone frame overlapping front-right" width="1200" />
+  <img src="docs/hero.png" alt="The Graftty window: a sidebar of projects and worktrees grouped into Needs you, Pinned Agents, and Recent, beside a Claude Code session that is asking a question" width="960" />
 </p>
+
+## Core features
+
+### Worktrees first
+
+- **One sidebar for every project.** A project rail on the left; each project's worktrees are grouped into **Needs you**, **Pinned Agents**, **Working**, and **Recent**.
+- **Terminals that survive.** Every pane is backed by a [zmx](https://zmx.sh/) session, so shells, servers, and agents keep running across worktree switches and app restarts.
+- **Splits per worktree.** Each worktree remembers its own split layout. Graftty uses libghostty for the terminal itself, so rendering, fonts, and input behave like Ghostty.
+- **Git status at a glance.** Rows show the linked PR or MR (`#123` for GitHub, `!123` for GitLab) and its CI status, plus how far the branch is ahead of or behind the default branch. Ports your panes listen on appear as chips in the header.
+- **Create and clean up worktrees** from the sidebar, the CLI, or your phone. Graftty offers to delete worktrees whose PR merged or closed.
+
+### Built for coding agents
+
+- **Claude Code and Codex plugins.** Graftty installs provider plugins that connect agents to the app through hooks and skills. It offers to install them on first launch, and they also live under **Settings → Agent Teams**.
+- **Attention that means something.** When an agent asks a question or finishes, its worktree moves to **Needs you** with a badge and an optional desktop notification. Busy agents show as working.
+- **Worktree briefs.** Agents keep a short recap of each worktree: what it's for, what's done, decisions made, and what's next. You see it in the sidebar and in the **Context** panel, so you can switch back into a worktree without rereading the transcript.
+- **Pinned agents with roles.** Pin long-lived agents (a lead, a release manager, a crash investigator) and give each durable instructions in a `GRAFTTY.md` file.
+- **Agent teams.** Agents in one repository can see each other, message each other's inboxes, and react to PR and CI events. One agent can start another in a new worktree with `graftty worktree add <name> --agent claude`.
+- **Native previews.** An agent can run `graftty preview explanation.html chart.png` to show HTML, images, and documents in a Quick Look tray beside the terminal. On your phone they open in the pane you control.
+
+<p align="center">
+  <img src="docs/screenshots/file-previews/mac-preview.png" alt="A native Quick Look preview tray showing an HTML explanation opened with graftty preview" width="720" />
+</p>
+
+### Take it anywhere
+
+- **iPhone and iPad.** GrafttyMobile pairs with your Mac and attaches to the same live sessions. You can type, take control of a pane's size, answer agents, create worktrees, and view previews. On iPad, panes split side by side.
+- **Remote Macs.** Pair two Macs and use one Mac's worktrees and sessions from the other, over the LAN or Tailscale. The connection carries authenticated SSH inside an encrypted WebRTC channel. See [Remote Macs](docs/remote-macs.md).
+- **Linux hosts.** Run Graftty's headless host on Ubuntu 24.04 and connect to it from the Mac app. **Set Up Linux Host…** installs it over SSH and imports projects, including committed work that hasn't been pushed. See [Linux hosts](docs/linux-host.md).
+- **Web access.** An optional HTTPS web client is served only on your Tailscale addresses.
+- **Windows (in progress).** Windows 11 support through WSL2 is under way; see [Windows headless host](docs/windows-host.md).
+
+### Scriptable
+
+The bundled `graftty` CLI lets anything running in a pane drive the app:
+
+```sh
+graftty notify "tests passing"                 # badge this worktree in the sidebar
+graftty pane add --command "pnpm dev"          # split and run a command
+graftty worktree add fix-auth --agent codex    # new worktree with an agent in it
+graftty pane show fix-auth:1 --lines 200       # read another worktree's pane
+graftty team send --stdin <member>             # message a teammate agent
+graftty preview report.html                    # open a native preview
+```
+
+See the [CLI reference](docs/cli.md) for everything else.
 
 ## Installing
 
@@ -26,370 +72,6 @@ Graftty may check for updates automatically — if you agree, a small
 indicator appears in the window titlebar when a new version is
 available, and clicking it installs the update. You can also trigger a
 check manually from `Graftty → Check for Updates…`.
-
-## Linux hosts
-
-Run the headless Swift host on Ubuntu 24.04, then connect from the Mac app.
-**Set Up Linux Host…** installs it over SSH and imports selected projects through
-Git bundles, including committed work that has not been pushed.
-See [Set up a Linux host from your Mac](docs/linux-host.md).
-
-## Windows hosts
-
-Windows 11 support is in progress. V1 targets the existing Linux host and
-Graftty-patched zmx under WSL2, with local installation and an outbound
-connection to the parent Mac. Setup will not require an SSH login into Windows.
-Planned cloud connections use graftty-server for signaling and paired device
-keys for terminal authorization.
-The local WSL installer and resource configuration tools are available under
-`scripts/windows`. Development groundwork includes a native Windows terminal
-and reverse-channel SSH tests on Mac and Linux. Native Windows SSH remains
-follow-up work. Cloud enrollment and the outbound host
-connection are not implemented yet.
-See [Windows headless host](docs/windows-host.md) for status and resource tuning.
-
-## Remote Macs
-
-Graftty can connect two Macs so you can use one Mac's existing worktrees
-and persistent terminal sessions from the other. Pairing starts on the
-local network; after that, the same key-authenticated connection works
-over either LAN or Tailscale. This is terminal access, not screen sharing.
-Both Macs run the normal Graftty app; no separate server or system SSH
-setup is required.
-
-### Pair two Macs
-
-Graftty advertises its dedicated local remote-access service with Bonjour
-while it is running. To add another Mac:
-
-1. Open Graftty on both Macs and allow Local Network access when macOS asks.
-2. On the Mac you want to work from, click **Add Remote Mac…** in the
-   **Remote Macs** sidebar section.
-3. Select the discovered Mac. If Bonjour/mDNS is unavailable on the
-   network, enter its LAN listener URL instead.
-4. Click **Pair** and compare the verification code shown on both Macs.
-   Accept the request on the host Mac and confirm it on the client only
-   when the codes match.
-
-The client saves the paired Mac by its stable device ID, full public key,
-and signed LAN/Tailscale routes—not by one changeable hostname or IP address.
-Only paired Macs become persistent sidebar rows; nearby, unpaired Bonjour
-results remain inside the Add Remote Mac sheet.
-
-Select a saved Mac to connect on demand. Once connected, its worktrees and
-panes appear beneath it in the sidebar. Selecting a remote pane opens an
-interactive terminal attached to that pane's persistent `zmx` session.
-Graftty keeps one client connection per saved Mac and carries terminal,
-pane-list, and pane-control traffic through an encrypted WebRTC DataChannel
-with mutually authenticated SSH inside it. When several saved routes are
-available, Graftty probes them concurrently and uses the first route that
-proves possession of the paired host key.
-
-To request a reconnect from any directory, run:
-
-```sh
-graftty remote reconnect "Studio Mac"
-```
-
-Use the exact saved name from the **Remote Macs** sidebar or a device ID.
-Graftty must be running locally. The command confirms that the request was
-accepted; check the sidebar for connection status. If a name matches multiple
-Macs, the error lists their device IDs. Macs that need pairing must be paired
-again in the app.
-
-From a shell on the host Mac, ask a connected viewing Mac to reconnect:
-
-```sh
-graftty remote reconnect-client "Laptop"
-```
-
-Use the viewing Mac's paired name or device ID. A targeting error lists
-connected clients. Both Macs need this command's support, and the control
-channel must still work. If the connection is completely broken, run
-`graftty remote reconnect` on the viewing Mac instead. Neither command resends
-team messages.
-
-### Trust, revocation, and recovery
-
-Bonjour discovery is only an address hint—it does not establish trust.
-Pairing exchanges public identity keys, requires approval on the host, and
-uses the matching verification code to prevent an untrusted LAN peer from
-silently adding itself. The dedicated paired-access listener runs on port
-8800 over LAN and Tailscale and exposes only pairing and signaling routes.
-Every signaling challenge, WebRTC offer, and answer is signed with the keys
-established during pairing; captured challenges are short-lived and
-single-use.
-
-Every later connection verifies the host's SSH key against the fingerprint
-pinned during pairing. If the key does not match, Graftty fails closed and
-shows the saved Mac with a key icon (`needsPairing`). A later Bonjour
-announcement does not clear that warning. Use **Add Remote Mac…** to pair
-again only after confirming why the host identity changed—for example,
-after the other Mac's Graftty identity data was intentionally reset.
-
-The host can revoke a paired client under **Settings → Web Access → Device
-Pairing**. Removing it also closes that client's active SSH connection.
-The current host accepts one active incoming remote connection at a time;
-another client receives a retryable “host busy” failure without displacing
-the active connection.
-
-If a Mac does not appear during initial pairing, confirm that both apps are
-running on the same LAN, Local Network permission is enabled for Graftty,
-and the network allows Bonjour/mDNS. Corporate and guest networks often
-block peer discovery or device-to-device traffic; use the manual LAN URL
-when one is available. For later remote connections, both devices must be
-online in the same tailnet and the host must still be reachable on port
-8800.
-
-## Agent instructions
-
-The sidebar lists temporary worktrees above a collapsible **Pinned Agents**
-section. The repository's default-branch row always appears first among pinned
-agents, followed by ongoing-role worktrees in saved manual order. To pin a local
-worktree, drag it onto the **Pinned Agents** header or a pinned worktree row,
-or right-click it and choose **Pin Agent**. Dropping on a collapsed header pins
-the worktree and expands the section. This works with recent activity sorting. Choose **Unpin Agent** to
-return it to the temporary list. Pin state, disclosure state, and manual pinned
-order persist across sessions. Remote clients show the owning Mac's pin state.
-
-Agents can use `graftty worktree pin` to pin their own worktree, or
-`graftty worktree pin <name-or-path>` to pin another local worktree.
-`graftty worktree unpin [name-or-path]` returns it to the temporary list without
-changing its workspace or instructions. The default-branch checkout stays
-pinned. Pinned agents do not receive deletion offers when their PR or MR merges
-or closes. The bundled team skill explains the pinning and role-file workflow.
-
-To configure a pinned agent's responsibilities, choose **Edit Role Instructions…**
-from its context menu. Graftty opens its effective worktree-specific instruction
-file, or creates an empty `.graftty/<worktree-key>/GRAFTTY.md` in the main
-checkout so peer agents can read its shared role context. It uses the same
-configured editor as Cmd-clicking a file in the terminal, opening CLI editors
-in a new pane in the selected worktree. The action is available on pinned local
-worktrees, including the default-branch checkout. Worktrees without a role key
-use their local `.graftty/GRAFTTY.md`. If an Application Support base file would
-override it, Graftty reports the overriding path instead of creating an
-ineffective role file. Pinning does not create or change instructions.
-Instruction files can also apply to temporary worktrees without pinning them.
-
-Graftty can give the agents running in your worktrees durable, per-worktree
-instructions. Files use the same relative layout in any instruction root:
-
-```
-.graftty/GRAFTTY.md                     # every worktree in the repo
-.graftty/research/GRAFTTY.md            # research and worktrees beneath it
-.graftty/research/vector-db/GRAFTTY.md  # research/vector-db and descendants
-```
-
-A worktree receives the repo-wide file, then each ancestor directory's
-`GRAFTTY.md`, then the `GRAFTTY.md` in its own keyed directory.
-
-For upgrade compatibility, the older `GRAFTTY.<leaf>.md` form remains a
-read-only fallback when the equivalent hierarchical file is absent. New and
-updated instructions should use the directory form above. If both forms exist
-for one scope in the same root, Graftty uses the hierarchical file and logs a
-warning naming both paths; reconcile any content that still matters, then
-delete the legacy file.
-
-Anything below a `## Private` heading goes only to the worktrees that file
-applies to. Everything above it is shared with every agent in the repo, so
-it's the right place for what other worktrees need in order to coordinate
-with this one. A file with no such heading is entirely shared.
-
-For each relative path, Graftty uses the first readable regular file it finds
-in this order:
-
-1. `~/Library/Application Support/Graftty/.graftty/`
-2. the current worktree's `.graftty/`
-3. the main checkout's `.graftty/`
-
-Resolution is per file, so a sparse higher-precedence overlay does not hide
-unrelated files below it. The Application Support root is machine-wide: a
-matching relative name overrides that file in every repository. Graftty reads
-current filesystem bytes and does not inspect Git, so an uncommitted edit takes
-effect at the next session start. Symlinks, non-regular files, and evicted
-iCloud placeholders are ignored.
-
-This lets one agent configure another before launch. Create the child's leaf
-where its first session can see it: in Application Support, in the main
-checkout, or in the child's starting tree. From a linked worktree, you can put
-the leaf in the starting tree by committing it and running
-`graftty worktree add <name> --base HEAD --agent <codex|claude>`; Git creates
-the child from that commit, but Graftty still reads the resulting filesystem
-file directly. Once the child exists, its own `.graftty/` can tune later
-sessions without a commit.
-
-The bundled Graftty Team skill explains these forms and tells agents they may
-suggest concise instruction files when durable team structure would help, but
-to create or modify them only when authorized. Instruction files are how you
-customize agents; Graftty has no separate session prompt setting.
-
-## Agent teams
-
-Each tracked repository has a team. Agents running in its worktrees can
-register their presence, send inbox messages, and react to PR and CI events.
-A repository with one local worktree can also communicate with agents on a
-remote Mac.
-
-Agents connect to Graftty through the Codex and Claude provider plugins.
-Graftty offers to install them on first launch; you can also install them
-from **Settings → Agent Teams**, which warns until they are installed. The
-plugins add Graftty's skills and lifecycle hooks, and Graftty refreshes them
-automatically after app updates. Start new agent sessions after installing.
-
-In **Settings → Agent Teams** you also choose which events (PR state,
-merges, CI conclusion, mergability) get routed to the root agent, the
-per-worktree agent, peer worktrees, or any combination, and customize the
-templated per-event prompt each agent receives with an automated event.
-Customize agents themselves with `GRAFTTY.md` instruction files (above).
-
-The bundled Graftty Team skill teaches agents the CLI surface for
-coordination:
-
-```sh
-graftty team list                        # see teammates, worktrees, and running state
-graftty team list --json                 # stable machine-readable roster
-graftty team send --stdin <member>       # read a direct message literally from stdin
-graftty team broadcast --stdin           # read a broadcast literally from stdin
-graftty team inbox                       # read the oldest 100 unread rows and mark them read
-graftty team inbox --all                 # consume the current unread snapshot page by page
-graftty team inbox --keep-unread         # peek without changing delivery state
-graftty team inbox --unread              # compatibility alias for --keep-unread
-graftty team inbox --history             # inspect prior incoming messages without mutation
-```
-
-Delivery is native. The plugins' `SessionStart` hook points agents at the
-Graftty skills and delivers their `GRAFTTY.md` instructions and any
-messages queued before the session started. After that, Graftty sends new
-messages into the running session: to Claude Code through its peer
-messaging socket, and to Codex through Codex's app server. For Codex,
-Graftty installs a `codex` shim on each agent's `PATH` that starts that app
-server and registers the session.
-
-The Codex shim routes feature, plugin marketplace, plugin, and MCP
-administration to the user's durable `~/.codex` home while maintaining a
-read-only-at-runtime config snapshot in an isolated managed home. Those
-changes therefore survive later agent launches without requiring an agent to
-rewrite Graftty's generated files. A sandboxed agent may
-request normal filesystem approval before changing this user-global state.
-Codex discovers plugin-provided tools when a session starts, so the shim prints
-a reminder to reload the agent or start a new session after a successful
-configuration mutation.
-
-*Window → Team Activity Log* opens a unified transcript of every team
-event and inter-agent message for the focused worktree's team.
-
-### Message agents on another Mac
-
-Add the other Mac under **Remote Macs** and connect it. Both Macs must run a
-version of Graftty that supports remote team messaging. One pairing provides
-messaging in both directions while that connection is open.
-
-Run `graftty team list --json` from a tracked worktree. The roster includes
-all teams on each directly connected Mac. Copy the remote agent's `address`
-unchanged into `graftty team send --stdin`. Remote addresses start with
-`graftty-mac://` and include a device identity, an escaped worktree path,
-and an optional `#codex`, `#claude`, or exact agent suffix.
-
-Replies use the sender's device-qualified `agent` or `fallback-agent`
-address from the message envelope. An exact agent address fails if that
-session is gone. A provider address queues the message for that provider's
-next agent after the receiving Mac accepts it.
-
-A successful send means the receiving Mac wrote the message to its durable
-inbox. Disconnected Macs reject new sends. If the connection breaks before
-an acknowledgement arrives, check the recipient's inbox before retrying,
-because the message may already have arrived. `team broadcast` continues
-to send only to other worktrees in the caller's local repository.
-
-### Team inbox delivery cursors and maintenance
-
-The team inbox is an append-only JSONL log. Hook and watcher delivery track two
-positions: a cursor for each runtime session and a shared watermark for each
-worktree. Those paths advance both positions; a new session begins at the
-worktree watermark. Codex app-server delivery uses the worktree watermark as
-its authoritative position and does not maintain a session cursor. A normal
-`graftty team inbox` read writes the oldest unread page and then advances the
-current worktree's shared watermark through the last displayed row. It does not
-change a session cursor. `--all` consumes a fixed upper snapshot, so rows
-appended while pages are being fetched remain unread for the next invocation.
-
-`--keep-unread` (and its compatibility alias `--unread`) peeks without changing
-delivery state. `--history` is also nonmutating. Supplying `--worktree`,
-`--repo`, or `--member` makes the read a diagnostic peek because a command must
-not consume another scope's inbox. Graftty emits the supported consuming command
-on stderr for those diagnostic reads while leaving stdout machine-readable.
-
-The shared watermark advances only after stdout accepts the complete output.
-If output fails, nothing advances. If the subsequent advance fails, the command
-returns nonzero and asks the caller to rerun `graftty team inbox`; direct edits
-to Graftty state files are unsupported. Pagination bounds each socket response;
-it does not delete or archive records.
-
-Both positions store a message ID that acts as an anchor into the log's append
-order. If an external archive removes an anchor record, the reader cannot infer
-where that record used to be and conservatively starts at the beginning of the
-retained log. That can replay retained messages. Retaining anchors alone is not
-enough: deleting rows newer than an anchor can discard messages that are still
-pending. Direct store surgery is therefore unsupported. A safe archive must
-remove only a contiguous prefix that is older than every effective delivery
-position, and must retain each referenced anchor or migrate every position
-atomically to a retained cutoff record. Inbox pagination removes the need to
-compact the store merely to keep `graftty team inbox` usable.
-
-When inbox messages aren't enough, any agent can drive a teammate's
-pane directly — see **CLI** below for `graftty pane show` (read another
-worktree's terminal) and `graftty pane send` (inject keystrokes).
-
-## CLI
-
-The bundled `graftty` CLI lets a process inside a Graftty pane drive the app, and lets one agent control panes in another worktree.
-
-```sh
-graftty project add ../my-project             # register a local Git project in the Mac app
-graftty notify "tests passing"               # set a sidebar attention badge
-graftty pane list                            # panes in the current worktree
-graftty pane add --command "claude"          # split + run a command
-graftty pane close 2                         # close pane 2
-
-# Launch an agent in a new worktree, then message that worktree's inbox:
-graftty worktree add fix-auth --agent codex
-# Start the new branch at any locally resolvable branch, tag, or commit:
-graftty worktree add backport-auth --base release/v2 --agent codex
-# For multiline or generated tasks, pass the prompt on stdin:
-printf '%s\n' 'Fix the auth tests and report the result.' | \
-  graftty worktree add fix-auth --agent codex --prompt-stdin
-# Copy the canonical address=... path printed by the command:
-printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin /path/to/repo/.worktrees/fix-auth
-# Remove the worktree from Git and Graftty while preserving its branch:
-graftty worktree remove fix-auth
-# Dirty or untracked files require an explicit forced removal:
-graftty worktree remove fix-auth --force
-
-# Cross-worktree pane control:
-graftty pane list drag-files                 # list panes in another worktree
-graftty pane show drag-files:1               # last 100 lines of that pane's output
-graftty pane show drag-files:1 --lines 500   # more scrollback
-graftty pane send drag-files:1 "pnpm test"   # type the command and press Enter
-graftty pane send drag-files:1 "y" --no-enter  # type without committing
-```
-
-`graftty project add <path>` registers a local Git repository through the running Mac app and saves it before returning success. The sidebar and connected mobile clients use the same project list. The command works from any directory. Relative paths resolve against the caller's working directory. Git roots, linked worktrees, and repositories with no commits are supported. Repeated additions preserve existing project settings and panes, and the command leaves the current selection unchanged.
-
-The command does not initialize Git. For a directory without Git, use **Add Repository** in the Mac app to choose **Initialize Git Repository** or **Add Without Git**. If the running app does not support project registration, quit and relaunch an updated app before retrying. This command registers projects in the Mac app; `graftty-host project add` manages the separate Linux host project list.
-
-`<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
-
-`graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
-
-`graftty worktree add --base <ref>` creates the new branch from an exact Git-resolvable revision already available in the local repository; it does not fetch, and it cannot be combined with `--existing`. Worktree-local revisions such as `HEAD`, `@`, and reflog selectors resolve in the worktree that invoked the command. Without `--base`, Graftty keeps its existing behavior of using the repository's default branch when available, then falling back to `HEAD`.
-
-`graftty worktree add` returns once Graftty accepts the request, with a pending operation ID and stable message address. Keep the app running while it waits for Git and its hooks, then opens the pane and launches the agent. Use `--wait` to block until the pane accepts the launch command, or `--async` to explicitly select the default. `--timeout` bounds the CLI's wait; it does not cancel accepted creation. Check `graftty team list --json` for agent reachability before treating a delegation as complete.
-
-`graftty worktree remove <worktree>` accepts an absolute tracked path, `.` for the current worktree, or a worktree name from `graftty team list`. It runs the same removal flow as the sidebar's Delete Worktree action: Git deletes the linked checkout but preserves its branch, Graftty tears down its panes and removes it from the UI, and modified, staged, or untracked files cause a non-zero exit with `git status --short` details. Pass `--force` to mirror the UI's Force Delete action.
-
-`graftty worktree add --agent` prints a canonical worktree-path address. The app accepts prompt text up to 128 KiB and stages it in an owner-only temporary file, so multiline prompts, heredoc examples, shell syntax, and substantial task descriptions are not typed through the new pane's interactive shell. Before starting Git, Graftty also saves the exact initial prompt in that runtime's durable inbox. The inbox copy survives a failed launch and reaches a later agent session as a labeled recovery copy. The CLI verifies staging support before creating anything; if the app was already running during an upgrade, quit and relaunch it before retrying. When no prompt is supplied, Graftty starts one short bootstrap turn; that lets the runtime finish initialization and establish idle inbox delivery instead of remaining in a pre-turn state that queued messages cannot wake. Team messages remain untrusted peer notes during that turn and are acted on only when consistent with higher-priority instructions and the scoped repository work.
-
-Agent-authored messages carry an exact canonical `agent` address and a provider-scoped `fallback-agent` address. Reply to the exact address while `graftty team list --json` reports that session as reachable; otherwise send to the fallback address (for example, `/path/to/worktree#codex`) so the reply waits durably for that provider's next agent. Native provider sender labels are display-only and may be truncated.
 
 ## Building
 
@@ -429,8 +111,12 @@ If you only touch Swift, you need neither — the committed bundle is what
 
 ## Further reading
 
-- [`SPECS.md`](SPECS.md) — authoritative EARS-style behavior spec.
-- [`docs/`](docs) — design notes and architecture details.
+- [Agents in Graftty](docs/agents.md): pinned agents, `GRAFTTY.md` instruction files, and agent teams.
+- [The graftty CLI](docs/cli.md): every command, with examples.
+- [Remote Macs](docs/remote-macs.md): pairing, reconnection, and the trust model.
+- [Linux hosts](docs/linux-host.md) and [Windows hosts](docs/windows-host.md).
+- [`SPECS.md`](SPECS.md): the authoritative EARS-style behavior spec.
+- [`docs/`](docs): design notes and architecture details.
 
 ## License
 
