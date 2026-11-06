@@ -64,8 +64,11 @@ struct WorktreeDrawingSVGTests {
         #expect(rejection(Self.svg("<rect width=\"4\" height=\"4\" fill=\"ink\"/>", viewBox: "0 0 24 24")) == .malformed)
     }
 
+    /// Linux's XMLParser recovers from broken markup and still returns true,
+    /// reporting the problem only through parseErrorOccurred.
     @Test func rejectsMalformedXML() {
         #expect(rejection("<svg viewBox=\"0 0 64 64\"><rect></svg>") == .malformed)
+        #expect(rejection("<svg viewBox=\"0 0 64 64\"><g>") == .malformed)
     }
 
     @Test func rejectsEntityDeclarations() {
