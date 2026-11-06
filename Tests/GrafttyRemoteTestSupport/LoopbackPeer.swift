@@ -211,10 +211,7 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
         tracker.onOpen = { [weak self] in
             Task { await self?.handleDataChannelOpen(dc) }
         }
-        if dc.readyState == .open {
-            Task { self.handleDataChannelOpen(dc) }
-        }
-        dc.delegate = tracker
+        tracker.observe(install: { dc.delegate = $0 }, readyState: { dc.readyState })
         self.openTrackers[dc.label] = tracker
     }
 
@@ -298,8 +295,14 @@ private struct PendingWait<Value> {
 
 /// Notifies once a channel reaches `.open`. Whoever wraps the channel next
 /// (an SSH transport) installs its own delegate, replacing this one.
-private final class OpenTrackerDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
+final class OpenTrackerDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
+    func observe(install: (RTCDataChannelDelegate) -> Void, readyState: () -> RTCDataChannelState) {
+        install(self)
+        // Observe after installation: an open transition during the delegate
+        // handoff may have notified only the channel's previous delegate.
+        if readyState() == .open { onOpen?() }
+    }
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
         if dataChannel.readyState == .open { onOpen?() }
     }

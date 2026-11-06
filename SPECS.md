@@ -5887,3 +5887,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.16** When a Git relay fixture command is cancelled, the test harness shall stop its subprocess and close its output before returning cancellation.
 
 **TEST-1.17** When a Git relay fixture transfer fails or is cancelled, the test harness shall close its channels and stop both subprocess groups before joining the sender, and reap both subprocesses before returning.
+
+**TEST-1.18** When a loopback data channel opens during listener attachment, the test fixture shall resolve its open observation without waiting for another state-change callback.
