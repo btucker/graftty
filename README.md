@@ -9,7 +9,7 @@ A worktree-native terminal for running many coding agents at once, built on [lib
 Graftty organizes persistent terminal sessions by Git worktree. Every project and worktree gets its own split layout of terminals, and those terminals keep running when you switch away, quit the app, or pick the work up from your phone. Graftty also tracks what each agent is doing, so the sidebar shows which ones need you.
 
 <p align="center">
-  <img src="docs/hero.png" alt="The Graftty window: a sidebar of projects and worktrees grouped into Needs you, Pinned Agents, and Recent, beside a Claude Code session that is asking a question" width="960" />
+  <img src="docs/hero.png" alt="The Graftty window: a project rail and a sidebar of pinned agents and recent worktrees with agent recaps, beside a Claude Code session" width="960" />
 </p>
 
 ## Core features
@@ -20,16 +20,16 @@ Graftty organizes persistent terminal sessions by Git worktree. Every project an
 - **Terminals that survive.** Every pane is backed by a [zmx](https://zmx.sh/) session, so shells, servers, and agents keep running across worktree switches and app restarts.
 - **Splits per worktree.** Each worktree remembers its own split layout. Graftty uses libghostty for the terminal itself, so rendering, fonts, and input behave like Ghostty.
 - **Git status at a glance.** Rows show the linked PR or MR (`#123` for GitHub, `!123` for GitLab) and its CI status, plus how far the branch is ahead of or behind the default branch. Ports your panes listen on appear as chips in the header.
-- **Create and clean up worktrees** from the sidebar, the CLI, or your phone. Graftty offers to delete worktrees whose PR merged or closed.
+- **Create and clean up worktrees** from the sidebar, the CLI, or your phone. When a worktree's PR or MR merges, its row offers a remove button.
 
 ### Built for coding agents
 
 - **Claude Code and Codex plugins.** Graftty installs provider plugins that connect agents to the app through hooks and skills. It offers to install them on first launch, and they also live under **Settings → Agent Teams**.
-- **Attention that means something.** When an agent asks a question or finishes, its worktree moves to **Needs you** with a badge and an optional desktop notification. Busy agents show as working.
+- **Attention that means something.** When an agent asks a question or sends a notification, its worktree moves to **Needs you** with a badge and an optional desktop notification. Finished agents stay where they are with an unread result, and busy agents show as working.
 - **Worktree briefs.** Agents keep a short recap of each worktree: what it's for, what's done, decisions made, and what's next. You see it in the sidebar and in the **Context** panel, so you can switch back into a worktree without rereading the transcript.
 - **Pinned agents with roles.** Pin long-lived agents (a lead, a release manager, a crash investigator) and give each durable instructions in a `GRAFTTY.md` file.
 - **Agent teams.** Agents in one repository can see each other, message each other's inboxes, and react to PR and CI events. One agent can start another in a new worktree with `graftty worktree add <name> --agent claude`.
-- **Native previews.** An agent can run `graftty preview explanation.html chart.png` to show HTML, images, and documents in a Quick Look tray beside the terminal. On your phone they open in the pane you control.
+- **Native previews.** An agent can run `graftty preview explanation.html chart.png` to show HTML, images, and documents in a native Quick Look window without taking focus from the terminal. On your phone, new previews open automatically for the focused pane you control.
 
 <p align="center">
   <img src="docs/screenshots/file-previews/mac-preview.png" alt="A native Quick Look preview tray showing an HTML explanation opened with graftty preview" width="720" />
@@ -56,11 +56,11 @@ graftty notify "tests passing"                 # badge this worktree in the side
 graftty pane add --command "pnpm dev"          # split and run a command
 graftty worktree add fix-auth --agent codex    # new worktree with an agent in it
 graftty pane show fix-auth:1 --lines 200       # read another worktree's pane
-graftty team send --stdin <member>             # message a teammate agent
+graftty team send fix-auth "rebase on main"    # message a teammate agent
 graftty preview report.html                    # open a native preview
 ```
 
-See the [CLI reference](docs/cli.md) for everything else.
+See the [CLI reference](docs/cli.md) for more commands and examples.
 
 ## Installing
 
@@ -116,7 +116,7 @@ If you only touch Swift, you need neither — the committed bundle is what
 ## Further reading
 
 - [Agents in Graftty](docs/agents.md): pinned agents, `GRAFTTY.md` instruction files, and agent teams.
-- [The graftty CLI](docs/cli.md): every command, with examples.
+- [The graftty CLI](docs/cli.md): common commands, with examples.
 - [Remote Macs](docs/remote-macs.md): pairing, reconnection, and the trust model.
 - [Linux hosts](docs/linux-host.md) and [Windows hosts](docs/windows-host.md).
 - [`SPECS.md`](SPECS.md): the authoritative EARS-style behavior spec.

@@ -2,9 +2,9 @@
 
 How Graftty pins agents, gives them per-worktree instructions, and lets them coordinate as a team.
 
-## Agent instructions
+## Pinned agents
 
-The sidebar lists temporary worktrees above a collapsible **Pinned Agents**
+The sidebar lists temporary worktrees below a collapsible **Pinned Agents**
 section. The repository's default-branch row always appears first among pinned
 agents, followed by ongoing-role worktrees in saved manual order. To pin a local
 worktree, drag it onto the **Pinned Agents** header or a pinned worktree row,
@@ -17,8 +17,8 @@ Agents can use `graftty worktree pin` to pin their own worktree, or
 `graftty worktree pin <name-or-path>` to pin another local worktree.
 `graftty worktree unpin [name-or-path]` returns it to the temporary list without
 changing its workspace or instructions. The default-branch checkout stays
-pinned. Pinned agents do not receive deletion offers when their PR or MR merges
-or closes. The bundled team skill explains the pinning and role-file workflow.
+pinned. Removing a pinned worktree with `graftty worktree remove` requires
+`--pinned`. The bundled team skill explains the pinning and role-file workflow.
 
 To configure a pinned agent's responsibilities, choose **Edit Role Instructions…**
 from its context menu. Graftty opens its effective worktree-specific instruction
