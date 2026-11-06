@@ -25,7 +25,7 @@ struct AttentionReport: ParsableCommand {
         abstract: "Publish an agent recap before finishing its turn"
     )
 
-    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, icon (an SVG worktree drawing), purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
     var stdin = false
 
     func run() throws {
@@ -42,11 +42,17 @@ struct AttentionReport: ParsableCommand {
     }
 
     static func decodeRecap(_ data: Data) throws -> AttentionRecap {
-        let recap: AttentionRecap
+        var recap: AttentionRecap
         do {
             recap = try JSONDecoder().decode(AttentionRecap.self, from: data)
         } catch {
-            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, icon, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+        }
+        // Checked first so an oversized drawing reports its own reason, not the brief-text error.
+        if let icon = recap.icon {
+            do { recap.icon = try WorktreeDrawingSVG.validate(icon) } catch {
+                throw ValidationError("the worktree drawing in \"icon\" was rejected: \(error)")
+            }
         }
         guard recap.isValid else {
             throw ValidationError("recap fields must be brief text, and emoji choices must be single glyphs")

@@ -186,6 +186,8 @@ struct WorktreeRow: View {
     var attentionCount: Int = 0
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
+    /// The rendered agent drawing, shown in place of the emoji (LAYOUT-2.202).
+    var drawingData: Data? = nil
     /// Right-click menu for the identity slot (LAYOUT-2.96); nil for rows
     /// whose identity is not editable.
     var identityMenu: ((NSView) -> NSMenu)? = nil
@@ -204,17 +206,26 @@ struct WorktreeRow: View {
         return items
     }
 
+    private var drawingIdentity: WorktreeIconIdentity {
+        .resolve(isMainCheckout: isMainCheckout, emoji: entry.emoji, drawingRevision: entry.drawing?.revision,
+                 emojiChosenByUser: entry.emojiChosenByUser)
+    }
+
     var body: some View {
         HStack(spacing: WorktreeRowGeometry.spacing) {
             if attentionCount > 0 { SidebarActivityBadge(attentionCount) }
-            ForEach(Self.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil, hasPR: prBadge != nil,
+            ForEach(Self.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil || drawingData != nil, hasPR: prBadge != nil,
                                          isInFlight: entry.state.isInFlight), id: \.self) { item in
                 switch item {
                 case .projectIcon:
                     ProjectIdentityView(project: project ?? SidebarProject(id: entry.path, repositoryID: entry.path, name: displayName),
                                         imageData: projectIconData, size: WorktreeRowGeometry.identityWidth)
                 case .emoji:
-                    if let emoji = entry.emoji {
+                    if case .drawing = drawingIdentity, let drawingData {
+                        identityMenuTarget(WorktreeIdentityView(identity: drawingIdentity, project: project
+                            ?? SidebarProject(id: entry.path, repositoryID: entry.path, name: displayName), imageData: drawingData, size: 17)
+                            .frame(width: WorktreeRowGeometry.identityWidth))
+                    } else if let emoji = entry.emoji {
                         identityMenuTarget(Text(emoji).font(.system(size: 15))
                             .frame(width: WorktreeRowGeometry.identityWidth).accessibilityHidden(true))
                     }

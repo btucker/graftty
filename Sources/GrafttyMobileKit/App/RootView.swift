@@ -33,6 +33,7 @@ public struct RootView: View {
     )
     @State private var nearbyMacBrowser = NearbyMacBrowser()
     @State private var projectIconCache = ProjectIconCache()
+    @State private var worktreeDrawingCache = WorktreeDrawingCache()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     struct NotificationIO {
         let fetch: @MainActor (Host) async throws -> [WorktreePanes]
@@ -80,6 +81,7 @@ public struct RootView: View {
         .environment(\.retainedMobilePanes, retainedPanes)
         .environment(\.remoteConnectionCoordinator, coordinator)
         .environment(\.projectIconCache, projectIconCache)
+        .environment(\.worktreeDrawingCache, worktreeDrawingCache)
         .environment(\.remoteWorktreeUpdates, RemoteWorktreeUpdatesProvider { [coordinator] host in
             coordinator.isPaired(host) ? coordinator.worktreeUpdates(for: host) : nil
         })
@@ -120,6 +122,7 @@ public struct RootView: View {
             retainedPanes.stopAll()
             // Project IDs are unique only within a host: a headless host's are repo paths.
             projectIconCache.reset()
+            worktreeDrawingCache.reset()
         }
         .onChange(of: horizontalSizeClass) { previous, current in
             guard previous == .regular, current != .regular else { return }

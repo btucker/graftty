@@ -103,6 +103,12 @@ public extension HeadlessHostRuntime {
                 guard let repo = state.repos.first(where: { $0.path == repositoryID }),
                       let icon = currentProjectIcon(for: repo), icon.revision == revision else { return .icon(nil) }
                 return .icon(icon.data)
+            case .worktreeIcon(let worktreeID, let revision):
+                #if canImport(AppKit)
+                return .icon(WorktreeDrawingRenderer.iconResponse(for: state.repos, worktreeID: worktreeID, revision: revision))
+                #else
+                return .icon(nil)
+                #endif
             default: return .error(code: "unsupported", message: "operation is unavailable on this host", forceAllowed: false, shortStatus: nil)
             }
             return .ok

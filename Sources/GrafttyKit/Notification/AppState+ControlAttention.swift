@@ -63,11 +63,21 @@ public extension AppState {
         repos[index.repo].worktrees[index.worktree].attention = nil
     }
 
+    /// Like the brief, only a recap newer than the brief may change the
+    /// drawing, so a late or dropped report cannot revert it (AGENT-3.34).
+    private mutating func adoptDrawing(from recap: AttentionRecap, callerPath: String, reportedAt: Date) {
+        guard recap.icon != nil, let index = indices(forWorktreePath: callerPath),
+              repos[index.repo].worktrees[index.worktree].isNewerThanBrief(reportedAt) else { return }
+        SidebarHostNavigation.adoptReportedDrawing(recap, worktreePath: callerPath,
+            projectHue: ProjectHueRegistry.shared.hue(for: repos[index.repo].id), in: &repos)
+    }
+
     /// Publishes retained context without marking the agent stopped.
     mutating func recordAgentRecap(_ recap: AttentionRecap, callerPath: String, reportedAt: Date) {
         guard let index = indices(forWorktreePath: callerPath) else { return }
         SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos)
-        repos[index.repo].worktrees[index.worktree].recordAgentRecap(recap, at: reportedAt)
+        adoptDrawing(from: recap, callerPath: callerPath, reportedAt: reportedAt)
+        repos[index.repo].worktrees[index.worktree].recordAgentRecap(recap.withoutDrawing, at: reportedAt)
     }
 
     func hasConsumedAgentReport(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
@@ -92,7 +102,7 @@ public extension AppState {
         // A recovered duplicate is a no-op. A distinct provider turn still
         // completes, but cannot reuse the old recap or its pending question.
         if isConsumed, turnID == nil || consumed?.turnID == turnID { return nil }
-        let effectiveRecap = isConsumed ? nil : recap
+        let effectiveRecap = isConsumed ? nil : recap?.withoutDrawing
         let paneSlot = paneSessionName.flatMap { worktree?.paneSlot(forSessionName: $0) }
         let stop = SidebarAgentStop(
             agentName: runtime.displayName,
@@ -112,6 +122,7 @@ public extension AppState {
                previous.recap == stop.recap { return nil }
         }
         SidebarHostNavigation.adoptReportedEmoji(effectiveRecap, worktreePath: callerPath, in: &repos)
+        if !isConsumed, let recap { adoptDrawing(from: recap, callerPath: callerPath, reportedAt: recapReportedAt ?? stoppedAt) }
         guard let index = indices(forWorktreePath: callerPath) else { return nil }
         repos[index.repo].worktrees[index.worktree].recordAgentStop(stop, recapReportedAt: recapReportedAt)
         if let recapReportedAt, let key = stop.providerSessionKey {
@@ -179,5 +190,16 @@ public extension AppState {
             if let wi = repo.worktrees.firstIndex(where: { $0.splitTree.containsLeaf(slot) }) { return (ri, wi) }
         }
         return nil
+    }
+}
+
+private extension AttentionRecap {
+    /// @spec AGENT-3.35
+    /// Stored stops, briefs and broadcasts never carry agent SVG; the drawing
+    /// lives only on the worktree that adopted it.
+    var withoutDrawing: AttentionRecap {
+        var stripped = self
+        stripped.icon = nil
+        return stripped
     }
 }

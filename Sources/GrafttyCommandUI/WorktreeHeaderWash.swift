@@ -17,6 +17,8 @@ public struct WorktreeHeaderWash: Equatable {
     public enum Glyph: Equatable {
         case emoji(String)
         case image(Data)
+        /// An agent drawing: transparent, with its own outline, so never clipped.
+        case drawing(Data)
         case initials(String, Color)
     }
 
@@ -35,6 +37,14 @@ public struct WorktreeHeaderWash: Equatable {
         switch identity {
         case .emoji(let emoji) where !emoji.isEmpty:
             glyph = .emoji(emoji)
+        case .drawing(_, let emoji):
+            if let iconData, DrawingImage.decode(iconData) != nil {
+                glyph = .drawing(iconData)
+            } else if let emoji, !emoji.isEmpty {
+                glyph = .emoji(emoji)
+            } else {
+                return nil
+            }
         case .project:
             if let iconData, iconData.count <= 65536, PlatformImage.decode(iconData) != nil {
                 glyph = .image(iconData)
@@ -122,6 +132,10 @@ private struct WorktreeHeaderWashGlyph: View {
                     .frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: size * 0.18))
             }
+        case .drawing(let data):
+            if let image = DrawingImage.decode(data) {
+                image.resizable().scaledToFit().frame(width: size, height: size)
+            }
         case .initials(let initials, let accent):
             Text(initials).font(.system(size: size * 0.62, weight: .bold)).foregroundStyle(accent)
                 .frame(width: size, height: size)
@@ -131,7 +145,7 @@ private struct WorktreeHeaderWashGlyph: View {
     }
 }
 
-private enum PlatformImage {
+enum PlatformImage {
     static func decode(_ data: Data) -> Image? {
         #if canImport(AppKit)
         return NSImage(data: data).map { Image(nsImage: $0) }

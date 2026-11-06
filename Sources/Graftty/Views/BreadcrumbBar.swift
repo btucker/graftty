@@ -25,6 +25,8 @@ struct BreadcrumbBar: View {
     let onRefreshPR: () -> Void
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
+    /// The selected worktree's resolved identity, including a drawing; nil derives it from the emoji.
+    var worktreeIdentity: WorktreeIconIdentity? = nil
     var previewWorktreePath: String? = nil
     var previewInlinePane: PaneSlotID? = nil
     var previewWorktreeForPane: ((PaneSlotID) -> String?)? = nil
@@ -207,7 +209,7 @@ struct BreadcrumbBar: View {
     }
 
     var iconIdentity: WorktreeIconIdentity {
-        .resolve(isMainCheckout: isHomeCheckout, emoji: worktreeEmoji)
+        worktreeIdentity ?? .resolve(isMainCheckout: isHomeCheckout, emoji: worktreeEmoji)
     }
 
     static func selectedWorktreeEmoji(localEmoji: String?, remoteWorktree: WorktreePanes?) -> String? {

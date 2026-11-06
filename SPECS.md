@@ -402,6 +402,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.198** When the user expands the terminal drawer, the application shall give its selected terminal keyboard focus, including a first terminal created by that action.
 
+**LAYOUT-2.199** When a linked worktree first receives a drawing, the application shall assign it a permanent OKLCH hue farthest from the hues of the other drawn worktrees in its project and from the project icon's dominant hue.
+
+**LAYOUT-2.200** While a linked worktree has an adopted drawing, the application shall identify it by that drawing ahead of an agent emoji, while a home checkout keeps its project icon and an emoji the user chose keeps precedence.
+
+**LAYOUT-2.201** When a host serves a worktree drawing, the application shall fill its palette tokens from the worktree's hue, render it to a 256-pixel PNG with a white outline, and answer only requests whose revision matches the current drawing.
+
+**LAYOUT-2.202** While a linked worktree with a drawing appears in the Mac sidebar or breadcrumb, the application shall show its rendered drawing in place of the emoji.
+
+**LAYOUT-2.203** When the selected linked worktree has a drawing whose image is available, the application shall draw the header wash from that image without clipping it, and otherwise from its emoji.
+
+**LAYOUT-2.204** If a host cannot render worktree drawings, then the application shall not advertise their revisions, so clients keep showing the emoji instead of requesting images the host cannot serve.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2389,6 +2401,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.63** When the selected host changes, the application shall discard the project images loaded from the previous host, whose project identifiers another host may reuse.
 
 **IOS-4.64** If the user leaves the worktree list while a project image is loading, then the application shall still finish loading it so the screens above the list can draw it.
+
+**IOS-4.65** When a mobile client fetches a worktree drawing, the application shall keep only a decodable image of at most 262144 bytes, scaled to at most 256 pixels per side, for that revision, fetch each revision once at a time, and discard every drawing when the selected host changes.
+
+**IOS-4.66** While a mobile worktree list row, header or header wash shows a linked worktree whose drawing has loaded, the application shall draw that drawing, and show the emoji until it loads.
 
 ### IOS-5.x — Multi-pane layout
 
@@ -4673,6 +4689,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.31** When a report recovers after completion through another delivery path, the application shall ignore duplicate completion and record newer provider turns without reusing the consumed recap.
 
 **AGENT-3.32** When a Claude session exports only CLAUDE_CODE_SESSION_ID, the application shall derive the same canonical report identity from it that a registered presence record carries, so a recap files under the identity the app already consumes.
+
+**AGENT-3.33** When an agent submits a worktree drawing, the application shall accept only a 64-unit SVG of at most 16384 bytes built from allowlisted shapes, gradients and text whose paints are palette tokens or local gradient references, and reject scripts, event handlers, external references, embedded images and foreign content.
+
+**AGENT-3.34** When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only when the same recap sets purposeChanged, keep its assigned hue across redraws, and ignore drawings for the home checkout.
+
+**AGENT-3.35** When the application records a recap that carried a drawing, it shall store and broadcast that recap without the drawing.
+
+**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, its palette tokens and the redraw rule while still requiring an emoji.
+
+**AGENT-3.37** When an Attention report carries a drawing that fails validation, the CLI shall reject the report with the specific reason before staging it.
+
+**AGENT-3.38** When an agent reports a recap carrying a drawing of up to 16384 bytes, the application shall deliver that recap and its stopped turn through the file handoff.
 
 ### AGENT-4.x
 

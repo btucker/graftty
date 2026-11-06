@@ -33,7 +33,7 @@ import GrafttyRemoteClient
             return repositoryID.hasPrefix("relay-repository-")
         case .addAgent(let worktreeID, _, _), .agentConversation(let worktreeID, _, _), .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
-             .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _):
+             .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _), .worktreeIcon(let worktreeID, _):
             return worktreeID.hasPrefix("relay-worktree-")
         }
     }
@@ -374,6 +374,9 @@ extension GrafttyApp {
                         return .ok
                     }
                 }
+            case let .worktreeIcon(worktreeID, revision):
+                let repos = await MainActor.run { appStateBinding.wrappedValue.repos }
+                return .icon(WorktreeDrawingRenderer.iconResponse(for: repos, worktreeID: worktreeID, revision: revision))
             case let .projectIcon(repositoryID, revision):
                 return await MainActor.run {
                     guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == repositoryID }),
