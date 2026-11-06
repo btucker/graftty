@@ -4696,6 +4696,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.8** While an agent's turn is busy, the application shall show no spinner on its sidebar row, because the agent's terminal title carries its own activity indicator, while agent tabs keep the spinner.
 
+**AGENT-2.9** When provider activity arrives through the durable file handoff, the application shall update the tracked pane's busy state using the original hook event while leaving legacy progress without hook metadata unchanged.
+
 ### AGENT-3.x
 
 **AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.

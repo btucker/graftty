@@ -736,6 +736,7 @@ struct GrafttyApp: App {
         let attentionDrain = AttentionHandoffDrain(
             handoff: attentionHandoff,
             apply: { activity in
+                services.claudeSessionRegistry.recordFileActivity(activity, in: binding.wrappedValue)
                 switch activity {
                 case .recap(let event):
                     binding.wrappedValue.recordAgentRecap(event.recap, callerPath: event.worktree, reportedAt: event.reportedAt)
@@ -757,15 +758,6 @@ struct GrafttyApp: App {
                     )
                 case .stop(let event):
                     guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
-                    if let pane = event.paneSessionName,
-                       binding.wrappedValue.worktree(forPath: event.worktree)?
-                        .paneSlot(forSessionName: pane) != nil {
-                        services.claudeSessionRegistry.recordHook(
-                            runtime: event.runtime, event: .stop,
-                            sessionID: event.sessionID ?? event.agentID,
-                            paneSessionName: pane, attentionReason: nil
-                        )
-                    }
                     Self.recordStoppedTurn(
                         callerPath: event.worktree, runtime: event.runtime,
                         callerAgentID: event.agentID, sessionID: event.sessionID,

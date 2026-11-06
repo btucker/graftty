@@ -127,6 +127,7 @@ public extension HeadlessHostRuntime {
 
     func consumeAttentionActivities(handoff: AttentionFileHandoff = AttentionFileHandoff()) throws {
         try handoff.consumeActivities(acceptingWorktree: { state.worktree(forPath: $0) != nil }) { event in
+            agentLiveness.recordFileActivity(event, in: state)
             switch event {
             case .recap(let report):
                 state.recordAgentRecap(report.recap, callerPath: report.worktree, reportedAt: report.reportedAt)
@@ -135,9 +136,6 @@ public extension HeadlessHostRuntime {
                 state.repos[index.repo].worktrees[index.worktree].recordAgentResponse(response.response)
             case .stop(let stop):
                 guard state.worktree(forPath: stop.worktree) != nil else { return }
-                ControlRequestCore.recordHookLiveness(callerPath: stop.worktree, runtime: stop.runtime, event: .stop,
-                    sessionID: stop.sessionID ?? stop.agentID, paneSessionName: stop.paneSessionName,
-                    attentionReason: nil, platform: controlPlatform)
                 ControlRequestCore.recordStoppedTurn(callerPath: stop.worktree, runtime: stop.runtime,
                     callerAgentID: stop.agentID, sessionID: stop.sessionID, paneSessionName: stop.paneSessionName,
                     recap: stop.recap, stoppedAt: stop.stoppedAt, recapReportedAt: stop.recapReportedAt, turnID: stop.turnID, platform: controlPlatform)

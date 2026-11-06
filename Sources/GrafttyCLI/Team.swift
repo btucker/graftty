@@ -250,7 +250,9 @@ struct TeamHook: ParsableCommand {
                 runtime: runtime,
                 sessionID: resolvedSessionID,
                 userPrompt: event == .userPromptSubmit ? WorktreeUserPrompt.text(from: stdinPayload, runtime: runtime.rawValue) : nil,
-                startsTurn: event == .sessionStart || event == .userPromptSubmit
+                startsTurn: event == .sessionStart || event == .userPromptSubmit,
+                paneSessionName: paneSessionName,
+                hookEvent: event
             )
         }
         if runtime == .claude,
