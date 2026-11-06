@@ -13,6 +13,7 @@ private extension WorktreeManagementResponse {
 }
 
 struct MainWindow: View {
+    @EnvironmentObject private var portBindings: PortBindingsModel
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
     let worktreeManagement: WorktreeManagement
@@ -48,6 +49,7 @@ struct MainWindow: View {
     @State private var pendingHostMaintenance: LinuxHostMaintenanceRequest?
     @State private var linuxHostSetupClient: LinuxHostTrustRequest?
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
+    @State private var wakeFlow: WakeFlow?
     @State private var worktreeHistory = WorktreeNavigationHistory()
     @State private var attentionOpenGeneration: UInt64 = 0
     @StateObject private var voiceDictation = VoiceDictationController()
@@ -102,6 +104,9 @@ struct MainWindow: View {
         let id = UUID()
         let remoteMac: RemoteMac
         let repository: RemoteRepositoryInfo
+        var hostContext: AddWorktreeHostContext? = nil
+        var name = ""
+        var branch: String? = nil
     }
 
     @ViewBuilder private func remoteWorkspaceContent(for remote: RemoteMac) -> some View {
@@ -143,9 +148,6 @@ struct MainWindow: View {
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
                 remoteMacsModel: remoteMacsModel,
-                remoteWorkspaceLayout: { identity, worktree in
-                    remoteViewer.workspaceLayout(identity: identity, worktree: worktree)
-                },
                 appStateChanges: appStateChanges,
                 selectedRemoteIdentity: selectedRemoteIdentity,
                 selectedRemoteWorktreePath: selectedRemoteWorktreePath,
@@ -153,11 +155,14 @@ struct MainWindow: View {
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
                 onNavigationIntent: { attentionOpenGeneration &+= 1 },
-                onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
-                onSelectRemotePane: selectRemotePane,
-                onAddRemoteWorktree: beginAddRemoteWorktree,
+                onWakeRemoteWorktree: wakeAndOpen,
+                onAddRemoteWorktree: { beginAddRemoteWorktree($0, repository: $1) },
+                onAddRemoteWorktreeWithHost: { mac, repository, context, name, branch in
+                    pendingAddRemoteWorktree = RemoteAddWorktreeRequest(remoteMac: mac, repository: repository,
+                                                                        hostContext: context, name: name, branch: branch)
+                },
                 onDeleteRemoteWorktree: deleteRemoteWorktree,
                 onAddRemoteMac: { isShowingAddRemoteMacSheet = true },
                 onSetupLinuxHost: presentLinuxHostSetup,
@@ -172,7 +177,6 @@ struct MainWindow: View {
                 onInitializeGit: initializeGitRepositoryInPlace,
                 onStopWorktree: stopWorktreeWithConfirmation,
                 onDeleteWorktree: deleteWorktreeWithConfirmation,
-                onMovePane: movePane,
                 onAddWorktree: addWorktree,
                 pendingAddWorktree: $pendingAddWorktree,
                 navigation: sidebarNavigation
@@ -191,60 +195,13 @@ struct MainWindow: View {
                 identity: selectedIdentity,
                 project: selectedIdentityProject, iconData: selectedIdentityImageData,
                 background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
-                BreadcrumbBar(
-                    repoName: selectedRemoteWorktreeSnapshot?.repoDisplayName
-                        ?? selectedRepo?.displayName,
-                    worktreeDisplayName:
-                        selectedRemoteWorktreeSnapshot?.displayName
-                        ?? worktreeDisplayName,
-                    worktreeEmoji: BreadcrumbBar.selectedWorktreeEmoji(
-                        localEmoji: selectedWorktree?.emoji,
-                        remoteWorktree: selectedRemoteWorktreeSnapshot
-                    ),
-                    worktreePath: selectedRemoteWorktreeSnapshot?.path
-                        ?? selectedWorktree?.path,
-                    branchName: selectedRemoteWorktreeSnapshot?.displayBranch
-                        ?? selectedWorktree?.displayBranch,
-                    isHomeCheckout:
-                        selectedRemoteWorktreeSnapshot?.isMainCheckout
-                        ?? isHomeCheckout,
-                    prInfo: selectedRemoteWorktreeSnapshot == nil
-                        ? prInfo
-                        : nil,
-                    theme: terminalManager.theme,
-                    sidebarHidden: columnVisibility == .detailOnly,
-                    canGoBack: worktreeHistory.target(forward: false, isAvailable: isHistoryTargetAvailable) != nil,
-                    canGoForward: worktreeHistory.target(forward: true, isAvailable: isHistoryTargetAvailable) != nil,
-                    historyItems: worktreeHistory.recentTargets.compactMap(historyItem),
-                    currentTarget: currentNavigationTarget,
-                    onGoBack: { navigateWorktreeHistory(forward: false) },
-                    onGoForward: { navigateWorktreeHistory(forward: true) },
-                    onSelectHistory: selectHistoryTarget,
-                    onRefreshPR: refreshPR,
-                    project: selectedIdentityProject, projectIconData: selectedIdentityImageData,
-                    worktreeIdentity: selectedIdentity,
-                    previewWorktreePath: selectedRemoteIdentity.map { "remote-preview:\($0):\(selectedRemoteWorktreeSnapshot?.path ?? "")" } ?? selectedWorktree?.path,
-                    previewInlinePane: selectedRemoteIdentity != nil ? nil : selectedWorktree.flatMap { worktree in
-                        worktree.presentationPane.flatMap { slot in
-                            worktree.visiblePaneSlots.contains(slot) && !worktree.hasCompletedContent(in: slot) ? slot : nil
-                        }
-                    },
-                    previewWorktreeForPane: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) },
-                    previewCatalogRequest: selectedRemoteIdentity.flatMap { identity in
-                        selectedRemoteWorktreeSnapshot.map { snapshot in
-                            { request in
-                                let response = try await remoteMacsModel.sendWorktreeManagement(identity: identity,
-                                    request: .openResource(worktreeID: snapshot.path, request: request))
-                                guard case .openResource(let result) = response else { throw RemoteOpenStore.Failure.invalidFile }
-                                return result
-                            }
-                        }
-                    },
-                    onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil,
-                    showsContext: showsWorktreeContext
-                )
+                breadcrumbBar
             } content: {
-                if let selectedRemoteMac {
+                if let wakeFlow {
+                    WakingWorktreeView(flow: wakeFlow, theme: terminalManager.theme, onTryAgain: {
+                        wakeAndOpen(wakeFlow.remoteMac, worktreePath: wakeFlow.worktreePath)
+                    })
+                } else if let selectedRemoteMac {
                     if let row = selectedRemoteWorktreeSnapshot, row.showsCreationProgress,
                        let progress = row.creationProgress {
                         WorktreeCreationDetailView(progress: progress,
@@ -327,7 +284,7 @@ struct MainWindow: View {
                 }
             } inspector: {
                 if showsWorktreeContext, let context = selectedContext {
-                    WorktreeContextPanel(context: context, theme: terminalManager.theme.core,
+                    WorktreeContextPanel(context: context, theme: terminalManager.theme.core, hostLabel: selectedHostLabel,
                         readTranscript: transcriptReader, showAgent: agentTabOpener, onClose: { showsWorktreeContext = false })
                         .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
                             openContextWorktree(path, remoteIdentity: identity)
@@ -403,6 +360,7 @@ struct MainWindow: View {
         .sheet(item: $pendingAddRemoteWorktree) { request in
             AddWorktreeSheet(
                 repoDisplayName: "\(request.repository.displayName) on \(request.remoteMac.label)",
+                initialWorktreeName: request.name,
                 branchEntries: request.repository.branches.map {
                     BranchPickerEntry(
                         name: $0.name,
@@ -437,13 +395,21 @@ struct MainWindow: View {
                         agent: agent
                     )
                     if case .created = response {
+                        request.hostContext?.onCreated()
                         pendingAddRemoteWorktree = nil
                         return nil
                     }
                     return response.errorMessage
                         ?? "The remote Mac returned an unexpected response."
                 },
-                onCancel: { pendingAddRemoteWorktree = nil }
+                onCancel: { pendingAddRemoteWorktree = nil },
+                existingBranch: request.branch,
+                hostContext: request.hostContext.map { context in
+                    AddWorktreeHostContext(projectName: context.projectName, choices: context.choices, selectedID: context.selectedID, onSelect: { id, name, branch in
+                        pendingAddRemoteWorktree = nil
+                        context.onSelect(id, name, branch)
+                    }, onCreated: context.onCreated)
+                }
             )
         }
         // Force the SwiftUI color scheme from the theme so SwiftUI-rendered
@@ -692,6 +658,104 @@ struct MainWindow: View {
     }
 
     private var selectedRemoteIdentity: RemoteMacIdentity? { remoteViewer.selectedRemoteIdentity }
+    private var selectedHostLabel: String? {
+        if let selectedRemoteMac {
+            return WorktreeHostLabel.text(isLocal: false, hostLabel: selectedRemoteMac.label, projectIsOnSeveralHosts: true)
+        }
+        guard selectedWorktree != nil else { return nil }
+        let isShared = selectedRepo?.originKey.map { SidebarHostController.shared.multiHostOriginKeys.contains($0) } ?? false
+        return WorktreeHostLabel.text(isLocal: true, hostLabel: "", projectIsOnSeveralHosts: isShared)
+    }
+    private var selectedPortChips: HeaderPortChips {
+        if selectedRemoteMac != nil {
+            guard let row = selectedRemoteWorktreeSnapshot, (row.origin?.relayDepth ?? 0) == 0 else { return .init(entries: []) }
+            return .init(entries: (row.portBindings ?? [:]).flatMap { session, bindings in
+                bindings.map { .init(binding: $0, session: session) }
+            })
+        }
+        guard let selectedWorktree else { return .init(entries: []) }
+        return .init(entries: selectedWorktree.splitTree.allLeaves.flatMap { slot in
+            (portBindings.bindings[slot] ?? []).map { .init(binding: $0, session: nil) }
+        })
+    }
+    private var breadcrumbBar: BreadcrumbBar {
+        BreadcrumbBar(
+            repoName: selectedRemoteWorktreeSnapshot?.repoDisplayName
+                ?? selectedRepo?.displayName,
+            worktreeDisplayName:
+                selectedRemoteWorktreeSnapshot?.displayName
+                ?? worktreeDisplayName,
+            worktreeEmoji: BreadcrumbBar.selectedWorktreeEmoji(
+                localEmoji: selectedWorktree?.emoji,
+                remoteWorktree: selectedRemoteWorktreeSnapshot
+            ),
+            worktreePath: selectedRemoteWorktreeSnapshot?.path
+                ?? selectedWorktree?.path,
+            branchName: selectedRemoteWorktreeSnapshot?.displayBranch
+                ?? selectedWorktree?.displayBranch,
+            isHomeCheckout:
+                selectedRemoteWorktreeSnapshot?.isMainCheckout
+                ?? isHomeCheckout,
+            prInfo: selectedRemoteWorktreeSnapshot == nil
+                ? prInfo
+                : nil,
+            theme: terminalManager.theme,
+            sidebarHidden: columnVisibility == .detailOnly,
+            canGoBack: worktreeHistory.target(forward: false, isAvailable: isHistoryTargetAvailable) != nil,
+            canGoForward: worktreeHistory.target(forward: true, isAvailable: isHistoryTargetAvailable) != nil,
+            historyItems: worktreeHistory.recentTargets.compactMap(historyItem),
+            currentTarget: currentNavigationTarget,
+            onGoBack: { navigateWorktreeHistory(forward: false) },
+            onGoForward: { navigateWorktreeHistory(forward: true) },
+            onSelectHistory: selectHistoryTarget,
+            onRefreshPR: refreshPR,
+            project: selectedIdentityProject, projectIconData: selectedIdentityImageData,
+            worktreeIdentity: selectedIdentity,
+            previewWorktreePath: selectedRemoteIdentity.map { "remote-preview:\($0):\(selectedRemoteWorktreeSnapshot?.path ?? "")" } ?? selectedWorktree?.path,
+            previewInlinePane: selectedRemoteIdentity != nil ? nil : selectedWorktree.flatMap { worktree in
+                worktree.presentationPane.flatMap { slot in
+                    worktree.visiblePaneSlots.contains(slot) && !worktree.hasCompletedContent(in: slot) ? slot : nil
+                }
+            },
+            previewWorktreeForPane: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) },
+            previewCatalogRequest: selectedPreviewCatalogRequest,
+            onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil,
+            showsContext: showsWorktreeContext,
+            hostLabel: selectedHostLabel,
+            portChips: selectedPortChips,
+            onOpenPort: selectedRemotePortOpener
+        )
+    }
+    private var selectedPreviewCatalogRequest: ((RemoteOpenRequest) async throws -> RemoteOpenResponse)? {
+        guard let identity = selectedRemoteIdentity, let snapshot = selectedRemoteWorktreeSnapshot else { return nil }
+        return { request in
+            let response = try await remoteMacsModel.sendWorktreeManagement(identity: identity,
+                request: .openResource(worktreeID: snapshot.path, request: request))
+            guard case .openResource(let result) = response else { throw RemoteOpenStore.Failure.invalidFile }
+            return result
+        }
+    }
+    private var selectedRemotePortOpener: ((HeaderPortChips.Entry) -> Void)? {
+        guard let mac = selectedRemoteMac, let row = selectedRemoteWorktreeSnapshot else { return nil }
+        return { entry in openRemotePort(entry, worktree: row, on: mac) }
+    }
+    private func openRemotePort(_ entry: HeaderPortChips.Entry, worktree: WorktreePanes, on mac: RemoteMac) {
+        guard let session = entry.session else { return }
+        Task {
+            do {
+                let url = try await remoteMacsModel.forwardedPortURL(on: mac, worktreePath: worktree.path,
+                    sessionName: session, binding: entry.binding)
+                try Task.checkCancellation()
+                NSWorkspace.shared.open(url)
+            } catch is CancellationError {
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Could not open remote port"
+                alert.informativeText = "\(error.localizedDescription)\nOn a Mac host, check Settings → Device Pairing → Port forwarding. For a Linux host, rerun setup to enable localhost forwarding unless it was explicitly disabled."
+                alert.runModal()
+            }
+        }
+    }
     private var selectedRemoteWorktreePath: String? { remoteViewer.selectedRemoteWorktreePath }
     private var selectedRemotePaneSessionName: String? { remoteViewer.selectedRemotePaneSessionName }
     private var selectedRemoteMac: RemoteMac? { remoteViewer.selectedRemoteMac }
@@ -919,6 +983,7 @@ struct MainWindow: View {
 
     @discardableResult
     private func selectWorktree(_ path: String, acknowledging: Bool, inspectingCreation: Bool = true) -> Bool {
+        wakeFlow = nil
         if inspectingCreation, let worktree = appState.worktree(forPath: path), worktree.showsCreationProgress {
             if let previous = appState.selectedWorktreePath, previous != path {
                 setWorktreeSurfacesVisible(false, worktreePath: previous)
@@ -1081,6 +1146,7 @@ struct MainWindow: View {
     }
 
     private func selectRemoteMac(_ remoteMac: RemoteMac) {
+        wakeFlow = nil
         attentionOpenGeneration &+= 1
         leaveLocalSelectionForRemote()
         remoteViewer.selectRemoteMac(remoteMac)
@@ -1104,7 +1170,35 @@ struct MainWindow: View {
         selectRemoteWorktree(remoteMac, worktreePath: worktreePath, acknowledging: true)
     }
 
+    /// Opens a worktree on a sleeping host. It waits on screen, since waking
+    /// takes a moment and can fail when the host isn't on this network.
+    private func wakeAndOpen(_ remoteMac: RemoteMac, worktreePath: String) {
+        let flow = WakeFlow(remoteMac: remoteMac, worktreePath: worktreePath, phase: .waking)
+        wakeFlow = flow
+        Task { @MainActor in
+            do {
+                try await remoteMacsModel.wake(remoteMac)
+                let identity = RemoteMacIdentity(remoteMac)
+                let hasRow = { remoteMacsModel.worktreePanesByRemote[identity]?.contains(where: { $0.path == worktreePath }) == true }
+                for _ in 0..<50 where !hasRow() {
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                guard wakeFlow?.id == flow.id else { return }
+                guard hasRow() else {
+                    wakeFlow = WakeFlow(remoteMac: remoteMac, worktreePath: worktreePath, phase: .failed)
+                    return
+                }
+                wakeFlow = nil
+                selectRemoteWorktree(remoteMac, worktreePath: worktreePath)
+            } catch {
+                guard wakeFlow?.id == flow.id else { return }
+                wakeFlow = WakeFlow(remoteMac: remoteMac, worktreePath: worktreePath, phase: .failed)
+            }
+        }
+    }
+
     private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool) {
+        wakeFlow = nil
         guard remoteViewer.canSelectRemoteWorktree(remoteMac, worktreePath: worktreePath) else { return }
         leaveLocalSelectionForRemote()
         remoteViewer.selectRemoteWorktree(remoteMac, worktreePath: worktreePath, acknowledging: acknowledging)
@@ -1198,6 +1292,7 @@ struct MainWindow: View {
     }
 
     private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String, acknowledging: Bool) {
+        wakeFlow = nil
         leaveLocalSelectionForRemote()
         remoteViewer.selectRemotePane(
             remoteMac,
@@ -1216,7 +1311,7 @@ struct MainWindow: View {
         pendingRemoteNotificationActivation = event
         Task { @MainActor in
             do {
-                _ = try await remoteMacsModel.connect(to: remoteMac)
+                _ = try await remoteMacsModel.connect(to: remoteMac, allowsWake: true)
                 switch activateRemoteNotificationIfAvailable(
                     event,
                     remoteMac: remoteMac
@@ -1545,14 +1640,6 @@ struct MainWindow: View {
         }
     }
 
-    private func movePane(_ terminalID: PaneSlotID, to newPWD: String) {
-        PaneCommands.reassignPaneByPWD(
-            appState: $appState,
-            terminalManager: terminalManager,
-            terminalID: terminalID,
-            newPWD: newPWD
-        )
-    }
 
     private func stopWorktreeWithConfirmation(_ worktreePath: String) {
         for repoIdx in appState.repos.indices {

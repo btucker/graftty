@@ -198,7 +198,8 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
                 displayName: repo.displayName,
                 origin: localOrigin,
                 defaultBranchStatus: defaultBranchStatus(for: repo, stats: statsStore.stats[repo.path]),
-                branches: includingBranches ? branches(of: repo) : []
+                branches: includingBranches ? branches(of: repo) : [],
+                originKey: repo.originKey
             )
         }
     }

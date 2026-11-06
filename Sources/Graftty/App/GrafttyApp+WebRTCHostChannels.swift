@@ -29,7 +29,8 @@ import GrafttyRemoteClient
             return false
         case .create(let repositoryID, _, _, _, _, _),
              .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
-             .moveWorktree(let repositoryID, _, _, _), .setWorktreeOrder(let repositoryID, _):
+             .moveWorktree(let repositoryID, _, _, _), .setWorktreeOrder(let repositoryID, _),
+             .setPinnedRank(let repositoryID, _, _), .setProjectRank(let repositoryID, _, _):
             return repositoryID.hasPrefix("relay-repository-")
         case .addAgent(let worktreeID, _, _), .agentConversation(let worktreeID, _, _), .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
@@ -359,6 +360,20 @@ extension GrafttyApp {
                         }
                         appStateBinding.wrappedValue.sidebarNavigation = navigation
                         return .ok
+                    }
+                }
+            case let .setPinnedRank(repositoryID, worktreeID, rank):
+                return await MainActor.run {
+                    GrafttyApp.persistingChanges(to: appStateBinding) {
+                        SidebarHostNavigation.setPinnedRank(rank, worktreeID: worktreeID, repositoryID: repositoryID, in: &appStateBinding.wrappedValue)
+                            ? .ok : .error(code: "invalid-rank", message: "This pinned agent is no longer available.", forceAllowed: false, shortStatus: nil)
+                    }
+                }
+            case let .setProjectRank(repositoryID, rank, changedAt):
+                return await MainActor.run {
+                    GrafttyApp.persistingChanges(to: appStateBinding) {
+                        SidebarHostNavigation.setProjectRank(rank, changedAt: changedAt, repositoryID: repositoryID, in: &appStateBinding.wrappedValue)
+                            ? .ok : .error(code: "invalid-rank", message: "This project is no longer available.", forceAllowed: false, shortStatus: nil)
                     }
                 }
             case let .setWorktreeOrder(repositoryID, mode):

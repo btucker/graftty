@@ -61,7 +61,7 @@ struct CompactSelectionFocusTests {
         let (state, host, row) = try fixture()
         let path = try #require(RootView.applyContextWorktree(row, host: host, appState: state,
                                                               compact: true, showsProjectRail: true))
-        #expect(path.count == 3)
+        #expect(path.count == 2)
         #expect(state.selectedWorktreePath == row.path)
         #expect(state.focusedPaneId == "first")
         #expect(state.focusRequestCount == 0)

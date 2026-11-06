@@ -33,6 +33,10 @@ struct BreadcrumbBar: View {
     var previewCatalogRequest: ((RemoteOpenRequest) async throws -> RemoteOpenResponse)? = nil
     var onToggleContext: (() -> Void)? = nil
     var showsContext = false
+    /// Set when this worktree's host should be named: see `WorktreeHostLabel`.
+    var hostLabel: String? = nil
+    var portChips = HeaderPortChips(entries: [])
+    var onOpenPort: ((HeaderPortChips.Entry) -> Void)? = nil
     @State private var showsHistory = false
 
     /// Leading inset wide enough to clear the three traffic-light buttons
@@ -78,6 +82,7 @@ struct BreadcrumbBar: View {
                 PRButton(info: prInfo, theme: theme, onRefresh: onRefreshPR, compact: true)
                     .fixedSize()
             }
+            HeaderPortChipsView(chips: portChips, theme: theme, onOpen: onOpenPort)
             Spacer(minLength: 4)
             if onToggleContext != nil || previewWorktreePath != nil {
                 HStack(spacing: 2) {
@@ -191,6 +196,12 @@ struct BreadcrumbBar: View {
             if let worktreeDisplayName {
                 identityView
                 worktreeLabel(worktreeDisplayName)
+                if let hostLabel {
+                    Text("·").foregroundColor(theme.foreground.opacity(0.3))
+                    Text(hostLabel)
+                        .foregroundColor(theme.foreground.opacity(0.6))
+                        .accessibilityLabel("on \(hostLabel)")
+                }
             }
 
             if repoName == nil && worktreeDisplayName == nil {

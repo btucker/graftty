@@ -41,31 +41,14 @@ struct AddWorktreeSheetViewTests {
         #expect(!AddWorktreeSheetView.shouldSubmitOnReturn(canSubmit: true, isSubmitting: false, editingTaskDescription: true))
     }
 
-    @Test("""
-    @spec REMOTE-13.10: When GrafttyMobile creates a worktree while the \
-    connected Mac exposes repositories from multiple Macs, the Add Worktree \
-    sheet shall require an explicit target Mac selection before repository \
-    selection and creation.
-    """)
-    func requiresExplicitTargetWhenMultipleMacsAreAvailable() {
-        #expect(
-            AddWorktreeSheetView.initialTargetID(
-                preservedTargetID: nil,
-                targetIDs: ["local", "remote"]
-            ) == nil
-        )
-        #expect(
-            AddWorktreeSheetView.initialTargetID(
-                preservedTargetID: nil,
-                targetIDs: ["local"]
-            ) == "local"
-        )
-        #expect(
-            AddWorktreeSheetView.initialTargetID(
-                preservedTargetID: "remote",
-                targetIDs: ["local", "remote"]
-            ) == "remote"
-        )
+    @Test("A selected branch carries to the next host only if that host has it")
+    func carriedBranchClearsWhenMissing() {
+        let repository = RemoteRepositoryInfo(id: "r", displayName: "r", origin: nil, defaultBranchStatus: nil, branches: [
+            .init(name: "feature", source: .local, lastCommitDate: Date(timeIntervalSince1970: 1), mountedWorktreeID: nil, pullRequest: nil),
+        ])
+        #expect(AddWorktreeSheetView.carriedBranch("feature", existing: true, in: repository) == "feature")
+        #expect(AddWorktreeSheetView.carriedBranch("gone", existing: true, in: repository) == "")
+        #expect(AddWorktreeSheetView.carriedBranch("typed", existing: false, in: repository) == "typed")
     }
 
     @Test("Relayed existing branches preserve their advertised source")

@@ -6,6 +6,24 @@ import GrafttyProtocol
 
 @MainActor
 struct VoiceDictationControllerTests {
+    @Test("@spec KEY-4.11: When voice dictation shows an error, the application shall hide it after a few seconds.")
+    func errorHidesByItself() async throws {
+        let controller = VoiceDictationController(errorLifetime: .milliseconds(50))
+        controller.toggle(inputTarget: nil)
+        #expect(controller.errorMessage != nil)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(controller.errorMessage == nil)
+    }
+
+    @Test("@spec KEY-4.12: When the person clicks anywhere while a voice dictation error is showing, the application shall hide the error.")
+    func clickHidesError() {
+        let controller = VoiceDictationController(errorLifetime: .seconds(60))
+        controller.toggle(inputTarget: nil)
+        #expect(controller.errorMessage != nil)
+        controller.handleMouseDown()
+        #expect(controller.errorMessage == nil)
+    }
+
     @Test("The selected pane is unavailable after keyboard focus moves to a search field")
     func concreteTargetRequiresKeyboardFocus() throws {
         _ = NSApplication.shared

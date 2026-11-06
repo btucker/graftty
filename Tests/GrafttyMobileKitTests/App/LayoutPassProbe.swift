@@ -45,9 +45,10 @@ final class SplitLayoutFixture {
         defaults = try #require(UserDefaults(suiteName: suite))
         storeURL = FileManager.default.temporaryDirectory.appendingPathComponent(suite + ".json")
         store = HostStore(storeURL: storeURL)
-        let host = try store.add(Host(label: "mac", baseURL: URL(string: "http://127.0.0.1:9")!))
+        // The sidebar lists every paired host, so no host content means none saved.
+        let host = hasHost ? try store.add(Host(label: "mac", baseURL: URL(string: "http://127.0.0.1:9")!)) : nil
         state = IPadAppState(defaults: defaults)
-        state.select(hostID: hasHost ? host.id : nil, worktreePath: nil, paneID: nil)
+        state.select(hostID: host?.id, worktreePath: nil, paneID: nil)
         state.columnVisibility = sidebarShown ? .all : .detailOnly
         notifications = MobileAgentNotifications(defaults: defaults)
     }

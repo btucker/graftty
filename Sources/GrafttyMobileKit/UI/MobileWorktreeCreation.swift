@@ -12,10 +12,11 @@ struct MobileWorktreeCreation {
         var worktreePath: String?
 
         func matches(_ row: WorktreePanes) -> Bool {
+            // Paths can repeat across hosts. An older host's repository names no origin.
+            guard placeholder.origin == nil || row.origin?.deviceID == placeholder.origin?.deviceID else { return false }
             if let worktreePath { return row.path == worktreePath }
             return !knownPaths.contains(row.path)
                 && row.repositoryID == placeholder.repositoryID
-                && row.origin?.deviceID == placeholder.origin?.deviceID
                 && row.repoDisplayName == placeholder.repoDisplayName
                 && row.displayBranch == placeholder.displayBranch
         }
@@ -79,8 +80,8 @@ struct MobileWorktreeCreation {
     mutating func takeReadySelection(in snapshot: [WorktreePanes], generation: UInt64) -> WorktreePanes? {
         var selected: WorktreePanes?
         pending.removeAll { item in
-            guard let path = item.worktreePath,
-                  let row = snapshot.first(where: { $0.path == path }),
+            guard item.worktreePath != nil,
+                  let row = snapshot.first(where: item.matches),
                   row.state == .running,
                   row.layout?.leaves.isEmpty == false else { return false }
             if item.generation == generation { selected = row }

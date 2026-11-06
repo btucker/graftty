@@ -328,6 +328,9 @@ final class TerminalManager: ObservableObject {
     /// menu-open time so the sampled state is fresh.
     var currentPaneMoveContext: ((PaneSlotID) -> PaneMoveMenuContext?)?
 
+    /// A web URL for this pane, or nil when the web server isn't listening.
+    var paneWebURL: ((PaneSlotID) -> String?)?
+
     /// Called when a surface emits a user close action. The host removes the
     /// pane from its split tree and calls `destroySurface`.
     var onCloseRequest: ((PaneSlotID) -> Void)?

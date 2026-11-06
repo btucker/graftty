@@ -25,7 +25,7 @@ public enum SidebarLayoutPolicy {
     }
 }
 
-/// @spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
+/// @spec LAYOUT-2.95: While the sidebar displays a repository, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, and preserve manual pinned order.
 public enum WorktreeOrderMode: String, Codable, Sendable, Equatable {
     case manual
     case recentActivity
@@ -44,11 +44,22 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var supportsWorktreeEditing: Bool?
     /// A missing mode means the host does not support changing worktree order.
     public var worktreeOrderMode: WorktreeOrderMode?
+    /// Normalized git origin; equal keys on different hosts are one project.
+    /// Nil for no origin and for hosts that predate merging.
+    public var originKey: String?
+    /// Fractional order shared across devices. Nil on older hosts.
+    public var rank: String?
+    /// When a drag last set `rank`. Nil for a rank seeded from host order.
+    public var rankChangedAt: Double?
+    /// Client-side availability text shown instead of Offline, never sent by hosts.
+    public var statusLabel: String?
 
     public init(id: String, repositoryID: String, name: String, owner: WorktreeOrigin? = nil,
-                iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil, worktreeOrderMode: WorktreeOrderMode? = nil) {
+                iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil, worktreeOrderMode: WorktreeOrderMode? = nil,
+                originKey: String? = nil, rank: String? = nil, rankChangedAt: Double? = nil) {
         self.id = id; self.repositoryID = repositoryID; self.name = name; self.owner = owner
         self.iconRevision = iconRevision; self.initials = initials; self.accentHex = accentHex; self.isAvailable = isAvailable; self.supportsWorktreeEditing = supportsWorktreeEditing; self.worktreeOrderMode = worktreeOrderMode
+        self.originKey = originKey; self.rank = rank; self.rankChangedAt = rankChangedAt
     }
 
     public var displayInitials: String {
@@ -60,7 +71,7 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
 
     public func ownerSubtitle(localDeviceID: RemoteDeviceID?) -> String? {
         let host = owner.flatMap { $0.deviceID == localDeviceID ? nil : $0.deviceLabel }
-        let parts = [host, isAvailable ? nil : "Offline"].compactMap { $0 }
+        let parts = [host, statusLabel ?? (isAvailable ? nil : "Offline")].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -233,7 +244,13 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var emojiChosenByUser: Bool?
     /// Nil for hosts that predate the temporary / pinned distinction.
     public var isPinned: Bool?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, brief: WorktreeBrief? = nil, history: WorktreeHistory? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
+    /// Latest activity, seconds since the reference date, so clients can merge
+    /// recency across hosts. Nil when idle since creation or on older hosts.
+    public var activityTime: Double?
+    /// Fractional order among pinned rows on every device. Nil on older hosts.
+    public var pinnedRank: String?
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, brief: WorktreeBrief? = nil, history: WorktreeHistory? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil, activityTime: Double? = nil, pinnedRank: String? = nil) {
+        self.activityTime = activityTime; self.pinnedRank = pinnedRank
         self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.lastAgentStop = lastAgentStop; self.brief = brief; self.history = history; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
         self.isPinned = isPinned
     }
@@ -406,7 +423,7 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
     }
 }
 
-/// @spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and identify pending user requests with an orange waiting glyph instead of numeric attention badges, excluding routine recaps and command-finished markers.
+/// @spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and show pending user requests as counts in the attention color, excluding routine recaps and command-finished markers.
 public struct SidebarActivityCounts: Sendable {
     public private(set) var workingByProject: [String: Int] = [:]
     public private(set) var attentionByProject: [String: Int] = [:]

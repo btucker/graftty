@@ -129,10 +129,9 @@ struct PinnedAgentEditingTests {
         VStack(spacing: 0) {
             WorktreeRow(entry: .init(path: "/repo/.worktrees/" + name, branch: name, state: .running),
                 isActive: false, displayName: name, isMainCheckout: name == "trunk",
-                theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
                 .frame(minHeight: 28)
-            PaneTitleRow(title: pinned ? "Durable role" : "Working on a task", isActiveWorktree: false,
-                isFocusedPane: false, isBusy: false, theme: .fallback, attentionStyle: nil, portBindings: [])
+            SidebarStatusLine(status: .whereWeAre(pinned ? "Durable role" : "Working on a task", isUnread: false), secondary: .secondary)
         }
         .padding(.vertical, 8)
     }

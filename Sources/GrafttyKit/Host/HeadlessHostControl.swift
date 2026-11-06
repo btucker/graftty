@@ -88,6 +88,16 @@ public extension HeadlessHostRuntime {
                 }
                 try candidate.save(to: configuration.stateDirectory)
                 state = candidate
+            case .setPinnedRank(let repo, let path, let rank):
+                guard SidebarHostNavigation.setPinnedRank(rank, worktreeID: path, repositoryID: repo, in: &state) else {
+                    return .error(code: "invalid-rank", message: "This pinned agent is no longer available.", forceAllowed: false, shortStatus: nil)
+                }
+                try save()
+            case .setProjectRank(let repo, let rank, let changedAt):
+                guard SidebarHostNavigation.setProjectRank(rank, changedAt: changedAt, repositoryID: repo, in: &state) else {
+                    return .error(code: "invalid-rank", message: "This project is no longer available.", forceAllowed: false, shortStatus: nil)
+                }
+                try save()
             case .moveWorktree(let repo, let path, let relative, let after):
                 _ = SidebarHostNavigation.moveWorktree(in: &state, repositoryID: repo, worktreeID: path, relativeTo: relative, after: after)
                 try save()

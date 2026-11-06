@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-host Projects</title>
+<style>
+:root{
+  --bg:#f6f6f4;--card:#fff;--ink:#1d1d1f;--mute:#62626a;--line:#deded9;--accent:#2a62c9;--good:#22733f;--warn:#96590c;--soft:#ecebe6;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#17181b;--card:#202125;--ink:#ececee;--mute:#a2a2ab;--line:#35363c;--accent:#83adf5;--good:#79c893;--warn:#dfaa63;--soft:#2a2b30;
+}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif}
+main{max-width:1120px;margin:0 auto;padding:36px 24px 72px}
+h1{font-size:30px;line-height:1.15;margin:0 0 8px;letter-spacing:-.015em}
+h2{font-size:21px;margin:52px 0 6px;letter-spacing:-.01em;padding-top:20px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:0 0 3px}
+h4{font-size:13px;margin:14px 0 3px}
+p{margin:0 0 10px}
+.lede{font-size:17px;color:var(--mute);max-width:75ch}
+.sub{color:var(--mute);max-width:78ch}
+ul{margin:4px 0 8px;padding-left:18px}
+li{margin:3px 0}
+code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--soft);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+.rec{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:16px 18px;margin:20px 0}
+.rec h3{margin-bottom:8px}
+.option{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin:16px 0}
+.option.pick{border-color:var(--accent)}
+.opthead{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;margin-bottom:4px}
+.tag{font-size:11px;font-weight:650;letter-spacing:.03em;text-transform:uppercase;color:var(--accent)}
+.mocks{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin:14px 0}
+figure{margin:0;min-width:0;max-width:100%}
+figcaption{font-size:12.5px;color:var(--mute);margin-top:7px;max-width:44ch}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:4px 26px}
+.pro{color:var(--good);font-weight:650}.con{color:var(--warn);font-weight:650}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--mute);font-weight:600}
+td:first-child{font-weight:600;width:27%}
+.tablewrap{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:12px}
+ol.q{padding-left:20px}ol.q li{margin:8px 0}
+.note{font-size:12.5px;color:var(--mute)}
+
+/* mock app: dark regardless of page theme, matching Graftty's sidebar */
+.m{--mbg:#20232a;--mrail:#1a1d23;--mfg:#e4e6ea;--mdim:#8d929c;--msel:#3b404a;--mline:#343842;--mgreen:#62b77a;--mred:#de6f64;
+  background:var(--mbg);color:var(--mfg);border:1px solid #000;border-radius:10px;overflow:hidden;font-size:12.5px;line-height:1.3;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;box-shadow:0 5px 18px rgba(0,0,0,.2)}
+.mac{width:430px;max-width:100%;display:flex;height:388px}
+.rail{width:164px;flex:none;background:var(--mrail);padding:30px 6px 8px;border-right:1px solid var(--mline);position:relative}
+.rail:before{content:"";position:absolute;left:10px;top:11px;width:44px;height:10px;background:radial-gradient(circle at 5px 5px,#ed6a5e 4.5px,transparent 5px),radial-gradient(circle at 22px 5px,#f4bf4f 4.5px,transparent 5px),radial-gradient(circle at 39px 5px,#61c554 4.5px,transparent 5px)}
+.proj{display:flex;gap:7px;align-items:center;padding:5px;border-radius:6px;margin-bottom:2px}
+.proj.on{background:var(--msel)}
+.tile{width:25px;height:25px;flex:none;border-radius:6px;display:grid;place-items:center;font-size:9.5px;font-weight:700;color:#fff}
+.t1{background:#566a96}.t2{background:#7c6348}.t3{background:#49755c}.t4{background:#74517c}
+.pn{min-width:0;flex:1}.pn b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pn i{display:block;font-style:normal;font-size:10px;color:var(--mdim);white-space:nowrap}
+.count{font-size:9.5px;font-weight:650;background:#a84f47;color:#fff;border-radius:7px;padding:0 4.5px}
+.col{flex:1;min-width:0;padding:10px 7px;overflow:hidden}
+.hosthead{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;font-weight:650;color:var(--mdim);letter-spacing:.04em;text-transform:uppercase;padding:8px 5px 4px;gap:6px}
+.hosthead:first-child{padding-top:1px}
+.hosthead span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hosthead em{font-style:normal;font-size:14px;font-weight:400;line-height:10px;flex:none}
+.offline{opacity:.62}
+.offline span{font-style:italic}
+.sect{font-size:10.5px;font-weight:650;color:var(--mdim);letter-spacing:.04em;text-transform:uppercase;padding:7px 5px 3px}
+.sect:first-child{padding-top:1px}
+.wt{display:flex;gap:6px;align-items:baseline;padding:3px 5px;border-radius:5px}
+.wt.sel{background:var(--msel)}
+.g{color:var(--mgreen);font-size:12px;flex:none}
+.wn{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
+.wh{color:var(--mdim);font-size:10.5px;flex:none}
+.sp{flex:1}
+.st{color:var(--mdim);font-size:10px;flex:none}
+.pane{color:var(--mdim);font-size:10.5px;padding:0 5px 2px 24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wtdiv{border-top:1px solid var(--mline);margin:4px 5px}
+.filter{display:flex;gap:2px;background:#15171c;padding:2px;border-radius:6px;margin:0 2px 7px;font-size:10.5px}
+.filter b{flex:1;font-weight:500;text-align:center;padding:2px 3px;color:var(--mdim);border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.filter b.on{background:var(--msel);color:var(--mfg)}
+
+.phone{width:252px;max-width:100%;border-radius:26px;padding:10px 0 12px;height:388px;border:3px solid #050505;overflow:hidden}
+.statusbar{font-size:10.5px;font-weight:650;text-align:center;padding-bottom:6px;color:var(--mfg)}
+.navbar{display:flex;align-items:center;justify-content:space-between;padding:0 12px;color:#84adf2;font-size:17px;height:22px}
+.large{font-size:21px;font-weight:700;padding:4px 14px 8px}
+.ptitle{font-weight:650;font-size:13px;color:var(--mfg)}
+.ilist{background:#2a2e36;margin:0 10px 8px;border-radius:9px;overflow:hidden}
+.irow{padding:7px 10px;border-bottom:1px solid var(--mline);display:flex;gap:7px;align-items:center}
+.irow:last-child{border-bottom:0}
+.isect{font-size:10.5px;color:var(--mdim);text-transform:uppercase;padding:0 22px 3px;letter-spacing:.03em;display:flex;justify-content:space-between}
+.chev{color:#6b707a}
+.status{margin:0 10px;font-size:10.5px;color:var(--mdim);text-align:center}
+
+.sheet{width:390px;max-width:100%;background:#2b2e36;padding:15px;border-radius:12px}
+.sheet h5{margin:0 0 11px;font-size:13px;font-weight:650}
+.frow{display:flex;gap:9px;align-items:center;margin:7px 0}
+.frow>label{width:82px;flex:none;text-align:right;color:var(--mdim);font-size:11.5px}
+.input{flex:1;min-width:0;background:#1f2228;border:1px solid #454955;border-radius:5px;padding:3px 7px;color:var(--mfg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.input.ph{color:#777d88}
+.menu{flex:1;min-width:0;background:#464b56;border-radius:5px;padding:3px 7px;display:flex;justify-content:space-between;gap:6px}
+.menu.pick{outline:2px solid #6c97e2;outline-offset:1px}
+.btns{display:flex;justify-content:flex-end;gap:7px;margin-top:13px}
+.btn{background:#464b56;border-radius:5px;padding:3px 11px}.btn.p{background:#3f71c8}
+.cards{flex:1;min-width:0;display:grid;gap:5px}
+.hc{background:#1f2228;border:1px solid #454955;border-radius:6px;padding:5px 8px}
+.hc.on{border-color:#6c97e2;box-shadow:inset 0 0 0 1px #6c97e2}
+.hc small{display:block;color:var(--mdim);font-size:10.5px}
+.hc.off{opacity:.5}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13.5px;margin:6px 0 2px}
+.flow span{background:var(--soft);padding:2px 8px;border-radius:6px}
+.flow s{color:var(--mute)}
+.mac{height:446px}
+.phone{height:446px}
+.where{color:var(--mdim);font-size:10.5px;line-height:1.32;padding:0 5px 3px 24px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ask{color:#e8c98a;font-size:10.5px;line-height:1.32;padding:0 5px 3px 24px}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--mgreen);margin-right:5px;vertical-align:1px}
+.dot.idle{background:#666b75}
+.foot{color:var(--mdim);font-size:10.5px;font-style:italic;padding:9px 5px 0}
+.stack{display:block;padding:6px 10px}
+.stack .top{display:flex;gap:7px;align-items:baseline}
+.stack .where,.stack .ask,.stack .pane{padding-left:19px;padding-right:0}
+.win{width:100%;display:flex;height:320px}
+.win .col{flex:0 0 190px;border-right:1px solid var(--mline)}
+.work{flex:1;min-width:0;display:flex;flex-direction:column}
+.crumb{display:flex;align-items:center;gap:6px;padding:7px 12px;border-bottom:1px solid var(--mline);white-space:nowrap;overflow:hidden;font-size:11.5px}
+.crumb .dim{color:var(--mdim)}
+.hostmark{display:inline-flex;align-items:center;gap:4px;color:var(--mdim)}
+.hostmark svg{width:11px;height:11px;flex:none}
+.pr{font-size:10px;color:var(--mdim);border:1px solid var(--mline);border-radius:4px;padding:0 4px}
+.term{flex:1;padding:11px 13px;font:11px/1.55 ui-monospace,Menlo,monospace;color:#b9bdc6;overflow:hidden}
+.term b{color:#fff;font-weight:500}
+.ipad{width:430px;max-width:100%;height:220px;display:flex;flex-direction:column}
+.ibar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--mline)}
+.ibar .tt{flex:1;min-width:0;text-align:center}
+.ibar .tt b{display:block;font-weight:650}
+.ibar .tt i{display:block;font-style:normal;font-size:10.5px;color:var(--mdim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card{background:#2a2e36;margin:0 10px 8px;border-radius:9px;padding:8px 10px}
+.card b{display:block;font-weight:500}
+.card small{display:block;color:var(--mdim);font-size:10.5px;margin-top:2px;line-height:1.3}
+.ident{padding:2px 14px 9px}
+.ident h6{margin:0 0 2px;font-size:17px;font-weight:700}
+.ident p{margin:3px 0 0;font-size:11px;color:var(--mdim);line-height:1.3}
+.decided{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--good);border-radius:8px;padding:14px 18px;margin:20px 0}
+.decided h3{margin-bottom:6px}
+.legend{flex:1 1 280px;min-width:0}
+.legend dt{font-weight:600;margin-top:10px}
+.legend dt:first-child{margin-top:0}
+.legend dd{margin:1px 0 0;color:var(--mute)}
+.tabs{display:flex;gap:2px;padding:4px 10px 0;border-bottom:1px solid var(--mline);font-size:11px}
+.tab{padding:3px 10px;border-radius:5px 5px 0 0;color:var(--mdim)}
+.tab.on{background:var(--msel);color:var(--mfg)}
+.port{margin-left:6px;font-size:10px;color:var(--mdim);border:1px solid var(--mline);border-radius:4px;padding:0 3px}
+.ctx{font-size:10.5px;color:var(--mdim);flex:none}
+.rankflow{display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;margin:14px 0 8px}
+.rankbox{flex:1 1 220px;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.rankbox h4{margin:0 0 8px}
+.rk{display:flex;justify-content:space-between;gap:10px;padding:2px 0;font-size:13.5px}
+.rk.moved{font-weight:600;color:var(--accent)}
+.rankarrow{align-self:center;color:var(--mute);font-size:18px}
+@media (max-width:640px){
+  .rankarrow{display:none}
+  .crumb{flex-wrap:wrap;white-space:normal}
+  .mac{height:auto;min-height:400px}
+  .win{height:auto;min-height:300px}
+  .win .col{display:none}
+}
+
+.gwin{--gbg:#2c3037;--grailbg:#292d33;--gdim:#8f949c;--gtext:#c9ccd1;--orange:#f0883e;background:var(--gbg);display:flex;font-size:12.5px;color:var(--gtext);border-radius:12px}
+.gwin.sideonly{width:430px;max-width:100%}
+.fixedside{flex:0 0 430px;max-width:100%}
+.gside{width:100%;display:flex;flex-direction:column;min-width:0}
+.gwin.full .gside{flex:0 0 340px;width:340px;border-right:1px solid #1b1d21}
+.gtitle{height:34px;display:flex;align-items:center;gap:14px;padding-left:12px;flex:none}
+.tl{display:block;width:46px;height:10px;background:radial-gradient(circle at 5px 5px,#ed6a5e 4.5px,transparent 5px),radial-gradient(circle at 23px 5px,#f4bf4f 4.5px,transparent 5px),radial-gradient(circle at 41px 5px,#61c554 4.5px,transparent 5px)}
+.tg{color:var(--gdim);font-size:13px}
+.gsearch{margin:0 9px 8px;padding:4px 8px;background:#3a3e45;border:1px solid #474b53;border-radius:6px;color:var(--gdim);font-size:12px;flex:none;white-space:nowrap;overflow:hidden}
+.gbody{display:flex;flex:1;min-height:0}
+.grail{flex:0 0 46px;background:var(--grailbg);border-right:1px solid #24272c;padding:6px 0;display:flex;flex-direction:column;align-items:center;gap:7px}
+.rt{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;font-size:9.5px;font-weight:650;position:relative;background:#373b42;border:1px solid #4a4e56;color:#a9adb4}
+.rt.sel{background:#fff;border-color:#fff;font-size:15px;box-shadow:0 0 0 4px #474b52}
+.rt.o{background:#d9631e;border-color:#d9631e;color:#fff;font-size:14px}
+.rt.s{background:#111;border-color:#333;color:#eee;font-size:7px;letter-spacing:-.02em}
+.rt.c1{color:#e88a4c;background:#4a3a30;border-color:#6a4f3c}.rt.c2{color:#4ea1e8;background:#25405a;border-color:#2f5f88}.rt.c3{color:#e65b6c;background:#4d2b34;border-color:#7a3a48}.rt.c5{color:#4ea1e8;background:#25405a;border-color:#2f5f88}
+.rb{position:absolute;top:-4px;right:-5px;display:flex}
+.rb .hand{width:11px;height:11px;margin:0}
+.rbot{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--gdim);font-size:13px}
+.rbot .mon{width:13px;height:13px}
+.gcol{flex:1;min-width:0;padding:2px 6px 10px}
+.gsect{color:var(--gtext);font-size:11px;font-weight:600;padding:2px 8px 6px}
+.gb{padding:5px 8px;border-radius:7px;margin-bottom:1px}
+.gb.sel{background:#4a4e55}
+.gr{display:flex;align-items:center;gap:5px;min-height:18px}
+.ge{font-size:12.5px;flex:none;width:17px;text-align:center}
+.gn{font-size:11px;font-weight:600;letter-spacing:.015em;text-transform:uppercase;color:var(--gdim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
+.gr.active .gn{color:#e4e6e9}
+.gh{font-size:10.5px;color:var(--gdim);opacity:.85;white-space:nowrap;flex:none;margin-left:3px}
+.gs{font-size:10px;font-weight:600;color:var(--gdim);flex:none}
+.gw-w{color:var(--gdim);font-size:11px;line-height:1.32;padding:2px 0 1px 22px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.gw-a{color:var(--orange);font-size:11px;line-height:1.32;padding:2px 0 1px 22px}
+.gw-r{color:var(--gtext);font-size:12px;padding:2px 0 1px 22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gsep{border-top:1px solid #3e4249;margin:6px 8px}
+.gadd{display:flex;justify-content:flex-end;padding:2px 2px 7px}
+.gbtn{background:#40444b;border:1px solid #50545c;border-radius:6px;padding:3px 9px;font-size:11px;font-weight:600;color:#dfe1e4}
+.gfoot{color:var(--gdim);font-style:italic;font-size:11px;padding:9px 8px 0}
+.hand{width:13px;height:13px;color:var(--orange);flex:none;margin-right:2px}
+.gr .hand{margin:0 -1px 0 0}
+.gdetail{flex:1;min-width:0;display:flex;flex-direction:column;background:#23262c}
+.gwash{background:linear-gradient(90deg,rgba(35,38,44,.15) 0%,#2c7c6c 32%,rgba(44,124,108,.55) 62%,rgba(35,38,44,0) 92%),#23262c}
+.ghead{display:flex;align-items:center;gap:7px;padding:9px 10px 5px;white-space:nowrap;min-width:0}
+.gcap{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);border-radius:13px;padding:3px 10px;font-size:12px;color:#e8eaec;flex:none;display:inline-flex;gap:10px}
+.gcrumb{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#e3e5e8;min-width:0}
+.gcrumb .d{opacity:.68}.gcrumb .d2{opacity:.42}
+.gcrumb .hostmark{color:#e3e5e8;opacity:.72}
+.mon{width:11px;height:11px;flex:none}
+.pill{font-size:10.5px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.13);border-radius:5px;padding:0 5px;color:#dfe1e4;flex:none}
+.gtabs{display:flex;gap:16px;padding:3px 12px 0;align-items:flex-end;font-size:12px;color:#c4c7cc;overflow:hidden;white-space:nowrap}
+.gtab{padding:2px 2px 5px;display:inline-flex;align-items:center}
+.gtab.on{color:#fff;font-weight:600;box-shadow:inset 0 -2px 0 #e6e8eb}
+.gban{display:flex;align-items:center;gap:5px;background:#332f2d;padding:5px 12px;font-size:11.5px;color:#e3e5e8;border-top:1px solid #1d1f23}
+.gterm{flex:1;padding:12px;font:11.5px/1.55 ui-monospace,Menlo,monospace;color:#c6cad1;min-height:150px;overflow:hidden}
+.gterm .dim{color:#fff}.gterm b{color:#fff;font-weight:500}
+.rule{display:block;border-top:1px solid #565a62;margin-bottom:6px}
+.gdraw{display:flex;justify-content:space-between;padding:4px 12px;background:#2a2d33;color:var(--gdim);font-size:13px}
+.m.gwin.full{width:100%}
+@media (max-width:760px){
+  .gwin.full .gside{display:none}
+  .ghead{flex-wrap:wrap;white-space:normal}
+  .fixedside{flex:1 1 100%}
+}
+.gfold{color:var(--gdim);font-size:11px;font-weight:600;padding:4px 8px 3px}
+.gb.in{margin-left:12px}
+.gb.asleep{opacity:.55}
+.gb.asleep .gh{font-style:italic}
+.wakepane{background:#1e2023;color:#c9ccd1;border-radius:8px;min-height:190px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:18px;text-align:center;font-size:13px}
+.wakebtn{border:1px solid #5a5f67;border-radius:6px;padding:4px 12px;font-size:12px}
+.gpr{font-size:10.5px;font-weight:600;color:#c8963f;flex:none;margin-right:4px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><symbol id="h" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol></svg>
+<main>
+
+<h1>One project across hosts</h1>
+<p class="lede">Latest pass, with your answers on folders, waking hosts and project order. Rows are a name plus one status line, temporary worktrees are a flat list by recent activity, and port chips move to the Mac header.</p>
+<p class="note">Mockups are drawn in HTML, and nothing has been built. The Mac ones follow your screenshot. iPhone and iPad follow the code rather than a screenshot, so they're rougher. Host names, worktrees and report text are made up.</p>
+
+<div class="decided">
+<h3>What changed in this version</h3>
+<ul>
+<li><b>Folders only in Pinned Agents.</b> Temporary worktrees are flat and show their full name, such as <code>spikes/old-relay</code>. Pinned folders with the same name merge across hosts.</li>
+<li><b>Hosts wake only when you need them,</b> such as opening one of their worktrees. Sleeping hosts' rows stay visible and dim, so there's something to open. See "Sleeping hosts".</li>
+<li><b>Project order syncs too.</b> See "Project order".</li>
+<li><b>No panes in the sidebar.</b> Each row shows one status line. Your question was whether we've outgrown them, and I think we have: the tabs already show them, and few things are unique to the rows. Those are listed under "What pane rows do today" below.</li>
+<li><b>No manual order for temporary worktrees.</b> The sort control goes away, on single-host projects too.</li>
+<li><b>Pinned Agents always name the host</b> when the project is on more than one. Temporary rows only name it when names clash.</li>
+<li><b>Pinned order is shared across hosts.</b> It's the same on every device, and you can drag across hosts. You confirmed this approach. See "Pinned order that follows you".</li>
+<li><b>Port chips sit in the Mac header</b> for the selected worktree.</li>
+</ul>
+</div>
+
+<h2>The sidebar</h2>
+<p class="sub">Every row is a name plus at most one line saying what matters most right now. Rows are shorter, so far more worktrees fit on screen.</p>
+<div class="mocks">
+<figure class="fixedside"><div class="m gwin sideonly"><div class="gside"><div class="gtitle"><i class="tl"></i><span class="tg">▯</span></div><div class="gsearch">⌕&nbsp;&nbsp;Search projects and worktrees</div><div class="gbody"><div class="grail"><div class="rt sel"><span>🌱</span><span class="rb"><svg class="hand"><use href="#h"/></svg></span></div><div class="rt o"><span>i</span><span class="rb"><svg class="hand"><use href="#h"/></svg></span></div><div class="rt s"><span>SAIL</span><span class="rb"><svg class="hand"><use href="#h"/></svg></span></div><div class="rt c1"><span>BL</span></div><div class="rt c2"><span>QC</span></div><div class="rt c3"><span>AF</span></div><div class="rt c4"><span>GS</span></div><div class="rt c5"><span>SR</span></div><div class="rt c4"><span>HI</span></div><div class="rt c4"><span>TA</span><span class="rb"><svg class="hand"><use href="#h"/></svg></span></div><div class="rbot"><span>◖</span><span><svg class="mon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="9" rx="1.2"/><path d="M5.5 14h5M8 11.5V14"/></svg></span><span>›</span></div></div><div class="gcol"><div class="gsect">⌄&nbsp;&nbsp;Pinned Agents</div><div class="gb"><div class="gr "><span class="ge">🌱</span><span class="gn">main</span><span class="gh">build-box</span><span class="sp"></span><span class="gs">↑0+</span></div></div><div class="gb"><div class="gr "><span class="ge">🌱</span><span class="gn">main</span><span class="gh">This Mac</span><span class="sp"></span></div></div><div class="gfold">⌄&nbsp;&nbsp;agents</div><div class="gb in"><div class="gr "><span class="ge">🌙</span><span class="gn">nightly-ci</span><span class="gh">build-box</span><span class="sp"></span></div><div class="gw-w">Last night's run passed on every target.</div></div><div class="gb in"><div class="gr "><span class="ge">🔍</span><span class="gn">reviewer</span><span class="gh">This Mac</span><span class="sp"></span></div><div class="gw-w">Reviewed the relay retry change. No blockers.</div></div><div class="gsep"></div><div class="gadd"><span class="gbtn">+&nbsp;&nbsp;Add worktree</span></div><div class="gb sel"><div class="gr active"><svg class="hand"><use href="#h"/></svg><span class="ge">🧪</span><span class="gn">linux-tests</span><span class="sp"></span></div><div class="gw-a">Should CI use the arm64 image?</div></div><div class="gb"><div class="gr "><span class="ge">🔧</span><span class="gn">fix-resize</span><span class="gh">This Mac</span><span class="sp"></span><span class="gs">↑2</span></div><div class="gw-r">✳ Running the terminal tests</div></div><div class="gb"><div class="gr "><span class="ge">📡</span><span class="gn">push-fallback</span><span class="sp"></span><span class="gpr">#431</span><span class="gs">↑1</span></div><div class="gw-w">Relay retry works end to end and tests pass. Ready for your review.</div></div><div class="gb"><div class="gr "><span class="ge">🔧</span><span class="gn">fix-resize</span><span class="gh">build-box</span><span class="sp"></span><span class="gs">↓12</span></div><div class="gw-w">Reproduced the bug on Linux. The cause isn't clear yet.</div></div><div class="gb asleep"><div class="gr "><span class="ge">🛰️</span><span class="gn">sat-sync</span><span class="gh">asleep</span><span class="sp"></span></div><div class="gw-w">Sync works on the mini. Needs a retry limit.</div></div><div class="gb"><div class="gr "><span class="ge">🧹</span><span class="gn">spikes/old-relay</span><span class="sp"></span><span class="gs">↓34</span></div></div><div class="gfoot">vps-2 is offline</div></div></div></div></div><figcaption>Mac sidebar, redrawn from your screenshot. Pane rows and the Recent Activity control are gone, leaving Add worktree on that line. Folders appear only in Pinned Agents, and <code>agents</code> here spans two hosts. Temporary rows are flat, so <code>spikes/old-relay</code> shows its full name. <code>sat-sync</code> is on a sleeping host: click it to wake the host.</figcaption></figure>
+<figure><div class="m phone" style="height:auto;min-height:0;overflow:visible;padding-bottom:14px"><div class="statusbar">9:41</div><div class="navbar"><span>‹</span><span class="ptitle">graftty</span><span>+</span></div><div style="height:9px"></div><div class="ilist"><div class="stack" style="border-bottom:1px solid var(--mline)"><div class="gr" style="padding:0"><span class="ge">🌱</span><span class="gn">main</span><span class="gh">build-box</span></div></div><div class="stack" style="border-bottom:1px solid var(--mline)"><div class="gr" style="padding:0"><span class="ge">🌱</span><span class="gn">main</span><span class="gh">MacBook Pro</span></div></div><div class="stack" style="border-bottom:1px solid var(--mline);color:var(--mdim,#8e8e93);font-size:12px;font-weight:600">⌄ agents</div><div class="stack" style="border-bottom:1px solid var(--mline)"><div class="gr" style="padding:0"><span class="ge">🌙</span><span class="gn">nightly-ci</span><span class="gh">build-box</span></div></div><div class="stack"><div class="gr" style="padding:0"><span class="ge">🔍</span><span class="gn">reviewer</span><span class="gh">MacBook Pro</span></div></div></div><div class="ilist"><div class="stack" style="border-bottom:1px solid var(--mline)"><div class="gr" style="padding:0"><span class="ge">🧪</span><span class="gn">linux-tests</span></div><div class="ask">Should CI use the arm64 image?</div></div><div class="stack" style="border-bottom:1px solid var(--mline)"><div class="gr" style="padding:0"><span class="ge">🔧</span><span class="gn">fix-resize</span></div><div class="pane"><span class="dot"></span>Running the terminal tests</div></div><div class="stack" style="border-bottom:1px solid var(--mline)"><div class="gr" style="padding:0"><span class="ge">📡</span><span class="gn">push-fallback</span></div><div class="where">Relay retry works end to end and tests pass.</div></div><div class="stack" style="opacity:.55"><div class="gr" style="padding:0"><span class="ge">🛰️</span><span class="gn">sat-sync</span><span class="gh" style="font-style:italic">asleep</span></div><div class="where">Sync works on the mini. Needs a retry limit.</div></div></div><div class="status">vps-2 is offline</div></div><figcaption>iPhone and iPad use the same rules. Name styling comes from the mobile row code.</figcaption></figure>
+<dl class="legend">
+<dt>1. An agent needs you: <code>linux-tests</code></dt><dd>The question. Clicking it opens the pane that asked, as it does today.</dd>
+<dt>2. An agent is working: <code>fix-resize</code></dt><dd>Its live title. With several working, I'd show "2 agents working".</dd>
+<dt>3. No active agent: <code>push-fallback</code></dt><dd>"Where we are", dim and clamped to two lines.</dd>
+<dt>4. Nothing to say: <code>spikes/old-relay</code></dt><dd>Just the name.</dd>
+<dt>Host labels</dt><dd>Always on Pinned Agents in a multi-host project. On temporary rows only when names clash, as with <code>fix-resize</code>. Never in a single-host project.</dd>
+<dt>Attention hand</dt><dd>Moves from the pane row to the worktree name.</dd>
+</dl>
+</div>
+
+<h3 style="margin-top:22px">What pane rows do today, and where each goes</h3>
+<div class="tablewrap"><table>
+<tr><th>Today, on a pane row</th><th>After</th></tr>
+<tr><td>Live agent title, busy state</td><td>The status line.</td></tr>
+<tr><td>Question and attention</td><td>The status line and the hand on the worktree name. The attention queue still lists every request.</td></tr>
+<tr><td>Jump to a specific pane (<code>LAYOUT-2.10</code>, <code>IPAD-1.4</code>)</td><td>Open the worktree, then pick a tab. A question still jumps straight to its pane. The attention queue does too.</td></tr>
+<tr><td>Move to worktree menu</td><td>Already in the terminal's context menu (<code>TERM-8.10</code>).</td></tr>
+<tr><td>Dragging a pane to a worktree (<code>PWD-1.4</code>, <code>PWD-1.5</code>)</td><td>Removed. You said it doesn't work; I haven't tried it myself.</td></tr>
+<tr><td>Port chips (<code>PORTS-3.x</code>)</td><td>The Mac header, for the selected worktree, as mocked below. You lose seeing at a glance which other worktrees have a server running. iPhone and iPad already have their own port rows, so they don't change.</td></tr>
+<tr><td>Copy web URL</td><td><b>Needs a new home.</b> The sidebar pane menu is its only entry point today. I'd move it to the terminal's context menu.</td></tr>
+</table></div>
+
+<h2>Pinned order that follows you</h2>
+<p class="sub">Every device shows the same pinned order, and you can drag across hosts. Hosts never need to talk to each other. Each pinned worktree stores its own rank on the host that owns it, and each device merges rows by rank. Only the dragged row changes, on its own host.</p>
+<div class="rankflow">
+  <div class="rankbox">
+    <h4>What each host stores</h4>
+    <div class="rk"><b>build-box</b></div>
+    <div class="rk"><span>nightly-ci</span><code>10</code></div>
+    <div class="rk"><span>deploy-watch</span><code>30</code></div>
+    <div class="rk" style="margin-top:10px"><b>This Mac</b></div>
+    <div class="rk"><span>reviewer</span><code>20</code></div>
+  </div>
+  <div class="rankarrow">→</div>
+  <div class="rankbox">
+    <h4>What every device shows</h4>
+    <div class="rk"><span>nightly-ci</span><code>10</code></div>
+    <div class="rk"><span>reviewer</span><code>20</code></div>
+    <div class="rk"><span>deploy-watch</span><code>30</code></div>
+  </div>
+  <div class="rankarrow">→</div>
+  <div class="rankbox">
+    <h4>Drag <code>deploy-watch</code> up one</h4>
+    <div class="rk"><span>nightly-ci</span><code>10</code></div>
+    <div class="rk moved"><span>deploy-watch</span><code>15</code></div>
+    <div class="rk"><span>reviewer</span><code>20</code></div>
+    <p class="note" style="margin:8px 0 0">One write, to <code>build-box</code>. Every device picks it up from that host's normal updates.</p>
+  </div>
+</div>
+<p class="note">Numbers are for illustration. The real rank would be a fractional index, a sortable string that always leaves room for a row between two others.</p>
+<div class="cols" style="margin-top:12px">
+<div><h4>How it holds up</h4><ul>
+<li><b>Host asleep:</b> its rows stay in place, dim. <b>Host otherwise offline:</b> its rows disappear and return to the same place when it's back.</li>
+<li><b>Two devices drag the same row:</b> the last write to that host wins.</li>
+<li><b>Two rows land on the same rank:</b> ties break on host and path, so every device agrees.</li>
+<li><b>Older host:</b> it sends no rank, so its pins sit last in its own order and can't be dragged across hosts.</li>
+</ul></div>
+<div><h4>Details</h4><ul>
+<li><b>First run:</b> ranks come from each host's current order, so existing pins interleave until you drag them once.</li>
+<li><b>Default checkouts:</b> still first, as today (<code>LAYOUT-2.103</code>), sorted by host name so devices agree.</li>
+<li><b>Replaces:</b> pinned moves use the rank instead of <code>moveWorktree</code>, and the cross-host drop rejection (<code>LAYOUT-2.61</code>) no longer applies to pins.</li>
+</ul></div>
+<div><h4>What I ruled out</h4><ul>
+<li><b>A shared list copied to every host:</b> edits made while a host is offline have to be merged later, and hosts would need a way to reach each other.</li>
+<li><b>iCloud or similar:</b> doesn't reach Linux hosts.</li>
+<li><b>A list on each device:</b> doesn't sync.</li>
+</ul></div>
+</div>
+
+<h2>Project order</h2>
+<p class="sub">It works like pinned order, with ranks stored on hosts and merged by each device. The difference is that a project can live on several hosts, so each drag goes to all of them and the newest change wins.</p>
+<div class="tablewrap"><table>
+<tr><th>Situation</th><th>What happens</th></tr>
+<tr><td>You drag a project</td><td>The new rank and time go to every reachable host with that project. Sleeping hosts aren't woken for it.</td></tr>
+<tr><td>A host missed the drag</td><td>Its value is older, so it loses. A device that sees both copies the newer value to it.</td></tr>
+<tr><td>Every host for the project is asleep</td><td>The drag wakes the last-used host, because it needs somewhere to write. If that fails, the project returns to its old place.</td></tr>
+<tr><td>First run</td><td>Ranks come from each host's current order, so projects interleave until you drag them.</td></tr>
+<tr><td>Older host</td><td>It sends no rank. Its projects sit last in its own order, and moving one uses today's request.</td></tr>
+</table></div>
+
+<h2>When a worktree is open</h2>
+<p class="sub">The host joins the worktree's identity wherever it's shown, in the same quiet style as the project name. Remote worktrees always show it. "This Mac" only appears when the project also lives on another host, so people with one machine never see it.</p>
+
+<figure style="margin-top:14px"><div class="m gwin full"><div class="gside"><div class="gtitle"><i class="tl"></i><span class="tg">▯</span></div><div class="gsearch">⌕&nbsp;&nbsp;Search projects and worktrees</div><div class="gbody"><div class="grail"><div class="rt sel"><span>🌱</span><span class="rb"><svg class="hand"><use href="#h"/></svg></span></div><div class="rt o"><span>i</span><span class="rb"><svg class="hand"><use href="#h"/></svg></span></div><div class="rt s"><span>SAIL</span><span class="rb"><svg class="hand"><use href="#h"/></svg></span></div><div class="rt c1"><span>BL</span></div><div class="rt c2"><span>QC</span></div><div class="rt c3"><span>AF</span></div><div class="rt c4"><span>GS</span></div><div class="rt c5"><span>SR</span></div><div class="rt c4"><span>HI</span></div><div class="rt c4"><span>TA</span><span class="rb"><svg class="hand"><use href="#h"/></svg></span></div><div class="rbot"><span>◖</span><span><svg class="mon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="9" rx="1.2"/><path d="M5.5 14h5M8 11.5V14"/></svg></span><span>›</span></div></div><div class="gcol"><div class="gsect">⌄&nbsp;&nbsp;Pinned Agents</div><div class="gb"><div class="gr "><span class="ge">🌱</span><span class="gn">main</span><span class="gh">build-box</span><span class="sp"></span><span class="gs">↑0+</span></div></div><div class="gb"><div class="gr "><span class="ge">🌱</span><span class="gn">main</span><span class="gh">This Mac</span><span class="sp"></span></div></div><div class="gfold">⌄&nbsp;&nbsp;agents</div><div class="gb in"><div class="gr "><span class="ge">🌙</span><span class="gn">nightly-ci</span><span class="gh">build-box</span><span class="sp"></span></div><div class="gw-w">Last night's run passed on every target.</div></div><div class="gb in"><div class="gr "><span class="ge">🔍</span><span class="gn">reviewer</span><span class="gh">This Mac</span><span class="sp"></span></div><div class="gw-w">Reviewed the relay retry change. No blockers.</div></div><div class="gsep"></div><div class="gadd"><span class="gbtn">+&nbsp;&nbsp;Add worktree</span></div><div class="gb sel"><div class="gr active"><svg class="hand"><use href="#h"/></svg><span class="ge">🧪</span><span class="gn">linux-tests</span><span class="sp"></span></div><div class="gw-a">Should CI use the arm64 image?</div></div><div class="gb"><div class="gr "><span class="ge">🔧</span><span class="gn">fix-resize</span><span class="gh">This Mac</span><span class="sp"></span><span class="gs">↑2</span></div><div class="gw-r">✳ Running the terminal tests</div></div><div class="gb"><div class="gr "><span class="ge">📡</span><span class="gn">push-fallback</span><span class="sp"></span><span class="gpr">#431</span><span class="gs">↑1</span></div><div class="gw-w">Relay retry works end to end and tests pass. Ready for your review.</div></div><div class="gb"><div class="gr "><span class="ge">🔧</span><span class="gn">fix-resize</span><span class="gh">build-box</span><span class="sp"></span><span class="gs">↓12</span></div><div class="gw-w">Reproduced the bug on Linux. The cause isn't clear yet.</div></div><div class="gb asleep"><div class="gr "><span class="ge">🛰️</span><span class="gn">sat-sync</span><span class="gh">asleep</span><span class="sp"></span></div><div class="gw-w">Sync works on the mini. Needs a retry limit.</div></div><div class="gb"><div class="gr "><span class="ge">🧹</span><span class="gn">spikes/old-relay</span><span class="sp"></span><span class="gs">↓34</span></div></div><div class="gfoot">vps-2 is offline</div></div></div></div><div class="gdetail"><div class="gwash"><div class="ghead"><span class="gcap">‹&nbsp;&nbsp;&nbsp;<span style="opacity:.45">›</span></span><span class="gcrumb"><span class="d">graftty</span><span class="d2">/</span><span>🧪</span><span>linux-tests</span><span class="d2">·</span><span class="hostmark"><svg class="mon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="9" rx="1.2"/><path d="M5.5 14h5M8 11.5V14"/></svg>build-box</span><span class="d">⌄</span></span><span class="pill">#412</span><span class="pill">◉ 3000</span><span class="pill">◉ 5173</span><span class="sp"></span><span class="gcap right"><span>▤ ⌄</span><span>▮▯&nbsp;Context</span></span></div><div class="gtabs"><span class="gtab on"><svg class="hand"><use href="#h"/></svg>✳ Check CI on arm64</span><span class="gtab">shell</span><span class="gtab">+ New agent ⌄</span></div></div><div class="gban"><svg class="hand"><use href="#h"/></svg>Should CI use the arm64 image?</div><div class="gterm"><span class="dim">●</span> Ran the Linux test target on the new image.<br><br>Both suites pass. The x86 runner took 41 minutes and the arm64 runner took 18.<br><br><b>Should CI use the arm64 image?</b><br><br><span class="rule"></span><b>❯</b></div><div class="gdraw"><span>▭</span><span>+</span></div></div></div><figcaption style="max-width:none">Mac, redrawn from your screenshot. In the header, the host sits inside the breadcrumb after the worktree name. The PR button and port chips follow it, and chips cover every pane in the worktree. Clicking one opens it, as it does today, and extras collapse into a menu. Tabs, the question banner and the Context button don't change.</figcaption></figure>
+
+
+<div class="mocks">
+<figure>
+<div class="m phone">
+  <div class="statusbar">9:41</div>
+  <div class="navbar"><span>‹</span><span>⋯</span></div>
+  <div class="ident"><div class="hostmark" style="font-size:11px">graftty&nbsp;·&nbsp;<svg class="mon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="9" rx="1.2"/><path d="M5.5 14h5M8 11.5V14"/></svg>build-box</div><h6>🧪 linux-tests</h6><p>Keep Linux hosts covered in CI without slowing every PR.</p></div>
+  <div class="isect"><span>Agents</span></div>
+  <div class="card"><b>Codex</b><small>Should CI use the arm64 image?</small></div>
+  <div class="isect"><span>Terminals</span></div>
+  <div class="ilist"><div class="irow">shell</div></div>
+</div>
+<figcaption>iPhone worktree screen: the host joins the project caption above the worktree name. The full-screen terminal hides its navigation bar, so there the host appears only in the context drawer's heading.</figcaption>
+</figure>
+<figure>
+<div class="m ipad">
+  <div class="ibar"><span style="color:#84adf2">‹</span><div class="tt"><b>linux-tests</b><i>build-box · #412 · Keep Linux hosts covered in CI</i></div><span style="color:#84adf2">⋯</span></div>
+  <div class="term">Ran the Linux test target on the new image.<br><br>Should CI use the arm64 image?<br><b>›</b> </div>
+</div>
+<figcaption>iPad: the host leads the existing toolbar subtitle, ahead of the PR number and purpose.</figcaption>
+</figure>
+</div>
+
+<h2>Sleeping hosts</h2>
+<p class="sub">Background connections never wake a host. Anything that needs the host does, such as opening a worktree, tapping its question, creating a worktree on it or dragging its pinned row.</p>
+<div class="mocks">
+<figure><div class="m" style="width:300px;max-width:100%"><div class="wakepane"><div>Waking mini-m1…</div></div></div><figcaption>You clicked <code>sat-sync</code>, so the host wakes and the worktree opens once it answers.</figcaption></figure>
+<figure><div class="m" style="width:300px;max-width:100%"><div class="wakepane"><div>mini-m1 didn't respond.</div><div style="opacity:.7;font-size:12px">Waking only works on its local network.</div><div class="wakebtn">Try Again</div></div></div><figcaption>A wake that fails, such as when you're away from home.</figcaption></figure>
+<figure><div class="m" style="width:300px;max-width:100%"><div class="wakepane"><div>mini-m1 is asleep.</div><div class="wakebtn">Wake</div></div></div><figcaption>The app relaunched with this worktree selected. You didn't ask for that host, so it waits for you.</figcaption></figure>
+</div>
+
+<h2>Add Worktree</h2>
+<p class="sub">This sheet is the one place you choose a host. Host is the first field because each host has its own branch list. Only hosts that have the project are offered.</p>
+<div class="mocks">
+<figure>
+<div class="m sheet">
+  <h5>Add Worktree to graftty</h5>
+  <div class="frow"><label>Host:</label><div class="menu pick"><span>build-box</span><span>⌄</span></div></div>
+  <div class="frow"><label>Worktree name:</label><div class="input ph">Automatic if blank</div></div>
+  <div class="frow"><label>Branch:</label><div class="input">New branch from main</div></div>
+  <div class="frow"><label>Agent:</label><div class="menu"><span>Claude Code</span><span>⌄</span></div></div>
+  <div class="btns"><div class="btn">Cancel</div><div class="btn p">Create</div></div>
+</div>
+<figcaption>Defaults to the last host used for this project, unless that host is asleep and another is awake, so opening the sheet doesn't wake anything. Choosing a sleeping host wakes it to load its branches. Other offline hosts are listed but disabled. The row is hidden when the project has one host. On mobile this reuses the existing Picker.</figcaption>
+</figure>
+</div>
+
+<h2>Mobile without a host selector</h2>
+<div class="flow"><b>iPhone today</b> <span>Hosts</span> → <span>Project</span> → <span>Worktree</span> → <span>Terminal</span></div>
+<div class="flow"><b>Proposed</b> <span>Projects</span> → <span>Worktree</span> → <span>Terminal</span></div>
+<div class="mocks">
+<figure>
+<div class="m phone">
+  <div class="statusbar">9:41</div>
+  <div class="navbar"><span>⚙︎</span><span>+</span></div>
+  <div class="large">Projects</div>
+  <div class="ilist">
+    <div class="irow"><div class="tile t1">GR</div><div class="pn"><b>graftty</b></div><span class="count">1</span><span class="chev">›</span></div>
+    <div class="irow"><div class="tile t2">SE</div><div class="pn"><b>selkie</b></div><span class="chev">›</span></div>
+    <div class="irow"><div class="tile t3">BL</div><div class="pn"><b>blindspots</b></div><span class="chev">›</span></div>
+    <div class="irow offline"><div class="tile t4">QU</div><div class="pn"><b>quotably</b><i>Asleep</i></div><span class="chev">›</span></div>
+  </div>
+</div>
+<figcaption>Home screen. A project is marked only when none of its hosts are reachable: Asleep if any can be woken, otherwise Offline. Opening it shows its last known rows without waking anything.</figcaption>
+</figure>
+<figure>
+<div class="m phone">
+  <div class="statusbar">9:41</div>
+  <div class="navbar"><span>‹</span><span class="ptitle">Hosts</span><span>+</span></div>
+  <div style="height:12px"></div>
+  <div class="isect"><span>Connected</span></div>
+  <div class="ilist">
+    <div class="irow"><div class="pn"><b>MacBook Pro</b><i>Direct</i></div></div>
+    <div class="irow"><div class="pn"><b>build-box</b><i>Through MacBook Pro</i></div></div>
+  </div>
+  <div class="isect"><span>Not connected</span></div>
+  <div class="ilist">
+    <div class="irow"><div class="pn"><b>mini-m1</b><i>Asleep · last seen 2 hours ago</i></div></div>
+  </div>
+  <div class="status">Pair and forget hosts here</div>
+</div>
+<figcaption>Behind the gear. It manages hosts and doesn't change what the app shows. The iPad's host menu goes away too.</figcaption>
+</figure>
+</div>
+
+<h2>Rules that apply</h2>
+<div class="tablewrap"><table>
+<tr><th>Situation</th><th>Proposed behavior</th></tr>
+<tr><td>What counts as the same project</td><td>Equal normalized <code>origin</code>, using the existing <code>GitRepositoryOrigin</code>. No origin, an older host, or a fork stays its own project.</td></tr>
+<tr><td>Different projects, same name</td><td>Both stay separate and show the owner, such as <code>acme/app</code> and <code>me/app</code>.</td></tr>
+<tr><td>Two checkouts on one host</td><td>Merged. The Host menu includes the path, such as <code>build-box · ~/src/graftty</code>.</td></tr>
+<tr><td>Temporary worktree order</td><td>Always recent activity, across all hosts. Today each host ranks its own list and clients only receive the result, so hosts would need to publish an activity time for clients to merge on. Hosts' clocks can differ a little, which is harmless for this.</td></tr>
+<tr><td>Pinned Agents order</td><td>A rank stored on each pinned worktree and merged by each device. See "Pinned order that follows you".</td></tr>
+<tr><td>Project order</td><td>Ranks merged by each device, newest change wins. See "Project order".</td></tr>
+<tr><td>Worktree folders</td><td>Pinned Agents only, merged by name across hosts. Temporary worktrees are flat.</td></tr>
+<tr><td>Saved manual orders</td><td>Ignored for temporary worktrees. The sort control and its wire request go away, while older hosts keep working.</td></tr>
+<tr><td>Project-level actions</td><td>Pull default branch and Remove become per-host in the context menu, such as "Remove from build-box…".</td></tr>
+<tr><td>Attention</td><td>Rail badges cover all of a project's hosts. Acknowledgement still routes to the owning host.</td></tr>
+<tr><td>Mac with the project column off</td><td>Same rows, grouped under project names. The Remote Hosts section goes away.</td></tr>
+<tr><td>Web client</td><td>Out of scope. It's served by one host, so it has nothing to merge.</td></tr>
+</table></div>
+
+<h2>Next</h2>
+<p>Your approval of the written design, then an implementation plan.</p>
+
+</main>
+</body>
+</html>

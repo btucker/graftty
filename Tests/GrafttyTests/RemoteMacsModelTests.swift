@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
@@ -60,30 +61,152 @@ struct RemoteMacsModelTests {
         await #expect(throws: (any Error).self) { try await model.addWorktreeRepository(for: project) }
     }
 
-    @Test("@spec LAYOUT-2.155: When a remote project's sort mode is changed, the application shall route the request to the owning repository and display the host's acknowledged snapshot mode, while disabling sorting for older hosts and retaining the mode after failure.")
-    func remoteSortRoutesAndRejectsUnsupportedOrFailedRequests() async throws {
+    @Test("@spec REMOTE-13.44: When a client sets a rank on a relayed project or pinned worktree, the relaying Mac shall forward the write to the owning host using that host's identifiers.")
+    func relayForwardsRankRequestsToOwner() async throws {
         let remote = try remoteMac()
-        let failure = WorktreeManagementResponse.error(code: "denied", message: "Host refused sorting", forceAllowed: false, shortStatus: nil)
-        let recorder = RemoteMacsModelManagementRecorder(response: failure)
+        let recorder = RemoteMacsModelManagementRecorder(response: .ok)
         let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
-        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
-        let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", supportsWorktreeEditing: true, worktreeOrderMode: .manual)
+        let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", originKey: "k/repo", rank: "b", rankChangedAt: 3)
         let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
-        #expect(model.canSetWorktreeOrder(for: project))
-        var legacy = project; legacy.worktreeOrderMode = nil
-        #expect(!model.canSetWorktreeOrder(for: legacy))
-        await #expect(throws: (any Error).self) { try await model.setWorktreeOrder(.recentActivity, for: legacy) }
-        #expect(await recorder.requests().isEmpty)
-        do {
-            try await model.setWorktreeOrder(.recentActivity, for: project)
-            Issue.record("Expected host error")
-        } catch { #expect(error.localizedDescription == "Host refused sorting") }
-        #expect(project.worktreeOrderMode == .manual)
-        #expect(await recorder.requests() == [.setWorktreeOrder(repositoryID: "/repo", mode: .recentActivity)])
-        #expect(await model.sendRelayedWorktreeManagement(.setWorktreeOrder(repositoryID: project.repositoryID, mode: .recentActivity)) == failure)
-        #expect(await recorder.requests().count == 2)
-        var offline = project; offline.isAvailable = false
-        #expect(!model.canSetWorktreeOrder(for: offline))
+        #expect(project.originKey == "k/repo")
+        #expect(project.rank == "b")
+        #expect(project.rankChangedAt == 3)
+        _ = await model.sendRelayedWorktreeManagement(.setProjectRank(repositoryID: project.repositoryID, rank: "c", changedAt: 9))
+        let worktree = model.relayRouter.registerCreatedWorktree(identity: RemoteMacIdentity(remote), path: "/repo/w", paneSessionName: "pane")
+        _ = await model.sendRelayedWorktreeManagement(.setPinnedRank(repositoryID: project.repositoryID, worktreeID: worktree.worktreeID, rank: "d"))
+        #expect(await recorder.requests() == [
+            .setProjectRank(repositoryID: "/repo", rank: "c", changedAt: 9),
+            .setPinnedRank(repositoryID: "/repo", worktreeID: "/repo/w", rank: "d"),
+        ])
+    }
+
+    private func wakeRecordingModel(gate: AsyncStream<Void>? = nil) async throws -> (RemoteMacsModel, RemoteMac, RemoteMacsModelWakeRecorder) {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let recorder = RemoteMacsModelWakeRecorder()
+        let registry = RemoteMacConnectionRegistry(wakeAwareFactory: { remoteMac, identity, _, allowsWake in
+            recorder.dials.append(allowsWake)
+            if let failure = recorder.failures.first {
+                recorder.failures.removeFirst()
+                throw failure
+            }
+            if !allowsWake, let gate { for await _ in gate { break } }
+            try Task.checkCancellation()
+            return RemoteMacConnectionRegistry.Entry(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        })
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        return (model, remote, recorder)
+    }
+
+    @Test func launchReconnectDoesNotWake() async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        _ = try await model.connect(to: remote)
+        #expect(recorder.dials == [false])
+    }
+
+    @Test func userSelectionWakes() async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        _ = try await model.connectFromUserSelection(to: remote)
+        #expect(recorder.dials == [true])
+    }
+
+    @Test func interactionWakesWithoutReplacingConnection() async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        _ = try await model.connect(to: remote, allowsWake: true)
+        #expect(recorder.dials == [true])
+    }
+
+    @Test func wakeRequestDuringQuietAttemptDialsAgainWithWake() async throws {
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let (model, remote, recorder) = try await wakeRecordingModel(gate: gate)
+        let quiet = Task { try? await model.connect(to: remote) }
+        while recorder.dials.isEmpty { await Task.yield() }
+        _ = try await model.connect(to: remote, allowsWake: true)
+        open.finish()
+        _ = await quiet.value
+        #expect(recorder.dials == [false, true])
+    }
+
+    @Test("@spec REMOTE-2.35: When removing a worktree needs a sleeping host, the application shall wake that host before sending the removal.")
+    func removingAWorktreeOnASleepingHostWakesIt() async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        _ = await model.deleteWorktree(on: remote, worktreePath: "/repo/w", force: false)
+        #expect(recorder.dials == [true])
+    }
+
+    @Test func wakeDetailsLearnedFromAConnectionApplyWithoutRelaunch() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let pins = OSAllocatedUnfairLock(initialState: Set<RemoteDeviceID>())
+        let registry = RemoteMacConnectionRegistry(wakeAwareFactory: { remoteMac, identity, _, _ in
+            // The host signs its wake details during the dial, and the pin keeps them.
+            pins.withLock { $0 = [remoteMac.id] }
+            return RemoteMacConnectionRegistry.Entry(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        })
+        let cache = HostSnapshotCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry, hostSnapshotCache: cache,
+                                    wakeableHostIDs: { pins.withLock { $0 } })
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        _ = await model.sidebarRelaySnapshot()
+        model.disconnect(identity: RemoteMacIdentity(remote))
+        #expect(model.sleepingSnapshot().hostIDs == [remote.id])
+    }
+
+    private func sleepingModel(wakeAddresses: Bool) async throws -> (RemoteMacsModel, RemoteMac, HostSnapshotCache) {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let cache = HostSnapshotCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let row = WorktreePanes(path: "/repo/w", displayName: "w", repoDisplayName: "Repo", displayBranch: "w", state: .running,
+                                isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        try cache.save(hostID: remote.id, projects: [SidebarProject(id: "project", repositoryID: "/repo", name: "Repo")], rows: [row])
+        let model = RemoteMacsModel(store: store, connectionRegistry: RemoteMacConnectionRegistry(factory: { _, _ in throw URLError(.cannotConnectToHost) }),
+                                    hostSnapshotCache: cache, wakeableHostIDs: { wakeAddresses ? [remote.id] : [] })
+        await model.loadSavedRemotes()
+        return (model, remote, cache)
+    }
+
+    @Test func sleepingRowsKeptOnlyWithWakeAddresses() async throws {
+        let (awake, remote, _) = try await sleepingModel(wakeAddresses: true)
+        #expect(awake.sleepingSnapshot().rows.map(\.path) == ["/repo/w"])
+        #expect(awake.sleepingSnapshot().rows.first?.origin?.deviceID == remote.id)
+        #expect(awake.sleepingSnapshot().hostIDs == [remote.id])
+        let (plain, _, _) = try await sleepingModel(wakeAddresses: false)
+        #expect(plain.sleepingSnapshot().rows.isEmpty)
+    }
+
+    @Test func cachedRowsNotRelayed() async throws {
+        let (model, _, _) = try await sleepingModel(wakeAddresses: true)
+        #expect(!model.sleepingSnapshot().rows.isEmpty)
+        #expect(await model.sidebarRelaySnapshot().worktrees.isEmpty)
+        #expect(model.promotedWorktreesForRelay().isEmpty)
+    }
+
+    @Test func wakeReportsFailure() async throws {
+        let (model, remote, _) = try await sleepingModel(wakeAddresses: true)
+        await #expect(throws: (any Error).self) { try await model.wake(remote) }
+    }
+
+    @Test func removingAHostDeletesItsSnapshot() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let cache = HostSnapshotCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        try cache.save(hostID: remote.id, projects: [], rows: [])
+        let model = RemoteMacsModel(store: store, connectionRegistry: RemoteMacConnectionRegistry(factory: { _, _ in throw URLError(.cannotConnectToHost) }),
+                                    hostSnapshotCache: cache, wakeableHostIDs: { [remote.id] })
+        await model.loadSavedRemotes()
+        #expect(model.sleepingSnapshot().hostIDs == [remote.id])
+        try store.delete(id: remote.id, fingerprint: remote.fingerprint)
+        await model.loadSavedRemotes()
+        #expect(cache.load(hostID: remote.id) == nil)
+        #expect(model.sleepingSnapshot().hostIDs.isEmpty)
     }
 
     @Test func addRepositoryReportsHostErrorsAndMissingRepository() async throws {
@@ -124,18 +247,35 @@ struct RemoteMacsModelTests {
         #expect(RemoteMacIdentity(result.0) == RemoteMacIdentity(remote))
     }
 
-    @Test func successfulSortUsesRawRepositoryRoute() async throws {
+    @Test("Dismissing a merged-sidebar row's request retires it under the owning Mac's own worktree path, not this Mac's relay alias.")
+    func dismissalOfPromotedRowReachesOwningMac() async throws {
         let remote = try remoteMac()
+        let identity = RemoteMacIdentity(remote)
         let recorder = RemoteMacsModelManagementRecorder()
-        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
-        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
-        let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", supportsWorktreeEditing: true, worktreeOrderMode: .manual)
-        let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
-        try await model.setWorktreeOrder(.recentActivity, for: project)
-        #expect(await recorder.requests() == [.setWorktreeOrder(repositoryID: "/repo", mode: .recentActivity)])
-        #expect(project.worktreeOrderMode == .manual)
-        let hostUpdate = SidebarProject(id: raw.id, repositoryID: raw.repositoryID, name: raw.name, supportsWorktreeEditing: true, worktreeOrderMode: .recentActivity)
-        #expect(model.relayRouter.promoteProjects([hostUpdate], from: remote).first?.worktreeOrderMode == .recentActivity)
+        let (model, registry) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        defer { model.disconnect(identity: identity) }
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: 100),
+            recap: .init(title: "Deploy", completed: "Built it", next: "Ship", need: "Ship it?"))
+        registry.onPaneSnapshot(identity, [
+            WorktreePanes(path: "/repo/wt", displayName: "wt", repoDisplayName: "repo", repositoryID: "/repo",
+                displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil, stats: nil,
+                attentionText: nil, layout: nil,
+                origin: WorktreeOrigin(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0),
+                sidebar: .init(id: "studio:/repo/wt", projectID: "studio:/repo", unseenAgentStop: stop))
+        ])
+        // The merged sidebar reads the relay-promoted row's context.
+        let promoted = try #require(model.promotedWorktreesForRelay().first)
+        #expect(promoted.path != "/repo/wt")
+        let item = try #require(SidebarProjection.activity([promoted]).first)
+        let request = try #require(SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: true))
+
+        #expect(try await model.retireRequest(request, on: remote) == .ok)
+        // A raw row's ID already names the owning Mac's worktree.
+        _ = try await model.retireRequest(.acknowledgeOccurrence(worktreeID: "/repo/wt", paneID: nil, occurrence: stop.occurrence), on: remote)
+        #expect(await recorder.requests() == [
+            .acknowledgeOccurrence(worktreeID: "/repo/wt", paneID: nil, occurrence: stop.occurrence),
+            .acknowledgeOccurrence(worktreeID: "/repo/wt", paneID: nil, occurrence: stop.occurrence),
+        ])
     }
 
     private func projectControlModel(remotes: [RemoteMac], recorder: RemoteMacsModelManagementRecorder) async throws -> (RemoteMacsModel, RemoteMacConnectionRegistry) {
@@ -2406,4 +2546,11 @@ private final class ModelRecoveryPanesDriver: PanesStateSubscriptionDriver, Side
     }
     func open() async throws { lock.withLock { opens += 1 }; await lock.withLock { snapshot }(rows) }
     func close() {}
+}
+
+
+@MainActor
+final class RemoteMacsModelWakeRecorder {
+    var dials: [Bool] = []
+    var failures: [Error] = []
 }

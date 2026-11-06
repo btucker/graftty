@@ -26,7 +26,10 @@ public struct IPadRootLayout: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
     @Environment(\.remoteConnectionCoordinator) private var coordinator
-    @Environment(\.remoteWorktreeUpdates) private var worktreeUpdates
+    @Environment(\.multiHostFeed) private var feed
+    @State private var showsHosts = false
+    /// The host whose theme and keybindings are showing.
+    @State private var presentationHostID: UUID?
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var mobilePaneCommandError: String?
     @State private var explicitSelectionGeneration: UInt64 = 0
@@ -95,10 +98,13 @@ public struct IPadRootLayout: View {
         Self.resolveSelectedHost(from: hostStore.hosts, selectedHostId: appState.selectedHostId)
     }
 
+    private var selectedHostIsLive: Bool {
+        appState.selectedHostId.map { feed?.state.isLive($0) == true } ?? false
+    }
+
     public var body: some View {
-        // Built once per render: `isPaired` reads the pin file.
-        let remote = selectedHost.map { (host: $0, providers: remoteProviders(for: $0)) }
         let selectionGeneration = explicitSelectionGeneration
+        let displayedHostID = selectedHost?.id
         let displayedWorktreePath = appState.selectedWorktreePath
         // `.balanced` locks in column-style (sidebar permanently to the
         // left of the detail) rather than letting iPad heuristics pick
@@ -115,49 +121,40 @@ public struct IPadRootLayout: View {
                 set: { appState.columnVisibility = $0 }
             )) {
                 Group {
-                    if let remote {
+                    if let feed, !feed.hosts.isEmpty {
                         WorktreeListContent(
-                            host: remote.host,
+                            feed: feed,
                             isSidebar: true,
                             theme: appState.theme,
+                            selectedHostID: appState.selectedHostId,
                             selectedWorktreePath: appState.selectedWorktreePath,
-                            focusedPaneId: appState.focusedPaneId,
-                            isReadyToLoad: LiveSessionReadiness.isActive(
-                                scene: scenePhase,
-                                gateUnlocked: gate.isUnlocked
-                            ),
-                            remote: remote.providers,
-                            onSelect: { wt in selectWorktree(wt) },
-                            onSelectPane: { worktree, leaf in
+                            onSelect: { host, wt in
+                                adoptHost(host)
+                                selectWorktree(wt)
+                            },
+                            onSelectPane: { host, worktree, leaf in
+                                adoptHost(host)
                                 selectWorktree(worktree)
                                 selectPane(leaf)
                             },
                             navigation: appState.sidebarNavigation,
-                            navigationWindowWidth: appState.navigationWindowWidth,
-                            workspaceLayout: { hostID, worktree in
-                                appState.workspaceStore.sidebarLayout(hostID: hostID, worktree: worktree)
-                            }
+                            navigationWindowWidth: appState.navigationWindowWidth
                         )
                     } else {
-                        Spacer()
+                        HostPickerView(store: hostStore, browser: nearbyMacBrowser)
                     }
                 }
                 .themedSidebarSurface(appState.theme)
-                // IPAD-1.2: the host menu lives in the sidebar nav bar's
-                // `.topBarLeading` slot — adjacent to the system
-                // sidebar-toggle button. Originally `.principal`, but the
-                // centered placement let the menu expand into the trailing
-                // `.primaryAction` (+) item at narrow column widths and
-                // overlap it. Leading placement is naturally bounded.
+                // Hosts are managed here. They don't change what the sidebar shows.
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        HostMenu(
-                            selectedHost: selectedHost,
-                            hostStore: hostStore,
-                            appState: appState,
-                            browser: nearbyMacBrowser
-                        )
+                        Button { showsHosts = true } label: { Image(systemName: "gearshape") }
+                            .accessibilityLabel("Hosts")
+                            .foregroundStyle(appState.theme.foreground)
                     }
+                }
+                .sheet(isPresented: $showsHosts) {
+                    NavigationStack { HostPickerView(store: hostStore, browser: nearbyMacBrowser) }
                 }
                 // IPAD-1.12: explicit 1pt trailing border separates the
                 // sidebar from the detail column (Mac's NSSplitView draws
@@ -182,7 +179,7 @@ public struct IPadRootLayout: View {
                     ghosttyCommandContext: ghosttyCommandContext,
                     onSelectPane: { sessionName in
                         guard selectionGeneration == explicitSelectionGeneration,
-                              appState.selectedHostId == remote?.host.id,
+                              appState.selectedHostId == displayedHostID,
                               appState.selectedWorktreePath == displayedWorktreePath else { return }
                         selectPane(sessionName: sessionName)
                     },
@@ -211,20 +208,21 @@ public struct IPadRootLayout: View {
                 guard width.isFinite, width > 0 else { return }
                 appState.sidebarWidth = width
             }
-        ), when: selectedHost != nil && appState.columnVisibility == .all)
+        ), when: !hostStore.hosts.isEmpty && appState.columnVisibility == .all)
         .focusedSceneValue(\.mobileGhosttyCommandContext, ghosttyCommandContext)
         .task(id: HostPresentationRefreshKey(
             hostID: selectedHost?.id,
             isReady: LiveSessionReadiness.isActive(
                 scene: scenePhase,
                 gateUnlocked: gate.isUnlocked
-            )
+            ),
+            isConnected: selectedHostIsLive
         )) {
             await refreshHostPresentationState()
         }
         // Outside the split view, so the shared rows stay current whether
         // or not the sidebar list is on screen (IPAD-1.24).
-        .modifier(IPadWorktreeFeed(host: remote?.host, updates: remote?.providers.updates, appState: appState) { list in
+        .modifier(IPadWorktreeFeed(hostID: appState.selectedHostId, feed: feed, appState: appState) { list in
             reconcileMobileCloseProjections(in: list)
             resolveLegacyMobileSplit(in: list)
             applyPendingMobileCreatedFocus(in: list)
@@ -234,7 +232,8 @@ public struct IPadRootLayout: View {
             isReady: LiveSessionReadiness.isActive(
                 scene: scenePhase,
                 gateUnlocked: gate.isUnlocked
-            )
+            ),
+            isConnected: selectedHostIsLive
         )) {
             await refreshPaneEnvironment()
         }
@@ -275,15 +274,11 @@ public struct IPadRootLayout: View {
         return worktrees.first { $0.path == selectedPath }
     }
 
-    static func applyHostSwitch(appState: IPadAppState, to newHostId: UUID) {
-        appState.select(hostID: newHostId, worktreePath: nil, paneID: nil)
-        appState.latestWorktrees = []
-        appState.worktreePickerProject = nil
-        appState.anyWorktreeHasAttention = false
-    }
-
-    private func remoteProviders(for host: Host) -> RemoteWorktreeProviders {
-        RemoteWorktreeProviders(coordinator: coordinator, host: host, worktreeUpdates: worktreeUpdates)
+    /// A row on another host moves the selection there, with that host's rows.
+    private func adoptHost(_ host: Host) {
+        guard appState.selectedHostId != host.id else { return }
+        appState.selectedHostId = host.id
+        appState.latestWorktrees = feed?.state.rawRows(of: host.id) ?? []
     }
 
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
@@ -1246,16 +1241,23 @@ public struct IPadRootLayout: View {
             return
         }
         guard let host = selectedHost else {
+            presentationHostID = nil
             appState.theme = .fallback
             keybindingSet = Self.keybindingSetForStartingHostRefresh()
             return
         }
         let capturedHostID = host.id
-        keybindingSet = Self.keybindingSetForStartingHostRefresh()
-        let presentation = await coordinator?.presentation(for: host)
+        // This runs again whenever the host's connection changes, and a brief
+        // disconnect shouldn't take away the theme and keys already showing.
+        let alreadyResolved = presentationHostID == capturedHostID
+        if !alreadyResolved { keybindingSet = Self.keybindingSetForStartingHostRefresh() }
+        // A selection restored at launch or on foreground isn't a reason to wake it.
+        let presentation = await coordinator?.presentation(for: host, wake: .never)
         let text = presentation?.ghosttyConfig
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
+        if presentation == nil, alreadyResolved { return }
+        presentationHostID = presentation == nil ? nil : capturedHostID
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
 
         let resolvedKeybindingSet = Self.keybindingSet(for: presentation)
@@ -1277,7 +1279,7 @@ public struct IPadRootLayout: View {
 
         await closeAndClearPaneEnvironment()
         let capturedHostID = host.id
-        let remoteHost = await coordinator?.connection(for: host)
+        let remoteHost = await coordinator?.connection(for: host, wake: .never)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         let environment = await buildPaneEnvironment(remoteHost: remoteHost)
@@ -1310,95 +1312,15 @@ public struct IPadRootLayout: View {
 private struct PaneEnvironmentRefreshKey: Hashable {
     let hostID: UUID?
     let isReady: Bool
+    /// These dials never wake a host, so they run again once it answers.
+    let isConnected: Bool
 }
 
 private struct HostPresentationRefreshKey: Hashable {
     let hostID: UUID?
     let isReady: Bool
-}
-
-// MARK: - HostMenu (private)
-
-/// @spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
-private struct HostMenu: View {
-    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
-    let selectedHost: Host?
-    @Bindable var hostStore: HostStore
-    @Bindable var appState: IPadAppState
-    @Bindable var browser: NearbyMacBrowser
-    @Environment(\.remoteConnectionCoordinator) private var coordinator
-
-    @State private var showingAddHost = false
-
-    var body: some View {
-        Menu {
-            // Saved hosts with a checkmark on the currently-selected
-            // one; tapping fires the standard host switch (clears
-            // worktree selection + focused pane). Filtered once: each
-            // `isPaired` reads the pinned-host store from disk.
-            let pairedHosts = hostStore.hosts.filter { coordinator?.isPaired($0) == true }
-            ForEach(pairedHosts) {
-                host in
-                Button {
-                    IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
-                } label: {
-                    if host.id == selectedHost?.id {
-                        Label(host.label, systemImage: "checkmark")
-                    } else {
-                        Text(host.label)
-                    }
-                }
-            }
-            if !pairedHosts.isEmpty {
-                Divider()
-            }
-            Button {
-                showingAddHost = true
-            } label: {
-                Label("Add Host…", systemImage: "plus")
-            }
-            Divider()
-            Toggle("Show project rail", isOn: $showsProjectRail)
-        } label: {
-            HStack(spacing: 4) {
-                Text(selectedHost?.label ?? "No host")
-                    .font(.body.weight(.semibold))
-                    // Middle-truncate long host labels so the menu
-                    // never crowds the trailing `+` action even at
-                    // the sidebar's minimum column width.
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(
-                        selectedHost == nil
-                            ? appState.theme.foreground.opacity(0.55)
-                            : appState.theme.foreground
-                    )
-                Image(systemName: "chevron.down")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(appState.theme.sidebarChevron)
-            }
-            // Cap the menu's intrinsic width so the host name
-            // truncates rather than pushing trailing toolbar items.
-            // The system handles spacing from the leading
-            // sidebar-toggle automatically when items share
-            // `.topBarLeading`.
-            .frame(maxWidth: 160, alignment: .leading)
-        }
-        .sheet(isPresented: $showingAddHost) {
-            NavigationStack {
-                AddHostView(browser: browser) { host in
-                    let savedHost = try hostStore.add(host)
-                    // Auto-select the freshly-added host so the sidebar
-                    // immediately fetches its worktree list.
-                    IPadRootLayout.applyHostSwitch(
-                        appState: appState,
-                        to: savedHost.id
-                    )
-                }
-            }
-        }
-        .task { await hostStore.loadIfNeeded() }
-    }
+    /// These dials never wake a host, so they run again once it answers.
+    let isConnected: Bool
 }
 
 /// @spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall keep workspace tabs and terminals below navigation chrome, extend the terminal tree to the bottom detail-column edge, and respect the sidebar boundary.

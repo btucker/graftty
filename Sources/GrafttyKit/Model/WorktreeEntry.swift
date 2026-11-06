@@ -99,6 +99,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var emojiChosenByUser: Bool = false
     /// Explicit sidebar pin; instruction files alone do not imply it.
     public var isPinned: Bool = false
+    /// Fractional order among pinned rows on every device. Nil when not pinned.
+    public var pinnedRank: String? = nil
     /// Pull origin in the main checkout; merge the local default in pinned agents.
     public var autoTrackEnabled: Bool = false
     /// Suppresses retries against the same upstream after an app restart.
@@ -212,7 +214,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, drawing, drawingHue, emojiChosenByUser, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
+        case id, path, branch, emoji, emojiSource, drawing, drawingHue, emojiChosenByUser, isPinned, pinnedRank, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID, agents, workspaceLayout
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -230,6 +232,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.drawingHue = try container.decodeIfPresent(Double.self, forKey: .drawingHue)
         self.emojiChosenByUser = try container.decodeIfPresent(Bool.self, forKey: .emojiChosenByUser) ?? false
         self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        self.pinnedRank = try container.decodeIfPresent(String.self, forKey: .pinnedRank)
         self.autoTrackEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoTrackEnabled) ?? false
         self.autoTrackLastAttempt = try container.decodeIfPresent(GitAutoTracking.Target.self, forKey: .autoTrackLastAttempt)
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)

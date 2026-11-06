@@ -149,7 +149,7 @@ struct TermTodo {
     func term_7_4() async throws { }
 
     @Test("""
-@spec TERM-7.5: When the user selects a worktree or pane row in the sidebar, the application shall promote the target pane's `NSView` to the window's first responder so subsequent keystrokes route to that pane without an intermediate click.
+@spec TERM-7.5: When the user selects a worktree in the sidebar, the application shall promote the target pane view to the workspace.
 """, .disabled("not yet implemented"))
     func term_7_5() async throws { }
 

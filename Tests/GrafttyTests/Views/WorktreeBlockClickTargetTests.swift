@@ -17,7 +17,6 @@ final class WorktreeBlockClickHarness: ObservableObject {
     @Published var headingFrames: [String: CGRect] = [:]
     @Published var blockFrames: [String: CGRect] = [:]
     @Published var questionFrames: [String: CGRect] = [:]
-    @Published var paneFrames: [PaneSlotID: CGRect] = [:]
     var selections: [String] = []
     var paneSelections: [PaneSlotID] = []
 
@@ -27,8 +26,8 @@ final class WorktreeBlockClickHarness: ObservableObject {
 }
 
 /// The production worktree column: `ProjectWorktreeColumn` hosting one
-/// `WorktreeBlock` per worktree, each with a `WorktreeRow` heading and
-/// `PaneTitleRow` children, as `SidebarView.worktreeBlock` composes them.
+/// `WorktreeBlock` per worktree, each with a `WorktreeRow` heading and a
+/// status line, as `SidebarView.worktreeBlock` composes them.
 /// The production worktree column only. The legacy `List` sidebar
 /// (`showsProjectRail == false`) hosts rows in an AppKit outline view that
 /// resolves presses through its own event loop, which synthesized events
@@ -49,20 +48,21 @@ private struct WorktreeBlockClickColumn: View {
         let repo = harness.repo
         let isActive = harness.state.selectedWorktreePath == worktree.path
         let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves : []
-        let groupsPanes = !paneLeaves.isEmpty
         return WorktreeBlock(
-            worktree: worktree, repoID: repo.id, isActive: isActive, isDropTarget: false,
-            groupsPanes: groupsPanes, theme: .fallback,
+            worktree: worktree, repoID: repo.id, isActive: isActive, theme: .fallback,
             appState: Binding(get: { harness.state }, set: { harness.state = $0 }),
             reorderingEnabled: harness.reorderingEnabled,
             onSelect: { harness.selections.append(worktree.path) },
-            onMovePane: { _, _ in }, onPaneTargeted: { _ in },
-            menu: { _ in NSMenu() }
+            menu: { _ in
+                let menu = NSMenu()
+                menu.addItem(withTitle: worktree.path, action: nil, keyEquivalent: "")
+                return menu
+            }
         ) {
             WorktreeRow(entry: worktree, isActive: isActive, displayName: worktree.branch,
                         isMainCheckout: worktree.path == repo.path, theme: .fallback,
-                        stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
-                .frame(minHeight: groupsPanes ? 28 : 44)
+                        stats: nil, baseRef: nil, prBadge: nil)
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
                     harness.headingFrames[worktree.path] = $0
@@ -70,28 +70,13 @@ private struct WorktreeBlockClickColumn: View {
                 // LazyVStack releases blocks that scroll out of view; drop
                 // their last frame so the harness never clicks a ghost.
                 .onDisappear { harness.headingFrames[worktree.path] = nil }
-        } panes: {
-            ForEach(paneLeaves, id: \.self) { terminalID in
-                Button {
-                    harness.selections.append(worktree.path)
-                } label: {
-                    PaneTitleRow(title: "shell", isActiveWorktree: isActive, isFocusedPane: false,
-                                 isBusy: false, theme: .fallback, attentionStyle: nil, portBindings: [])
-                }
-                .buttonStyle(.plain)
-                .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
-                .draggable(TransferablePaneSlotID(id: terminalID.id))
-                .rightClickMenu { NSMenu() }
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
-                    harness.paneFrames[terminalID] = $0
-                }
-                .onDisappear { harness.paneFrames[terminalID] = nil }
-            }
+        } status: {
             if let stop = worktree.unseenAgentStop {
                 let row = sidebarLocalWorktree(worktree, repo: repo,
                     owner: .init(deviceID: .init(value: "test"), deviceLabel: "Test", relayDepth: 0),
                     displayName: worktree.branch, titles: [:], liveness: [:], prBadge: nil)
-                SidebarWorktreeQuestionTarget(context: .init(worktree: row)) {
+                let context = SidebarWorktreeContext(worktree: row)
+                SidebarWorktreeStatusTarget(status: SidebarRowStatus.resolve(context: context, worktree: row, isAsleep: false), secondary: .secondary) {
                     if let slot = stop.paneSlotID.flatMap({ id in paneLeaves.first { $0.id.uuidString == id } }) {
                         harness.paneSelections.append(slot)
                     } else {
@@ -154,13 +139,10 @@ struct WorktreeBlockClickTargetTests {
 
         try await hosted.expectVisibleHeadingsSelect(scenario: "initial")
 
-        // A block above the rest gains two pane rows, pushing later rows down.
+        // A block above the rest changes state, which must not shift hit targets.
         hosted.setPanes(path: Self.grownPath, count: 2)
         try await hosted.settle()
         try await hosted.expectVisibleHeadingsSelect(scenario: "after a block grew")
-        for pane in hosted.harness.paneFrames.keys {
-            try await hosted.expectPaneClickSelects(pane)
-        }
 
         // Real scrolling: the clip view origin must move.
         let scrollView = try #require(hosted.scrollView)
@@ -179,26 +161,6 @@ struct WorktreeBlockClickTargetTests {
         hosted.setPanes(path: Self.grownPath, count: 0)
         try await hosted.settle()
         try await hosted.expectVisibleHeadingsSelect(scenario: "after the block collapsed")
-    }
-
-    @Test("@spec LAYOUT-2.117: When the user clicks the vertical padding inside a grouped worktree block's highlight, the application shall select that worktree.")
-    func groupedBlockPaddingSelectsTheWorktree() async throws {
-        let hosted = try await Hosted.make(rowCount: 4)
-        defer { hosted.tearDown() }
-        hosted.setPanes(path: Self.grownPath, count: 2)
-        try await hosted.settle()
-
-        let block = try #require(hosted.harness.blockFrames[Self.grownPath])
-        let heading = try #require(hosted.harness.headingFrames[Self.grownPath])
-        #expect(abs(heading.minY - block.minY - 8) < 0.5, "the grouped block carries 8pt of padding above its heading")
-        let lastPaneMaxY = try #require(hosted.harness.paneFrames.values.map(\.maxY).max())
-        #expect(abs(block.maxY - lastPaneMaxY - 8) < 0.5, "the grouped block carries 8pt of padding below its last pane")
-
-        for point in [CGPoint(x: block.midX, y: block.minY + 4), CGPoint(x: block.midX, y: block.maxY - 4)] {
-            let outcome = try await hosted.click(at: point)
-            #expect(outcome.selections == [Self.grownPath], "padding click at \(point) selected \(outcome.selections)")
-            #expect(outcome.paneSelections.isEmpty)
-        }
     }
 
     @Test("@spec LAYOUT-2.145: When the user clicks a local macOS worktree block, the application shall select that worktree, focus the requesting pane when its inline question is clicked, and preserve embedded controls and the previously selected agent tab.", arguments: [false, true])
@@ -225,7 +187,6 @@ struct WorktreeBlockClickTargetTests {
         let path = Self.grownPath
         hosted.setPanes(path: path, count: 2)
         try await hosted.settle()
-        for pane in hosted.harness.paneFrames.keys { try await hosted.expectPaneClickSelects(pane) }
         let index = try #require(hosted.harness.state.repos[0].worktrees.firstIndex { $0.path == path })
         let requestingPane = try #require(hosted.harness.state.repos[0].worktrees[index].splitTree.allLeaves.last)
         hosted.harness.state.selectedWorktreePath = path
@@ -238,6 +199,22 @@ struct WorktreeBlockClickTargetTests {
         let outcome = try await hosted.click(at: CGPoint(x: question.midX, y: question.midY))
         #expect(outcome.paneSelections == [requestingPane])
         #expect(outcome.selections.isEmpty)
+    }
+
+    @Test("@spec LAYOUT-2.217: When the user right-clicks a macOS worktree's status line, the application shall open that worktree's row menu.")
+    func statusLineRightClickOpensRowMenu() async throws {
+        let hosted = try await Hosted.make(rowCount: 3)
+        defer { hosted.tearDown() }
+        let path = hosted.harness.repo.worktrees[1].path
+        hosted.harness.state.repos[0].worktrees[1].recordAgentStop(.init(
+            agentName: "Codex", stoppedAt: Date(),
+            recap: .init(title: "Sidebar", completed: "Updated clicks", next: "Review", need: "Dismiss this?")))
+        try await hosted.settle()
+        let frame = try #require(hosted.harness.questionFrames[path])
+        let root = try #require(hosted.window.contentView)
+        let host = try #require(RightClickMenuHostView.innermostHost(
+            at: hosted.hosting.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil), in: root))
+        #expect(host.build?(host).items.map(\.title) == [path])
     }
 
     // MARK: - Hosting
@@ -289,7 +266,6 @@ struct WorktreeBlockClickTargetTests {
 
         func setPanes(path: String, count: Int) {
             guard let index = harness.state.repos[0].worktrees.firstIndex(where: { $0.path == path }) else { return }
-            harness.paneFrames = [:]
             if count == 0 {
                 harness.state.repos[0].worktrees[index].state = .closed
                 harness.state.repos[0].worktrees[index].splitTree = SplitTree(root: nil)
@@ -348,14 +324,6 @@ struct WorktreeBlockClickTargetTests {
             }
         }
 
-        func expectPaneClickSelects(_ pane: PaneSlotID) async throws {
-            let frame = try #require(harness.paneFrames[pane])
-            let outcome = try await click(at: CGPoint(x: frame.midX, y: frame.midY))
-            let owner = try #require(harness.repo.worktrees.first { $0.splitTree.containsLeaf(pane) })
-            #expect(outcome.paneSelections.isEmpty)
-            #expect(outcome.selections == [owner.path])
-        }
-
         /// Clicks like AppKit does: resolve the hit view from the window's
         /// root with the press as the current event, then deliver the press
         /// and release to it. SwiftUI-owned regions take the events through
@@ -402,5 +370,61 @@ struct WorktreeBlockClickTargetTests {
             for subview in view.subviews { found += find(type, in: subview) }
             return found
         }
+    }
+}
+
+@MainActor
+private final class IdentityFrames {
+    var byPath: [String: CGRect] = [:]
+}
+
+@MainActor
+struct WorktreeBlockIdentityMenuTests {
+    private static func menu(_ title: String) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
+        return menu
+    }
+
+    @Test("Right-clicking a row's identity opens the row menu unless the identity has a menu of its own.")
+    func identityRightClickOpensRowMenu() async throws {
+        let frames = IdentityFrames()
+        // As in production: the main checkout's project icon has no menu, a linked
+        // worktree's emoji has its own.
+        func block(_ path: String, identityMenu: String?) -> some View {
+            let worktree = WorktreeEntry(path: path, branch: path)
+            return WorktreeBlock(worktree: worktree, repoID: UUID(), isActive: false, theme: .fallback,
+                appState: .constant(AppState()), reorderingEnabled: false, onSelect: {},
+                menu: { _ in Self.menu(path) }) {
+                let identity = Color.gray.frame(width: 20, height: 20)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames.byPath[path] = $0 }
+                if let identityMenu { identity.rightClickMenu { Self.menu(identityMenu) } } else { identity }
+            } heading: {
+                Text(path).frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+            } status: {
+                EmptyView()
+            }
+        }
+        let host = NSHostingView(rootView: VStack(spacing: 3) {
+            block("/repo", identityMenu: nil)
+            block("/repo/feature", identityMenu: "emoji")
+        }.padding(10).frame(width: 300))
+        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        let root = try #require(window.contentView)
+        func menuTitles(at path: String) throws -> [String]? {
+            let frame = try #require(frames.byPath[path], "identities \(frames.byPath)")
+            let menuHost = try #require(RightClickMenuHostView.innermostHost(
+                at: host.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil), in: root))
+            return menuHost.build?(menuHost).items.map(\.title)
+        }
+        #expect(try menuTitles(at: "/repo") == ["/repo"])
+        #expect(try menuTitles(at: "/repo/feature") == ["emoji"])
     }
 }

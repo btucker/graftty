@@ -98,21 +98,14 @@ struct RemoteMacsSidebarTests {
             Divider()
             ProjectWorktreeColumn {
                 let entry = WorktreeEntry(path: "/local/feature", branch: "feature")
-                let node = SidebarWorktreeNode.worktree(entry, displayName: "feature")
-                SidebarWorktreeNodeRow(node: node, depth: 0, repositoryID: UUID(), expansion: .constant(.init()),
-                    statsByWorktreePath: [:], theme: .fallback, projectColumn: true) { entry, name in
-                    WorktreeRow(entry: entry, isActive: true, displayName: name, isMainCheckout: false,
-                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
-                        .frame(minHeight: 24)
-                        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
-                }.modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: true))
-                SidebarWorktreeNodeRow(node: .folder(path: "topic", name: "topic", children: [node]), depth: 0,
-                    repositoryID: UUID(), expansion: .constant(.init()), statsByWorktreePath: [:], theme: .fallback,
-                    projectColumn: true) { entry, name in
-                    WorktreeRow(entry: entry, isActive: false, displayName: name, isMainCheckout: false,
-                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                SidebarWorktreeRowLayout { Color.clear } content: {
+                    WorktreeRow(entry: entry, isActive: true, displayName: "feature", isMainCheckout: false,
+                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
                         .frame(minHeight: 24)
                 }
+                .padding(.leading, 6)
+                .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+                .padding(.vertical, SidebarWorktreeListStyle.macRowOuterInset)
             }.frame(width: 260)
         }.frame(height: 400).background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark)
         let hosting = NSHostingView(rootView: content)
@@ -138,7 +131,8 @@ struct RemoteMacsSidebarTests {
                 return (color?.redComponent ?? 0) > 0.2
             })
             #expect(abs(firstHighlight - 6) <= 1)
-            let highlightHeight = try #require((0..<100).first { y in
+            // Starts inside the highlight, below the space a row keeps above it.
+            let highlightHeight = try #require((6..<100).first { y in
                 let color = bitmap.colorAt(x: Int(CGFloat(columnStart + 14) * scale), y: Int(CGFloat(y) * scale))?.usingColorSpace(.deviceRGB)
                 return (color?.redComponent ?? 0) <= 0.2
             })
@@ -166,10 +160,12 @@ struct RemoteMacsSidebarTests {
     @Test("@spec LAYOUT-2.44: If the owning Mac does not advertise worktree editing, then the application shall disable remote worktree reorder actions.")
     func reorderRequiresOwningHostCapability() {
         let row = WorktreePanes(path: "/feature", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature", state: .closed,
-            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "worktree", projectID: "project"))
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "worktree", projectID: "project", isPinned: true))
         #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: [], query: ""))
         #expect(RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["project"], query: ""))
         #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["other"], query: ""))
+        #expect(RemoteWorktreeReorderPolicy.allowsWhileAsleep(row, query: ""))
+        #expect(!RemoteWorktreeReorderPolicy.allowsWhileAsleep(row, query: "x"))
         #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["project"], query: "feature"))
         let main = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "Project", displayBranch: "main", state: .closed,
             isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "main", projectID: "project"))
@@ -197,7 +193,7 @@ struct RemoteMacsSidebarTests {
         #expect(RemoteWorktreeReorderPolicy.areSiblings(legacyTask, row("legacy-home", membership: nil, isMain: true)))
     }
 
-    @Test("@spec LAYOUT-2.156: While a remote project uses recent activity order, the application shall disable temporary worktree reordering and preserve manual pinned worktree reordering.")
+    @Test("@spec LAYOUT-2.156: The application shall disable temporary worktree reordering on remote projects and preserve manual pinned worktree reordering.")
     func recentActivityPreventsTemporaryReordering() {
         func row(_ id: String, pinned: Bool) -> WorktreePanes {
             WorktreePanes(path: id, displayName: id, repoDisplayName: "Project", repositoryID: "repo", displayBranch: id,
@@ -206,30 +202,9 @@ struct RemoteMacsSidebarTests {
         }
         let task = row("fix", pinned: false)
         let role = row("architect", pinned: true)
-        #expect(!RemoteWorktreeReorderPolicy.allows(task, editableProjectIDs: ["project"], query: "", orderMode: .recentActivity))
-        #expect(RemoteWorktreeReorderPolicy.allows(role, editableProjectIDs: ["project"], query: "", orderMode: .recentActivity))
-        #expect(RemoteWorktreeReorderPolicy.allows(task, editableProjectIDs: ["project"], query: "", orderMode: .manual))
-        #expect(!RemoteWorktreeReorderPolicy.allows(role, editableProjectIDs: [], query: "", orderMode: .recentActivity))
-    }
-
-    @Test func unsupportedSortingDisablesNativePopupAndExplainsUpdate() async throws {
-        let help = "Update Graftty on the owning host to change worktree order."
-        let hosting = NSHostingView(rootView: SidebarWorktreeOrderControl(selection: .constant(.manual), helpText: help, color: .secondaryLabelColor)
-            .disabled(true).frame(width: 136, height: 28))
-        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 160, height: 40), styleMask: .borderless, backing: .buffered, defer: false)
-        window.contentView = hosting
-        window.orderFront(nil)
-        defer { window.orderOut(nil); window.contentView = nil }
-        try await Task.sleep(for: .milliseconds(100))
-        hosting.layoutSubtreeIfNeeded()
-        func find(_ view: NSView) -> NSPopUpButton? {
-            (view as? NSPopUpButton) ?? view.subviews.lazy.compactMap { find($0) }.first
-        }
-        let popup = try #require(find(hosting))
-        #expect(!popup.isEnabled)
-        #expect(popup.toolTip == help)
-        #expect(popup.selectedItem?.title == "Manual Order")
-        #expect(popup.menu?.items.map(\.title) == ["Manual Order", "Recent Activity"])
+        #expect(!RemoteWorktreeReorderPolicy.allows(task, editableProjectIDs: ["project"], query: ""))
+        #expect(RemoteWorktreeReorderPolicy.allows(role, editableProjectIDs: ["project"], query: ""))
+        #expect(!RemoteWorktreeReorderPolicy.allows(role, editableProjectIDs: [], query: ""))
     }
 
     @Test("empty sidebar projection still exposes Add Remote Mac")

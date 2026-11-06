@@ -12,6 +12,9 @@ public struct SidebarWorktreeListStyle: ViewModifier {
         #endif
     }
 
+    /// Space a Mac worktree row keeps outside its selection, above and below (LAYOUT-2.214).
+    public static var macRowOuterInset: CGFloat { 2.5 }
+
     public let projectColumn: Bool
 
     public init(projectColumn: Bool) { self.projectColumn = projectColumn }

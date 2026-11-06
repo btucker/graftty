@@ -152,7 +152,8 @@ struct RemoteBrowserButtonTests {
         gate.applicationWillEnterForeground()
         await gate.authenticateOnActivation()
         let root = RootView(hostStore: store, gate: gate, notifications: MobileAgentNotifications(defaults: defaults),
-            appState: IPadAppState(defaults: defaults), notificationIO: .init(fetch: { _ in [] }, reopen: { _, _ in }))
+            appState: IPadAppState(defaults: defaults), notificationIO: .init(fetch: { _ in [] }, reopen: { _, _ in }),
+            hostsNeedPins: true)
         let controller = UIHostingController(rootView: root
             .environment(\.horizontalSizeClass, .compact)
             .environment(\.scenePhase, .inactive)

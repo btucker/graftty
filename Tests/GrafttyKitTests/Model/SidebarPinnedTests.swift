@@ -52,9 +52,7 @@ struct SidebarPinnedTests {
         qa.attention = Attention(text: "Test", timestamp: Date(timeIntervalSince1970: 500))
         taskA.attention = Attention(text: "A", timestamp: Date(timeIntervalSince1970: 100))
         taskB.attention = Attention(text: "B", timestamp: Date(timeIntervalSince1970: 200))
-        var repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [architect, taskA, main, qa, taskB])
-        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["main", "architect", "qa", "a", "b"])
-        repo.worktreeOrderMode = .recentActivity
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [architect, taskA, main, qa, taskB])
         #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["main", "architect", "qa", "b", "a"])
         #expect(repo.worktrees.map(\.branch) == ["architect", "a", "main", "qa", "b"])
     }

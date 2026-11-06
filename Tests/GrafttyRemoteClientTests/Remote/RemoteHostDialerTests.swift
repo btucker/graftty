@@ -36,6 +36,32 @@ struct RemoteHostDialerTests {
         ) == [RemoteConnectionRoute(kind: .lan, baseURL: fallback)])
     }
 
+    @Test("@spec REMOTE-2.33: While a client connects in the background, it shall not send a wake to the host; it shall send one only when an interaction needs that host.")
+    func dialSendsWakeOnlyWhenAllowed() async throws {
+        let fixture = try DialerFixture()
+        let targets = [WakeOnLANTarget(macAddress: "02:00:5e:00:53:01", ipv4Address: "192.168.1.20")]
+        let hostID = fixture.hostDeviceID
+        let advertisement = try WakeOnLANAdvertisement(hostDeviceID: hostID, targets: targets, signingKey: fixture.hostKey)
+        var pinned = fixture.pinnedHost
+        pinned.wakeOnLAN = advertisement
+        for allowed in [false, true] {
+            let wakes = EventLog()
+            let transport = fixture.transport()
+            _ = try await RemoteHostDialer.negotiate(
+                ScriptedWebRTCLink(events: EventLog()),
+                signaling: SignalingClient(transport: transport, wake: { _ in wakes.append("wake"); return false }),
+                pinnedHost: pinned,
+                routes: [fixture.lanRoute],
+                clientKey: fixture.clientKey,
+                clientDeviceID: fixture.clientDeviceID,
+                replacingExistingConnection: false,
+                allowsWake: allowed,
+                connectedAt: { Date(timeIntervalSince1970: 1_800_000_100) }
+            )
+            #expect(wakes.values == (allowed ? ["wake"] : []))
+        }
+    }
+
     @Test("negotiate checkpoints after each network step and stamps the pin only after applying the answer")
     func negotiateAppliesAnswerThenRefreshesPin() async throws {
         let fixture = try DialerFixture()
@@ -55,6 +81,7 @@ struct RemoteHostDialerTests {
             clientKey: fixture.clientKey,
             clientDeviceID: fixture.clientDeviceID,
             replacingExistingConnection: false,
+            allowsWake: false,
             connectedAt: {
                 events.append("now")
                 return connectedAt
@@ -93,6 +120,7 @@ struct RemoteHostDialerTests {
                 clientKey: fixture.clientKey,
                 clientDeviceID: fixture.clientDeviceID,
                 replacingExistingConnection: false,
+                allowsWake: false,
                 connectedAt: { Date() },
                 checkpoint: {
                     events.append("checkpoint")

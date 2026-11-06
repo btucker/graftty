@@ -27,6 +27,24 @@ struct RootViewSizeClassTests {
         #expect(selection.session == nil)
     }
 
+    @Test("@spec IOS-4.67: When an iPhone opens an agent's terminal, the application shall start the terminal screen with the rows it already has for that host, so the terminal is not rebuilt and left blank when the worktree's agents arrive.")
+    func terminalScreenStartsWithKnownRows() throws {
+        let state = IPadAppState(defaults: try #require(UserDefaults(suiteName: "session-rows-\(UUID())")))
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let row = WorktreePanes(path: "/repo/emoji-clarify", displayName: "emoji-clarify", repoDisplayName: "graftty",
+            displayBranch: "emoji-clarify", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "agent", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil),
+            agents: [.init(id: "a", name: "Agent", provider: "claude", status: "running", sessionName: "agent")])
+        state.latestWorktrees = [row]
+        state.selectedHostId = host.id
+        let step = SessionStep(host: host, worktreePath: row.path, sessionName: "agent", title: "Agent")
+        #expect(RootView.sessionRows(for: step, appState: state) == [row])
+        // Another host's rows would name the wrong worktrees.
+        let other = SessionStep(host: Host(label: "Other", baseURL: URL(string: "https://other.local")!),
+            worktreePath: row.path, sessionName: "agent", title: "Agent")
+        #expect(RootView.sessionRows(for: other, appState: state).isEmpty)
+    }
+
     @Test func recentPaneChoiceUpdatesTheActualHostWorktreeAndPaneRoute() throws {
         let state = IPadAppState(defaults: try #require(UserDefaults(suiteName: "recent-selection-\(UUID())")))
         let host = Host(label: "Other Mac", baseURL: URL(string: "https://other.invalid")!)
@@ -69,15 +87,10 @@ struct RootViewSizeClassTests {
         #expect(state.selectedWorktreePath == "other")
         #expect(state.focusedPaneId == "third")
         #expect(RootView.compactSelection(appState: state, hosts: []) == nil)
-        RootView.applyCompactHost(host, to: state)
-        #expect(state.selectedWorktreePath == "other")
-        #expect(state.focusedPaneId == "third")
         let secondHost = Host(label: "Other Mac", baseURL: URL(string: "https://other.local")!)
-        RootView.applyCompactHost(secondHost, to: state)
-        #expect(state.selectedHostId == secondHost.id)
-        #expect(state.selectedWorktreePath == nil)
-        #expect(state.focusedPaneId == nil)
-        #expect(state.latestWorktrees.isEmpty)
+        state.select(hostID: secondHost.id, worktreePath: nil, paneID: nil)
+        state.latestWorktrees = []
+        state.worktreePickerProject = nil
         let hostOnly = RootView.compactSelection(appState: state, hosts: [host, secondHost])
         #expect(hostOnly?.host == secondHost)
         #expect(hostOnly?.session == nil)

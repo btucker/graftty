@@ -19,6 +19,7 @@ struct AddWorktreeSheet: View {
     let onPullDefaultBranch: () async -> String?
     let onSubmit: (String, BranchSelection, WorktreeAgentConfiguration) async -> String?
     let onCancel: () -> Void
+    let hostContext: AddWorktreeHostContext?
 
     @State private var controller: AddWorktreeFormController
     @State private var isSubmitting: Bool = false
@@ -37,7 +38,9 @@ struct AddWorktreeSheet: View {
         defaultBranchStatus: WebServer.RepoInfo.DefaultBranchStatus? = nil,
         onPullDefaultBranch: @escaping () async -> String? = { nil },
         onSubmit: @escaping (String, BranchSelection, WorktreeAgentConfiguration) async -> String?,
-        onCancel: @escaping () -> Void
+        onCancel: @escaping () -> Void,
+        existingBranch: String? = nil,
+        hostContext: AddWorktreeHostContext? = nil
     ) {
         self.repoDisplayName = repoDisplayName
         self.initialWorktreeName = initialWorktreeName
@@ -46,15 +49,37 @@ struct AddWorktreeSheet: View {
         self.onPullDefaultBranch = onPullDefaultBranch
         self.onSubmit = onSubmit
         self.onCancel = onCancel
-        _controller = State(initialValue: AddWorktreeFormController(initialWorktreeName: initialWorktreeName))
+        self.hostContext = hostContext
+        let controller = AddWorktreeFormController(initialWorktreeName: initialWorktreeName)
+        controller.carry(existingBranch: existingBranch, entries: branchEntries)
+        _controller = State(initialValue: controller)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Add Worktree to \(repoDisplayName)")
+            Text("Add Worktree to \(hostContext?.projectName ?? repoDisplayName)")
                 .font(.headline)
 
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
+                if let hostContext, AddWorktreeHostChoice.showsRow(hostContext.choices) {
+                    GridRow {
+                        Text("Host:")
+                            .foregroundStyle(.secondary)
+                        Picker("Host", selection: Binding(
+                            get: { hostContext.selectedID },
+                            set: { id in
+                                guard id != hostContext.selectedID else { return }
+                                hostContext.onSelect(id, controller.worktreeName, controller.existingSelection?.name)
+                            }
+                        )) {
+                            ForEach(hostContext.choices) { choice in
+                                Text(choice.label).tag(choice.id).selectionDisabled(!choice.isSelectable)
+                            }
+                        }
+                        .labelsHidden()
+                        .disabled(isSubmitting)
+                    }
+                }
                 GridRow {
                     Text("Worktree name:")
                         .foregroundStyle(.secondary)

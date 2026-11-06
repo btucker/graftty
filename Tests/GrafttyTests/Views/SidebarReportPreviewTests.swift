@@ -25,19 +25,17 @@ struct SidebarReportPreviewTests {
         let worktree = WorktreeEntry(path: "/wt", branch: "task", state: .running)
         let repo = RepoEntry(path: "/repo", displayName: "Project", worktrees: [worktree])
         let host = NSHostingView(rootView: WorktreeBlock(
-            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
-            groupsPanes: true, theme: .fallback, appState: .constant(AppState(repos: [repo])),
-            reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
-            onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
+            worktree: worktree, repoID: repo.id, isActive: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
+            reorderingEnabled: true, onSelect: { selections += 1 }, menu: { _ in NSMenu() }
         ) {
             HStack {
             WorktreeRow(entry: worktree, isActive: false, displayName: "Worktree",
-                        isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                        isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil)
             SidebarReportButton(controller: controller, context: context, theme: .fallback)
                 .frame(width: 20, height: 20)
                 .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.reportButton: $0] }
             }
-        } panes: {
+        } status: {
             SidebarWorktreeQuestion(context: context).padding(.leading, 33)
         }.frame(width: 380).background(GhosttyTheme.fallback.sidebarBackground).foregroundStyle(GhosttyTheme.fallback.foreground))
         let window = makeWindow()
@@ -116,14 +114,6 @@ struct SidebarReportPreviewTests {
             view.layoutSubtreeIfNeeded()
             try capture(view, name: theme.isDark ? "report-dark" : "report-light")
         }
-    }
-
-    @Test("@spec LAYOUT-2.134: When a worktree question's pane is not displayed, the application shall show its question beneath the worktree instead of hiding it.")
-    func questionSurvivesMissingPaneRows() {
-        #expect(SidebarView.showsWorktreeQuestion(questionPaneID: "agent", displayedPaneSessions: []))
-        #expect(SidebarView.showsWorktreeQuestion(questionPaneID: "agent", displayedPaneSessions: ["shell"]))
-        #expect(SidebarView.showsWorktreeQuestion(questionPaneID: nil, displayedPaneSessions: ["shell"]))
-        #expect(!SidebarView.showsWorktreeQuestion(questionPaneID: "agent", displayedPaneSessions: ["agent", "shell"]))
     }
 
     private func findDragSources(_ view: NSView) -> [WorktreeDragSourceView] {

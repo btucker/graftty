@@ -28,9 +28,9 @@ public struct RootView: View {
     /// transitions on the iPad path. `body` injects this one instance as
     /// `\.remoteConnectionCoordinator` for both size classes, so a host
     /// negotiated once from either surface is cached for the other.
-    @State private var coordinator = RemoteConnectionCoordinator(
-        connectionsAllowedInitially: false
-    )
+    @State private var coordinator: RemoteConnectionCoordinator
+    @State private var feed: MultiHostFeed
+    @State private var showsHosts = false
     @State private var nearbyMacBrowser = NearbyMacBrowser()
     @State private var projectIconCache = ProjectIconCache()
     @State private var worktreeDrawingCache = WorktreeDrawingCache()
@@ -42,7 +42,11 @@ public struct RootView: View {
     private var notificationIO: NotificationIO?
     private var notificationConnectionProvider: RemoteConnectionProvider?
 
-    public init() {}
+    public init() {
+        let coordinator = RemoteConnectionCoordinator(connectionsAllowedInitially: false)
+        _coordinator = State(initialValue: coordinator)
+        _feed = State(initialValue: MultiHostFeed(coordinator: coordinator))
+    }
 
     // The isolated native interaction host supplies controlled remote I/O while
     // retaining this view's real lifecycle, notification delegate and navigation.
@@ -50,11 +54,23 @@ public struct RootView: View {
         appState: IPadAppState, notificationIO: NotificationIO,
         connectionProvider: RemoteConnectionProvider? = nil,
         retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil,
+        hostsNeedPins: Bool = false,
         projectIconCache: ProjectIconCache? = nil) {
         _hostStore = State(initialValue: hostStore)
         _gate = State(initialValue: gate)
         _notifications = State(initialValue: notifications)
         _iPadAppState = State(initialValue: appState)
+        let coordinator = RemoteConnectionCoordinator(connectionsAllowedInitially: false)
+        _coordinator = State(initialValue: coordinator)
+        // The interaction host supplies rows through its controlled I/O.
+        _feed = State(initialValue: MultiHostFeed(coordinator: coordinator, updates: { host in
+            AsyncStream { continuation in
+                Task { @MainActor in
+                    if let rows = try? await notificationIO.fetch(host) { continuation.yield(.frame(.snapshot(rows))) }
+                    continuation.finish()
+                }
+            }
+        }, isPaired: { hostsNeedPins ? coordinator.isPaired($0) : true }))
         self.notificationIO = notificationIO
         self.notificationConnectionProvider = connectionProvider
         if let retainedPanes { _retainedPanes = State(initialValue: retainedPanes) }
@@ -62,6 +78,14 @@ public struct RootView: View {
     }
 
     public var body: some View {
+        rootContent
+            .environment(\.multiHostFeed, feed)
+            .modifier(RootFeedObserver(feed: feed, hostStore: hostStore, appState: iPadAppState,
+                isReady: scenePhase != .background && gate.state == .unlocked,
+                isRegular: horizontalSizeClass == .regular))
+    }
+
+    private var rootContent: some View {
         ZStack {
             switch horizontalSizeClass {
             case .regular:
@@ -119,8 +143,8 @@ public struct RootView: View {
         }
         .onChange(of: iPadAppState.latestWorktrees) { _, _ in recordSelectedPane() }
         .onChange(of: iPadAppState.selectedHostId) { _, _ in
-            retainedPanes.stopAll()
-            // Project IDs are unique only within a host: a headless host's are repo paths.
+            // IOS-4.63: project IDs are unique only within a host (a headless
+            // host's are repo paths), so images from another host can't be reused.
             projectIconCache.reset()
             worktreeDrawingCache.reset()
         }
@@ -254,8 +278,7 @@ public struct RootView: View {
             return nil
         }
         var path = NavigationPath()
-        path.append(host)
-        if showsProjectRail, let project { path.append(ProjectStep(host: host, project: project)) }
+        if showsProjectRail, let project { path.append(ProjectStep(project: project)) }
         applyCompactWorktreeSelection(row, host: host, project: project, appState: appState, navigationPath: &path)
         return path
     }
@@ -407,18 +430,33 @@ public struct RootView: View {
         )
     }
 
+    /// With nothing paired, the root is where pairing happens.
+    @ViewBuilder
+    private var compactRoot: some View {
+        if !hostStore.hasLoaded {
+            Color.clear
+        } else if feed.hosts.isEmpty {
+            HostPickerView(store: hostStore, browser: nearbyMacBrowser)
+        } else {
+            compactPicker()
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { showsHosts = true } label: { Image(systemName: "gearshape") }
+                            .accessibilityLabel("Hosts")
+                    }
+                }
+                .sheet(isPresented: $showsHosts) {
+                    NavigationStack { HostPickerView(store: hostStore, browser: nearbyMacBrowser) }
+                }
+        }
+    }
+
     @ViewBuilder
     private var compactBody: some View {
         NavigationStack(path: $navigationPath) {
-            HostPickerView(
-                store: hostStore,
-                browser: nearbyMacBrowser
-            )
-                .navigationDestination(for: Host.self) { host in
-                    compactPicker(host: host)
-                }
+            compactRoot
                 .navigationDestination(for: ProjectStep.self) { step in
-                    compactPicker(host: step.host, project: step.project)
+                    compactPicker(project: step.project)
                 }
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
@@ -448,6 +486,7 @@ public struct RootView: View {
                                                                 showsProjectRail: showsProjectRail)
                                       },
                                       sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes,
+                                      attentionWorktrees: Self.sessionRows(for: step, appState: iPadAppState),
                                       remoteConnectionProvider: notificationConnectionProvider)
                         .id(step.paneIdentity)
                         .onAppear {
@@ -458,25 +497,34 @@ public struct RootView: View {
         }
     }
 
-    private func compactPicker(host: Host, project: SidebarProject? = nil) -> some View {
+    /// A row on another host moves the selection there, with that host's rows.
+    private func adoptHost(_ host: Host) {
+        guard iPadAppState.selectedHostId != host.id else { return }
+        iPadAppState.selectedHostId = host.id
+        iPadAppState.latestWorktrees = feed.state.rawRows(of: host.id)
+    }
+
+    private func compactPicker(project: SidebarProject? = nil) -> some View {
         WorktreePickerView(
-            host: host,
-            onSelect: { wt in
+            feed: feed,
+            onSelect: { host, wt in
+                adoptHost(host)
                 Self.applyCompactWorktreeSelection(wt, host: host, project: project, appState: iPadAppState,
                                                    navigationPath: &navigationPath)
             },
-            onSelectPane: { worktree, leaf in
+            onSelectPane: { host, worktree, leaf in
+                adoptHost(host)
                 Self.applyCompactPaneSelection(leaf, in: worktree, host: host, project: project,
                                                appState: iPadAppState, navigationPath: &navigationPath)
             },
             navigation: iPadAppState.sidebarNavigation,
             project: project,
-            onSelectWorktreeDetail: { worktree in
+            onSelectWorktreeDetail: { host, worktree in
+                adoptHost(host)
                 iPadAppState.select(hostID: host.id, worktreePath: worktree.path, paneID: iPadAppState.focusedPaneId)
                 navigationPath.append(WorktreeStep(host: host, worktree: worktree, project: project))
             }
         )
-        .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
         .task {
             if let project,
                iPadAppState.sidebarNavigation.selectedProjectID != project.id {
@@ -492,8 +540,7 @@ public struct RootView: View {
         let session: SessionStep?
         var path: NavigationPath {
             var result = NavigationPath()
-            result.append(host)
-            if let project { result.append(ProjectStep(host: host, project: project)) }
+            if let project { result.append(ProjectStep(project: project)) }
             if let session { result.append(session) }
             else if let worktree { result.append(WorktreeStep(host: host, worktree: worktree, project: project)) }
             return result
@@ -518,11 +565,6 @@ public struct RootView: View {
         return CompactSelection(host: host, project: project, worktree: worktree, session: session)
     }
 
-    static func applyCompactHost(_ host: Host, to appState: IPadAppState) {
-        guard appState.selectedHostId != host.id else { return }
-        IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
-    }
-
     /// Compact picker row tap: select the worktree's first pane and push its
     /// terminal, or the worktree detail when it has no single session.
     static func applyCompactWorktreeSelection(_ wt: WorktreePanes, host: Host, project: SidebarProject?,
@@ -532,8 +574,13 @@ public struct RootView: View {
             navigationPath.append(WorktreeStep(host: host, worktree: wt, project: project))
             return
         }
-        appState.select(hostID: host.id, worktreePath: wt.path, paneID: wt.layout?.leaves.first?.sessionName)
-        switch MobileNavigationDecision.decide(layout: wt.layout) {
+        let decision = MobileNavigationDecision.decide(worktree: wt, context: appState.sidebarNavigation.worktreeContext(wt))
+        if case let .session(sessionName, _) = decision {
+            appState.select(hostID: host.id, worktreePath: wt.path, paneID: sessionName)
+        } else {
+            appState.select(hostID: host.id, worktreePath: wt.path, paneID: wt.layout?.leaves.first?.sessionName)
+        }
+        switch decision {
         case let .session(sessionName, title):
             navigationPath.append(SessionStep(host: host, worktreePath: wt.path, sessionName: sessionName, title: title,
                 worktreeProject: project ?? SidebarProjection.projects([wt]).first))
@@ -551,6 +598,13 @@ public struct RootView: View {
             navigationPath.append(SessionStep(host: host, worktreePath: worktree.path, sessionName: sessionName,
                 title: title, worktreeProject: project ?? SidebarProjection.projects([worktree]).first))
         }
+    }
+
+    /// @spec IOS-4.67
+    /// The rows a terminal screen starts with, so it knows its agents on its
+    /// first layout instead of rebuilding the terminal when they arrive.
+    static func sessionRows(for step: SessionStep, appState: IPadAppState) -> [WorktreePanes] {
+        appState.selectedHostId == step.host.id ? appState.latestWorktrees : []
     }
 
     static func applyCompactSession(_ step: SessionStep, to appState: IPadAppState) {
@@ -593,8 +647,49 @@ public struct RootView: View {
 
 /// @spec IOS-4.38: When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.
 struct ProjectStep: Hashable {
-    let host: Host
     let project: SidebarProject
+}
+
+/// Runs the feed while the app can hold connections, and keeps the selected
+/// host's rows current on the compact path.
+private struct RootFeedObserver: ViewModifier {
+    let feed: MultiHostFeed
+    let hostStore: HostStore
+    let appState: IPadAppState
+    let isReady: Bool
+    let isRegular: Bool
+
+    private struct Key: Hashable {
+        let hosts: [Host]
+        let isReady: Bool
+    }
+
+    func body(content: Content) -> some View {
+        content
+            // Before the first frame's layout settles, so the root isn't briefly
+            // the pairing screen for someone who has hosts.
+            .onChange(of: hostStore.hosts, initial: true) { _, hosts in
+                feed.setHosts(hosts)
+                // Forgetting a host from the Hosts screen ends its selection.
+                if hostStore.hasLoaded, let id = appState.selectedHostId, !hosts.contains(where: { $0.id == id }) {
+                    appState.select(hostID: nil, worktreePath: nil, paneID: nil)
+                    appState.latestWorktrees = []
+                }
+            }
+            .task(id: Key(hosts: hostStore.hosts, isReady: isReady)) {
+                await hostStore.loadIfNeeded()
+                feed.setHosts(hostStore.hosts)
+                guard isReady else { return }
+                await feed.observe()
+            }
+            .onChange(of: feed.state) { _, state in
+                // The regular layout's IPadWorktreeFeed does more with each frame.
+                guard !isRegular, let id = appState.selectedHostId, state.isLive(id) else { return }
+                let rows = state.rawRows(of: id)
+                // Another host's frame leaves this host's rows as they were.
+                if appState.latestWorktrees != rows { appState.latestWorktrees = rows }
+            }
+    }
 }
 
 /// Picked a worktree, now show its pane tree.
@@ -633,9 +728,8 @@ struct SessionStep: Hashable {
 
     func worktreePickerPath(showsProjectRail: Bool) -> NavigationPath {
         var path = NavigationPath()
-        path.append(host)
         if showsProjectRail, let project = worktreeProject {
-            path.append(ProjectStep(host: host, project: project))
+            path.append(ProjectStep(project: project))
         }
         return path
     }

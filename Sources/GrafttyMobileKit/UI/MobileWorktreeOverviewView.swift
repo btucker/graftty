@@ -32,7 +32,8 @@ struct MobileWorktreeIdentityHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(worktree.repoDisplayName).font(.caption).foregroundStyle(theme.foreground.opacity(0.65))
+            Text([worktree.repoDisplayName, worktree.origin?.deviceLabel].compactMap { $0 }.joined(separator: " · "))
+                .font(.caption).foregroundStyle(theme.foreground.opacity(0.65))
             HStack(spacing: 8) {
                 if let project {
                     WorktreeIdentityView(identity: worktree.iconIdentity, project: project,
@@ -41,8 +42,12 @@ struct MobileWorktreeIdentityHeader: View {
                 }
                 Text(worktree.displayName).font(.title3.weight(.semibold)).lineLimit(1).truncationMode(.middle)
             }
-            if let badge = worktree.prBadge {
-                SidebarPRBadge(badge: badge).padding(.top, 2)
+            if worktree.prBadge != nil || worktree.stats?.isEmpty == false {
+                HStack(spacing: 8) {
+                    if let badge = worktree.prBadge { SidebarPRBadge(badge: badge) }
+                    DivergenceGutter(stats: worktree.stats, theme: theme)
+                }
+                .padding(.top, 2)
             }
             if let purpose {
                 Text(purpose).font(.subheadline).foregroundStyle(theme.foreground.opacity(0.82))

@@ -24,16 +24,6 @@ struct PwdTodo {
     func pwd_1_3() async throws { }
 
     @Test("""
-@spec PWD-1.4: While a pane row is rendered in the sidebar (a `running`-state worktree's leaf row per the `STATE` section semantics), the application shall make the row a drag source whose payload identifies the pane. While a worktree row in the same repository is rendered, the application shall make it a drop target that accepts such a payload and route the drop through the same reassignment path as `PWD-1.1` / `PWD-1.3` — i.e. via the manual-routing pipeline in `PWD-2.x`. Drops onto worktree rows in a different repository shall be refused (cross-repo moves are out of scope, matching `PWD-1.3`).
-""", .disabled("not yet implemented"))
-    func pwd_1_4() async throws { }
-
-    @Test("""
-@spec PWD-1.5: While a drag from a pane row is in flight and the user hovers over a worktree row, the application shall render a visual highlight on that worktree row distinct from the active-worktree highlight defined by `LAYOUT-2.11` so the user can see the row is a possible drop target. The highlight is rendered for any hovered worktree row regardless of repo membership; the cross-repo refusal from `PWD-1.4` happens at drop time so the in-flight visual signal isn't required to peek into the payload's source repo.
-""", .disabled("not yet implemented"))
-    func pwd_1_5() async throws { }
-
-    @Test("""
 @spec PWD-2.1: When the destination worktree differs from the current worktree, the application shall remove the pane from the source worktree's split tree and insert it into the destination worktree's split tree.
 """, .disabled("not yet implemented"))
     func pwd_2_1() async throws { }

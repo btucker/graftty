@@ -49,10 +49,10 @@ private struct HostedSidebarScrollView: View {
                     harness.selections.append($0)
                     harness.state.selectedWorktreePath = $0
                 },
-                onSelectPane: { _, _ in }, onSelectRemoteMac: { _ in }, onSelectRemoteWorktree: { _, _ in },
-                onSelectRemotePane: { _, _, _ in }, onAddRemoteWorktree: { _, _ in }, onDeleteRemoteWorktree: { _, _ in },
+                onSelectRemoteMac: { _ in }, onSelectRemoteWorktree: { _, _ in }, onWakeRemoteWorktree: { _, _ in },
+                onAddRemoteWorktree: { _, _ in }, onAddRemoteWorktreeWithHost: { _, _, _, _, _ in }, onDeleteRemoteWorktree: { _, _ in },
                 onAddRemoteMac: {}, onAddRepo: {}, onAddPath: { _ in }, onRemoveRepo: { _ in }, onInitializeGit: { _ in },
-                onStopWorktree: { _ in }, onDeleteWorktree: { harness.deleteRequests.append(($0, $1)) }, onMovePane: { _, _ in },
+                onStopWorktree: { _ in }, onDeleteWorktree: { harness.deleteRequests.append(($0, $1)) },
                 onAddWorktree: { _, _, _, _ in nil }, pendingAddWorktree: .constant(nil))
                 .environmentObject(harness.web)
                 .environmentObject(PortBindingsModel())
@@ -166,10 +166,6 @@ final class SidebarScrollLayoutTests: XCTestCase {
         XCTAssertTrue(abs(dividerFrame.width - content.width) <= 1)
         XCTAssertTrue(dividerFrame.height == 1)
         XCTAssertTrue(!divider.visibleRect.isEmpty)
-        let popup = try XCTUnwrap(Self.find(NSPopUpButton.self, in: hosted.hosting).first {
-            $0.accessibilityLabel() == "Worktree order"
-        })
-        XCTAssertTrue(dividerFrame.maxY <= popup.convert(popup.bounds, to: hosted.hosting).minY)
         let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
             pixelsWide: Int(divider.bounds.width) * bitmapScale,
             pixelsHigh: bitmapScale,
@@ -231,7 +227,7 @@ final class SidebarScrollLayoutTests: XCTestCase {
         XCTAssertTrue(selectedRow.convert(selectedRow.bounds, to: hosted.hosting) == originalFrame)
     }
 
-    /// @spec LAYOUT-2.89: While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Sort order and Add Worktree line fixed above its viewport in both macOS sidebar modes.
+    /// @spec LAYOUT-2.89: While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Add Worktree line fixed above its viewport in both macOS sidebar modes.
     func testOrdinaryScrollKeepsPinnedRowsFixed() async throws {
         for rail in [false, true] {
             try await ordinaryScrollKeepsPinnedRowsFixed(rail: rail)
@@ -246,8 +242,6 @@ final class SidebarScrollLayoutTests: XCTestCase {
         let ordinary = try XCTUnwrap(hosted.enclosingScroll(task))
         let originalPinned = pinned.convert(pinned.bounds, to: hosted.hosting)
         let originalTask = task.convert(task.bounds, to: hosted.hosting)
-        let sort = try XCTUnwrap(Self.find(NSPopUpButton.self, in: hosted.hosting).first)
-        let originalSort = sort.convert(sort.bounds, to: hosted.hosting)
         ordinary.contentView.scroll(to: CGPoint(x: 0, y: 120))
         ordinary.reflectScrolledClipView(ordinary.contentView)
         try await hosted.settle()
@@ -255,7 +249,6 @@ final class SidebarScrollLayoutTests: XCTestCase {
         XCTAssertTrue(pinned.convert(pinned.bounds, to: hosted.hosting) == originalPinned)
         XCTAssertTrue(task.convert(task.bounds, to: hosted.hosting).minY != originalTask.minY)
         XCTAssertTrue(hosted.enclosingScroll(pinned) !== ordinary)
-        XCTAssertTrue(sort.convert(sort.bounds, to: hosted.hosting) == originalSort)
     }
 
     /// @spec LAYOUT-2.119: If pinned agents exceed the available sidebar height, then the application shall scroll them independently within the usable sidebar height, keep the sort line fixed, reserve 96 points for ordinary worktrees when space permits, and otherwise fit all pinned agents by default.
@@ -281,14 +274,11 @@ final class SidebarScrollLayoutTests: XCTestCase {
         } else {
             XCTAssertTrue(try XCTUnwrap(pinned.documentView).bounds.height > pinned.contentView.bounds.height)
             let oldOrdinaryOrigin = ordinary.contentView.bounds.origin
-            let sort = try XCTUnwrap(Self.find(NSPopUpButton.self, in: hosted.hosting).first)
-            let sortFrame = sort.convert(sort.bounds, to: hosted.hosting)
             pinned.contentView.scroll(to: CGPoint(x: 0, y: 100))
             pinned.reflectScrolledClipView(pinned.contentView)
             try await hosted.settle()
             XCTAssertTrue(pinned.contentView.bounds.origin.y == 100)
             XCTAssertTrue(ordinary.contentView.bounds.origin == oldOrdinaryOrigin)
-            XCTAssertTrue(sort.convert(sort.bounds, to: hosted.hosting) == sortFrame)
             for height in [340.0, 280.0] {
                 hosted.window.setContentSize(NSSize(width: 900, height: height))
                 try await hosted.settle()
@@ -438,70 +428,6 @@ final class SidebarScrollLayoutTests: XCTestCase {
         }
     }
 
-    /// AppKit menu cancellation can stop the caller's CFRunLoop. Swift's
-    /// async main exits the test process if that is its outer run loop, so
-    /// keep native tracking inside a nested loop owned by this probe.
-    @MainActor
-    private final class NativeMenuDispatch {
-        let window: NSWindow
-        let event: NSEvent
-        let releaseEvent: NSEvent
-        let popup: NSPopUpButton
-        let selectionItem: NSMenuItem
-        var attemptedSelection = false
-        var didRun = false
-        var fallbackFired = false
-        init(window: NSWindow, event: NSEvent, releaseEvent: NSEvent, popup: NSPopUpButton, selectionItem: NSMenuItem) {
-            self.window = window; self.event = event; self.releaseEvent = releaseEvent; self.popup = popup
-            self.selectionItem = selectionItem
-        }
-        func perform() {
-            let timer = Timer(timeInterval: 0.01, repeats: false) { _ in
-                MainActor.assumeIsolated { self.run() }
-            }
-            RunLoop.main.add(timer, forMode: .default)
-            defer { timer.invalidate() }
-            CFRunLoopRunInMode(.defaultMode, 2, false)
-        }
-        private func run() {
-            var beganTracking = false
-            let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
-                object: popup.menu, queue: .main) { _ in
-                MainActor.assumeIsolated { beganTracking = true }
-            }
-            // Press the actual visible native menu item through its public
-            // accessibility action, after pointer input starts menu tracking.
-            let selection = Timer(timeInterval: 0.05, repeats: true) { _ in
-                MainActor.assumeIsolated {
-                    guard beganTracking, !self.attemptedSelection else { return }
-                    self.attemptedSelection = true
-                    _ = self.selectionItem.accessibilityPerformPress()
-                }
-            }
-            RunLoop.main.add(selection, forMode: .eventTracking)
-            let fallback = Timer(timeInterval: 1, repeats: false) { _ in
-                MainActor.assumeIsolated {
-                    self.fallbackFired = true
-                    self.popup.menu?.cancelTrackingWithoutAnimation()
-                }
-            }
-            RunLoop.main.add(fallback, forMode: .eventTracking)
-            defer {
-                selection.invalidate(); fallback.invalidate()
-                NotificationCenter.default.removeObserver(observer)
-            }
-            NSApp.finishLaunching()
-            // mouseDown enters native menu tracking synchronously. Its
-            // matching release must already be available to that event loop.
-            NSApp.postEvent(releaseEvent, atStart: true)
-            window.sendEvent(event)
-            didRun = true
-            CFRunLoopStop(CFRunLoopGetCurrent())
-        }
-    }
-
-    @MainActor
-    private final class MenuTracking { var menu: NSMenu? }
 
     @MainActor
     fileprivate final class Hosted {
@@ -528,53 +454,6 @@ final class SidebarScrollLayoutTests: XCTestCase {
             window.appearance = NSAppearance(named: .darkAqua)
             window.contentView = hosting
             window.orderFront(nil)
-        }
-        func expectSortOpensAndSelects(_ mode: WorktreeOrderMode) async throws {
-            for probe in 0..<3 {
-                // SwiftUI may replace the native control when AppState
-                // updates. Probe the view currently attached to the window.
-                let popup = try XCTUnwrap(SidebarScrollLayoutTests.find(NSPopUpButton.self, in: hosting).first {
-                    $0.accessibilityLabel() == "Worktree order"
-                })
-                let sources = SidebarScrollLayoutTests.find(WorktreeDragSourceView.self, in: hosting)
-                let frame = popup.convert(popup.bounds, to: hosting)
-                XCTAssertGreaterThanOrEqual(frame.height, 28)
-                let point = [CGPoint(x: frame.midX, y: frame.midY),
-                             CGPoint(x: frame.minX + 2, y: frame.minY + 2),
-                             CGPoint(x: frame.maxX - 2, y: frame.maxY - 2)][probe]
-                let location = hosting.convert(point, to: nil)
-                let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: window)
-                let up = try NSEvent.syntheticClick(.leftMouseUp, at: location, in: window)
-                for source in sources { source.currentEvent = { down } }
-                defer { for source in sources { source.currentEvent = { NSApp.currentEvent } } }
-                let root = try XCTUnwrap(window.contentView)
-                let hit = root.hitTest(root.superview?.convert(location, from: nil) ?? location)
-                XCTAssertTrue(hit === popup || hit?.isDescendant(of: popup) == true,
-                    "sort click at \(point) routed to \(String(describing: hit))")
-                let tracking = MenuTracking()
-                let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
-                    object: popup.menu, queue: .main) { note in
-                    MainActor.assumeIsolated { tracking.menu = note.object as? NSMenu }
-                }
-                defer { NotificationCenter.default.removeObserver(observer) }
-                let selectionItem = try XCTUnwrap(popup.menu?.items.first {
-                    $0.title == (mode == .manual ? "Manual Order" : "Recent Activity")
-                })
-                let dispatch = NativeMenuDispatch(window: window, event: down, releaseEvent: up, popup: popup,
-                    selectionItem: selectionItem)
-                dispatch.perform()
-                XCTAssertTrue(dispatch.didRun)
-                XCTAssertTrue(dispatch.attemptedSelection)
-                XCTAssertFalse(dispatch.fallbackFired, "Native menu selection timed out at probe \(probe)")
-                let menu = try XCTUnwrap(tracking.menu)
-                XCTAssertTrue(menu.items.map(\.title).contains("Manual Order"))
-                XCTAssertTrue(menu.items.map(\.title).contains("Recent Activity"))
-                try await settle()
-                XCTAssertEqual(harness.state.repos[0].worktreeOrderMode, mode,
-                    "mode \(mode), probe \(probe), native selection \(popup.indexOfSelectedItem)")
-                XCTAssertEqual(popup.selectedItem?.title, selectionItem.title)
-                XCTAssertTrue(harness.selections.isEmpty)
-            }
         }
         func dragView(named name: String) throws -> WorktreeDragSourceView {
             let row = try XCTUnwrap(harness.state.repos[0].worktrees.first { $0.branch == name })
@@ -690,31 +569,8 @@ final class SidebarSearchNativeTests: XCTestCase {
     }
 }
 
-/// Native menu tracking stops the Swift Testing async-main run loop on
-/// affected Swift runtimes. XCTest provides a separate AppKit test process.
-@MainActor
-final class SidebarSortNativeTests: XCTestCase {
-    /// @spec LAYOUT-2.118: When the user clicks the visible sidebar sort dropdown, the application shall open its order choices and apply the selected order without selecting a worktree, including after scrolling and resizing, with a target at least 28 points tall.
-    func testSortTargetsInBothSidebarModes() async throws {
-        for rail in [false, true] {
-            let hosted = try await SidebarScrollLayoutTests.Hosted.make(pinnedCount: 1, rail: rail)
-            defer { hosted.tearDown() }
-            try await hosted.expectSortOpensAndSelects(.recentActivity)
-            let ordinary = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "task-0")))
-            ordinary.contentView.scroll(to: CGPoint(x: 0, y: 120))
-            ordinary.reflectScrolledClipView(ordinary.contentView)
-            try await hosted.settle()
-            XCTAssertEqual(ordinary.contentView.bounds.origin.y, 120)
-            try await hosted.expectSortOpensAndSelects(.manual)
-            hosted.window.setContentSize(NSSize(width: 740, height: 420))
-            try await hosted.settle()
-            try await hosted.expectSortOpensAndSelects(.recentActivity)
-        }
-    }
-}
-
-/// Native menu construction uses the XCTest AppKit process for the same
-/// run-loop reason as SidebarSortNativeTests.
+/// Native menu tracking stops the Swift Testing async-main run loop on some
+/// Swift runtimes, so native menu construction uses the XCTest AppKit process.
 @MainActor
 final class SidebarDeleteMenuNativeTests: XCTestCase {
     func testUnselectedDeleteTargetsOwningWindow() async throws {

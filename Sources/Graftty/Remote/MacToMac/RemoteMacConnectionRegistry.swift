@@ -27,6 +27,7 @@ final class RemoteMacConnectionRegistry {
     private struct InFlightAttempt {
         let id: UUID
         let replacesExistingHostConnection: Bool
+        let allowsWake: Bool
         let task: Task<Entry, Error>
     }
 
@@ -87,6 +88,12 @@ final class RemoteMacConnectionRegistry {
         RemoteMacIdentity,
         Bool
     ) async throws -> Entry
+    typealias WakeAwareConnectionFactory = @MainActor @Sendable (
+        RemoteMac,
+        RemoteMacIdentity,
+        Bool,
+        Bool
+    ) async throws -> Entry
     typealias IdentityProvider = @MainActor @Sendable () throws -> Curve25519.Signing.PrivateKey
     /// REMOTE-1.15: read once per WebRTC connection attempt, never cached, so
     /// an unreadable device-ID store fails that attempt and a later attempt
@@ -141,7 +148,7 @@ final class RemoteMacConnectionRegistry {
     var onReconnectFromHost: @MainActor (Entry) async -> Void = { _ in }
     weak var teamRouter: RemoteTeamRouter?
     private var inFlight: [RemoteMacIdentity: InFlightAttempt] = [:]
-    private var legacyFactory: IntentAwareConnectionFactory?
+    private var legacyFactory: WakeAwareConnectionFactory?
     private let identityProvider: IdentityProvider
     private let clientDeviceIDProvider: ClientDeviceIDProvider
     private let pinnedHostProvider: PinnedHostProvider
@@ -163,7 +170,7 @@ final class RemoteMacConnectionRegistry {
         let identityStore = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
         let pinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
         if let factory {
-            self.legacyFactory = { remoteMac, identity, _ in
+            self.legacyFactory = { remoteMac, identity, _, _ in
                 try await factory(remoteMac, identity)
             }
         } else {
@@ -200,7 +207,14 @@ final class RemoteMacConnectionRegistry {
         intentAwareFactory: @escaping IntentAwareConnectionFactory
     ) {
         self.init(factory: nil)
-        self.legacyFactory = intentAwareFactory
+        self.legacyFactory = { remoteMac, identity, replacing, _ in
+            try await intentAwareFactory(remoteMac, identity, replacing)
+        }
+    }
+
+    convenience init(wakeAwareFactory: @escaping WakeAwareConnectionFactory) {
+        self.init(factory: nil)
+        self.legacyFactory = wakeAwareFactory
     }
 
     init(
@@ -243,7 +257,8 @@ final class RemoteMacConnectionRegistry {
 
     func connect(
         to remoteMac: RemoteMac,
-        replacingExistingHostConnection: Bool = false
+        replacingExistingHostConnection: Bool = false,
+        allowsWake: Bool = false
     ) async throws -> Entry {
         try Task.checkCancellation()
         let identity = RemoteMacIdentity(remoteMac)
@@ -255,7 +270,8 @@ final class RemoteMacConnectionRegistry {
             guard var current = entries[identity], current.id == existing.id else {
                 return try await connect(
                     to: remoteMac,
-                    replacingExistingHostConnection: replacingExistingHostConnection
+                    replacingExistingHostConnection: replacingExistingHostConnection,
+                    allowsWake: allowsWake
                 )
             }
             if state.isTerminal {
@@ -270,8 +286,10 @@ final class RemoteMacConnectionRegistry {
 
         var supersededAttempt: InFlightAttempt?
         if let pending = inFlight[identity] {
-            if replacingExistingHostConnection,
-               !pending.replacesExistingHostConnection {
+            // A quiet dial never sends a wake, so joining it would leave a
+            // sleeping host asleep.
+            if (replacingExistingHostConnection && !pending.replacesExistingHostConnection)
+                || (allowsWake && !pending.allowsWake) {
                 supersededAttempt = pending
             } else {
                 let completed = try await pending.task.value
@@ -300,14 +318,16 @@ final class RemoteMacConnectionRegistry {
                 entry = try await legacyFactory(
                     remoteMac,
                     identity,
-                    replacingExistingHostConnection
+                    replacingExistingHostConnection,
+                    allowsWake
                 )
             } else {
                 entry = try await dial(
                     remoteMac: remoteMac,
                     identity: identity,
                     attemptID: attemptID,
-                    replacingExistingHostConnection: replacingExistingHostConnection
+                    replacingExistingHostConnection: replacingExistingHostConnection,
+                    allowsWake: allowsWake
                 )
             }
             do {
@@ -328,6 +348,7 @@ final class RemoteMacConnectionRegistry {
         inFlight[identity] = InFlightAttempt(
             id: attemptID,
             replacesExistingHostConnection: replacingExistingHostConnection,
+            allowsWake: allowsWake,
             task: task
         )
         do {
@@ -436,7 +457,8 @@ final class RemoteMacConnectionRegistry {
         remoteMac: RemoteMac,
         identity: RemoteMacIdentity,
         attemptID: UUID,
-        replacingExistingHostConnection: Bool
+        replacingExistingHostConnection: Bool,
+        allowsWake: Bool
     ) async throws -> Entry {
         if remoteMac.transport == .webRTC, remoteMac.lastKnownBaseURL == nil {
             throw ConnectionError.missingBaseURL(identity)
@@ -492,6 +514,7 @@ final class RemoteMacConnectionRegistry {
                     clientKey: clientKey,
                     clientDeviceID: clientDeviceID,
                     replacingExistingConnection: replacingExistingHostConnection,
+                    allowsWake: allowsWake,
                     connectedAt: now
                 ) {
                     try ensureCurrentAttempt(attemptID, identity: identity)

@@ -35,6 +35,14 @@ public final class AddWorktreeFormController {
         self.newBranchName = initialWorktreeName
     }
 
+    /// Keeps the branch picked on another host, if this host has it too.
+    public func carry(existingBranch: String?, entries: [BranchPickerEntry]) {
+        guard let entry = entries.first(where: { $0.name == existingBranch }) else { return }
+        worktreeMirrorsBranch = false
+        branchMode = .existing
+        existingSelection = entry
+    }
+
     public func pickExistingBranch(_ entry: BranchPickerEntry) {
         if existingSelection != entry { existingSelection = entry }
         if worktreeMirrorsBranch && worktreeName != entry.name {

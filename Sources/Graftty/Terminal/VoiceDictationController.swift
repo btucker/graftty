@@ -64,7 +64,13 @@ struct VoiceDictationTarget {
 @MainActor
 final class VoiceDictationController: ObservableObject {
     @Published private(set) var isListening = false
-    @Published var errorMessage: String?
+    /// Hides by itself after `errorLifetime`, or at the next click (KEY-4.11, KEY-4.12).
+    @Published var errorMessage: String? {
+        didSet { scheduleErrorDismissal() }
+    }
+    private let errorLifetime: Duration
+    private var errorDismissal: Task<Void, Never>?
+    private var clickMonitor: Any?
     private var session = VoiceDictationSession()
     private var recognizer: (any VoiceSpeechRecognizing)?
     private let makeRecognizer: @MainActor () -> any VoiceSpeechRecognizing
@@ -76,8 +82,34 @@ final class VoiceDictationController: ObservableObject {
     private var inactiveObserver: NSObjectProtocol?
     private var startTask: Task<Void, Never>?
 
-    init(makeRecognizer: @escaping @MainActor () -> any VoiceSpeechRecognizing = { VoiceSpeechRecognizer() }) {
+    init(makeRecognizer: @escaping @MainActor () -> any VoiceSpeechRecognizing = { VoiceSpeechRecognizer() },
+         errorLifetime: Duration = .seconds(6)) {
         self.makeRecognizer = makeRecognizer
+        self.errorLifetime = errorLifetime
+    }
+
+    /// A click anywhere in the app dismisses a showing error.
+    func handleMouseDown() {
+        errorMessage = nil
+    }
+
+    private func scheduleErrorDismissal() {
+        errorDismissal?.cancel()
+        errorDismissal = nil
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        clickMonitor = nil
+        guard errorMessage != nil else { return }
+        let lifetime = errorLifetime
+        errorDismissal = Task { [weak self] in
+            try? await Task.sleep(for: lifetime)
+            guard !Task.isCancelled else { return }
+            self?.errorMessage = nil
+        }
+        // Clicks pass through untouched; they only hide the message.
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated { self?.handleMouseDown() }
+            return event
+        }
     }
 
     func toggle(target: SurfaceHandle?) {

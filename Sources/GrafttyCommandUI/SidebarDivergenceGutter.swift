@@ -21,23 +21,26 @@ public struct SidebarDivergenceGutter: View {
         self.behindColor = behindColor
     }
 
+    /// Each side's token, or nil when it has nothing to say.
+    public static func tokens(ahead: Int, behind: Int, hasUncommittedChanges: Bool) -> (ahead: String?, behind: String?) {
+        (ahead > 0 || hasUncommittedChanges ? "↑\(ahead)\(hasUncommittedChanges ? "+" : "")" : nil,
+         behind > 0 ? "↓\(behind)" : nil)
+    }
+
     public var body: some View {
         commitsText
             .font(.system(size: 10, design: .monospaced))
     }
 
     private var commitsText: Text {
-        let aheadShown = ahead > 0 || hasUncommittedChanges
-        let behindShown = behind > 0
-        let aheadText = Text("↑\(ahead)\(hasUncommittedChanges ? "+" : "")")
-            .foregroundColor(aheadColor)
-        let behindText = Text("↓\(behind)")
-            .foregroundColor(behindColor)
-        switch (aheadShown, behindShown) {
-        case (true, true): return aheadText + Text(" ") + behindText
-        case (true, false): return aheadText
-        case (false, true): return behindText
-        case (false, false): return Text("")
+        let tokens = Self.tokens(ahead: ahead, behind: behind, hasUncommittedChanges: hasUncommittedChanges)
+        let aheadText = tokens.ahead.map { Text($0).foregroundColor(aheadColor) }
+        let behindText = tokens.behind.map { Text($0).foregroundColor(behindColor) }
+        switch (aheadText, behindText) {
+        case let (ahead?, behind?): return ahead + Text(" ") + behind
+        case let (ahead?, nil): return ahead
+        case let (nil, behind?): return behind
+        case (nil, nil): return Text("")
         }
     }
 }

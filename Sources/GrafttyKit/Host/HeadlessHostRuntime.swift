@@ -24,6 +24,7 @@ public final class HeadlessHostRuntime {
     var portBindingSessions: [PaneSlotID: String] = [:]
     var portBindingsByPane: [PaneSlotID: [PortBinding]] = [:]
     var projectIconRefreshTask: Task<Void, Never>?
+    var originKeysCheckedAt: Date?
     var projectIcons: [UUID: HostProjectIcon] = [:]
     var projectIconLoads: [UUID: HostProjectIconLoad] = [:]
     var busyPaths: Set<String> = []
@@ -530,7 +531,7 @@ public final class HeadlessHostRuntime {
             let siblingPaths = repo.worktrees.map(\.path)
             return SidebarHostNavigation.displayedWorktrees(in: repo).map { worktree in
                 WorktreePanes(entry: worktree, repo: repo, inputs: WorktreeRowInputs(
-                    origin: origin, projectID: repo.path,
+                    origin: origin, projectID: projectID(for: repo),
                     displayName: worktree.displayName(amongSiblingPaths: siblingPaths),
                     stats: worktreeStats[worktree.path],
                     paneTitles: worktree.paneTitleMetadata.compactMapValues(\.title), liveness: liveness,

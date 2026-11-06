@@ -105,7 +105,7 @@ extension SurfaceNSView {
         )
 
         // TERM-8.10: surface the same Move-to-worktree section the
-        // sidebar pane row offers (PWD-1.1 / PWD-1.2 / PWD-1.3),
+        // pane menu offers (PWD-1.1 / PWD-1.2 / PWD-1.3),
         // sandwiched between the Splits block and Reset. Both context
         // and onMove are wired through TerminalManager by GrafttyApp;
         // either being nil collapses to no items rather than a no-op
@@ -122,6 +122,11 @@ extension SurfaceNSView {
             ) {
                 menu.addItem(item)
             }
+        }
+
+        if let id = terminalID, let url = terminalManager?.paneWebURL?(id) {
+            menu.addItem(.separator())
+            menu.addItem(ClosureMenuItem(title: "Copy web URL") { Pasteboard.copy(url) })
         }
 
         menu.addItem(.separator())

@@ -5,8 +5,8 @@ import Testing
 
 @Suite("Mobile worktree creation")
 struct MobileWorktreeCreationTests {
-    private func row(path: String = "opaque-worktree", name: String = "feature", state: WorktreeWireState = .creating, layout: PaneLayoutNode? = nil) -> WorktreePanes {
-        WorktreePanes(path: path, displayName: name, repoDisplayName: "Repo", repositoryID: "opaque-repo", displayBranch: "feature", state: state, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout)
+    private func row(path: String = "opaque-worktree", name: String = "feature", state: WorktreeWireState = .creating, layout: PaneLayoutNode? = nil, origin: WorktreeOrigin? = nil) -> WorktreePanes {
+        WorktreePanes(path: path, displayName: name, repoDisplayName: "Repo", repositoryID: "opaque-repo", displayBranch: "feature", state: state, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout, origin: origin)
     }
 
     private var pane: PaneLayoutNode {
@@ -41,6 +41,20 @@ struct MobileWorktreeCreationTests {
         #expect(creation.takeReadySelection(in: [row(state: .closed, layout: pane)], generation: 1) == nil)
         #expect(creation.takeReadySelection(in: [row(state: .running, layout: pane)], generation: 2) == nil)
         #expect(creation.isEmpty)
+    }
+
+    @Test("A row at the same path on another host is not the created worktree")
+    func samePathOnAnotherHostIsNotTheCreatedRow() {
+        let target = WorktreeOrigin(deviceID: .init(value: "target"), deviceLabel: "target", relayDepth: 0)
+        let other = WorktreeOrigin(deviceID: .init(value: "other"), deviceLabel: "other", relayDepth: 0)
+        var creation = MobileWorktreeCreation()
+        let id = creation.begin(placeholder: row(path: "temporary", origin: target), knownPaths: [], generation: 1)
+        creation.complete(id, worktreePath: "/same")
+        let onOther = row(path: "/same", state: .running, layout: pane, origin: other)
+        #expect(creation.takeReadySelection(in: [onOther], generation: 1) == nil)
+        #expect(creation.pendingRows(in: [onOther]).first?.origin == target)
+        let onTarget = row(path: "/same", state: .running, layout: pane, origin: target)
+        #expect(creation.takeReadySelection(in: [onOther, onTarget], generation: 1) == onTarget)
     }
 
     @Test("@spec IOS-9.15: When mobile worktree creation fails, the application shall remove its temporary row and show the error outside the dismissed form.")

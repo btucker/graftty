@@ -50,7 +50,6 @@ struct SidebarView: View {
     let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
     @ObservedObject var remoteMacsModel: RemoteMacsModel
-    var remoteWorkspaceLayout: (RemoteMacIdentity, WorktreePanes) -> WorkspaceLayout<String> = { _, row in .initial(for: row) }
     let appStateChanges: AppStateChanges
     let selectedRemoteIdentity: RemoteMacIdentity?
     let selectedRemoteWorktreePath: String?
@@ -58,11 +57,12 @@ struct SidebarView: View {
     let onSelect: (String) -> Void
     var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
     var onNavigationIntent: () -> Void = {}
-    let onSelectPane: (String, PaneSlotID) -> Void
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
-    let onSelectRemotePane: (RemoteMac, String, String) -> Void
+    let onWakeRemoteWorktree: (RemoteMac, String) -> Void
     let onAddRemoteWorktree: (RemoteMac, RemoteRepositoryInfo) -> Void
+    /// Opens the sheet for a remote host from the Host row or Add worktree.
+    let onAddRemoteWorktreeWithHost: (RemoteMac, RemoteRepositoryInfo, AddWorktreeHostContext?, String, String?) -> Void
     let onDeleteRemoteWorktree: (RemoteMac, WorktreePanes) -> Void
     let onAddRemoteMac: () -> Void
     var onSetupLinuxHost: (() -> Void)? = nil
@@ -73,19 +73,17 @@ struct SidebarView: View {
     let onInitializeGit: (RepoEntry) -> Void
     let onStopWorktree: (String) -> Void
     let onDeleteWorktree: (String, NSWindow) -> Void
-    let onMovePane: (PaneSlotID, String) -> Void
     /// Called when the user submits the add-worktree sheet. Returns nil
     /// on success, or a user-visible error string (typically git's
     /// stderr) on failure so the sheet can display it inline.
     let onAddWorktree: (RepoEntry, String, BranchSelection, WorktreeAgentConfiguration) async -> String?
 
-    /// Injected by GrafttyApp so the pane-row context menu can gate the
-    /// "Copy web URL" item on `controller.status == .listening` and read
-    /// the listening addresses to compose the URL.
+    /// Injected by GrafttyApp so the terminal menu can gate "Copy web URL" on
+    /// `controller.status == .listening` and read the address to compose it.
     @EnvironmentObject private var webController: WebServerController
 
-    /// Injected by GrafttyApp so each pane row can render port-binding
-    /// chips for ports its process subtree is currently listening on.
+    /// Injected by GrafttyApp so a local row's context can list the ports its
+    /// panes' process subtrees are listening on.
     @EnvironmentObject private var portBindings: PortBindingsModel
 
     /// SwiftUI's environment-provided window-opener. Used by the
@@ -96,13 +94,6 @@ struct SidebarView: View {
 
     @Binding var pendingAddWorktree: AddWorktreeRequest?
 
-    /// Hovered drop-target row during a pane drag (PWD-1.5). Nil otherwise.
-    @State private var dropTargetWorktreeID: WorktreeEntry.ID?
-
-    /// Virtual folders start expanded. Only explicit user collapses are
-    /// retained, scoped by repository so same-named folders do not share UI
-    /// state across projects.
-    @State private var worktreeFolderExpansion = SidebarWorktreeFolderExpansion()
     @State private var remoteSectionExpansion = RemoteSidebarExpansion()
 
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
@@ -111,6 +102,13 @@ struct SidebarView: View {
     @State private var frozenWorktreeOrder: [UUID: [UUID]] = [:]
     @State private var frozenPins: [UUID: Bool] = [:]
     @State private var frozenRemoteRows: [RemoteMacIdentity: [WorktreePanes]] = [:]
+    @State private var frozenMergedOrder: [String: [String]] = [:]
+    /// Keeps rows in their sections while a report is open.
+    @State private var frozenActivity: [String: WorktreeActivitySections.Hold] = [:]
+    /// The row last selected in each merged project. Paths alone can repeat across hosts.
+    @State private var rememberedRowIDs: [String: String] = [:]
+    @State private var collapsedMergedFolders: Set<String> = []
+    @State private var rankRepairs = ProjectRankRepairTracker()
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
     @State private var navigationError: String?
@@ -120,14 +118,6 @@ struct SidebarView: View {
 
     private var owner: WorktreeOrigin { iconStore.owner }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
-    private var orderedSidebarRepos: [RepoEntry] {
-        let positions = Dictionary(projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
-        return appState.repos.enumerated().sorted {
-            let left = positions[localProjectID($0.element), default: .max]
-            let right = positions[localProjectID($1.element), default: .max]
-            return left == right ? $0.offset < $1.offset : left < right
-        }.map(\.element)
-    }
     private var localWorktrees: [WorktreePanes] {
         sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles,
             liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
@@ -143,10 +133,10 @@ struct SidebarView: View {
         return SidebarActivityCounts(items: pending + working)
     }
 
-    private func pinnedMembership(in rows: [WorktreePanes]) -> Set<String> {
-        let projectFilter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
+    private func pinnedMembership(in rows: [WorktreePanes], merged: SidebarMergedRows) -> Set<String> {
+        let projectFilter = SidebarLayoutPolicy.projectFilter(selectedID: merged.selectedProjectID(for: navigation.selectedProjectID), showsProjectRail: showsProjectRail)
         return Set(rows.filter {
-            (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+            (projectFilter == nil || merged.mergedID(forMember: SidebarProjection.projectID($0)) == projectFilter)
                 && ($0.isMainCheckout || $0.sidebar?.isPinned == true)
         }.map { SidebarProjection.projectID($0) + "\u{0}" + $0.path })
     }
@@ -170,6 +160,22 @@ struct SidebarView: View {
             row.isPinned = frozenPins[row.id] ?? row.isPinned
             return row
         }
+    }
+
+    /// Every project and row once, from all hosts. Compute once per use: it
+    /// projects every worktree.
+    private var mergedSidebar: SidebarMergedRows { makeMerged(local: localWorktrees) }
+
+    private func makeMerged(local: [WorktreePanes]) -> SidebarMergedRows {
+        let sleeping = remoteMacsModel.sleepingSnapshot()
+        let known = Set(projects.map(\.id))
+        let localID = owner.deviceID
+        return SidebarMergedRows.make(projects: projects + sleeping.projects.filter { !known.contains($0.id) }, localRows: local,
+            remoteRows: displayedRemoteRows.values.flatMap { $0 } + sleeping.rows, localDeviceID: localID,
+            availability: { project in
+                if project.owner?.deviceID == localID || project.isAvailable { return .reachable }
+                return project.owner.map { sleeping.hostIDs.contains($0.deviceID) } == true ? .asleep : .offline
+            })
     }
 
     private var displayedRemoteRows: [RemoteMacIdentity: [WorktreePanes]] {
@@ -197,6 +203,9 @@ struct SidebarView: View {
         return result
     }
     private func refreshNavigation() async {
+        // Git can hang, and this loop is what keeps the sidebar current. The
+        // result arrives as a state change, which runs this again.
+        Task { await iconStore.refreshOriginKeys(state: $appState) }
         let remote = await remoteMacsModel.sidebarRelaySnapshot()
         let snapshot = iconStore.snapshot(state: $appState, owner: owner, remote: remote.projects,
             authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
@@ -207,9 +216,16 @@ struct SidebarView: View {
             }.map(\.id))
         navigation.reconcile(worktrees: localWorktrees + remote.worktrees, projects: projects,
             authoritativeProjectIDs: authoritativeProjects)
-        if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
-            navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id
-        }
+        // Store the merged id, so the selection outlives whichever host set it.
+        let merged = mergedSidebar
+        let selected = merged.selectedProjectID(for: navigation.selectedProjectID)
+        let fallback = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } })
+            .map { merged.mergedID(forMember: localProjectID($0)) } ?? merged.projects.first?.id
+        let shared = Set(merged.projects.filter(\.isOnSeveralHosts).compactMap(\.representative.originKey))
+        if iconStore.multiHostOriginKeys != shared { iconStore.multiHostOriginKeys = shared }
+        let next = selected ?? fallback
+        if navigation.selectedProjectID != next { navigation.selectedProjectID = next }
+        write(rankRepairs.due(ProjectMerge.repairs(merged.projects, isReachable: { $0.isAvailable && isReachable(host: $0.owner?.deviceID) })))
         iconStore.remoteIconCache.reconcile(remote.projects)
         for project in remote.projects where project.isAvailable {
             guard let revision = project.iconRevision else { continue }
@@ -221,42 +237,116 @@ struct SidebarView: View {
         }
     }
     private func rememberSelection(_ path: String?) {
-        guard let path, let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == path } }) else { return }
-        navigation.rememberedWorktrees[localProjectID(repo)] = path
+        guard let path, let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == path } }),
+              let row = localWorktrees.first(where: { $0.path == path }) else { return }
+        remember(row, projectID: localProjectID(repo))
+    }
+    private func remember(_ row: WorktreePanes, projectID: String) {
+        let mergedID = mergedSidebar.mergedID(forMember: projectID)
+        navigation.rememberedWorktrees[mergedID] = row.path
+        rememberedRowIDs[mergedID] = MergedWorktreeList.identity(row)
     }
     private func rememberRemoteSelection() {
         guard let identity = selectedRemoteIdentity, let path = selectedRemoteWorktreePath,
               let row = remoteMacsModel.worktreePanesByRemote[identity]?.first(where: { $0.path == path }) else { return }
-        navigation.rememberedWorktrees[SidebarProjection.projectID(row)] = path
+        remember(row, projectID: SidebarProjection.projectID(row))
     }
     private func selectProject(_ project: SidebarProject) {
         onNavigationIntent()
         rememberSelection(appState.selectedWorktreePath)
         rememberRemoteSelection()
+        let merged = mergedSidebar
         navigation.showProject(project.id); navigationError = nil
         guard project.isAvailable else { navigationError = "The owning host is offline. Use Manage Remote Hosts to reconnect."; return }
-        if let index = appState.repos.firstIndex(where: { localProjectID($0) == project.id }) {
-            appState.repos[index].isCollapsed = false
-            let repo = appState.repos[index]
-            let path = navigation.rememberedWorktrees[project.id].flatMap { saved in repo.worktrees.first { $0.path == saved }?.path } ?? repo.worktrees.first?.path
-            if let path { onSelect(path) }
-        } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == project.owner?.deviceID }) {
-            let rows = (remoteMacsModel.worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).filter { SidebarProjection.projectID($0) == project.id }
-            let remembered = navigation.rememberedWorktrees[project.id]
-                .flatMap { remoteMacsModel.relayRouter.resolveWorktree($0)?.path ?? $0 }
-            if let target = rows.first(where: { $0.path == remembered }) ?? rows.first {
-                onSelectRemoteWorktree(mac, target.path)
+        let rows = merged.flattenedRows(for: project.id)
+        // Choosing a project isn't reason enough to wake its hosts.
+        guard let target = rows.first(where: { $0.id == rememberedRowIDs[project.id] }) ?? rows.first,
+              target.availability != .asleep else { return }
+        openMergedRow(target)
+    }
+    private func openMergedRow(_ row: MergedWorktreeRow) {
+        if row.hostID == owner.deviceID {
+            if let index = appState.repos.firstIndex(where: { $0.worktrees.contains { $0.path == row.row.path } }) {
+                appState.repos[index].isCollapsed = false
             }
+            onSelect(row.row.path)
+        } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == row.hostID }) {
+            if row.availability == .asleep { onWakeRemoteWorktree(mac, row.row.path) }
+            else { onSelectRemoteWorktree(mac, row.row.path) }
         }
     }
     private func moveProject(_ id: String, _ target: String, _ after: Bool) {
-        guard var state = appState.sidebarNavigation else { return }
-        guard state.order.move(id, relativeTo: target, after: after) else { return }
+        let merged = mergedSidebar
+        let writes = merged.projectMove(id: id, target: target, after: after, changedAt: Date().timeIntervalSinceReferenceDate,
+                                        isReachable: { $0.isAvailable && isReachable(host: $0.owner?.deviceID) })
+        if !writes.isEmpty { write(writes); return }
+        // Every host for this project is asleep, and the order has to be saved
+        // somewhere. It only moves once a host has stored it.
+        if let project = merged.project(id: id), project.availability == .asleep,
+           let member = project.members.first(where: { $0.id == lastUsedHost(project) }) ?? project.members.first(where: { $0.rank != nil }),
+           let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == member.owner?.deviceID }) {
+            Task { @MainActor in
+                do {
+                    try await remoteMacsModel.wake(mac)
+                    write(merged.projectMove(id: id, target: target, after: after, changedAt: Date().timeIntervalSinceReferenceDate,
+                                             isReachable: { $0.id == member.id }))
+                } catch { navigationError = "\(mac.label) didn't respond, so the project stayed in place." }
+            }
+            return
+        }
+        // No member stores ranks, so this is an older host: keep this device's order.
+        guard var state = appState.sidebarNavigation,
+              let source = merged.project(id: id)?.members.first?.id,
+              let destination = merged.project(id: target)?.members.first?.id,
+              state.order.move(source, relativeTo: destination, after: after) else { return }
         state.cachedProjects = state.order.sorted(state.cachedProjects)
         appState.sidebarNavigation = state; projects = state.cachedProjects
     }
-    private func projectMenu(_ project: SidebarProject) -> AnyView {
-        guard let repo = appState.repos.first(where: { localProjectID($0) == project.id }) else { return AnyView(EmptyView()) }
+    /// Pull and Remove act on one checkout, so each names its host when the
+    /// project has several. Only this Mac's checkout can be removed from here.
+    @ViewBuilder private func projectHostActions(_ project: SidebarProject, merged: SidebarMergedRows) -> some View {
+        let mergedProject = merged.project(id: project.id)
+        let several = mergedProject?.isOnSeveralHosts ?? false
+        let repos = localRepos(in: mergedProject)
+        // Two checkouts on this Mac are told apart by path.
+        let label = { (repo: RepoEntry) in repos.count > 1 ? "This Mac · \(repo.path)" : "This Mac" }
+        ForEach(repos) { repo in
+            Button(SidebarMergedRows.pullTitle(hostLabel: label(repo), isOnSeveralHosts: several || repos.count > 1)) {
+                Task { @MainActor in
+                    if let error = await pullDefaultBranch(for: repo) { navigationError = error }
+                }
+            }
+        }
+        ForEach((mergedProject?.members ?? []).filter { $0.owner?.deviceID != owner.deviceID && merged.availability(ofMember: $0.id) != .offline }, id: \.id) { member in
+            if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == member.owner?.deviceID }) {
+                Button(SidebarMergedRows.pullTitle(hostLabel: mac.label, isOnSeveralHosts: several)) {
+                    Task { @MainActor in
+                        do {
+                            // Waking also registers the route a sleeping host's row uses.
+                            if mergedSidebar.availability(ofMember: member.id) == .asleep { try await remoteMacsModel.wake(mac) }
+                            guard let route = remoteMacsModel.relayRouter.resolveRepository(member.repositoryID) else {
+                                throw RemoteMacsModel.ProjectControlError.unavailable
+                            }
+                            if case .error(_, let message, _, _) = await remoteMacsModel.pullDefaultBranch(on: mac, repositoryID: route.repositoryID) {
+                                navigationError = message
+                            }
+                        } catch { navigationError = error.localizedDescription }
+                    }
+                }
+            }
+        }
+        ForEach(repos) { repo in
+            Button(SidebarMergedRows.removeTitle(hostLabel: label(repo), isOnSeveralHosts: several || repos.count > 1)) { onRemoveRepo(repo) }
+        }
+    }
+
+    private func localRepos(in project: MergedProject?) -> [RepoEntry] {
+        let members = Set(project?.members.map(\.id) ?? [])
+        return appState.repos.filter { members.contains(localProjectID($0)) }
+    }
+    private func localRepo(in project: MergedProject?) -> RepoEntry? { localRepos(in: project).first }
+    private func projectMenu(_ project: SidebarProject, merged: SidebarMergedRows) -> AnyView {
+        guard let repo = localRepo(in: merged.project(id: project.id)) else { return AnyView(projectHostActions(project, merged: merged)) }
         return AnyView(Group {
             if !repo.isGitTracked {
                 Button("Initialize Git Repository") { onInitializeGit(repo) }
@@ -278,7 +368,7 @@ struct SidebarView: View {
                 }
             }
             Divider()
-            Button("Remove Repository") { onRemoveRepo(repo) }
+            projectHostActions(project, merged: merged)
         })
     }
     /// Relayed-row contexts for `remoteSection`, keyed as its lookup expects.
@@ -288,21 +378,23 @@ struct SidebarView: View {
         }, uniquingKeysWith: { first, _ in first })
     }
     private func remoteSection(contexts: [String: SidebarWorktreeContext], projectFilter: String?, query: String = "",
-                               section: SidebarWorktreeSection = .all) -> some View {
-        RemoteMacsSection(model: remoteMacsModel, expansion: $remoteSectionExpansion, worktreePanesByRemote: displayedRemoteRows,
-                          workspaceLayout: remoteWorkspaceLayout,
+                               section: SidebarWorktreeSection = .all, singleRow: RemoteMacsSection.SingleRow? = nil) -> some View {
+        // One row only reads its own worktree, and every row builds this view.
+        RemoteMacsSection(model: remoteMacsModel, expansion: $remoteSectionExpansion, worktreePanesByRemote: singleRow == nil ? displayedRemoteRows : [:],
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
-                          onSelectRemotePane: onSelectRemotePane, onAddRemoteWorktree: onAddRemoteWorktree,
+                          onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
                           onSetupLinuxHost: onSetupLinuxHost,
                           projectFilter: projectFilter, query: query,
-                          showsMacHierarchy: !showsProjectRail,
-                          showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
+                          showsMacHierarchy: false,
+                          showsRepositoryHeaders: !query.isEmpty,
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)),
-                          projects: projects, projectIcons: projectIcons, section: section,
-                          reportController: reportController, contextForWorktree: { row in
+                          projects: projects, projectIcons: projectIcons, section: section, singleRow: singleRow,
+                          reportController: reportController,
+                          onDismissRequest: { navigation.dismissRequest(in: $0) },
+                          contextForWorktree: { row in
                               contexts[(row.sidebar?.id ?? row.path) + "\u{0}" + SidebarProjection.projectID(row)] ?? navigation.worktreeContext(row)
                           })
     }
@@ -349,6 +441,8 @@ struct SidebarView: View {
         let promoted = remoteMacsModel.promotedWorktreesForRelay()
         let counts = activityCounts(local + promoted)
         let promotedContexts = relayedRowContexts(promoted)
+        let merged = makeMerged(local: local)
+        let selectedMergedID = merged.selectedProjectID(for: navigation.selectedProjectID)
         // Read native chrome height before expanding underneath it.
         GeometryReader { titleBarGeometry in
         GeometryReader { _ in
@@ -359,8 +453,8 @@ struct SidebarView: View {
         searchRow
         HStack(spacing: 0) {
             if showsProjectRail {
-                ProjectNavigationRail(projects: projects, counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
-                                      selectedID: navigation.selectedProjectID,
+                ProjectNavigationRail(projects: merged.projects.map(\.representative), counts: merged.rekeyed(counts.attentionByProject), workingCounts: merged.rekeyed(counts.workingByProject), icons: mergedProjectIcons(merged),
+                                      selectedID: selectedMergedID,
                                       collapsed: $navigation.railCollapsed, expandedWidth: $navigation.railExpandedWidth, selectionColor: theme.foreground.opacity(0.16), onSelect: selectProject,
 
                                       onMove: moveProject, localDeviceID: owner.deviceID,
@@ -368,7 +462,7 @@ struct SidebarView: View {
                                       management: { AnyView(HStack(spacing: 0) {
                                           addRepositoryIconButton
                                           remoteManagementButton
-                                      }) }, menu: projectMenu)
+                                      }) }, menu: { projectMenu($0, merged: merged) })
                 Divider()
             }
             VStack(spacing: 0) {
@@ -376,24 +470,23 @@ struct SidebarView: View {
                     Text(navigationError).font(.caption).foregroundStyle(.red).padding(8)
                 }
                     ScrollViewReader { proxy in
-                        SidebarWorktreeViewport(pinnedMembership: pinnedMembership(in: local + promoted),
+                        SidebarWorktreeViewport(pinnedMembership: pinnedMembership(in: local + promoted, merged: merged),
                                                 showsDivider: navigation.query.isEmpty) {
                             if navigation.query.isEmpty {
-                                worktreeRows(section: .pinned, activityCounts: counts, remoteContexts: promotedContexts)
+                                worktreeRows(section: .pinned, activityCounts: counts, remoteContexts: promotedContexts, merged: merged)
                                     .padding(.horizontal, showsProjectRail ? 6 : 10)
                             }
                         } controls: {
                             if navigation.query.isEmpty {
-                                selectedProjectAddWorktreeHeader
+                                selectedProjectAddWorktreeHeader(merged: merged)
                             }
                         } content: {
                             if showsProjectRail {
                                 ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
-                                    worktreeRows(section: .tasks, activityCounts: counts, remoteContexts: promotedContexts)
+                                    worktreeRows(section: .tasks, activityCounts: counts, remoteContexts: promotedContexts, merged: merged)
                                 }
-                                .emptySpaceMenu(selectedProjectEmptySpaceMenu)
                             } else {
-                                List { worktreeRows(section: .tasks, activityCounts: counts, remoteContexts: promotedContexts) }.listStyle(.sidebar)
+                                List { worktreeRows(section: .tasks, activityCounts: counts, remoteContexts: promotedContexts, merged: merged) }.listStyle(.sidebar)
                             }
                         }
                         .onChange(of: navigation.selectedProjectID) { _, _ in
@@ -421,15 +514,27 @@ struct SidebarView: View {
         .ignoresSafeArea(.container, edges: .top)
         }
         .task { await appStateChanges.observe { await refreshNavigation() } }
+        .onAppear {
+            terminalManager.paneWebURL = { [appState = $appState, webController] terminalID in
+                guard case let .listening(_, port) = webController.status, let host = webController.serverHostname else { return nil }
+                return Self.paneWebURL(terminalID: terminalID, repos: appState.wrappedValue.repos, host: host, port: port)
+            }
+        }
         .onChange(of: reportController.activeID) { _, id in
             if id != nil {
                 if frozenWorktreeOrder.isEmpty {
                     frozenWorktreeOrder = Dictionary(uniqueKeysWithValues: appState.repos.map { ($0.id, SidebarHostNavigation.displayedWorktrees(in: $0).map(\.id)) })
                     frozenPins = Dictionary(uniqueKeysWithValues: appState.repos.flatMap(\.worktrees).map { ($0.id, $0.isPinned) })
                     frozenRemoteRows = remoteMacsModel.worktreePanesByRemote
+                    frozenMergedOrder = mergedSidebar.temporaryOrder()
+                    frozenActivity = Dictionary(uniqueKeysWithValues: mergedSidebar.projects.map { project in
+                        let sections = mergedSidebar.sections(for: project.id)
+                        return (project.id, WorktreeActivitySections.make(pinned: sections.pinned, temporary: sections.temporary,
+                            context: { navigation.worktreeContext($0) }, holding: nil).hold)
+                    })
                 }
             } else {
-                frozenWorktreeOrder = [:]; frozenPins = [:]; frozenRemoteRows = [:]
+                frozenWorktreeOrder = [:]; frozenPins = [:]; frozenRemoteRows = [:]; frozenMergedOrder = [:]; frozenActivity = [:]
             }
         }
         .onChange(of: navigation.selectedProjectID) { _, _ in reportController.close() }
@@ -439,15 +544,15 @@ struct SidebarView: View {
             rememberSelection(old)
             if let new,
                let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == new } }) {
-                navigation.selectedProjectID = localProjectID(repo)
-                navigation.rememberedWorktrees[localProjectID(repo)] = new
+                navigation.selectedProjectID = mergedSidebar.mergedID(forMember: localProjectID(repo))
+                rememberSelection(new)
             }
         }
         .onRemoteWorktreeSelectionChange(identity: selectedRemoteIdentity, path: selectedRemoteWorktreePath) { _ in
             rememberRemoteSelection()
             if let identity = selectedRemoteIdentity, let path = selectedRemoteWorktreePath,
                let row = remoteMacsModel.worktreePanesByRemote[identity]?.first(where: { $0.path == path }) {
-                navigation.selectedProjectID = SidebarProjection.projectID(row)
+                navigation.selectedProjectID = mergedSidebar.mergedID(forMember: SidebarProjection.projectID(row))
             }
         }
         .onChange(of: showsProjectRail) { _, enabled in
@@ -467,6 +572,8 @@ struct SidebarView: View {
         }
         .publishSidebarWidth()
         .sheet(item: $pendingAddWorktree) { request in
+            // Every way in gets the Host row, including the menu command.
+            let hostContext = request.hostContext ?? localHostContext(request.repo, merged: merged)
             AddWorktreeSheet(
                 repoDisplayName: request.repo.displayName,
                 initialWorktreeName: request.prefill,
@@ -480,10 +587,15 @@ struct SidebarView: View {
                 },
                 onSubmit: { worktreeName, branch, agent in
                     let err = await onAddWorktree(request.repo, worktreeName, branch, agent)
-                    if err == nil { pendingAddWorktree = nil }
+                    if err == nil {
+                        hostContext?.onCreated()
+                        pendingAddWorktree = nil
+                    }
                     return err
                 },
-                onCancel: { pendingAddWorktree = nil }
+                onCancel: { pendingAddWorktree = nil },
+                existingBranch: request.existingBranch,
+                hostContext: hostContext
             )
         }
     }
@@ -505,13 +617,12 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func worktreeRows(section: SidebarWorktreeSection, activityCounts counts: SidebarActivityCounts,
-                              remoteContexts: [String: SidebarWorktreeContext]) -> some View {
+                              remoteContexts: [String: SidebarWorktreeContext], merged: SidebarMergedRows) -> some View {
         if navigation.query.isEmpty {
-            let filter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
-            ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
-                repoSection(repo, attentionCounts: counts, section: section)
+            let selected = merged.selectedProjectID(for: navigation.selectedProjectID)
+            ForEach(merged.projects.filter { !showsProjectRail || $0.id == selected }) { project in
+                mergedProjectSection(project, merged: merged, section: section, counts: counts, remoteContexts: remoteContexts)
             }
-            remoteSection(contexts: remoteContexts, projectFilter: filter, section: section)
         } else {
             remoteSection(contexts: remoteContexts, projectFilter: nil, query: navigation.query)
             ForEach(appState.repos) { repo in
@@ -578,89 +689,246 @@ struct SidebarView: View {
         return (presentation.menuTitle, url)
     }
 
-    @ViewBuilder
-    private func repoSection(_ repo: RepoEntry, attentionCounts: SidebarActivityCounts, section: SidebarWorktreeSection) -> some View {
-        let forgeLink = forgeLink(for: repo)
-        let resolvedDefaultBranch = remoteBranchStore.resolvedDefaultBranch(
-            forRepoAt: repo.path,
-            hint: repo.defaultBranchHint
-        )
-        let worktrees = displayedWorktrees(in: repo)
-        let temporaryWorktrees = worktrees.filter { !SidebarHostNavigation.isPinned($0, in: repo) }
-        let rows = Group {
-            if section != .tasks {
-                SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: Binding(
-                    get: { repo.isPinnedCollapsed },
-                    set: { collapsed in
-                        if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
-                            appState.repos[index].isPinnedCollapsed = collapsed
-                        }
-                    }
-                ), separatesPrecedingRows: false)
-                .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
-                .modifier(PinnedWorktreeDropTarget(repoID: repo.id, appState: $appState, isEnabled: navigation.query.isEmpty))
-                if !repo.isPinnedCollapsed {
-                    let members = worktrees.filter { SidebarHostNavigation.isPinned($0, in: repo) }
-                    worktreeNodeRows(members, repo: repo, defaultBranch: resolvedDefaultBranch,
-                                     attentionCounts: attentionCounts, isPinnedSection: true)
-                    if members.isEmpty {
-                        Text("Right-click a worktree to pin it here.")
-                            .font(.caption)
-                            .foregroundColor(theme.sidebarDimIcon)
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 6)
-                    }
-                }
-            }
-            if section != .pinned {
-                worktreeNodeRows(temporaryWorktrees,
-                                 repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
-            }
+    private func mergedProjectIcons(_ merged: SidebarMergedRows) -> [String: Data] {
+        let icons = projectIcons
+        var result: [String: Data] = [:]
+        for project in merged.projects {
+            if let member = project.iconMember { result[project.id] = icons[member.id] }
         }
+        return result
+    }
+
+    private func pinnedCollapsed(_ project: MergedProject) -> Binding<Bool> {
+        let key = "sidebar.pinned.collapsed.\(project.id)"
+        if let repo = localRepo(in: project) {
+            return Binding(
+                get: { appState.repos.first { $0.id == repo.id }?.isPinnedCollapsed ?? false },
+                set: { collapsed in
+                    if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
+                        appState.repos[index].isPinnedCollapsed = collapsed
+                    }
+                })
+        }
+        return Binding(get: { UserDefaults.standard.bool(forKey: key) }, set: { UserDefaults.standard.set($0, forKey: key) })
+    }
+
+    @ViewBuilder
+    private func mergedProjectSection(_ project: MergedProject, merged: SidebarMergedRows, section: SidebarWorktreeSection,
+                                      counts: SidebarActivityCounts, remoteContexts: [String: SidebarWorktreeContext]) -> some View {
+        let rows = mergedProjectRows(project, merged: merged, section: section, counts: counts, remoteContexts: remoteContexts)
         if showsProjectRail {
             rows
-        } else {
+        } else if let repo = localRepo(in: project) {
             DisclosureGroup(isExpanded: Binding(
                 get: { !repo.isCollapsed },
                 set: { expanded in
-                    if let idx = appState.repos.firstIndex(where: { $0.id == repo.id }) {
-                        appState.repos[idx].isCollapsed = !expanded
+                    if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
+                        appState.repos[index].isCollapsed = !expanded
                     }
                 }
-            )) {
-                rows
-            } label: {
+            )) { rows } label: {
                 HStack(spacing: 6) {
-                    Text(repo.displayName).foregroundColor(theme.foreground).fontWeight(.semibold)
+                    Text(project.name).foregroundColor(theme.foreground).fontWeight(.semibold)
                     Spacer()
                     if SidebarMenuVisibility.showsAddWorktree(repo: repo) { addWorktreeButton(repo, showsLabel: false) }
                 }
-                .contextMenu {
-                    if !repo.isGitTracked {
-                        Button("Initialize Git Repository") { onInitializeGit(repo) }
+                .contextMenu { projectMenu(project.representative, merged: merged) }
+            }
+        } else {
+            let key = "project:" + project.id
+            DisclosureGroup(isExpanded: Binding(
+                get: { !collapsedMergedFolders.contains(key) },
+                set: { expanded in
+                    if expanded { collapsedMergedFolders.remove(key) } else { collapsedMergedFolders.insert(key) }
+                }
+            )) { rows } label: {
+                Text(project.name).foregroundColor(theme.foreground).fontWeight(.semibold)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func mergedProjectRows(_ project: MergedProject, merged: SidebarMergedRows, section: SidebarWorktreeSection,
+                                   counts: SidebarActivityCounts, remoteContexts: [String: SidebarWorktreeContext]) -> some View {
+        let sections = merged.sections(for: project.id, frozenOrder: frozenMergedOrder[project.id])
+        let activity = WorktreeActivitySections.make(pinned: sections.pinned, temporary: sections.temporary,
+            context: { navigation.worktreeContext($0) }, holding: frozenActivity[project.id]).placed(in: section)
+        let collapsed = pinnedCollapsed(project)
+        if section != .tasks {
+            if !activity.needsYou.isEmpty {
+                WorktreeListSectionTitle("Needs you", count: activity.needsYou.count, tone: .attention)
+                ForEach(activity.needsYou) { row in
+                    mergedRow(row, counts: counts, remoteContexts: remoteContexts)
+                }
+            }
+            let header = SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: collapsed, separatesPrecedingRows: false)
+                .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
+            if let repo = localRepo(in: project) {
+                header.modifier(PinnedWorktreeDropTarget(repoID: repo.id, appState: $appState, isEnabled: navigation.query.isEmpty))
+            } else {
+                header
+            }
+            if !collapsed.wrappedValue {
+                mergedNodes(activity.pinned, projectID: project.id, depth: 0, counts: counts, remoteContexts: remoteContexts)
+                if sections.pinned.isEmpty {
+                    Text("Right-click a worktree to pin it here.")
+                        .font(.caption)
+                        .foregroundColor(theme.sidebarDimIcon)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 6)
+                }
+            }
+        }
+        if section != .pinned {
+            if !activity.working.isEmpty {
+                WorktreeListSectionTitle("Working", count: activity.working.count, tone: .standard(theme.sidebarDimIcon))
+                ForEach(activity.working) { row in
+                    mergedRow(row, counts: counts, remoteContexts: remoteContexts)
+                }
+            }
+            if !activity.recent.isEmpty {
+                WorktreeListSectionTitle("Recent", tone: .standard(theme.sidebarDimIcon))
+                ForEach(activity.recent) { row in
+                    mergedRow(row, counts: counts, remoteContexts: remoteContexts)
+                }
+            }
+            ForEach(merged.offlineHosts(for: project.id), id: \.self) { host in
+                Text("\(host) is offline")
+                    .font(.caption).italic()
+                    .foregroundColor(theme.sidebarDimIcon)
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func mergedNodes(_ nodes: [MergedWorktreeNode], projectID: String, depth: Int, counts: SidebarActivityCounts,
+                             remoteContexts: [String: SidebarWorktreeContext]) -> AnyView {
+        AnyView(ForEach(nodes) { node in
+            switch node {
+            case .row(let row):
+                mergedRow(row, counts: counts, remoteContexts: remoteContexts)
+            case .folder(let id, let name, let children):
+                let key = projectID + "\u{0}" + id
+                DisclosureGroup(isExpanded: Binding(
+                    get: { !collapsedMergedFolders.contains(key) },
+                    set: { expanded in
+                        if expanded { collapsedMergedFolders.remove(key) } else { collapsedMergedFolders.insert(key) }
                     }
-                    if let forge = forgeLink {
-                        Button(forge.menuTitle) { NSWorkspace.shared.open(forge.url) }
+                )) {
+                    mergedNodes(children, projectID: projectID, depth: depth + 1, counts: counts, remoteContexts: remoteContexts)
+                        .padding(.leading, showsProjectRail ? 16 : 0)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.sidebarDimIcon)
+                        Text(name)
+                            .lineLimit(1)
+                            .foregroundColor(theme.sidebarPrimaryText(isActive: false))
+                        Spacer()
                     }
-                    worktreeOrderPicker(repo)
-                    Button("Remove Repository") { onRemoveRepo(repo) }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+            }
+        })
+    }
+
+    /// One row, drawn by whichever view owns its data: local rows read live
+    /// terminal state, remote rows read their host's report.
+    @ViewBuilder
+    private func mergedRow(_ row: MergedWorktreeRow, counts: SidebarActivityCounts,
+                           remoteContexts: [String: SidebarWorktreeContext]) -> some View {
+        if row.hostID == owner.deviceID,
+           let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == row.row.path } }),
+           let worktree = displayedWorktrees(in: repo).first(where: { $0.path == row.row.path }) {
+            worktreeBlock(worktree, repo: repo, displayName: row.leafName, activityCounts: counts,
+                          hostLabel: SidebarMergedRows.hostText(row, isLocal: true))
+                .modifier(MergedRowInsets(projectColumn: showsProjectRail))
+        } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == row.hostID }) {
+            remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.leafName,
+                          hostLabel: SidebarMergedRows.hostText(row, isLocal: false), isAsleep: row.availability == .asleep,
+                          onOpen: { openMergedRow(row) },
+                          onOpenPane: { context in Task { _ = await openReport(context) } },
+                          onDrop: { drop, after in
+                              handleRowDrop(drop, target: row.row.path, targetHost: mac.id, after: after)
+                          }))
+                .modifier(MergedRowInsets(projectColumn: showsProjectRail))
+        }
+    }
+
+    /// Pinned rows take their order from ranks. Returns false for a drop this
+    /// doesn't own, such as pinning a temporary row.
+    private func handleRowDrop(_ drop: WorktreeRowDrop, target: String, targetHost: RemoteDeviceID, after: Bool) -> Bool {
+        let merged = mergedSidebar
+        // Not the selected project: without the rail, every project is on screen.
+        guard let projectID = merged.projectID(holdingRowAt: target, on: targetHost) else { return false }
+        let rows = merged.flattenedRows(for: projectID)
+        guard let targetRow = rows.first(where: { $0.hostID == targetHost && $0.row.path == target }) else { return false }
+        let sourceRow: MergedWorktreeRow?
+        switch drop {
+        case .worktree(let payload):
+            let path = appState.repos.first { $0.id == payload.repoID }?.worktrees.first { $0.id == payload.worktreeID }?.path
+            sourceRow = rows.first { $0.hostID == owner.deviceID && $0.row.path == path }
+        case .remote(let payload):
+            sourceRow = rows.first { $0.hostID == payload.deviceID && $0.row.path == payload.path }
+        }
+        // A temporary row dropped here pins it: the local path owns that.
+        guard let sourceRow, sourceRow.row.sidebar?.isPinned == true else { return false }
+        guard let move = merged.pinnedMove(source: sourceRow.id, target: targetRow.id, after: after, projectID: projectID,
+                                           isWritable: { row in
+                                               row.row.sidebar?.pinnedRank != nil && (isReachable(host: row.hostID) || row.id == sourceRow.id)
+                                           }) else { return true }
+        apply(move)
+        return true
+    }
+
+    private func isReachable(host: RemoteDeviceID?) -> Bool {
+        host == owner.deviceID || remoteMacsModel.savedRemoteMacs.contains {
+            $0.id == host && remoteMacsModel.connectionState(for: RemoteMacIdentity($0)) == .connected
+        }
+    }
+
+    private func apply(_ move: SidebarMergedRows.PinnedMove) {
+        switch move {
+        case .legacy(let source, let target, let after):
+            guard let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == source.hostID }) else { return }
+            Task { @MainActor in
+                do {
+                    if source.availability == .asleep { try await remoteMacsModel.wake(mac) }
+                    try await remoteMacsModel.moveWorktree(source.row, relativeTo: target.row, after: after, on: mac)
+                } catch { navigationError = error.localizedDescription }
+            }
+        case .ranks(let writes):
+            for write in writes {
+                if write.row.hostID == owner.deviceID, let repositoryID = write.row.row.repositoryID {
+                    SidebarHostNavigation.setPinnedRank(write.rank, worktreeID: write.row.row.path, repositoryID: repositoryID, in: &appState)
+                } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == write.row.hostID }) {
+                    Task { @MainActor in
+                        do {
+                            // Moving a sleeping host's row needs that host, so it wakes.
+                            if write.row.availability == .asleep { try await remoteMacsModel.wake(mac) }
+                            try await remoteMacsModel.setPinnedRank(write.rank, worktree: write.row.row, on: mac)
+                        } catch { navigationError = error.localizedDescription }
+                    }
                 }
             }
         }
     }
 
-    private func worktreeNodeRows(_ worktrees: [WorktreeEntry], repo: RepoEntry, defaultBranch: String?,
-                                  attentionCounts: SidebarActivityCounts, isPinnedSection: Bool = false) -> some View {
-        let nodes = SidebarWorktreeHierarchy.nodes(for: worktrees, inRepoAtPath: repo.path, defaultBranch: defaultBranch)
-        return ForEach(nodes) { node in
-            SidebarWorktreeNodeRow(
-                node: node, depth: 0, repositoryID: repo.id, expansion: $worktreeFolderExpansion,
-                statsByWorktreePath: statsStore.stats, theme: theme,
-                projectColumn: showsProjectRail, isPinnedSection: isPinnedSection
-            ) { worktree, displayName in
-                worktreeBlock(worktree, repo: repo, displayName: displayName, activityCounts: attentionCounts)
+    private func write(_ writes: [(member: SidebarProject, rank: String, changedAt: Double)]) {
+        for write in writes {
+            if write.member.owner?.deviceID == owner.deviceID {
+                SidebarHostNavigation.setProjectRank(write.rank, changedAt: write.changedAt, repositoryID: write.member.repositoryID, in: &appState)
+            } else {
+                Task { @MainActor in
+                    do { try await remoteMacsModel.setProjectRank(write.rank, changedAt: write.changedAt, for: write.member) }
+                    catch { navigationError = error.localizedDescription }
+                }
             }
-            .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail))
         }
     }
 
@@ -686,28 +954,12 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private var selectedProjectAddWorktreeHeader: some View {
+    private func selectedProjectAddWorktreeHeader(merged: SidebarMergedRows) -> some View {
         if navigation.query.isEmpty,
-           let project = projects.first(where: { $0.id == navigation.selectedProjectID && $0.isAvailable }) {
+           let project = addWorktreeTarget(in: merged) {
             let repo = appState.repos.first { localProjectID($0) == project.id }
-            let canAdd = canAddWorktree(to: project)
+            let canAdd = canAddWorktree(to: project, merged: merged)
             if repo != nil || project.owner != nil {
-                let order = Group {
-                    SidebarWorktreeOrderControl(selection: Binding(
-                        get: {
-                            if let repo { return appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual }
-                            return project.worktreeOrderMode ?? .manual
-                        },
-                        set: { mode in
-                            if let repo { setWorktreeOrderMode(mode, for: repo) }
-                            else { setRemoteWorktreeOrderMode(mode, for: project) }
-                        }
-                    ), helpText: repo != nil || project.worktreeOrderMode != nil
-                        ? "Worktree order" : "Update Graftty on the owning host to change worktree order.",
-                        color: NSColor(theme.sidebarDimIcon))
-                    .disabled(repo == nil && (!remoteMacsModel.canSetWorktreeOrder(for: project) || remoteProjectOperationInProgress))
-                    .frame(width: 136, height: 28)
-                }
                 let add = Group {
                     if canAdd {
                         Button(action: addWorktreeToSelectedProject) {
@@ -724,81 +976,118 @@ struct SidebarView: View {
                         .accessibilityLabel("Add worktree to \(project.name)")
                     }
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { order; Spacer(minLength: 0); add }
-                    VStack(alignment: .leading, spacing: 6) {
-                        order
-                        add.frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                }
+                HStack(spacing: 8) { Spacer(minLength: 0); add }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
             }
         }
     }
 
-    private func canAddWorktree(to project: SidebarProject) -> Bool {
+    /// The checkout Add worktree targets in the selected project.
+    private func addWorktreeTarget(in merged: SidebarMergedRows) -> SidebarProject? {
+        guard let project = merged.project(id: merged.selectedProjectID(for: navigation.selectedProjectID)),
+              let choice = AddWorktreeHostChoice.defaultChoice(addWorktreeChoices(project, merged: merged), lastUsedID: lastUsedHost(project))?.choice else { return nil }
+        return project.members.first { $0.id == choice.id }
+    }
+
+    private func lastUsedHost(_ project: MergedProject) -> String? {
+        UserDefaults.standard.string(forKey: "addWorktree.lastHost.\(project.id)")
+    }
+
+    private func addWorktreeChoices(_ project: MergedProject, merged: SidebarMergedRows) -> [AddWorktreeHostChoice] {
+        AddWorktreeHostChoice.labeled(project.members.filter { $0.supportsWorktreeEditing == true || $0.owner?.deviceID == owner.deviceID }.map { member in
+            let isLocal = member.owner?.deviceID == owner.deviceID
+            return AddWorktreeHostChoice(
+                id: member.id,
+                host: isLocal ? "This Mac" : member.owner?.deviceLabel ?? member.name,
+                path: isLocal ? member.repositoryID : remoteMacsModel.relayRouter.resolveRepository(member.repositoryID)?.repositoryID,
+                availability: merged.availability(ofMember: member.id))
+        })
+    }
+
+    /// The Host row, for a project with more than one checkout to choose from.
+    private func hostContext(member: SidebarProject, project: MergedProject, merged: SidebarMergedRows) -> AddWorktreeHostContext? {
+        let choices = addWorktreeChoices(project, merged: merged)
+        guard choices.count > 1 else { return nil }
+        return AddWorktreeHostContext(projectName: project.name, choices: choices, selectedID: member.id, onSelect: { id, name, branch in
+            guard let next = project.members.first(where: { $0.id == id }) else { return }
+            pendingAddWorktree = nil
+            // Local and remote sheets have separate presenters, and one can't
+            // appear while the other is still dismissing.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                presentAddWorktree(member: next, project: project, name: name, branch: branch)
+            }
+        }, onCreated: {
+            UserDefaults.standard.set(member.id, forKey: "addWorktree.lastHost.\(project.id)")
+        })
+    }
+
+    private func localHostContext(_ repo: RepoEntry, merged: SidebarMergedRows) -> AddWorktreeHostContext? {
+        let id = localProjectID(repo)
+        guard let project = merged.project(id: merged.mergedID(forMember: id)),
+              let member = project.members.first(where: { $0.id == id }) else { return nil }
+        return hostContext(member: member, project: project, merged: merged)
+    }
+
+    /// Opens Add Worktree on one host. A project on several hosts gets a Host row.
+    private func presentAddWorktree(member: SidebarProject, project: MergedProject, name: String = "", branch: String? = nil) {
+        let context = hostContext(member: member, project: project, merged: mergedSidebar)
+        if let repo = appState.repos.first(where: { localProjectID($0) == member.id }) {
+            guard SidebarMenuVisibility.showsAddWorktree(repo: repo) else { return }
+            remoteBranchStore.pulse()
+            prStatusStore.pulse()
+            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: name, existingBranch: branch, hostContext: context)
+            return
+        }
+        guard !remoteProjectOperationInProgress else { return }
+        remoteProjectOperationInProgress = true
+        navigationError = nil
+        Task { @MainActor in
+            defer { remoteProjectOperationInProgress = false }
+            do {
+                // Choosing a sleeping host wakes it to load its branches.
+                if mergedSidebar.availability(ofMember: member.id) == .asleep,
+                   let sleeping = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == member.owner?.deviceID }) {
+                    try await remoteMacsModel.wake(sleeping)
+                }
+                var target = member
+                target.isAvailable = true
+                let (mac, repository) = try await remoteMacsModel.addWorktreeRepository(for: target)
+                onAddRemoteWorktreeWithHost(mac, repository, context, name, branch)
+            } catch { navigationError = error.localizedDescription }
+        }
+    }
+
+    private func canAddWorktree(to project: SidebarProject, merged: SidebarMergedRows) -> Bool {
         if let repo = appState.repos.first(where: { localProjectID($0) == project.id }) {
             return SidebarMenuVisibility.showsAddWorktree(repo: repo)
         }
+        // Opening the sheet wakes a sleeping host to load its branches.
+        if merged.availability(ofMember: project.id) == .asleep { return project.supportsWorktreeEditing == true }
         return remoteMacsModel.editableRepositoryTarget(for: project) != nil
     }
 
     private func addWorktreeToSelectedProject() {
-        guard navigation.query.isEmpty,
-              let project = projects.first(where: { $0.id == navigation.selectedProjectID && $0.isAvailable }) else { return }
-
-        if let repo = appState.repos.first(where: { localProjectID($0) == project.id }) {
-            if SidebarMenuVisibility.showsAddWorktree(repo: repo) { presentAddWorktree(for: repo) }
-            return
-        }
-
-        guard !remoteProjectOperationInProgress else { return }
-        remoteProjectOperationInProgress = true
-        navigationError = nil
-        Task { @MainActor in
-            defer { remoteProjectOperationInProgress = false }
-            do {
-                let (mac, repository) = try await remoteMacsModel.addWorktreeRepository(for: project)
-                onAddRemoteWorktree(mac, repository)
-            } catch { navigationError = error.localizedDescription }
-        }
+        let merged = mergedSidebar
+        guard navigation.query.isEmpty, let member = addWorktreeTarget(in: merged),
+              let project = merged.project(id: merged.mergedID(forMember: member.id)) else { return }
+        presentAddWorktree(member: member, project: project)
     }
 
-    private func setRemoteWorktreeOrderMode(_ mode: WorktreeOrderMode, for project: SidebarProject) {
-        guard !remoteProjectOperationInProgress else { return }
-        remoteProjectOperationInProgress = true
-        navigationError = nil
-        Task { @MainActor in
-            defer { remoteProjectOperationInProgress = false }
-            do {
-                try await remoteMacsModel.setWorktreeOrder(mode, for: project)
-                await refreshNavigation()
-            } catch { navigationError = error.localizedDescription }
-        }
-    }
-
-    /// Renders a worktree and its pane children as one visually-unified
-    /// block. When the worktree is active, the whole block (worktree row +
-    /// every pane row underneath) gets a single rounded highlight — the
-    /// user can see at a glance which worktree they're "in" even when
-    /// multiple panes are listed. Inside the highlighted block, the
-    /// focused pane is distinguished by text emphasis rather than a
-    /// second background.
+    /// Renders a worktree and its status line as one block, with a single
+    /// rounded highlight when it's active.
     @ViewBuilder
     private func worktreeBlock(
         _ worktree: WorktreeEntry,
         repo: RepoEntry,
         displayName: String,
-        activityCounts: SidebarActivityCounts
+        activityCounts: SidebarActivityCounts,
+        hostLabel: String? = nil
     ) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
-        let attention = SidebarAttentionLayout.layout(for: worktree)
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: displayName)
-        let isDropTarget = dropTargetWorktreeID == worktree.id
-        let paneLeaves = worktree.sidebarAgentSlots
-        let agentSessions = Set(paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) })
-        let groupsPanes = showsProjectRail && !paneLeaves.isEmpty
+        let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isAsleep: false)
         let projectID = localProjectID(repo)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: repo.id.uuidString, name: repo.displayName)
@@ -818,16 +1107,7 @@ struct SidebarView: View {
                 repoPath: repo.path
             ),
             prBadge: prBadge,
-            attentionStyle: attention.worktreeCapsule,
-            attentionCount: max(0, activityCounts.attentionByWorktree[worktree.path, default: 0]
-                - agentSessions.reduce(0) { $0 + activityCounts.attentionByPane[$1, default: 0] }),
-            project: project, projectIconData: iconStore.iconData(for: repo),
-            drawingData: iconStore.drawingData(for: worktree),
-            identityMenu: worktree.path == repo.path ? nil : { anchor in
-                WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
-                                        onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
-                                        onClear: { SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &appState.repos) })
-            },
+            hostLabel: hostLabel,
             onRemove: { window in onDeleteWorktree(worktree.path, window) }
         )
         .frame(minHeight: 24)
@@ -835,78 +1115,31 @@ struct SidebarView: View {
             SleepingWorktreeIndicator(state: terminalManager.worktreeSleepState, path: worktree.path)
         }
         .contentShape(Rectangle())
-        let paneRow: (PaneSlotID) -> PaneTitleRow = { terminalID in
-            let sessionName = worktree.paneSessions[terminalID]
-                .map(ZmxLauncher.sessionName(for:))
-            return PaneTitleRow(
-                title: SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: terminalID),
-                    agentName: worktree.agents.first { $0.presentationSlotID == terminalID }?.name),
-                isActiveWorktree: isActive,
-                isFocusedPane: false,
-                isBusy: AgentLivenessMerge.isPaneBusy(
-                    sessionName: sessionName,
-                    liveness: claudeSessionRegistry.livenessBySession),
-                theme: theme,
-                // The pane-scoped capsule (agent-stop icon, or
-                // notify/✓! text) renders directly; busy/idle no
-                // longer feed it.
-                attentionStyle: context.question != nil && context.questionPaneID == sessionName ? nil : attention.paneCapsules[terminalID],
-                portBindings: portBindings.bindings[terminalID] ?? [],
-                needsInput: worktree.paneAttention[terminalID]?.source == .agentStop || (context.question != nil && context.questionPaneID == sessionName),
-                agent: context.worktree.agents?.first { $0.id == worktree.agents.first(where: { $0.presentationSlotID == terminalID })?.id },
-                attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
-            )
-        }
-        let panes = ForEach(paneLeaves, id: \.self) { terminalID in
-            Button {
-                onSelect(worktree.path)
-            } label: {
-                paneRow(terminalID)
-            }
-            .buttonStyle(.plain)
-            .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
-            // PWD-1.4: pane rows are drag sources. The payload
-            // is a typed wrapper around the pane's UUID so
-            // SwiftUI's Transferable matching keeps unrelated
-            // drops from being mis-decoded as panes.
-            .draggable(TransferablePaneSlotID(id: terminalID.id))
-            .rightClickMenu {
-                buildPaneMenu(terminalID: terminalID)
-            }
-            if let route = context.questionPaneID,
-               worktree.paneSessions[terminalID].map(ZmxLauncher.sessionName(for:)) == route {
-                SidebarWorktreeQuestionTarget(context: context) {
-                    Task { _ = await openReport(context) }
-                }
-            }
-        }
         WorktreeBlock(
-            worktree: worktree, repoID: repo.id, isActive: isActive, isDropTarget: isDropTarget,
-            groupsPanes: groupsPanes, theme: theme, appState: $appState,
+            worktree: worktree, repoID: repo.id, isActive: isActive,
+            theme: theme, appState: $appState,
             reorderingEnabled: navigation.query.isEmpty,
             onSelect: { onSelect(worktree.path) },
-            onMovePane: onMovePane,
-            onPaneTargeted: { targeted in
-                if targeted { dropTargetWorktreeID = worktree.id }
-                else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
-            },
-            menu: { anchor in buildWorktreeMenu(worktree, repo: repo, window: anchor.window) }
+            menu: { anchor in buildWorktreeMenu(worktree, repo: repo, context: context, window: anchor.window) },
+            onDrop: { drop, placement in
+                handleRowDrop(drop, target: worktree.path, targetHost: owner.deviceID, after: placement == .after)
+            }
         ) {
+            WorktreeRowIdentitySlot(entry: worktree, displayName: displayName, isMainCheckout: worktree.path == repo.path, theme: theme,
+                prBadge: prBadge, status: status, project: project, projectIconData: iconStore.iconData(for: repo),
+                drawingData: iconStore.drawingData(for: worktree),
+                identityMenu: worktree.path == repo.path ? nil : { anchor in
+                    WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
+                                            onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
+                                            onClear: { SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &appState.repos) })
+                })
+        } heading: {
             heading
-        } panes: {
-            panes
-            if Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
-                                          displayedPaneSessions: paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) }) {
-                SidebarWorktreeQuestionTarget(context: context) {
-                    Task { _ = await openReport(context) }
-                }
+        } status: {
+            SidebarWorktreeStatusTarget(status: status, secondary: theme.sidebarSecondaryText) {
+                Task { _ = await openReport(context) }
             }
         }
-    }
-
-    static func showsWorktreeQuestion(questionPaneID: String?, displayedPaneSessions: [String]) -> Bool {
-        guard let questionPaneID else { return true }
-        return !displayedPaneSessions.contains(questionPaneID)
     }
 
     /// Worktree row's right-click menu. Built as `NSMenu` (not a
@@ -914,13 +1147,19 @@ struct SidebarView: View {
     /// `.rightClickMenu` documents. Reordering is drag-only and the
     /// emoji identity has its own menu on the identity slot
     /// (LAYOUT-2.96), so neither appears here.
-    private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry, window: NSWindow?) -> NSMenu {
+    private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry, context: SidebarWorktreeContext,
+                                   window: NSWindow?) -> NSMenu {
         let menu = NSMenu()
+        SidebarAttentionDismissalMenu.add(to: menu, context: context) { context in
+            navigation.dismissRequest(in: context)
+            SidebarAttentionDismissalMenu.acknowledge(
+                SidebarAttentionDismissal.requests(for: context, supportsExactAcknowledgement: true), in: &appState)
+        }
         // In-flight rows have nothing the menu actions can act on
         // safely — Open-in-Finder, Stop, and Delete-Worktree would all
         // either error or race the flow that owns the placeholder.
         if worktree.state.isInFlight {
-            return menu
+            return menu.droppingTrailingSeparator()
         }
         var hasPinnedActions = false
         if worktree.path != repo.path && (worktree.isPinned || worktree.state.hasOnDiskWorktree) {
@@ -1027,85 +1266,12 @@ struct SidebarView: View {
         }
     }
 
-    // MARK: Worktree order (LAYOUT-2.95)
 
-    private func setWorktreeOrderMode(_ mode: WorktreeOrderMode, for repo: RepoEntry) {
-        guard let index = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
-        appState.repos[index].worktreeOrderMode = mode
-    }
-
-    private static let worktreeOrderChoices = SidebarWorktreeOrderControl.choices
-
-    private func worktreeOrderPicker(_ repo: RepoEntry) -> some View {
-        Picker("Sort Worktrees", selection: Binding(
-            get: { appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual },
-            set: { setWorktreeOrderMode($0, for: repo) }
-        )) {
-            ForEach(Self.worktreeOrderChoices, id: \.mode) { Text($0.title).tag($0.mode) }
-        }
-    }
-
-    private func worktreeOrderMenu(_ repo: RepoEntry) -> NSMenu {
-        let menu = NSMenu()
-        for choice in Self.worktreeOrderChoices {
-            let item = ClosureMenuItem(title: choice.title) { setWorktreeOrderMode(choice.mode, for: repo) }
-            item.state = repo.worktreeOrderMode == choice.mode ? .on : .off
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    /// Right-click below the last row in the project column.
-    private func selectedProjectEmptySpaceMenu() -> NSMenu {
-        let menu = NSMenu()
-        guard navigation.query.isEmpty,
-              let repo = appState.repos.first(where: { localProjectID($0) == navigation.selectedProjectID }) else { return menu }
-        let sort = NSMenuItem(title: "Sort Worktrees", action: nil, keyEquivalent: "")
-        sort.submenu = worktreeOrderMenu(repo)
-        menu.addItem(sort)
-        return menu
-    }
-
-    /// AppKit-side pane right-click menu (PWD-1.1 / PWD-1.3 / LAYOUT-2.7
-    /// / TERM-8.10). The Move section is shared with the terminal-surface
-    /// menu via `PaneMoveMenuBuilder`; the Copy-web-URL item is sidebar-
-    /// only because the surface has no worktree-context-free way to know
-    /// its session name without going through this same view tree.
-    private func buildPaneMenu(terminalID: PaneSlotID) -> NSMenu {
-        let menu = NSMenu()
-        let defaultBranches = PaneMoveMenuContext.defaultBranches(
-            for: appState.repos,
-            using: remoteBranchStore
-        )
-        if !appState.repos.flatMap(\.worktrees).contains(where: { $0.ownsManagedAgent(in: terminalID) }),
-           let context = PaneMoveMenuContext.resolve(
-            terminalID: terminalID,
-            appState: appState,
-            shellCwd: terminalManager.shellCwd(for: terminalID),
-            defaultBranchesByRepoPath: defaultBranches
-        ) {
-            for item in PaneMoveMenuBuilder.items(
-                terminalID: terminalID,
-                context: context,
-                onMove: onMovePane
-            ) {
-                menu.addItem(item)
-            }
-        }
-        if case let .listening(_, port) = webController.status,
-           let host = webController.serverHostname,
-           let indices = appState.indicesOfWorktreeContaining(terminalID: terminalID),
-           let sessionID = appState.repos[indices.repo].worktrees[indices.worktree].paneSessions[terminalID] {
-            menu.addItem(.separator())
-            menu.addItem(ClosureMenuItem(title: "Copy web URL") {
-                Pasteboard.copy(WebURLComposer.url(
-                    session: ZmxLauncher.sessionName(for: sessionID),
-                    host: host,
-                    port: port
-                ))
-            })
-        }
-        return menu
+    /// The terminal menu's Copy web URL (LAYOUT-2.7): the surface has no way to
+    /// know its session name without the repositories this view holds.
+    static func paneWebURL(terminalID: PaneSlotID, repos: [RepoEntry], host: String, port: Int) -> String? {
+        guard let session = repos.lazy.flatMap(\.worktrees).compactMap({ $0.paneSessions[terminalID] }).first else { return nil }
+        return WebURLComposer.url(session: ZmxLauncher.sessionName(for: session), host: host, port: port)
     }
 
     private func dismissWorktree(_ worktree: WorktreeEntry) {
@@ -1156,104 +1322,16 @@ extension View {
 /// that treatment on leaf rows at every depth: a folder owns a native
 /// disclosure column, while its worktree children should advance by the same
 /// visual amount that a direct worktree advances beneath a repository.
-struct SidebarWorktreeRowInsets: ViewModifier {
-    let node: SidebarWorktreeNode
-    let depth: Int
-    var projectColumn: Bool = false
+/// Matches the outdent nested rows have always had in the project-less list.
+struct MergedRowInsets: ViewModifier {
+    let projectColumn: Bool
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if projectColumn {
             content
-        } else if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
-            content.listRowInsets(
-                EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
-            )
         } else {
-            content
-        }
-    }
-}
-
-/// Recursive row renderer with caller-owned disclosure state. `OutlineGroup`
-/// owns its expansion state internally and starts folders collapsed; using
-/// explicit `DisclosureGroup` bindings makes the initial state deterministic
-/// and lets the folder label react to collapse by showing aggregate stats.
-struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
-    let node: SidebarWorktreeNode
-    let depth: Int
-    let repositoryID: UUID
-    @Binding var expansion: SidebarWorktreeFolderExpansion
-    let statsByWorktreePath: [String: WorktreeStats]
-    let theme: GhosttyTheme
-    var projectColumn: Bool = false
-    var isPinnedSection: Bool = false
-    let worktreeContent: (WorktreeEntry, String) -> WorktreeContent
-
-    @ViewBuilder
-    var body: some View {
-        switch node {
-        case .worktree(let worktree, let displayName):
-            worktreeContent(worktree, displayName)
-
-        case .folder(let path, let name, let children):
-            let folderID = SidebarWorktreeFolderID(
-                repositoryID: repositoryID,
-                path: (isPinnedSection ? "pinned:" : "tasks:") + path
-            )
-            let isExpanded = expansion.isExpanded(folderID)
-            let aggregate = SidebarWorktreeHierarchy.aggregateStats(
-                in: node,
-                statsByWorktreePath: statsByWorktreePath
-            )
-            DisclosureGroup(
-                isExpanded: Binding(
-                    get: { expansion.isExpanded(folderID) },
-                    set: { expansion.setExpanded($0, for: folderID) }
-                )
-            ) {
-                ForEach(children) { child in
-                    SidebarWorktreeNodeRow(
-                        node: child,
-                        depth: depth + 1,
-                        repositoryID: repositoryID,
-                        expansion: $expansion,
-                        statsByWorktreePath: statsByWorktreePath,
-                        theme: theme,
-                        projectColumn: projectColumn,
-                        isPinnedSection: isPinnedSection,
-                        worktreeContent: worktreeContent
-                    )
-                    .modifier(SidebarWorktreeRowInsets(
-                        node: child,
-                        depth: depth + 1,
-                        projectColumn: projectColumn
-                    ))
-                    .padding(.leading, projectColumn ? 16 : 0)
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.sidebarDimIcon)
-                    Text(name)
-                        .lineLimit(1)
-                        .foregroundColor(theme.sidebarPrimaryText(isActive: false))
-                    Spacer()
-                    if !isExpanded {
-                        WorktreeRowGutter(
-                            stats: aggregate,
-                            baseRef: nil,
-                            theme: theme
-                        )
-                    }
-                }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
-                .frame(minHeight: projectColumn ? 44 : 0)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
+            content.listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)).listRowSeparator(.hidden)
         }
     }
 }

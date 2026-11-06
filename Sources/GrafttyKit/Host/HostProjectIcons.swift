@@ -17,6 +17,7 @@ struct HostProjectIcon {
 
 extension HeadlessHostRuntime {
     func refreshProjectIcons() async {
+        await refreshOriginKeys()
         let ids = Set(state.repos.map(\.id))
         projectIcons = projectIcons.filter { ids.contains($0.key) }
         projectIconLoads = projectIconLoads.filter { ids.contains($0.key) }
@@ -52,6 +53,32 @@ extension HeadlessHostRuntime {
         }
     }
 
+    /// An origin rarely changes, so look again every few minutes. Ranks are cheap
+    /// and a new pin can't be dragged without one, so those are seeded each pass.
+    private func refreshOriginKeys() async {
+        var keys: [String: String] = [:]
+        let isDue = originKeysCheckedAt.map { Date().timeIntervalSince($0) >= 300 } ?? true
+            || state.repos.contains { $0.isGitTracked && $0.originKey == nil && $0.projectRank == nil }
+        if isDue {
+            originKeysCheckedAt = Date()
+            for repo in state.repos where repo.isGitTracked {
+                if let origin = try? await GitRepositoryOrigin.detect(repoPath: repo.path) { keys[repo.path] = origin.identityKey }
+            }
+        }
+        var candidate = state
+        SidebarHostNavigation.applyOriginKeys(keys, in: &candidate.repos)
+        SidebarHostNavigation.seedRanks(in: &candidate.repos, projectOrder: candidate.repos.map(\.id))
+        guard candidate != state else { return }
+        state = candidate
+        try? state.save(to: configuration.stateDirectory)
+    }
+
+    /// Clients merge projects from several hosts, so one host's id can't equal
+    /// another's just because both checked out to the same path.
+    func projectID(for repo: RepoEntry) -> String {
+        origin.map { "\($0.deviceID.value):\(repo.path)" } ?? repo.path
+    }
+
     func currentProjectIcon(for repo: RepoEntry) -> HostProjectIcon? {
         guard let cached = projectIcons[repo.id], cached.path == repo.path, cached.override == repo.iconOverride else { return nil }
         return cached
@@ -69,9 +96,10 @@ extension HeadlessHostRuntime {
         return .snapshot(snapshot(), sidebar: SidebarSnapshot(projects: state.repos.map { repo in
             let initials: String?
             if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
-            return SidebarProject(id: repo.path, repositoryID: repo.path, name: repo.displayName,
+            return SidebarProject(id: projectID(for: repo), repositoryID: repo.path, name: repo.displayName,
                 owner: origin, iconRevision: currentProjectIcon(for: repo)?.revision, initials: initials,
-                supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil)
+                supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil,
+                originKey: repo.originKey, rank: repo.projectRank, rankChangedAt: repo.projectRankChangedAt)
         }, hostResources: hostResources))
     }
 }

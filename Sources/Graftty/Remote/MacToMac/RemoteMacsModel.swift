@@ -32,6 +32,11 @@ final class RemoteMacsModel: ObservableObject {
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
     @Published private(set) var trustedLinuxHosts: [RemoteDeviceID: PinnedHost] = [:]
     private let maintenancePins: PinnedHostStore
+    private let hostSnapshotCache: HostSnapshotCache
+    private let wakeableHostIDsProvider: @Sendable () -> Set<RemoteDeviceID>
+    @Published private var wakeableHostIDs: Set<RemoteDeviceID> = []
+    @Published private var hostSnapshots: [RemoteDeviceID: HostSnapshotCache.Snapshot] = [:]
+    private var hostSnapshotSavedAt: [RemoteDeviceID: Date] = [:]
     private var linuxPinGeneration: UInt64 = 0
     @Published private(set) var discoveryCandidates: [GrafttyBonjourCandidate] = []
     @Published private(set) var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
@@ -54,11 +59,16 @@ final class RemoteMacsModel: ObservableObject {
     private let paneFeedRetryDelay: @Sendable () async throws -> Void
     private enum ConnectionIntent: Int {
         case ordinary
+        /// Something the user did needs this host, so it may wake.
+        case interaction
         case selectionRecovery
         case forcedReconnect
 
+        /// Background connections never wake a host.
+        var allowsWake: Bool { self != .ordinary }
+
         var replacesExistingHostConnection: Bool {
-            self != .ordinary
+            self == .selectionRecovery || self == .forcedReconnect
         }
 
         var disconnectsLocalConnection: Bool {
@@ -99,10 +109,16 @@ final class RemoteMacsModel: ObservableObject {
         connectionRegistry: RemoteMacConnectionRegistry? = nil,
         relayRouter: RemoteWorktreeRelayRouter? = nil,
         paneFeedRetryDelay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
-        maintenancePins: PinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
+        maintenancePins: PinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory),
+        hostSnapshotCache: HostSnapshotCache = HostSnapshotCache(),
+        wakeableHostIDs: (@Sendable () -> Set<RemoteDeviceID>)? = nil
     ) {
         self.store = store ?? RemoteMacStore()
         self.maintenancePins = maintenancePins
+        self.hostSnapshotCache = hostSnapshotCache
+        self.wakeableHostIDsProvider = wakeableHostIDs ?? {
+            Set(((try? maintenancePins.list()) ?? []).filter { $0.wakeOnLAN != nil }.map(\.id))
+        }
         self.paneFeedRetryDelay = paneFeedRetryDelay
         let registry = connectionRegistry ?? RemoteMacConnectionRegistry()
         self.connectionRegistry = registry
@@ -180,6 +196,16 @@ final class RemoteMacsModel: ObservableObject {
             linuxPinGeneration &+= 1
         }
         savedRemoteMacs = store.remoteMacs
+        await refreshWakeableHostIDs()
+        let savedIDs = Set(savedRemoteMacs.map(\.id))
+        for id in hostSnapshots.keys where !savedIDs.contains(id) {
+            hostSnapshots[id] = nil
+            hostSnapshotSavedAt[id] = nil
+            hostSnapshotCache.remove(hostID: id)
+        }
+        for remoteMac in savedRemoteMacs where hostSnapshots[remoteMac.id] == nil && wakeableHostIDs.contains(remoteMac.id) {
+            hostSnapshots[remoteMac.id] = hostSnapshotCache.load(hostID: remoteMac.id)
+        }
         for remoteMac in savedRemoteMacs {
             let identity = RemoteMacIdentity(remoteMac)
             if let candidate = candidatesByIdentity[identity] {
@@ -375,8 +401,8 @@ final class RemoteMacsModel: ObservableObject {
     }
 
     @discardableResult
-    func connect(to remoteMac: RemoteMac) async throws -> RemoteMacConnectionRegistry.Entry {
-        try await connectionTask(to: remoteMac).value
+    func connect(to remoteMac: RemoteMac, allowsWake: Bool = false) async throws -> RemoteMacConnectionRegistry.Entry {
+        try await connectionTask(to: remoteMac, intent: allowsWake ? .interaction : .ordinary).value
     }
 
     func reconnectAfterMaintenance(_ remote: RemoteMac) async throws {
@@ -439,7 +465,8 @@ final class RemoteMacsModel: ObservableObject {
                     identity: identity,
                     attemptID: attemptID,
                     replacingExistingHostConnection:
-                        intent.replacesExistingHostConnection
+                        intent.replacesExistingHostConnection,
+                    allowsWake: intent.allowsWake
                 )
             } catch {
                 // Teardown can suspend and be cancelled before performConnect
@@ -460,6 +487,12 @@ final class RemoteMacsModel: ObservableObject {
         return task
     }
 
+    private func refreshWakeableHostIDs() async {
+        let provider = wakeableHostIDsProvider
+        let hostIDs = await Task.detached { provider() }.value
+        if wakeableHostIDs != hostIDs { wakeableHostIDs = hostIDs }
+    }
+
     private func prepareForExplicitReconnect(identity: RemoteMacIdentity) {
         stopPaneFeedRecovery(identity: identity)
         invalidatePaneControlQueue(for: identity)
@@ -473,12 +506,14 @@ final class RemoteMacsModel: ObservableObject {
         to remoteMac: RemoteMac,
         identity: RemoteMacIdentity,
         attemptID: UUID,
-        replacingExistingHostConnection: Bool
+        replacingExistingHostConnection: Bool,
+        allowsWake: Bool
     ) async throws -> RemoteMacConnectionRegistry.Entry {
         do {
             let entry = try await connectionRegistry.connect(
                 to: remoteMac,
-                replacingExistingHostConnection: replacingExistingHostConnection
+                replacingExistingHostConnection: replacingExistingHostConnection,
+                allowsWake: allowsWake
             )
             try Task.checkCancellation()
             guard connectAttemptIDs[identity] == attemptID else {
@@ -494,6 +529,9 @@ final class RemoteMacsModel: ObservableObject {
             // frame: an empty default can incorrectly prime notification
             // state, then replay durable attention when the real first frame
             // arrives.
+            // A host signs its wake details during the dial, so a host paired
+            // moments ago can already sleep and keep its rows.
+            await refreshWakeableHostIDs()
             return entry
         } catch {
             let requiresPairing = Self.requiresPairing(after: error)
@@ -671,7 +709,8 @@ final class RemoteMacsModel: ObservableObject {
             }
             if let remoteMac {
                 do {
-                    _ = try await self.connect(to: remoteMac)
+                    // Pane input is the user acting on this host.
+                    _ = try await self.connect(to: remoteMac, allowsWake: true)
                 } catch {
                     guard !Task.isCancelled,
                           self.paneControlEpochs[identity, default: 0]
@@ -783,15 +822,26 @@ final class RemoteMacsModel: ObservableObject {
         return (mac, repository)
     }
 
-    func canSetWorktreeOrder(for project: SidebarProject) -> Bool {
-        project.worktreeOrderMode != nil && editableRepositoryTarget(for: project) != nil
+    func setProjectRank(_ rank: String, changedAt: Double, for project: SidebarProject) async throws {
+        guard let route = relayRouter.resolveRepository(project.repositoryID) else { throw ProjectControlError.unavailable }
+        try expectOK(await sendWorktreeManagement(identity: route.identity,
+            request: .setProjectRank(repositoryID: route.repositoryID, rank: rank, changedAt: changedAt)))
     }
 
-    func setWorktreeOrder(_ mode: WorktreeOrderMode, for project: SidebarProject) async throws {
-        guard project.worktreeOrderMode != nil else { throw ProjectControlError.unsupportedOrder }
-        guard let route = editableRepositoryTarget(for: project) else { throw ProjectControlError.unavailable }
-        let response = try await sendWorktreeManagement(identity: route.identity,
-            request: .setWorktreeOrder(repositoryID: route.repositoryID, mode: mode))
+    func setPinnedRank(_ rank: String, worktree: WorktreePanes, on remoteMac: RemoteMac) async throws {
+        guard let repositoryID = worktree.repositoryID else { throw ProjectControlError.unavailable }
+        try expectOK(await sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac),
+            request: .setPinnedRank(repositoryID: repositoryID, worktreeID: worktree.path, rank: rank)))
+    }
+
+    /// A row on an older host, which has no rank to write.
+    func moveWorktree(_ source: WorktreePanes, relativeTo target: WorktreePanes, after: Bool, on remoteMac: RemoteMac) async throws {
+        guard let repositoryID = source.repositoryID else { throw ProjectControlError.unavailable }
+        try expectOK(await sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac),
+            request: .moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after)))
+    }
+
+    private func expectOK(_ response: WorktreeManagementResponse) throws {
         switch response {
         case .ok: return
         case .error(_, let message, _, _): throw ProjectControlError.host(message)
@@ -846,6 +896,14 @@ final class RemoteMacsModel: ObservableObject {
         force: Bool
     ) async -> WorktreeManagementResponse {
         let identity = RemoteMacIdentity(remoteMac)
+        // A sleeping host's rows stay listed, and removing one needs that host.
+        if connectionState(for: identity) != .connected {
+            do {
+                _ = try await connect(to: remoteMac, allowsWake: true)
+            } catch {
+                return Self.downstreamManagementError(error)
+            }
+        }
         let response = await forwardManagement(
             identity: identity,
             request: .delete(worktreeID: worktreePath, force: force)
@@ -930,11 +988,60 @@ final class RemoteMacsModel: ObservableObject {
             }
             snapshots[identity] = rows
             let projects = sidebar?.projects ?? SidebarProjection.projects(rows)
-            result.projects += relayRouter.promoteProjects(projects, from: mac)
+            let promoted = relayRouter.promoteProjects(projects, from: mac)
+            result.projects += promoted
+            rememberSnapshot(of: mac, projects: promoted, rows: rows.filter { ($0.origin?.relayDepth ?? 0) == 0 })
             if sidebar != nil { result.authoritativeOwnerIDs.insert(mac.id) }
         }
         result.worktrees = relayRouter.promotedWorktrees(snapshots: snapshots, remoteMacs: savedRemoteMacs)
         return result
+    }
+
+    struct SleepingSnapshot {
+        var hostIDs: Set<RemoteDeviceID> = []
+        var projects: [SidebarProject] = []
+        var rows: [WorktreePanes] = []
+    }
+
+    /// The last report from each unreachable host that can be woken. Its rows
+    /// have to stay visible, or there would be nothing to open to wake it.
+    /// Deliberately separate from `worktreePanesByRemote`, so they're never relayed.
+    func sleepingSnapshot() -> SleepingSnapshot {
+        var result = SleepingSnapshot()
+        for mac in savedRemoteMacs where wakeableHostIDs.contains(mac.id) {
+            guard connectionState(for: RemoteMacIdentity(mac)) != .connected,
+                  let snapshot = hostSnapshots[mac.id] else { continue }
+            let origin = WorktreeOrigin(deviceID: mac.id, deviceLabel: mac.label, relayDepth: 0)
+            result.hostIDs.insert(mac.id)
+            result.rows += snapshot.rows.map { $0.with(origin: origin) }
+            result.projects += snapshot.projects.map { project in
+                var project = project
+                project.isAvailable = false
+                project.owner = WorktreeOrigin(deviceID: mac.id, deviceLabel: mac.label, relayDepth: 1)
+                return project
+            }
+        }
+        return result
+    }
+
+    /// Connects for something the user asked of this host, sending a wake if
+    /// it has wake details, and registers the routes its project rows use.
+    func wake(_ remoteMac: RemoteMac) async throws {
+        _ = try await connect(to: remoteMac, allowsWake: true)
+        _ = await sidebarRelaySnapshot()
+    }
+
+    /// Reports arrive often, and sleeping rows only need to be roughly current.
+    private func rememberSnapshot(of mac: RemoteMac, projects: [SidebarProject], rows: [WorktreePanes]) {
+        guard wakeableHostIDs.contains(mac.id) else { return }
+        let snapshot = HostSnapshotCache.Snapshot(projects: projects, rows: rows)
+        guard hostSnapshots[mac.id] != snapshot else { return }
+        hostSnapshots[mac.id] = snapshot
+        let now = Date()
+        guard now.timeIntervalSince(hostSnapshotSavedAt[mac.id] ?? .distantPast) > 30 else { return }
+        hostSnapshotSavedAt[mac.id] = now
+        let cache = hostSnapshotCache
+        Task.detached(priority: .utility) { try? cache.save(hostID: mac.id, projects: projects, rows: rows) }
     }
 
     func notificationProjectIdentity(for event: RemoteNotificationEvent) async -> (SidebarProject, Data?)? {
@@ -976,6 +1083,17 @@ final class RemoteMacsModel: ObservableObject {
             }
         }
         return promoted
+    }
+
+    /// LAYOUT-2.218: retires one of a remote row's requests on the Mac that owns it.
+    /// A merged-sidebar row reads its relay-promoted context, whose IDs only this
+    /// Mac's router resolves; a raw row's IDs already name the owning Mac's worktree.
+    func retireRequest(_ request: WorktreeManagementRequest, on remoteMac: RemoteMac) async throws -> WorktreeManagementResponse {
+        if case let .acknowledgeOccurrence(worktreeID, _, _) = request, relayRouter.resolveWorktree(worktreeID) != nil {
+            return await sendRelayedWorktreeManagement(request)
+                ?? .error(code: "not-found", message: "This request's pane is no longer available.", forceAllowed: false, shortStatus: nil)
+        }
+        return try await sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac), request: request)
     }
 
     func sendRelayedWorktreeManagement(
@@ -1119,6 +1237,16 @@ final class RemoteMacsModel: ObservableObject {
                   let target = relayRouter.resolveWorktree(relativeTo),
                   repo.identity == worktree.identity, repo.identity == target.identity else { return nil }
             return await forwardManagement(identity: repo.identity, request: .moveWorktree(repositoryID: repo.repositoryID, worktreeID: worktree.path, relativeTo: target.path, after: after))
+
+        case let .setPinnedRank(repositoryID, worktreeID, rank):
+            guard let repo = relayRouter.resolveRepository(repositoryID),
+                  let worktree = relayRouter.resolveWorktree(worktreeID),
+                  repo.identity == worktree.identity else { return nil }
+            return await forwardManagement(identity: repo.identity, request: .setPinnedRank(repositoryID: repo.repositoryID, worktreeID: worktree.path, rank: rank))
+
+        case let .setProjectRank(repositoryID, rank, changedAt):
+            guard let repo = relayRouter.resolveRepository(repositoryID) else { return nil }
+            return await forwardManagement(identity: repo.identity, request: .setProjectRank(repositoryID: repo.repositoryID, rank: rank, changedAt: changedAt))
 
         case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }

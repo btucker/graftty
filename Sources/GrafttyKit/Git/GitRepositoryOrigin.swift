@@ -12,6 +12,17 @@ public struct GitRepositoryOrigin: Codable, Sendable, Equatable {
     public let transport: String?
     public let sshUser: String?
 
+    /// Published to paired devices so they can merge checkouts of one repository.
+    /// Equal exactly when two origins are equal, and parsing already drops credentials.
+    public var identityKey: String {
+        var key = ""
+        if let transport { key += transport + "://" }
+        if let sshUser { key += sshUser + "@" }
+        key += host
+        if let port { key += ":\(port)" }
+        return key + (path.hasPrefix("/") ? path : "/" + path)
+    }
+
     public static func parse(_ remoteURL: String) -> Self? {
         let value = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let host: String

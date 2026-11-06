@@ -5,85 +5,87 @@ import GrafttyCommandUI
 
 /// The question owns its click so the block's drag target cannot replace
 /// navigation to the requesting pane with worktree-only selection.
-struct SidebarWorktreeQuestionTarget: View {
-    let context: SidebarWorktreeContext
+struct SidebarWorktreeStatusTarget: View {
+    let status: SidebarRowStatus
+    let secondary: Color
     let onOpen: () -> Void
 
     var body: some View {
-        if context.question != nil {
-            Button(action: onOpen) {
-                SidebarWorktreeQuestion(context: context)
-                    .padding(.leading, 33).padding(.trailing, 8)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Open the worktree and focus the requesting pane")
-            .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.question: $0] }
+        if status == .none {
+            EmptyView()
+        } else if status.opensPane {
+            Button(action: onOpen) { line }
+                .buttonStyle(.plain)
+                .accessibilityHint("Open the worktree and focus the requesting pane")
+                .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.question: $0] }
+        } else {
+            line
         }
+    }
+
+    private var line: some View {
+        SidebarStatusLine(status: status, secondary: secondary)
+            .padding(.top, SidebarStatusLine.macTopInset)
+            .padding(.trailing, 8).padding(.bottom, SidebarStatusLine.macBottomInset(status))
+            .contentShape(Rectangle())
     }
 }
 
-/// One sidebar worktree block: the heading button, the pane rows beneath
-/// it, the unified active highlight and drop stroke, and the block-level
-/// drag source / drop target. `SidebarView` supplies the heading and pane
-/// content; the click-target tests compose the same block so hit testing
-/// is verified against the production structure rather than a copy.
-struct WorktreeBlock<Heading: View, Panes: View>: View {
+/// One sidebar worktree block: the heading button, its status line, the active
+/// highlight, and the block-level drag source and drop target. The click-target
+/// tests compose the same block, so hit testing covers the production structure.
+struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
     let worktree: WorktreeEntry
     let repoID: RepoEntry.ID
     let isActive: Bool
-    let isDropTarget: Bool
-    /// True when pane rows render under the heading on the project column.
-    /// The block then carries vertical breathing room inside its highlight.
-    let groupsPanes: Bool
     let theme: GhosttyTheme
     @Binding var appState: AppState
     let reorderingEnabled: Bool
     let onSelect: () -> Void
-    let onMovePane: (PaneSlotID, String) -> Void
-    let onPaneTargeted: (Bool) -> Void
     let menu: (NSView) -> NSMenu
+    var onDrop: ((WorktreeRowDrop, WorktreeDropPlacement) -> Bool)? = nil
+    @ViewBuilder var identity: () -> Identity
     @ViewBuilder let heading: () -> Heading
-    @ViewBuilder let panes: () -> Panes
+    @ViewBuilder let status: () -> Status
 
     var body: some View {
-        VStack(spacing: 0) {
-            if groupsPanes { breathingRoom }
+        SidebarWorktreeRowLayout {
+            Button(action: onSelect) { identity().contentShape(Rectangle()) }
+                .buttonStyle(.plain)
+                // Fills the identity column, so an emoji's own, smaller menu stays innermost.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .rightClickMenu(anchored: menu)
+        } content: {
             Button(action: onSelect) { heading() }
                 .buttonStyle(.plain)
                 .id(worktree.path)
                 .rightClickMenu(anchored: menu)
-
-            panes()
-            if groupsPanes { breathingRoom }
+            status().rightClickMenu(anchored: menu)
         }
+        .padding(.leading, 6)
         .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
         )
-        // PWD-1.5: drop-target highlight. Stroked so it composes with
-        // the active-worktree background fill above when the dragged-
-        // onto row is also the active one.
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
-        )
-        // The whole block (heading + pane rows) is the drag image and the
-        // drop target, so a worktree never lands between another's panes.
         .worktreeReorderTarget(
             repoID: repoID,
             worktreeID: worktree.id,
             appState: $appState, isEnabled: reorderingEnabled,
-            onSelect: onSelect,
-            onMovePane: onMovePane,
-            onPaneTargeted: onPaneTargeted
+            onSelect: onSelect, onDrop: onDrop
         )
+        .padding(.vertical, SidebarWorktreeListStyle.macRowOuterInset)
     }
+}
 
-    /// LAYOUT-2.117: the native block target also selects through this space.
-    private var breathingRoom: some View {
-        Color.clear.frame(maxWidth: .infinity).frame(height: 8)
-            .accessibilityHidden(true)
+extension WorktreeBlock where Identity == EmptyView {
+    /// A block whose row has no identity to draw.
+    init(worktree: WorktreeEntry, repoID: RepoEntry.ID, isActive: Bool, theme: GhosttyTheme, appState: Binding<AppState>,
+         reorderingEnabled: Bool, onSelect: @escaping () -> Void, menu: @escaping (NSView) -> NSMenu,
+         onDrop: ((WorktreeRowDrop, WorktreeDropPlacement) -> Bool)? = nil,
+         @ViewBuilder heading: @escaping () -> Heading, @ViewBuilder status: @escaping () -> Status) {
+        self.init(worktree: worktree, repoID: repoID, isActive: isActive, theme: theme, appState: appState,
+                  reorderingEnabled: reorderingEnabled, onSelect: onSelect, menu: menu, onDrop: onDrop,
+                  identity: { EmptyView() }, heading: heading, status: status)
     }
 }

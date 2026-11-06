@@ -23,7 +23,7 @@ import GrafttyRemoteClient
 /// the equivalent leaf in the new layout.
 ///
 /// @spec IPAD-1.4
-/// When the user taps a pane child row in the sidebar at iPad regular
+/// When the user opens a pane from an attention request at iPad regular
 /// width, the application shall set `IPadAppState.focusedPaneId` to
 /// that leaf's `sessionName` without pushing a new navigation stack
 /// frame.
