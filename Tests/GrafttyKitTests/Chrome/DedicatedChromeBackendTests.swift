@@ -101,7 +101,8 @@ struct DedicatedChromeBackendTests {
             let lost = await broker.handle(request, peerID: "trusted", viewerID: viewer)
             #expect(lost.error == nil)
             let tab = try #require(lost.state?.selectedTabID)
-            #expect(try await backend.evaluateForTesting("location.href") == original)
+            // Target creation can return before its initial navigation commits.
+            try await expectValue("location.href", equals: original, backend: backend)
             _ = await broker.handle(.init(target: "pane", action: .text(tabID: tab, text: "")), peerID: "trusted", viewerID: viewer)
             await broker.disconnect(viewerID: viewer)
             let retried = await broker.handle(request, peerID: "trusted", viewerID: UUID())

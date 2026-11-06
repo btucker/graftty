@@ -227,7 +227,7 @@ private func waitForFrame(_ tab: String, width: Int, height: Int, viewportID: UI
     return frame
 }
 
-private func expectValue(_ expression: String, equals expected: String, backend: DedicatedChromeBackend) async throws {
+func expectValue(_ expression: String, equals expected: String, backend: DedicatedChromeBackend) async throws {
     for _ in 0..<40 {
         if (try? await backend.evaluateForTesting(expression)) == expected { return }
         try await Task.sleep(for: .milliseconds(50))
