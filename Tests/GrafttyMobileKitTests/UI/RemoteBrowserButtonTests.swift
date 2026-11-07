@@ -853,7 +853,10 @@ struct RemoteBrowserButtonTests {
         let sheet = try #require(fixture.host.presentedViewController)
         try await waitUntil { !sheet.isBeingPresented && sheet.view.window != nil }
         #expect(!(sheet is UIAlertController), "Retry must present the browser rather than silently return")
-        #expect(accessibilityObjects(in: sheet.view).contains { $0.accessibilityLabel == "Done" })
+        // UIKit can finish presenting before SwiftUI mounts its toolbar.
+        try await waitUntil("retried browser Done control") {
+            accessibilityObjects(in: sheet.view).contains { $0.accessibilityLabel == "Done" }
+        }
         fixture.state.owner = false
         try await waitUntil { fixture.host.presentedViewController == nil }
         // UIKit removes the controller before SwiftUI delivers its dismissal
