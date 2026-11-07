@@ -29,6 +29,7 @@ public extension PagedTerminalRenderer {
 @Observable
 @MainActor
 public final class PagedTerminalCoordinator {
+    private var hasViewportHistoryDemand = false
     public enum RestoreError: Error, Equatable, Sendable { case timedOut }
     /// @spec TERM-12.55
     /// When a checkpoint installation completes or fails in the current attachment, the application shall retain only its latest elapsed installation duration and outcome for diagnosis without retaining snapshot contents.
@@ -43,7 +44,11 @@ public final class PagedTerminalCoordinator {
     public enum Status: Equatable, Sendable {
         case inactive, installing, available, loading, complete, requiresRecovery, unavailable, limit, pageTooLarge
     }
-    public private(set) var status: Status = .inactive
+    public private(set) var status: Status = .inactive {
+        didSet { if oldValue != status { onStatusChange?(status) } }
+    }
+    /// Includes changes caused by a timeout when no further frame arrives.
+    @ObservationIgnored public var onStatusChange: (@MainActor (Status) -> Void)?
     private let renderer: any PagedTerminalRenderer
     private let send: @MainActor (PagedTerminalRequest) async throws -> Void
     private let requestTimeout: Duration
@@ -101,6 +106,7 @@ public final class PagedTerminalCoordinator {
                 throw PagedTerminalEnvelope.Error.invalid
             }
             if checkpoint?.incarnation == value.incarnation, checkpoint?.id == value.id { return nil }
+            hasViewportHistoryDemand = false
             cancelPending()
             retryRequest = nil
             generation &+= 1
@@ -179,7 +185,20 @@ public final class PagedTerminalCoordinator {
         case .output, .ended:
             break
         }
+        await continueViewportHistory()
         return nil
+    }
+
+    /// Only a user scroll starts history loading. Native viewport updates and
+    /// completed pages can then continue it while the viewport remains near top.
+    public func viewportDidChange(requestHistory: Bool = true) async {
+        if requestHistory { hasViewportHistoryDemand = true }
+        await continueViewportHistory()
+    }
+
+    private func continueViewportHistory() async {
+        guard hasViewportHistoryDemand else { return }
+        await loadIfNeeded()
     }
 
     /// Called from scroll demand or a modest viewport poll. There is at most
@@ -224,11 +243,13 @@ public final class PagedTerminalCoordinator {
         await loadIfNeeded()
     }
 
-    /// A replacement changes the reading position, so the UI calls this only
-    /// after an explicit recovery action. Loaded content remains until READY.
+    /// A replacement changes the reading position. Call only after explicit
+    /// recovery or an initial layout resize before history interaction. Loaded content remains until READY.
     public func recover() async {
         guard status != .installing, checkpoint != nil || status == .requiresRecovery else { return }
         cancelPending()
+        // Fence a prior send that can finish after its timeout and a retry.
+        generation &+= 1
         // Explicit recovery must accept READY even when the host returns the
         // same identity. The renderer retains loaded content until it arrives.
         checkpoint = nil
@@ -246,7 +267,15 @@ public final class PagedTerminalCoordinator {
         }
     }
 
+    /// Keep the live terminal visible while offering a fresh history snapshot.
+    public func invalidateHistory() {
+        cancelPending()
+        hasViewportHistoryDemand = false
+        status = .requiresRecovery
+    }
+
     public func disconnect() {
+        hasViewportHistoryDemand = false
         generation &+= 1
         cancelPending()
         rendererOperation?.cancel()

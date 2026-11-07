@@ -18,6 +18,9 @@ IOS_INTEGRATION_GROUPS = (
 )
 IOS_INTEGRATION_SUITES = tuple(suite for group in IOS_INTEGRATION_GROUPS for suite in group)
 
+# Native WebRTC fault injection has process-wide SDK state. Keep its lifecycle
+# independent of unrelated AppKit and Speech tests in alphabetical batches.
+MAC_ISOLATED_SUITES = {"WebRTCBulkTransportTests"}
 
 
 def mac_filters(test_ids, batch_size=20):
@@ -32,14 +35,16 @@ def mac_filters(test_ids, batch_size=20):
             suites.add(name.split("/", 1)[0])
     if not suites:
         raise ValueError("No non-ownership tests were discovered")
-    names = sorted(suites)
+    names = sorted(suites - MAC_ISOLATED_SUITES)
+    batches = [names[i:i + batch_size] for i in range(0, len(names), batch_size)]
+    batches.extend([name] for name in sorted(suites & MAC_ISOLATED_SUITES))
     # SwiftPM lists module-qualified names; Swift Testing can match names with
     # the module removed. Anchor both forms, including the suite boundary.
     # Group globally so a suite shared by modules is selected only once.
     module_prefix = "|".join(re.escape(n) for n in sorted(modules))
     patterns = ["^(?:(?:" + module_prefix + r")\.)?(" +
-                "|".join(re.escape(n) for n in names[i:i + batch_size]) + r")(/|$)"
-                for i in range(0, len(names), batch_size)]
+                "|".join(re.escape(n) for n in batch) + r")(/|$)"
+                for batch in batches]
     compiled = [re.compile(pattern) for pattern in patterns]
     for identifier in test_ids:
         expected = 0 if identifier.startswith("OwnershipModelTests.") else 1

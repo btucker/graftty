@@ -1,5 +1,7 @@
 import AppKit
 import GhosttyKit
+import GrafttyRemoteTestSupport
+import IOSurface
 @testable import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
@@ -9,9 +11,24 @@ import XCTest
 
 #if GRAFTTY_PAGED_HISTORY
 struct MacPagedOutputDeadlockTests {
+    @Test("@spec PERF-1.25: When the native transport latency probe is explicitly run, the probe shall report transport, parsing, and matching rendered-pixel latency separately without treating renderer completion as physical display presentation.",
+          .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TERMINAL_FLOW_PROBES"] != nil), .serialized, arguments: [false, true])
+    func nativeTransportLatency(direct: Bool) async throws {
+        try await runChild(direct ? "testDirectTransportLatency" : "testWebRTCTransportLatency", timeout: .seconds(45))
+    }
+
     @Test("@spec TERM-12.56: When live output fills the native app mailbox in a Mac paged attachment, the application shall keep main available to drain messages and apply subsequent output and control events in order.")
     func remoteOutputMakesMailboxProgress() async throws {
         try await runChild("testRemoteOutput")
+    }
+
+    @Test func nativeKeyboardScrollLoadsOlderHistory() async throws {
+        try await runChild("testRemoteKeyboard")
+    }
+
+    @Test("@spec TERM-12.65: When an initial remote Mac owner resize changes the checkpoint width before history is read, the application shall refresh that checkpoint at the new width and keep older rows reachable on scroll demand.")
+    func initialOwnerResizePreservesHistory() async throws {
+        try await runChild("testInitialOwnerResizeHistory")
     }
 
     @Test("@spec TERM-12.57: When a local Mac paged attachment receives title output that exceeds the native mailbox capacity, the application shall parse it off main and render its final output before reporting shell exit.")
@@ -29,7 +46,7 @@ struct MacPagedOutputDeadlockTests {
         try await runChild("testGridCompletionRetirement")
     }
 
-    private func runChild(_ method: String) async throws {
+    private func runChild(_ method: String, timeout: Duration = .seconds(15)) async throws {
         let directory = URL(fileURLWithPath: "/private/tmp/paged-output-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let log = directory.appendingPathComponent("child.log")
@@ -55,9 +72,17 @@ struct MacPagedOutputDeadlockTests {
                                       zmxDir: directory.appendingPathComponent("daemon"))
             launcher.kill(sessionName: "probe")
             try? FileManager.default.removeItem(at: launcher.zmxDir)
-            if succeeded { try? FileManager.default.removeItem(at: directory) }
+            if succeeded {
+                try? FileManager.default.removeItem(at: directory)
+            } else {
+                for name in ["child.log", "sample.txt"] {
+                    if let diagnostics = try? String(contentsOf: directory.appendingPathComponent(name), encoding: .utf8) {
+                        Attachment.record(diagnostics, named: "\(method)-\(name)")
+                    }
+                }
+            }
         }
-        let deadline = ContinuousClock.now + .seconds(15)
+        let deadline = ContinuousClock.now + timeout
         while child.isRunning, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         if child.isRunning {
             // Capture the causal stack before killing the child. The sample
@@ -72,13 +97,18 @@ struct MacPagedOutputDeadlockTests {
             while sample.isRunning, ContinuousClock.now < sampleDeadline { try await Task.sleep(for: .milliseconds(20)) }
             if sample.isRunning { kill(sample.processIdentifier, SIGKILL) }
             kill(child.processIdentifier, SIGKILL)
-            Issue.record("Native paged output blocked for 15 seconds; diagnostics: \(directory.path)")
+            Issue.record("Native paged output blocked for \(timeout); diagnostics: \(directory.path)")
             return
         }
         let diagnostics = try String(contentsOf: log, encoding: .utf8)
+        if let metrics = try? String(contentsOf: directory.appendingPathComponent("metrics.json"), encoding: .utf8) {
+            print("[native-transport] \(metrics)")
+            Attachment.record(metrics, named: "\(method)-metrics.json")
+        }
         #expect(child.terminationReason == .exit && child.terminationStatus == 0, "Native probe failed: \(diagnostics)")
-        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("completed").path))
-        succeeded = child.terminationReason == .exit && child.terminationStatus == 0
+        let completed = FileManager.default.fileExists(atPath: directory.appendingPathComponent("completed").path)
+        #expect(completed)
+        succeeded = child.terminationReason == .exit && child.terminationStatus == 0 && completed
     }
 }
 
@@ -95,7 +125,161 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         try Data("completed".utf8).write(to: directory.appendingPathComponent("completed"))
     }
 
-    func testRemoteOutput() async throws {
+    func testDirectTransportLatency() async throws { try await transportLatency(direct: true) }
+    func testWebRTCTransportLatency() async throws { try await transportLatency(direct: false) }
+
+    private func transportLatency(direct: Bool) async throws {
+        let directory = try probeDirectory()
+        let connection = try await TerminalTransportProbeConnection.make(direct: direct)
+        do {
+            let canvas = try PagedOutputCanvas(loadUserConfig: false)
+            let parseTiming = ProbeParseTiming()
+            let native = MacPagedSurface(canvas.surface, writeBuffer: { surface, data in
+                data.withUnsafeBytes { bytes in
+                    guard let base = bytes.baseAddress else { return }
+                    ghostty_surface_write_buffer(surface, base.assumingMemoryBound(to: UInt8.self), UInt(bytes.count))
+                }
+                parseTiming.record()
+            })
+            defer { native.close(); canvas.close() }
+            let pixels = canvas.view.convertToBacking(canvas.view.bounds.size)
+            ghostty_surface_set_size(canvas.surface, UInt32(pixels.width), UInt32(pixels.height))
+            // Despite its name, the native API takes a visible flag.
+            ghostty_surface_set_occlusion(canvas.surface, true)
+            let client = try await connection.open("echo")
+            defer { client.close() }
+            var reports: [[String: Any]] = []
+            for load in ["idle", "streamingSibling", "stalledSibling"] {
+                let bulk = load == "idle" ? nil : try await connection.open("bulk")
+                let reader = load == "streamingSibling" ? Task {
+                    do { while !Task.isCancelled { _ = try await bulk?.receive() } } catch {}
+                } : nil
+                defer { reader?.cancel(); bulk?.close() }
+                var transport: [Double] = [], parse: [Double] = [], render: [Double] = [], total: [Double] = []
+                for sequence in 0..<30 {
+                    let color = (red: UInt8(40 + sequence * 5), green: UInt8(210 - sequence * 4), blue: UInt8(65 + sequence * 3))
+                    let bytes = Data(String(format: "\u{1b}]11;rgb:%02x/%02x/%02x\u{7}", color.red, color.green, color.blue).utf8)
+                    var renderedAt: ContinuousClock.Instant?
+                    let layer = try XCTUnwrap(canvas.view.layer)
+                    let observation = layer.observe(\.contents, options: [.new]) { _, _ in
+                        let time = ContinuousClock.now
+                        MainActor.assumeIsolated {
+                            guard let pixel = canvas.renderedPixel(),
+                                  abs(Int(pixel.red) - Int(color.red)) <= 2,
+                                  abs(Int(pixel.green) - Int(color.green)) <= 2,
+                                  abs(Int(pixel.blue) - Int(color.blue)) <= 2 else { return }
+                            if renderedAt == nil { renderedAt = time }
+                        }
+                    }
+                    defer { observation.invalidate() }
+                    let sent = ContinuousClock.now
+                    try await client.send(.binary(bytes))
+                    let frame = try await client.receive()
+                    XCTAssertEqual(frame, .binary(bytes))
+                    guard case .binary(let delivered) = frame else { throw ProbeTimeout() }
+                    let received = ContinuousClock.now
+                    try await native.writeAndWait(delivered)
+                    let parsed = try XCTUnwrap(parseTiming.completedAt)
+                    canvas.app.tick()
+                    ghostty_surface_refresh(canvas.surface)
+                    ghostty_surface_draw(canvas.surface)
+                    do { try await waitUntil { renderedAt != nil } }
+                    catch {
+                        print("Native pixel probe timed out at sequence \(sequence); expected \(color), actual \(String(describing: canvas.renderedPixel())); layer \(String(describing: canvas.view.layer))")
+                        throw error
+                    }
+                    let rendered = try XCTUnwrap(renderedAt)
+                    if sequence >= 5 {
+                        transport.append(Self.milliseconds(sent.duration(to: received)))
+                        parse.append(Self.milliseconds(received.duration(to: parsed)))
+                        render.append(Self.milliseconds(parsed.duration(to: rendered)))
+                        total.append(Self.milliseconds(sent.duration(to: rendered)))
+                    }
+                }
+                func summary(_ samples: [Double]) throws -> Any {
+                    let value = try XCTUnwrap(TransportLatencySummary(milliseconds: samples))
+                    return try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
+                }
+                reports.append(["direct": direct, "load": load, "samples": total.count,
+                    "transport": try summary(transport), "parse": try summary(parse),
+                    "renderedPixel": try summary(render), "total": try summary(total),
+                    "boundary": "Offscreen forced draw: contents-change timestamp with a matching GPU-rendered IOSurface pixel; excludes normal app frame scheduling and display scanout."])
+            }
+            try JSONSerialization.data(withJSONObject: reports, options: [.sortedKeys]).write(to: directory.appendingPathComponent("metrics.json"))
+            try complete(directory)
+        } catch { await connection.close(); throw error }
+        await connection.close()
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
+    }
+
+    func testInitialOwnerResizeHistory() async throws {
+        let directory = try probeDirectory()
+        let daemon = try await PagedOutputDaemon.make()
+        defer { daemon.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: daemon.launcher.executable,
+            zmxDir: daemon.launcher.zmxDir, sessionName: "probe", workingDirectory: daemon.launcher.zmxDir))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        guard case .checkpoint(let checkpoint) = await events.next() else { XCTFail("Missing READY"); return }
+        let client = PagedOutputProbeClient(control: true, onSend: { frame in
+            guard case .text(let text) = frame, let request = try PagedTerminalEnvelope.parse(text).request else { return }
+            switch request {
+            case .checkpoint: try await stream.requestCheckpoint()
+            case .history(let request): try await stream.requestHistory(request)
+            }
+        }, onResize: { cols, rows in try? stream.resize(windowSize: .init(cols: UInt16(cols), rows: UInt16(rows))) })
+        let backend = RemoteTerminalSurfaceBackend(client: client)
+        let canvas = try PagedOutputCanvas(configure: backend.configure)
+        let ownerGrid = try DisplayGrid(cols: 120, rows: 24)
+        backend.bindAttachmentGrid { canvas.prepareGrid($0 ?? ownerGrid) }
+        backend.bindSurfaceSync(currentGridSize: { (120, 24) }, requestRefresh: {})
+        defer { backend.close(); canvas.close(); backend.surfaceWasFreed() }
+        var pages: [PagedTerminalPage] = []
+        var checkpoints = 0
+        let forward = Task { @MainActor in
+            while let event = await events.next(), !Task.isCancelled {
+                switch event {
+                case .output(let bytes): client.deliver(.binary(bytes))
+                case .ended: return
+                default:
+                    if case .page(let page) = event { pages.append(page) }
+                    if case .checkpoint = event { checkpoints += 1 }
+                    client.deliver(.paged(event))
+                }
+            }
+        }
+        defer { forward.cancel() }
+        try backend.start(surface: canvas.surface)
+        try await waitUntil { client.helloID != nil }
+        let id = try XCTUnwrap(client.helloID)
+        client.deliver(.text(WebControlEnvelope.ownership(try .init(sessionName: "probe",
+            ownerClientID: id, ownerKind: .mac, grid: .init(cols: 80, rows: 24), epoch: 1, revision: 1)).encoded()))
+        client.deliver(.paged(.checkpoint(checkpoint)))
+        // Host receipt precedes the awaited native import. Scroll only after
+        // the backend requests another frame, or READY can reset the viewport
+        // after our scroll and PAGE can preserve an obsolete top position.
+        try await waitUntil { checkpoints == 1 && client.isWaitingForFrame }
+        XCTAssertTrue(pages.isEmpty, "The initial rebase must not eagerly transfer history")
+        for ordinal in 0..<100 {
+            let action = "scroll_to_row:0"
+            action.withCString { _ = ghostty_surface_binding_action(canvas.surface, $0, UInt(action.utf8.count)) }
+            backend.historyViewportDidChange(requestHistory: true)
+            try await waitUntil { pages.count > ordinal && client.isWaitingForFrame }
+            if pages[ordinal].complete { break }
+        }
+        try await waitUntil { canvas.oldestHistoryRow().contains("seed-row-0") }
+        XCTAssertEqual(ghostty_surface_size(canvas.surface).columns, 120)
+        try complete(directory)
+    }
+
+    func testRemoteOutput() async throws { try await remoteOutput(keyboard: false) }
+    func testRemoteKeyboard() async throws { try await remoteOutput(keyboard: true) }
+
+    private func remoteOutput(keyboard: Bool) async throws {
         let directory = try probeDirectory()
         let daemon = try await PagedOutputDaemon.make()
         defer { daemon.close() }
@@ -118,7 +302,8 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         client.deliver(.binary(titleOutput + Data("before-grid\r\n".utf8)))
         client.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 80, rows: 24)).encoded()))
         client.deliver(.binary(Data("after-grid\r\n".utf8)))
-        try await waitUntil { client.receiveCount >= 6 && !client.sentFrames.isEmpty }
+        try await waitUntil { client.receiveCount >= 6 }
+        XCTAssertTrue(client.sentFrames.isEmpty, "Live output must not prefetch history")
         let visible = canvas.text()
         XCTAssertFalse(visible.contains("discard-before-ready"), visible)
         XCTAssertTrue(visible.contains("seed-row-999"), visible)
@@ -126,8 +311,26 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         let after = try XCTUnwrap(visible.range(of: "after-grid"))
         XCTAssertLessThan(before.lowerBound, after.lowerBound)
         XCTAssertFalse(canvas.oldestHistoryRow().contains("seed-row-0"))
+        let keyboardView = SurfaceNSView()
+        keyboardView.surface = canvas.surface
+        keyboardView.historyScrollChords = { canvas.historyChords }
+        keyboardView.historyScrollNotifier = { backend.historyViewportDidChange(requestHistory: true) }
+        canvas.setScrollNotification { Task { @MainActor in backend.historyViewportDidChange(requestHistory: false) } }
+        defer { keyboardView.surface = nil }
+        let home = String(UnicodeScalar(NSHomeFunctionKey)!)
+        let keyEvent = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: .command, timestamp: 0, windowNumber: canvas.window.windowNumber,
+            context: nil, characters: home, charactersIgnoringModifiers: home, isARepeat: false, keyCode: 115))
+        XCTAssertEqual(GhosttyTriggerAdapter.chord(from: keyEvent), .init(key: "home", modifiers: .command))
         var received = 6
         for ordinal in 0..<100 {
+            if keyboard {
+                keyboardView.keyDown(with: keyEvent)
+            } else {
+                let scroll = "scroll_to_row:0"
+                scroll.withCString { _ = ghostty_surface_binding_action(canvas.surface, $0, UInt(scroll.utf8.count)) }
+                backend.historyViewportDidChange(requestHistory: true)
+            }
             try await waitUntil { client.sentFrames.count > ordinal }
             guard case .text(let text) = client.sentFrames[ordinal],
                   case .history(let request)? = try PagedTerminalEnvelope.parse(text).request else {
@@ -144,8 +347,12 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
             if page.complete { break }
         }
         XCTAssertTrue(canvas.oldestHistoryRow().contains("seed-row-0"))
-        XCTAssertTrue(canvas.text().contains("after-page"))
-        XCTAssertTrue(canvas.text().contains("after-grid"))
+        // History demand now scrolls the native viewport. Return to the live
+        // screen before checking the output that arrived during page imports.
+        let bottom = "scroll_to_bottom"
+        XCTAssertTrue(bottom.withCString { ghostty_surface_binding_action(canvas.surface, $0, UInt(bottom.utf8.count)) })
+        try await waitUntil { canvas.text().contains("after-page") }
+        XCTAssertTrue(canvas.text().contains("after-grid"), canvas.text())
         XCTAssertEqual(canvas.titles.last, "paged-title-255")
         // A distinct grid must apply before the following VT cursor query.
         // At 40 columns, x at column 40 wraps Y to row 2, column 2.
@@ -290,6 +497,13 @@ private enum PagedOutputProbePaths {
 
 private struct ProbeTimeout: Error {}
 
+private final class ProbeParseTiming: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: ContinuousClock.Instant?
+    func record() { lock.withLock { value = .now } }
+    var completedAt: ContinuousClock.Instant? { lock.withLock { value } }
+}
+
 @MainActor
 private final class PagedSurfaceOwner {
     var access: MacPagedSurface?
@@ -304,8 +518,10 @@ private final class PagedOutputCanvas {
     private var observer: NSObjectProtocol?
     private let actions: PagedOutputActions
     var titles: [String] { actions.titles }
+    let historyChords: [ShortcutChord]
+    func setScrollNotification(_ callback: @escaping @Sendable () -> Void) { actions.setScrollNotification(callback) }
 
-    init(configure: (inout ghostty_surface_config_s) -> Void = { config in
+    init(loadUserConfig: Bool = true, configure: (inout ghostty_surface_config_s) -> Void = { config in
         config.backend = GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED
         config.receive_buffer = { _, _, _ in }
         config.receive_resize = { _, _, _, _, _ in }
@@ -314,7 +530,14 @@ private final class PagedOutputCanvas {
         XCTAssertEqual(ghostty_init(0, nil), 0)
         let actions = PagedOutputActions()
         self.actions = actions
-        app = GhosttyApp(config: GhosttyConfig()) { _, action in actions.record(action); return true }
+        let nativeConfig = GhosttyConfig(loadUserConfig: loadUserConfig)
+        let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString + ".conf")
+        try Data("keybind = super+home=scroll_to_top\n".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        ghostty_config_load_file(nativeConfig.config, file.path)
+        ghostty_config_finalize(nativeConfig.config)
+        historyChords = Array(GhosttyKeybindBridge(resolver: GhosttyTriggerAdapter.resolver(config: nativeConfig.config)).historyChords.values)
+        app = GhosttyApp(config: nativeConfig) { _, action in actions.record(action); return true }
         window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 800, height: 600),
                           styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -356,6 +579,31 @@ private final class PagedOutputCanvas {
         return text.text.map { String(decoding: Data(bytes: $0, count: Int(text.text_len)), as: UTF8.self) } ?? ""
     }
 
+    /// Read a blank cell near the center, away from the cursor and padding.
+    /// The native renderer publishes its IOSurface only after GPU completion.
+    func renderedPixel() -> (red: UInt8, green: UInt8, blue: UInt8)? {
+        guard let contents = view.layer?.contents,
+              CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() else { return nil }
+        let frame = unsafeBitCast(contents as CFTypeRef, to: IOSurfaceRef.self)
+        guard IOSurfaceGetPixelFormat(frame) == 0x42475241,
+              IOSurfaceLock(frame, .readOnly, nil) == 0 else { return nil }
+        defer { IOSurfaceUnlock(frame, .readOnly, nil) }
+        let base = IOSurfaceGetBaseAddress(frame)
+        let offset = (IOSurfaceGetHeight(frame) / 2) * IOSurfaceGetBytesPerRow(frame)
+            + (IOSurfaceGetWidth(frame) / 2) * IOSurfaceGetBytesPerElement(frame)
+        guard offset + 3 < IOSurfaceGetAllocSize(frame) else { return nil }
+        let pixel = base.advanced(by: offset).assumingMemoryBound(to: UInt8.self)
+        guard let metadata = IOSurfaceCopyValue(frame, kIOSurfaceColorSpace),
+              let sourceSpace = CGColorSpace(propertyListPlist: metadata),
+              let targetSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let color = CGColor(colorSpace: sourceSpace, components: [CGFloat(pixel[2]) / 255,
+                  CGFloat(pixel[1]) / 255, CGFloat(pixel[0]) / 255, 1]),
+              let converted = color.converted(to: targetSpace, intent: .relativeColorimetric, options: nil),
+              let channels = converted.components, channels.count >= 3 else { return nil }
+        func byte(_ component: CGFloat) -> UInt8 { UInt8(clamping: Int((component * 255).rounded())) }
+        return (byte(channels[0]), byte(channels[1]), byte(channels[2]))
+    }
+
     func close() {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
@@ -368,8 +616,11 @@ private final class PagedOutputCanvas {
 private final class PagedOutputActions: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String] = []
+    private var scrollNotification: (@Sendable () -> Void)?
+    func setScrollNotification(_ callback: @escaping @Sendable () -> Void) { lock.withLock { scrollNotification = callback } }
     var titles: [String] { lock.withLock { values } }
     func record(_ action: ghostty_action_s) {
+        if action.tag == GHOSTTY_ACTION_SCROLLBAR { lock.withLock { scrollNotification }?() }
         if action.tag == GHOSTTY_ACTION_SET_TITLE, let title = action.action.set_title.title {
             let value = String(cString: title)
             lock.withLock { values.append(value) }
@@ -427,7 +678,24 @@ private final class PagedOutputSeed: @unchecked Sendable {
 
 private final class PagedOutputProbeClient: WebSocketClient, @unchecked Sendable {
     let supportsPagedHistory: Bool
-    init(paged: Bool = true) { supportsPagedHistory = paged }
+    let supportsWebControlTextFrames: Bool
+    private let onSend: (@Sendable (WebSocketFrame) async throws -> Void)?
+    private let onResize: (@Sendable (Int, Int) async -> Void)?
+    private var hello: DisplayClientID?
+    var helloID: DisplayClientID? { lock.withLock { hello } }
+    init(paged: Bool = true, control: Bool = false,
+         onSend: (@Sendable (WebSocketFrame) async throws -> Void)? = nil,
+         onResize: (@Sendable (Int, Int) async -> Void)? = nil) {
+        supportsPagedHistory = paged
+        supportsWebControlTextFrames = control
+        self.onSend = onSend
+        self.onResize = onResize
+    }
+    func sendHello(clientID: DisplayClientID, kind: DisplayClientKind, role: DisplayClientRole,
+                   visible: Bool, cols: Int, rows: Int) async { lock.withLock { hello = clientID } }
+    func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+        await onResize?(cols, rows)
+    }
     private let lock = NSLock()
     private var frames: [WebSocketFrame] = []
     private var waiter: CheckedContinuation<WebSocketFrame, Error>?
@@ -436,7 +704,11 @@ private final class PagedOutputProbeClient: WebSocketClient, @unchecked Sendable
     private var sent: [WebSocketFrame] = []
     var sentFrames: [WebSocketFrame] { lock.withLock { sent } }
     var receiveCount: Int { lock.withLock { receives } }
-    func send(_ frame: WebSocketFrame) async throws { lock.withLock { sent.append(frame) } }
+    var isWaitingForFrame: Bool { lock.withLock { waiter != nil } }
+    func send(_ frame: WebSocketFrame) async throws {
+        lock.withLock { sent.append(frame) }
+        try await onSend?(frame)
+    }
     func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { continuation in
             lock.lock()

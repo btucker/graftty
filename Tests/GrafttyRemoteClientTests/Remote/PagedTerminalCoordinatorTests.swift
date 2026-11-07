@@ -5,6 +5,34 @@ import Testing
 
 @MainActor
 struct PagedTerminalCoordinatorTests {
+    @Test("@spec TERM-12.60: When a remote viewer scrolls toward unloaded history, the application shall request one page at a time and continue only while the viewport needs history, without initial prefetch or recurring polling.")
+    func viewportDemandStartsAndContinuesBoundedHistory() async throws {
+        let surface = Surface()
+        surface.nearTop = true
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { requests.append($0) }
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        await coordinator.viewportDidChange(requestHistory: false)
+        #expect(requests.isEmpty, "A checkpoint or native scrollbar update is not scroll demand")
+        await coordinator.viewportDidChange()
+        await coordinator.viewportDidChange()
+        #expect(requests.count == 1)
+        guard case .history(let first) = try #require(requests.first) else { return }
+        try await coordinator.handle(.page(page(first)))
+        #expect(requests.count == 2, "A completed page advances existing viewport demand")
+        guard case .history(let second) = try #require(requests.last) else { return }
+        surface.nearTop = false
+        try await coordinator.handle(.page(page(second)))
+        #expect(requests.count == 2, "Scrolling away stops further requests")
+        try await coordinator.handle(.checkpoint(checkpoint(2)))
+        surface.nearTop = true
+        await coordinator.viewportDidChange(requestHistory: false)
+        #expect(requests.count == 2, "A replacement checkpoint clears old scroll demand")
+        coordinator.disconnect()
+        await coordinator.viewportDidChange()
+        #expect(requests.count == 2)
+    }
+
     @Test("@spec TERM-12.55: When a checkpoint installation completes or fails in the current attachment, the application shall retain only its latest elapsed installation duration and outcome for diagnosis without retaining snapshot contents.")
     func checkpointDiagnosticsReplacePreviousMeasurement() async throws {
         struct InvalidSnapshot: Error { }
@@ -220,6 +248,33 @@ struct PagedTerminalCoordinatorTests {
         guard case .history(let next) = try #require(requests.last) else { return }
         try await coordinator.handle(.page(page(next)))
         #expect(coordinator.status == .limit)
+        coordinator.disconnect()
+    }
+
+    @Test("@spec TERM-12.67: If an expired history recovery finishes after a newer recovery begins, then the application shall ignore the stale completion and preserve the newer recovery state.")
+    func expiredRecoveryCannotOverwriteNewAttempt() async throws {
+        let surface = Surface()
+        var firstSend: CheckedContinuation<Void, any Error>?
+        var attempts = 0
+        let coordinator = PagedTerminalCoordinator(renderer: surface, requestTimeout: .milliseconds(20)) { _ in
+            attempts += 1
+            if attempts == 1 {
+                try await withCheckedThrowingContinuation { firstSend = $0 }
+            }
+        }
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        let first = Task { await coordinator.recover() }
+        while firstSend == nil { await Task.yield() }
+        await coordinator.timeoutTaskForTesting?.value
+        #expect(coordinator.status == .requiresRecovery)
+        await coordinator.recover()
+        #expect(attempts == 2)
+        firstSend?.resume(throwing: CancellationError())
+        firstSend = nil
+        await first.value
+        #expect(coordinator.status == .installing)
+        try await coordinator.handle(.checkpoint(checkpoint(2)))
+        #expect(coordinator.status == .available)
         coordinator.disconnect()
     }
 

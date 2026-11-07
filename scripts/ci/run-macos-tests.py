@@ -4,9 +4,11 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import signal
 import subprocess
 import sys
+import time
 
 from test_plan import mac_filters, verify_swift_results, verify_xctest_results
 
@@ -46,29 +48,85 @@ def swift_testing_runners(test_ids):
             for module, binary in binaries.items()}
 
 
-def run_swift_testing_batch(command, environment):
-    """Keep SwiftPM's closed stdin and captured output inside the PTY."""
+def capture_timeout_sample(pid, command):
+    """Keep native stacks beside the batch's other uploaded diagnostics."""
+    directory = Path(".ci-results/macos")
+    if "--attachments-path" in command:
+        directory = Path(command[command.index("--attachments-path") + 1])
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"runner-timeout-{pid}.sample.txt"
+    try:
+        subprocess.run(["/usr/bin/sample", str(pid), "1", "1", "-file", str(path)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, timeout=10, check=True)
+    except (OSError, subprocess.SubprocessError) as error:
+        if not path.exists():
+            path.write_text(f"Could not sample timed-out helper: {error}\n")
+
+
+def run_swift_testing_batch(command, environment, *, timeout_seconds=180):
+    """Bound native hangs independently of Swift's cooperative test deadlines."""
     def terminate(signum, _frame):
         raise SystemExit(128 + signum)
 
     process = None
+    completed = False
+    output_fd = sys.stdout.fileno()
+    output_was_blocking = os.get_blocking(output_fd)
     previous_sigterm = signal.signal(signal.SIGTERM, terminate)
     try:
         process = subprocess.Popen(command, env={**os.environ, **environment},
-                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
         process.stdin.close()
-        while chunk := process.stdout.read1(65536):
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.buffer.flush()
-        status = process.wait()
+        os.set_blocking(output_fd, False)
+        deadline = time.monotonic() + timeout_seconds
+        pending = b""
+        ended = False
+        while pending or not ended:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout_seconds)
+            readable, writable, _ = select.select(
+                [process.stdout] if not pending and not ended else [],
+                [output_fd] if pending else [], [], remaining)
+            if writable:
+                try:
+                    pending = pending[os.write(output_fd, pending):]
+                except BlockingIOError:
+                    pass
+            if readable:
+                pending = os.read(process.stdout.fileno(), 65536)
+                ended = not pending
+        status = process.wait(timeout=max(0, deadline - time.monotonic()))
+        completed = True
         return status if status >= 0 else 128 - status
+    except subprocess.TimeoutExpired:
+        # stderr may share the same full PTY as stdout. Diagnostics must not
+        # wait behind a blocked logger before sampling and killing the helper.
+        error_fd = sys.stderr.fileno()
+        error_was_blocking = os.get_blocking(error_fd)
+        try:
+            os.set_blocking(error_fd, False)
+            os.write(error_fd, f"Swift test batch exceeded {timeout_seconds}s; capturing native stacks before termination\n".encode())
+        except OSError:
+            pass
+        finally:
+            os.set_blocking(error_fd, error_was_blocking)
+        capture_timeout_sample(process.pid, command)
+        return 124
     finally:
         if process is not None:
-            if process.poll() is None:
-                process.kill()
-                process.wait()
+            # A helper may leave children holding stdout open after it exits.
+            # Only this helper's fresh process group belongs to this launcher.
+            if not completed:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.wait()
             process.stdout.close()
         signal.signal(signal.SIGTERM, previous_sigterm)
+        os.set_blocking(output_fd, output_was_blocking)
 
 
 def main():
@@ -100,8 +158,11 @@ def main():
                     continue
                 name = f"swift-{index}" + (f"-{module}" if module is not None else "")
                 result = evidence / f"{name}.xml"
+                attachments = evidence / "attachments" / name
+                attachments.mkdir(parents=True, exist_ok=True)
                 subprocess.run(["/usr/bin/script", "-q", str(evidence / f"{name}.log"), *command,
                                 "--no-parallel", "--filter", pattern,
+                                "--attachments-path", str(attachments),
                                 "--xunit-output", str(result)], stdin=stdin, check=True)
                 result_paths.append(result)
             print("::endgroup::", flush=True)

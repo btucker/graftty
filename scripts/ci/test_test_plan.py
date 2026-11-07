@@ -85,6 +85,9 @@ class MacRunnerTests(unittest.TestCase):
                     }
                     self.assertEqual(json.loads(command[command.index("--swift-testing-batch") + 1]),
                                      expected_environment)
+                    attachments = Path(command[command.index("--attachments-path") + 1])
+                    self.assertTrue(attachments.is_relative_to(Path(".ci-results/macos")))
+                    (attachments / "native-child.log").write_text("Native child diagnostics\n")
                     if outcome == "pty":
                         # Cross the real macOS PTY boundary: SIP strips DYLD_*
                         # passed only in the environment of /usr/bin/script.
@@ -222,8 +225,58 @@ class MacRunnerTests(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
+    def test_batch_deadline_captures_diagnostics_and_reaps_a_stuck_helper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "sample.txt"
+            code = (
+                "import importlib.util,pathlib,sys; "
+                f"spec=importlib.util.spec_from_file_location('runner',{mac_runner.__file__!r}); "
+                "runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner); "
+                f"runner.capture_timeout_sample=lambda pid,command: pathlib.Path({str(evidence)!r}).write_text(str(pid)); "
+                "sys.exit(runner.run_swift_testing_batch([sys.executable,'-c',"
+                "\"import os,signal; print('ready',flush=True); signal.pause()\"],{},timeout_seconds=0.2))"
+            )
+            result = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=10,
+                                    env={**os.environ, "PYTHONPATH": str(Path(mac_runner.__file__).parent)})
+            self.assertEqual(result.returncode, 124, result.stderr)
+            self.assertEqual(result.stdout, b"ready\n")
+            self.assertIn(b"exceeded", result.stderr)
+            helper_pid = int(evidence.read_text())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(helper_pid, 0)
+
+    def test_full_downstream_log_pipe_cannot_block_the_batch_deadline(self):
+        code = (
+            "import importlib.util,sys; "
+            f"spec=importlib.util.spec_from_file_location('runner',{mac_runner.__file__!r}); "
+            "runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner); "
+            "runner.capture_timeout_sample=lambda pid,command: None; "
+            "sys.exit(runner.run_swift_testing_batch([sys.executable,'-c',"
+            "\"import os,time; os.write(1,b'x'*(1024*1024)); time.sleep(100)\"],{},timeout_seconds=0.2))"
+        )
+        process = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env={**os.environ, "PYTHONPATH": str(Path(mac_runner.__file__).parent)})
+        try:
+            # Intentionally leave stdout unread until the deadline has ended.
+            self.assertEqual(process.wait(timeout=5), 124)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+            process.stdout.close()
+            process.stderr.close()
+
 
 class MacPlanTests(unittest.TestCase):
+    def test_native_webrtc_bulk_faults_run_without_unrelated_suites(self):
+        tests = ["MacTests.VoiceDictationTests/test()", "MacTests.WebAccessSettingsTests/test()",
+                 "MacTests.WebRTCBulkTransportTests/stalledHistoryOpenPreservesTerminal()",
+                 "MacTests.WebRTCBulkTransportTests/negotiatesAndFallsBack(enabled:)"]
+        patterns = test_plan.mac_filters(tests)
+        selected = [[test for test in tests if re.search(pattern, test)] for pattern in patterns]
+        self.assertIn(tests[2:], selected)
+        self.assertEqual(sorted(test for batch in selected for test in batch), sorted(tests))
+
     def test_xctest_completions_match_discovery_including_skips(self):
         tests = ["MacTests.Native/testPass", "MacTests.Native/testSkipped"]
         with tempfile.TemporaryDirectory() as directory:

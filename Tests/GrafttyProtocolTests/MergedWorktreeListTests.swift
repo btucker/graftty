@@ -94,8 +94,8 @@ struct MergedWorktreeListTests {
         #expect(result.temporary.map(\.row.displayName) == ["new", "legacy"])
     }
     @Test func availabilityIsCarried() {
-        let asleep = MergedWorktreeList.build(rows: [row("a", box, activity: 1)], availability: { _ in .asleep }, projectIsOnSeveralHosts: false)
-        #expect(asleep.temporary[0].availability == .asleep)
+        let asleep = MergedWorktreeList.build(rows: [row("a", box, activity: 1)], availability: { _ in .wakeable }, projectIsOnSeveralHosts: false)
+        #expect(asleep.temporary[0].availability == .wakeable)
     }
 }
 

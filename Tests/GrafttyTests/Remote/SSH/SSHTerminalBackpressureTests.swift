@@ -125,6 +125,7 @@ struct SSHTerminalBackpressureTests {
                 reading: while true {
                     switch try await fixture.client.receive() {
                     case .binary(let bytes): deliveredBeforeControl += bytes.count
+                    case .paged: throw PagedTerminalEnvelope.Error.invalid
                     case .text(let text):
                         // The host rewrites client IDs, so identify the takeover by its grid.
                         if case .ownership(let snapshot)? = try? WebControlEnvelope.parse(Data(text.utf8)),
@@ -146,8 +147,56 @@ struct SSHTerminalBackpressureTests {
     /// SCTP retransmits lost packets, so at this layer loss appears as delay.
     @Test(.enabled(if: probesEnabled), .timeLimit(.minutes(3)), arguments: [true, false], [0, 25, 100])
     func probeDelayedLink(negotiated: Bool, oneWayMilliseconds: Int) async throws {
+        try await measureDelayedLink(windowBytes: negotiated ? TerminalOutputCredit.clientWindowBytes : nil,
+                                     oneWayMilliseconds: oneWayMilliseconds)
+    }
+
+    @Test(.enabled(if: probesEnabled), .timeLimit(.minutes(3)), arguments: [128, 256, 1024], [0, 25, 100])
+    func probeWindowTradeoff(kibibytes: Int, oneWayMilliseconds: Int) async throws {
+        try await measureDelayedLink(windowBytes: kibibytes * 1024, oneWayMilliseconds: oneWayMilliseconds)
+    }
+
+    @Test(.enabled(if: probesEnabled), .serialized, .timeLimit(.minutes(3)), arguments: [false, true], [0, 25, 100])
+    func probeAdaptiveOutputCredit(adaptive: Bool, oneWayMilliseconds: Int) async throws {
+        try await measureDelayedLink(windowBytes: TerminalOutputCredit.clientWindowBytes,
+            oneWayMilliseconds: oneWayMilliseconds, adaptive: adaptive, warmSlowConsumer: true)
+    }
+
+    @Test("@spec REMOTE-9.25: When an adaptive terminal consumer speeds up with no buffered output, the client shall send newly available credit without waiting for another inbound frame.")
+    func adaptiveCreditRecoversWhileReceiveWaits() async throws {
+        let fixture = try await SSHBackpressureFixture.make(adaptiveOutputWindow: true)
+        do {
+            let total = 2 * TerminalOutputCredit.clientWindowBytes
+            let producer = fixture.stream.produce(total: total)
+            defer { producer.cancel() }
+            try await fixture.waitForSourceToStop()
+            var consumed = 0
+            while consumed < total {
+                guard case .binary(let bytes) = try await fixture.client.receive() else { continue }
+                consumed += bytes.count
+                if consumed < total {
+                    try await Task.sleep(for: .seconds(Double(bytes.count) / Double(2 * 1024 * 1024)))
+                }
+            }
+            #expect(fixture.client.outputWindowForTesting == 128 * 1024)
+            // The source is now empty. No delivery can hide a missing ACK in
+            // receive's suspension branch. Observe the decrypted wire at host.
+            let receiver = Task { try await fixture.client.receive() }
+            defer { receiver.cancel() }
+            try await fixture.wait(for: "restored credit without another output frame") {
+                fixture.probe.consumedAcknowledgement == UInt64(total)
+            }
+            try fixture.stream.emit(Data([0x42]))
+            #expect(try await receiver.value == .binary(Data([0x42])))
+        } catch { await fixture.close(); throw error }
+        await fixture.close()
+    }
+
+    private func measureDelayedLink(windowBytes: Int?, oneWayMilliseconds: Int,
+                                    adaptive: Bool = false, warmSlowConsumer: Bool = false) async throws {
         let fixture = try await SSHBackpressureFixture.make(
-            sibling: true, negotiatesOutputWindow: negotiated, oneWayDelay: .milliseconds(oneWayMilliseconds)
+            sibling: true, negotiatesOutputWindow: windowBytes != nil, oneWayDelay: .milliseconds(oneWayMilliseconds),
+            windowBytes: windowBytes ?? TerminalOutputCredit.clientWindowBytes, adaptiveOutputWindow: adaptive
         )
         do {
             await fixture.client.sendHello(clientID: DisplayClientID("primary"), kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
@@ -165,6 +214,27 @@ struct SSHTerminalBackpressureTests {
             let slow = fixture.stream.produce(total: 32 * 1024 * 1024, startingAt: keepingUp)
             defer { slow.cancel() }
             try await fixture.waitForSourceToStop()
+            var settledMegabytesPerSecond: Double?
+            if warmSlowConsumer {
+                var warmBytes = 0
+                while warmBytes < 2 * TerminalOutputCredit.clientWindowBytes {
+                    if case .binary(let bytes) = try await fixture.client.receive() {
+                        warmBytes += bytes.count
+                        try await Task.sleep(for: .seconds(Double(bytes.count) / Double(consumerRate)))
+                    }
+                }
+                let settledStart = ContinuousClock.now
+                var settledBytes = 0
+                while settledBytes < 2 * TerminalOutputCredit.clientWindowBytes {
+                    if case .binary(let bytes) = try await fixture.client.receive() {
+                        settledBytes += bytes.count
+                        try await Task.sleep(for: .seconds(Double(bytes.count) / Double(consumerRate)))
+                    }
+                }
+                let duration = settledStart.duration(to: .now).components
+                settledMegabytesPerSecond = Double(settledBytes) / 1_048_576
+                    / (Double(duration.seconds) + Double(duration.attoseconds) / 1e18)
+            }
             let takeoverStart = ContinuousClock.now
             await fixture.sibling.sendHello(clientID: DisplayClientID("sibling"), kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
             await fixture.sibling.takeControl(clientID: DisplayClientID("sibling"), kind: .ios, cols: 90, rows: 30)
@@ -174,13 +244,14 @@ struct SSHTerminalBackpressureTests {
                 case .binary(let bytes):
                     ahead += bytes.count
                     try await Task.sleep(for: .seconds(Double(bytes.count) / Double(consumerRate)))
+                case .paged: throw PagedTerminalEnvelope.Error.invalid
                 case .text(let text):
                     if case .ownership(let snapshot)? = try? WebControlEnvelope.parse(Data(text.utf8)),
                        snapshot.grid.cols == 90 { break reading }
                 }
             }
             let lag = takeoverStart.duration(to: .now).components
-            print("[terminal-flow] {\"scenario\":\"delayedLink\",\"negotiated\":\(negotiated),\"oneWayMilliseconds\":\(oneWayMilliseconds),\"keepingUpMegabytesPerSecond\":\(Double(keepingUp) / 1_048_576 / seconds),\"consumerBytesPerSecond\":\(consumerRate),\"bytesAheadOfTakeover\":\(ahead),\"takeoverSeconds\":\(Double(lag.seconds) + Double(lag.attoseconds) / 1e18)}")
+            print("[terminal-flow] {\"scenario\":\"delayedLink\",\"adaptive\":\(adaptive),\"warmSlowConsumer\":\(warmSlowConsumer),\"targetWindowBytes\":\(fixture.client.outputWindowForTesting ?? 0),\"windowBytes\":\(windowBytes ?? 0),\"oneWayMilliseconds\":\(oneWayMilliseconds),\"keepingUpMegabytesPerSecond\":\(Double(keepingUp) / 1_048_576 / seconds),\"settledMegabytesPerSecond\":\(settledMegabytesPerSecond.map { String($0) } ?? "null"),\"consumerBytesPerSecond\":\(consumerRate),\"bytesAheadOfTakeover\":\(ahead),\"takeoverSeconds\":\(Double(lag.seconds) + Double(lag.attoseconds) / 1e18)}")
         } catch {
             await fixture.close()
             throw error
@@ -342,6 +413,7 @@ struct SSHTerminalBackpressureTests {
                                 throw SSHBackpressureFailure("unexpected extra terminal output")
                             }
                             bytes.append(chunk)
+                        case .paged: throw PagedTerminalEnvelope.Error.invalid
                         case .text:
                             throw SSHBackpressureFailure("unexpected terminal control frame")
                         }
@@ -390,17 +462,21 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
     private(set) var client: TerminalSessionClient!
 
     private let negotiatesOutputWindow: Bool
+    private let windowBytes: Int
+    private let adaptiveOutputWindow: Bool
     private let oneWayDelay: Duration
 
-    private init(stalling phase: SSHTerminalBackpressureTests.AttachmentPhase?, negotiatesOutputWindow: Bool, oneWayDelay: Duration) {
+    private init(stalling phase: SSHTerminalBackpressureTests.AttachmentPhase?, negotiatesOutputWindow: Bool, oneWayDelay: Duration, windowBytes: Int, adaptiveOutputWindow: Bool) {
         self.negotiatesOutputWindow = negotiatesOutputWindow
+        self.windowBytes = windowBytes
+        self.adaptiveOutputWindow = adaptiveOutputWindow
         self.oneWayDelay = oneWayDelay
         attachGate = phase == .shellFactory ? SSHBackpressureAttachGate() : nil
         childConfirmationGate = phase == .childConfirmation ? SSHBackpressureChildGate() : nil
     }
 
-    static func make(stalling phase: SSHTerminalBackpressureTests.AttachmentPhase? = nil, sibling: Bool = false, negotiatesOutputWindow: Bool = true, oneWayDelay: Duration = .zero) async throws -> SSHBackpressureFixture {
-        let fixture = SSHBackpressureFixture(stalling: phase, negotiatesOutputWindow: negotiatesOutputWindow, oneWayDelay: oneWayDelay)
+    static func make(stalling phase: SSHTerminalBackpressureTests.AttachmentPhase? = nil, sibling: Bool = false, negotiatesOutputWindow: Bool = true, oneWayDelay: Duration = .zero, windowBytes: Int = TerminalOutputCredit.clientWindowBytes, adaptiveOutputWindow: Bool = false) async throws -> SSHBackpressureFixture {
+        let fixture = SSHBackpressureFixture(stalling: phase, negotiatesOutputWindow: negotiatesOutputWindow, oneWayDelay: oneWayDelay, windowBytes: windowBytes, adaptiveOutputWindow: adaptiveOutputWindow)
         do {
             try await fixture.start()
             if sibling { try await fixture.openSibling() }
@@ -433,14 +509,14 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
                 }
                 let index = attachCount.next()
                 child.closeFuture.whenComplete { _ in if index == 0 { probe.markChildClosed() } else { probe.markSiblingClosed() } }
-                let installed = child.pipeline.addHandler(TerminalSessionHandler(
+                let installed = child.pipeline.addHandlers([SSHBackpressureCreditRecorder(probe: probe), TerminalSessionHandler(
                     streamFactory: { _ in
                         await attachGate?.wait()
                         return index == 0 ? stream : siblingStream
                     },
                     ownershipStore: ownershipStore,
                     ownershipBroadcaster: ownershipBroadcaster, deviceID: peer.id
-                ))
+                )])
                 guard let childConfirmationGate else { return installed }
                 let ready = child.eventLoop.makePromise(of: Void.self)
                 childConfirmationGate.hold(ready)
@@ -507,7 +583,7 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
         self.clientHandler = clientHandler
         let client = TerminalSessionClient(parentChannel: clientParent,
             parentHandler: clientHandler.handler, sessionName: "backpressure",
-            outputWindowBytes: negotiatesOutputWindow ? TerminalOutputCredit.clientWindowBytes : nil)
+            outputWindowBytes: negotiatesOutputWindow ? windowBytes : nil, adaptiveOutputWindow: adaptiveOutputWindow)
         self.client = client
         connecting = Task {
             do { try await client.connect(); probe.connection.complete(.success(())) }
@@ -578,6 +654,7 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
             case .binary(let bytes):
                 try verify(bytes, at: position)
                 position += bytes.count
+            case .paged: throw PagedTerminalEnvelope.Error.invalid
             case .text(let text):
                 if case .ownership(let snapshot)? = try? WebControlEnvelope.parse(Data(text.utf8)),
                    snapshot.grid.cols == 90 { return position }
@@ -793,12 +870,32 @@ private final class SSHBackpressureProbe: @unchecked Sendable {
     var siblingClosed: Bool { lock.withLock { didCloseSibling } }
     func markSiblingClosed() { lock.withLock { didCloseSibling = true } }
     private var error: Error?
+    private var consumed: UInt64 = 0
+    var consumedAcknowledgement: UInt64 { lock.withLock { consumed } }
+    func acknowledge(_ bytes: UInt64) { lock.withLock { consumed = bytes } }
     var authenticated: Bool { lock.withLock { didAuthenticate } }
     var childClosed: Bool { lock.withLock { didCloseChild } }
     var failure: Error? { lock.withLock { error } }
     func markAuthenticated() { lock.withLock { didAuthenticate = true } }
     func markChildClosed() { lock.withLock { didCloseChild = true } }
     func fail(_ error: Error) { lock.withLock { if self.error == nil { self.error = error } } }
+}
+
+private final class SSHBackpressureCreditRecorder: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    private var decoder = StdErrControlFraming.Decoder()
+    private let probe: SSHBackpressureProbe
+    init(probe: SSHBackpressureProbe) { self.probe = probe }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let frame = unwrapInboundIn(data)
+        if frame.type == .stdErr, case .byteBuffer(let bytes) = frame.data {
+            decoder.append(bytes.readableBytesView)
+            for payload in decoder.drain().frames {
+                if let consumed = TerminalOutputCredit.parseConsumed(Data(payload)) { probe.acknowledge(consumed) }
+            }
+        }
+        context.fireChannelRead(data)
+    }
 }
 
 private final class SSHBackpressureCounter: @unchecked Sendable {

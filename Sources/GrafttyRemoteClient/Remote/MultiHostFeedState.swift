@@ -77,7 +77,7 @@ public struct MultiHostFeedState: Sendable, Equatable {
 
     /// Gives every sleeping host with nothing to show its saved report.
     public mutating func loadCaches(_ load: (RemoteDeviceID) -> HostSnapshotCache.Snapshot?) {
-        for id in order where isAsleep(id) {
+        for id in order where needsReconnect(id) {
             guard let record = records[id], record.rows.isEmpty, let device = record.info.deviceID,
                   let snapshot = load(device) else { continue }
             setCache(snapshot, for: id)
@@ -93,9 +93,16 @@ public struct MultiHostFeedState: Sendable, Equatable {
     }
 
     public func isLive(_ hostID: UUID) -> Bool { records[hostID]?.isLive == true }
-    public func isAsleep(_ hostID: UUID) -> Bool {
-        guard let record = records[hostID] else { return false }
-        return !record.isLive && record.info.isWakeable
+    public func availability(of hostID: UUID) -> HostAvailability {
+        guard let record = records[hostID] else { return .offline }
+        if record.isLive { return .reachable }
+        return record.info.isWakeable ? .wakeable : .offline
+    }
+
+    /// A cached host can be reconnected and, if necessary, woken. Saved wake
+    /// details are a capability, never evidence of the host's power state.
+    public func needsReconnect(_ hostID: UUID) -> Bool {
+        availability(of: hostID) == .wakeable
     }
 
     /// What this host reported, including rows it relays.
@@ -166,7 +173,7 @@ public struct MultiHostFeedState: Sendable, Equatable {
         // A live relay reaches it without waking anything.
         let relayed = records.values.contains { $0.isLive && $0.projects.contains { $0.id == project.id && $0.isAvailable } }
         if relayed { return .reachable }
-        return host?.info.isWakeable == true ? .asleep : .offline
+        return host?.info.isWakeable == true ? .wakeable : .offline
     }
 
     /// `rows` stands in for the delivered rows, for a client that adds its own

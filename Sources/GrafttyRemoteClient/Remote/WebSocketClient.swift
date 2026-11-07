@@ -4,6 +4,8 @@ import GrafttyProtocol
 public enum WebSocketFrame: Equatable {
     case text(String)
     case binary(Data)
+    /// Decoded SSH paging control, distinct from raw terminal output.
+    case paged(PagedTerminalEvent)
 }
 
 public protocol WebSocketClient: AnyObject {

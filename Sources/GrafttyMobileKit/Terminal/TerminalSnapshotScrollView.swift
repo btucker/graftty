@@ -7,6 +7,7 @@ import UIKit
 /// The live screen keeps its native grid; a separate display fills spare height with history.
 @MainActor
 final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+    var onHistoryScroll: (() -> Void)?
     let terminalView: UITerminalView
     private var canvas: TerminalSnapshotCanvas.Layout?
     private(set) var followerZoomScale: CGFloat = 1
@@ -26,10 +27,27 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         )
     }
     lazy var followerPinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(pinchFollower(_:)))
+    /// UIScrollView need not move when the current screen fits. Observe intent
+    /// independently so an empty scroll range can fetch its first older page.
+    lazy var historyIntentPan = UIPanGestureRecognizer(target: self, action: #selector(historyPanDidChange(_:)))
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        gestureRecognizer === followerPinchGesture && otherGestureRecognizer === panGestureRecognizer
+        ((gestureRecognizer === followerPinchGesture || gestureRecognizer === historyIntentPan)
+            && otherGestureRecognizer === panGestureRecognizer)
+            || (gestureRecognizer === panGestureRecognizer && otherGestureRecognizer === historyIntentPan)
+    }
+
+    @objc private func historyPanDidChange(_ gesture: UIPanGestureRecognizer) {
+        guard canvas != nil, gesture.state == .began || gesture.state == .changed else { return }
+        let delta = gesture.translation(in: self)
+        guard abs(delta.y) > abs(delta.x) else { return }
+        onHistoryScroll?()
+    }
+
+    override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
+        if canvas != nil, direction == .up || direction == .down { onHistoryScroll?() }
+        return super.accessibilityScroll(direction)
     }
 
     @objc private func pinchFollower(_ gesture: UIPinchGestureRecognizer) {
@@ -115,6 +133,13 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         followerPinchGesture.isEnabled = false
         followerPinchGesture.delegate = self
         addGestureRecognizer(followerPinchGesture)
+        historyIntentPan.name = "terminal-history-intent"
+        historyIntentPan.maximumNumberOfTouches = 1
+        historyIntentPan.cancelsTouchesInView = false
+        historyIntentPan.allowedScrollTypesMask = [.continuous, .discrete]
+        historyIntentPan.delegate = self
+        historyIntentPan.isEnabled = false
+        addGestureRecognizer(historyIntentPan)
         panGestureRecognizer.allowedScrollTypesMask = [.continuous, .discrete]
         isScrollEnabled = false
         addSubview(terminalView)
@@ -163,6 +188,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         self.rowHeight = rowHeight
         self.columns = columns
         isScrollEnabled = canvas != nil
+        historyIntentPan.isEnabled = canvas != nil
         reconcile(wasAtBottom: wasAtBottom, withinCanvas: withinCanvas)
     }
 
@@ -350,6 +376,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     /// Shows absolute row `row` at the top: through the canvas offset while following
     /// another client's grid, otherwise in the native viewport.
     func reveal(row: UInt64) {
+        defer { onHistoryScroll?() }
         guard let surface = terminalView.surface else { return }
         guard canvas != nil, rowHeight > 0 else {
             surface.scrollToRow(UInt(row))
@@ -364,6 +391,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard !adjusting, let canvas, rowHeight > 0 else { return }
+        defer { if isDragging || isDecelerating { onHistoryScroll?() } }
         // UIScrollView quantizes offsets to display pixels. Treat its rounded
         // bottom as the final row instead of occasionally stopping one row up.
         // Allow one point for a near-bottom offset plus display-pixel rounding.

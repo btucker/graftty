@@ -58,10 +58,10 @@ struct MergedProjectsTests {
     @Test func availabilityPrefersReachableThenAsleep() {
         let pair = [project("a", owner: mac, key: "k/app"), project("b", owner: box, key: "k/app")]
         #expect(merge(pair) { $0.id == "a" ? .offline : .reachable }[0].availability == .reachable)
-        let asleep = merge(pair) { $0.id == "a" ? .offline : .asleep }[0]
-        #expect(asleep.availability == .asleep)
+        let asleep = merge(pair) { $0.id == "a" ? .offline : .wakeable }[0]
+        #expect(asleep.availability == .wakeable)
         #expect(asleep.representative.isAvailable)
-        #expect(asleep.representative.statusLabel == "Asleep")
+        #expect(asleep.representative.statusLabel == "Not connected")
         let offline = merge(pair) { _ in .offline }[0]
         #expect(!offline.representative.isAvailable)
         #expect(offline.representative.ownerSubtitle(localDeviceID: nil) == "Offline")

@@ -234,18 +234,34 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
 /// Both Mac transports use the same screen-first import and bounded backfill.
 @MainActor
 final class MacPagedAttachment {
+    enum HistoryLoading { case eager, onDemand }
     let coordinator: PagedTerminalCoordinator
-    private var poll: Task<Void, Never>?
+    private let historyLoading: HistoryLoading
+    private var prefetchTask: Task<Void, Never>?
+    private var prefetchGeneration: UInt64 = 0
+    private var needsPrefetch = false
     private let finishGrid: () -> Void
     private let sourceGrid: (DisplayGrid?) -> Void
     private var restoringGrid = false
     private var closed = false
+    private var initialCheckpointWidth: UInt16?
+    private var didRebaseInitialCheckpoint = false
+    private var hasHistoryInteraction = false
+    private enum Rebase { case grid(DisplayGrid), checkpoint }
+    private var rebase: Rebase?
+    private var rebaseTimeout: Task<Void, Never>?
+    private let requestTimeout: Duration
+    private var queuedHistoryDemand = false
 
-    init(renderer: any PagedTerminalRenderer, sourceGrid: @escaping (DisplayGrid?) -> Void = { _ in }, finishGrid: @escaping () -> Void,
+    init(renderer: any PagedTerminalRenderer, historyLoading: HistoryLoading = .eager, requestTimeout: Duration = .seconds(15),
+         sourceGrid: @escaping (DisplayGrid?) -> Void = { _ in }, finishGrid: @escaping () -> Void,
          send: @escaping @MainActor (PagedTerminalRequest) async throws -> Void) {
-        coordinator = PagedTerminalCoordinator(renderer: renderer, send: send)
+        coordinator = PagedTerminalCoordinator(renderer: renderer, requestTimeout: requestTimeout, send: send)
+        self.historyLoading = historyLoading
+        self.requestTimeout = requestTimeout
         self.finishGrid = finishGrid
         self.sourceGrid = sourceGrid
+        coordinator.onStatusChange = { [weak self] _ in self?.finishGridIfNeeded() }
     }
 
     private static let trace = Logger(subsystem: "com.graftty.app", category: "paged-trace")
@@ -254,6 +270,21 @@ final class MacPagedAttachment {
         try Task.checkCancellation()
         guard !closed else { throw CancellationError() }
         let appliedGrid = try await coordinator.handle(event)
+        if case .checkpoint(let checkpoint) = event, appliedGrid != nil {
+            if initialCheckpointWidth == nil { initialCheckpointWidth = checkpoint.cols }
+            if case .checkpoint = rebase {
+                rebase = nil
+                rebaseTimeout?.cancel()
+                rebaseTimeout = nil
+            }
+        }
+        if case .grid(let cols, let rows) = event,
+           case .grid(let target) = rebase, target.cols == cols, target.rows == rows {
+            rebase = .checkpoint
+            rebaseTimeout?.cancel()
+            rebaseTimeout = nil
+            await coordinator.recover()
+        }
         try Task.checkCancellation()
         guard !closed else { throw CancellationError() }
         if let appliedGrid {
@@ -266,26 +297,77 @@ final class MacPagedAttachment {
         // A later live resize borrows the authoritative grid only while its
         // resize is applied. It must not leave the pane in restore mode.
         if case .grid = event, !restoringGrid { finishGrid() }
-        if poll == nil, coordinator.status == .available {
-            poll = Task { [weak self] in
-                while !Task.isCancelled {
-                    // Let the current screen present before doing history work.
-                    do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+        if historyLoading == .onDemand, restoringGrid {
+            restoringGrid = false
+            finishGrid()
+        }
+        if historyLoading == .eager, coordinator.status == .available {
+            needsPrefetch = true
+            if prefetchTask == nil {
+                prefetchGeneration &+= 1
+                let generation = prefetchGeneration
+                prefetchTask = Task { [weak self] in
                     guard let self else { return }
-                    await self.coordinator.loadIfNeeded(prefetch: true)
-                    self.finishGridIfNeeded()
+                    defer {
+                        if self.prefetchGeneration == generation { self.prefetchTask = nil }
+                    }
+                    while self.needsPrefetch, !self.closed, !Task.isCancelled {
+                        self.needsPrefetch = false
+                        await self.coordinator.loadIfNeeded(prefetch: true)
+                    }
                 }
             }
         }
         finishGridIfNeeded()
+        if rebase == nil, queuedHistoryDemand {
+            queuedHistoryDemand = false
+            await coordinator.viewportDidChange()
+        }
+    }
+
+    /// An initial owner layout can invalidate READY before the user reads any
+    /// history. Refresh only after the ordered host grid acknowledgment. Later
+    /// changes require explicit recovery so a reader's position is not reset.
+    func prepareInitialOwnerResize(cols: UInt16, rows: UInt16) {
+        guard historyLoading == .onDemand, !closed, !hasHistoryInteraction,
+              !didRebaseInitialCheckpoint, let initialCheckpointWidth,
+              initialCheckpointWidth != cols,
+              let target = try? DisplayGrid(cols: cols, rows: rows) else { return }
+        didRebaseInitialCheckpoint = true
+        rebase = .grid(target)
+        rebaseTimeout = Task { [weak self, requestTimeout] in
+            do { try await Task.sleep(for: requestTimeout) } catch { return }
+            guard let self, !self.closed, self.rebase != nil else { return }
+            self.rebase = nil
+            self.queuedHistoryDemand = false
+            self.coordinator.invalidateHistory()
+        }
+    }
+
+    func viewportDidChange(requestHistory: Bool) async {
+        guard !closed, historyLoading == .onDemand else { return }
+        if requestHistory { hasHistoryInteraction = true }
+        if rebase != nil {
+            queuedHistoryDemand = queuedHistoryDemand || requestHistory
+            return
+        }
+        await coordinator.viewportDidChange(requestHistory: requestHistory)
     }
 
     private func finishGridIfNeeded() {
         guard !closed else { return }
         switch coordinator.status {
         case .complete, .limit, .pageTooLarge, .requiresRecovery, .unavailable:
-            poll?.cancel()
-            poll = nil
+            if coordinator.status == .requiresRecovery || coordinator.status == .unavailable {
+                rebase = nil
+                rebaseTimeout?.cancel()
+                rebaseTimeout = nil
+                queuedHistoryDemand = false
+            }
+            prefetchGeneration &+= 1
+            prefetchTask?.cancel()
+            prefetchTask = nil
+            needsPrefetch = false
             if restoringGrid { restoringGrid = false; finishGrid() }
         default: break
         }
@@ -293,10 +375,13 @@ final class MacPagedAttachment {
 
     func close() {
         closed = true
-        poll?.cancel()
-        poll = nil
+        rebaseTimeout?.cancel()
+        rebaseTimeout = nil
+        rebase = nil
+        prefetchTask?.cancel()
+        prefetchTask = nil
         coordinator.disconnect()
     }
 
-    deinit { poll?.cancel() }
+    deinit { prefetchTask?.cancel(); rebaseTimeout?.cancel() }
 }

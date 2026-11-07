@@ -24,7 +24,7 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
     public typealias OutboundOut = ByteBuffer
 
     public typealias Subscribe = @Sendable (
-        @escaping @Sendable (PanesStateMessage) async -> Void
+        @escaping @Sendable (PanesStatePublication) async -> Void
     ) async -> Cancellable
 
     public struct Cancellable: Sendable {
@@ -72,7 +72,6 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
         }
         guard shouldStart else { return }
         let channel = context.channel
-        let loop = context.eventLoop
         let allocator = context.channel.allocator
         let subscribe = self.subscribe
         let storeCancellable: @Sendable (Cancellable) -> Void = { [weak self] c in
@@ -87,16 +86,12 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
 
         Task { [storeCancellable] in
             let cancellable = await subscribe { snapshot in
-                guard
-                    let body = try? JSONEncoder.shared.encode(snapshot)
-                else { return }
+                guard let body = snapshot.encoded else { channel.close(promise: nil); return }
                 let buf = allocator.buffer(bytes: body)
-                // Marshal back to the event loop before writing — NIO requires
-                // channel writes on the event loop, and this closure runs on the
-                // Swift-concurrency executor.
-                loop.execute {
-                    channel.writeAndFlush(buf, promise: nil)
-                }
+                // Await admission instead of queuing every stale snapshot in
+                // SSH. The shared feed retains only the newest pending one.
+                do { try await channel.writeAndFlush(buf).get() }
+                catch { channel.close(promise: nil) }
             }
             storeCancellable(cancellable)
         }

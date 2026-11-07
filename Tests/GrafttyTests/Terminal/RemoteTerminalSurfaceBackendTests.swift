@@ -108,8 +108,8 @@ struct RemoteTerminalSurfaceBackendTests {
     }
 
     @MainActor
-    @Test("@spec TERM-12.27: While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.")
-    func pagedRestoreDefersOwnerResizesFromOwnershipAndLayout() async throws {
+    @Test("@spec TERM-12.27: While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until that checkpoint is installed, then release the viewport without fetching older history.", arguments: [false, true])
+    func pagedRestoreReleasesOwnerGridBeforeHistoryDemand(binary: Bool) async throws {
         let client = FakeRemoteTerminalWebSocketClient(supportsWebControlTextFrames: true, supportsPagedHistory: true)
         var grids: [DisplayGrid?] = []
         let backend = RemoteTerminalSurfaceBackend(client: client, pagedRendererFactory: { _, prepare in
@@ -121,37 +121,68 @@ struct RemoteTerminalSurfaceBackendTests {
         try backend.start(surface: fakeSurface())
         try await client.waitForControlCounts(hello: 1)
         let hello = try #require(client.hellos().first)
-        func deliverOwnership(revision: UInt64) throws {
-            client.deliver(.text(WebControlEnvelope.ownership(try DisplayOwnershipSnapshot(
-                sessionName: "main", ownerClientID: hello.clientID, ownerKind: .mac,
-                grid: DisplayGrid(cols: 80, rows: 24), epoch: 1, revision: revision)).encoded()))
-        }
-        try deliverOwnership(revision: 1)
+        client.deliver(.text(WebControlEnvelope.ownership(try DisplayOwnershipSnapshot(
+            sessionName: "main", ownerClientID: hello.clientID, ownerKind: .mac,
+            grid: DisplayGrid(cols: 80, rows: 24), epoch: 1, revision: 1)).encoded()))
         try await waitForGridUpdates(1, grids: { grids })
         backend.resyncVisibleGrid()
         RemoteTerminalSurfaceBackend.receiveResizeCallback(backend.userdataForTesting, 120, 40, 0, 0)
-        client.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(.init(
-            incarnation: 1, id: 1, cols: 80, rows: 24, ready: Data([1]),
-            hasPrimaryHistory: true, hasAlternateHistory: false))).encoded()))
-        try await client.waitForSentFrames(count: 1)
-        try deliverOwnership(revision: 2)
-        try await waitForGridUpdates(3, grids: { grids })
-        backend.resyncVisibleGrid()
-        RemoteTerminalSurfaceBackend.receiveResizeCallback(backend.userdataForTesting, 120, 40, 0, 0)
         #expect(client.ownerResizes().isEmpty)
-        let frame = try #require(client.sentFrames().first)
-        guard case .text(let text) = frame,
-              case .history(let request)? = try PagedTerminalEnvelope.parse(text).request else {
-            Issue.record("Expected a history request"); return
-        }
-        client.deliver(.text(try PagedTerminalEnvelope(event: .page(.init(
-            incarnation: request.incarnation, checkpointID: request.checkpointID,
-            requestID: request.requestID, ordinal: request.ordinal, screen: request.screen,
-            data: Data(), complete: true))).encoded()))
-        try await waitForGridUpdates(4, grids: { grids })
-        #expect(grids.last! == nil)
+        let checkpoint = PagedTerminalEvent.checkpoint(.init(
+            incarnation: 1, id: 1, cols: 80, rows: 24, ready: Data([1]),
+            hasPrimaryHistory: true, hasAlternateHistory: false))
+        client.deliver(binary ? .paged(checkpoint) : .text(try PagedTerminalEnvelope(event: checkpoint).encoded()))
         try await client.waitForControlCounts(ownerResize: 1)
+        #expect(grids.last! == nil)
+        #expect(client.sentFrames().isEmpty, "The initial screen must not prefetch old history")
         #expect(client.ownerResizes().count == 1)
+    }
+
+    @MainActor
+    @Test("@spec TERM-12.63: If local eager history fails to send or times out, then the application shall release the restored source grid without waiting for another terminal event.", arguments: [false, true])
+    func localHistoryFailureReleasesGrid(sendFails: Bool) async throws {
+        var finishes = 0
+        var requests = 0
+        let attachment = MacPagedAttachment(renderer: RemotePagedRenderer(prepare: { _ in }),
+            requestTimeout: .milliseconds(20), finishGrid: { finishes += 1 }) { _ in
+                requests += 1
+                if sendFails { throw PagedTerminalEnvelope.Error.invalid }
+            }
+        defer { attachment.close() }
+        try await attachment.handle(.checkpoint(.init(incarnation: 1, id: 1, cols: 80, rows: 24,
+            ready: Data([1]), hasPrimaryHistory: true, hasAlternateHistory: false)))
+        let deadline = ContinuousClock.now + .seconds(1)
+        while finishes == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(requests == 1)
+        #expect(attachment.coordinator.status == .unavailable)
+        #expect(finishes == 1)
+    }
+
+    @MainActor
+    @Test(arguments: [false, true])
+    func initialResizeHistoryGateHasBoundedRecovery(alreadyRead: Bool) async throws {
+        var requests: [PagedTerminalRequest] = []
+        let attachment = MacPagedAttachment(renderer: RemotePagedRenderer(prepare: { _ in }),
+            historyLoading: .onDemand, requestTimeout: .milliseconds(20), finishGrid: {}) { requests.append($0) }
+        defer { attachment.close() }
+        try await attachment.handle(.checkpoint(.init(incarnation: 1, id: 1, cols: 80, rows: 24,
+            ready: Data([1]), hasPrimaryHistory: true, hasAlternateHistory: false)))
+        if alreadyRead { await attachment.viewportDidChange(requestHistory: true) }
+        attachment.prepareInitialOwnerResize(cols: 120, rows: 24)
+        if alreadyRead {
+            try await attachment.handle(.grid(cols: 120, rows: 24))
+            #expect(!requests.contains(.checkpoint), "A later resize must not silently replace history being read")
+        } else {
+            await attachment.viewportDidChange(requestHistory: true)
+            #expect(requests.isEmpty, "Scroll demand waits for the ordered grid acknowledgment")
+            let deadline = ContinuousClock.now + .seconds(1)
+            while attachment.coordinator.status != .requiresRecovery, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            #expect(attachment.coordinator.status == .requiresRecovery)
+            await attachment.coordinator.recover()
+            #expect(requests == [.checkpoint])
+        }
     }
 
     @MainActor

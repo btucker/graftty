@@ -24,6 +24,13 @@ public final class TerminalInputContainerView: UIView,
     /// Where timeline messages sit in this pane's scrollback, for the agent pane's overlay.
     private(set) lazy var scrollbackMapModel = ScrollbackMapModel(terminal: self)
     private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
+    var historyScrollChords: [ShortcutChord] = []
+    var onHistoryViewportChange: ((Bool) -> Void)? {
+        didSet {
+            terminalView.onHistoryScroll = { [weak self] in self?.onHistoryViewportChange?(true) }
+            snapshotScrollView.onHistoryScroll = { [weak self] in self?.onHistoryViewportChange?(true) }
+        }
+    }
     var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)? {
         didSet {
             if onPhysicalViewportReady != nil { setNeedsLayout() }
@@ -512,6 +519,9 @@ public final class TerminalInputContainerView: UIView,
         applicationScrollRecognizer.require(toFail: selectionPanRecognizer)
         applicationScrollRecognizer.require(toFail: backSwipeRecognizer)
         snapshotScrollView.panGestureRecognizer.require(toFail: applicationScrollRecognizer)
+        snapshotScrollView.historyIntentPan.require(toFail: selectionPanRecognizer)
+        snapshotScrollView.historyIntentPan.require(toFail: backSwipeRecognizer)
+        snapshotScrollView.historyIntentPan.require(toFail: applicationScrollRecognizer)
         for pan in terminalView.gestureRecognizers?.compactMap({ $0 as? UIPanGestureRecognizer }) ?? [] {
             pan.require(toFail: applicationScrollRecognizer)
             if pan.allowedTouchTypes.contains(NSNumber(value: UITouch.TouchType.direct.rawValue)) {
@@ -723,6 +733,7 @@ extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
 extension TerminalInputContainerView: TerminalSurfaceScrollbarDelegate {
     public func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
         snapshotScrollView.updateScrollbar(scrollbar)
+        onHistoryViewportChange?(false)
         refreshFirstLineClearance()
         if let value = snapshotScrollView.scrollbar {
             scrollbackMapModel.update(viewport: ScrollbackViewport(

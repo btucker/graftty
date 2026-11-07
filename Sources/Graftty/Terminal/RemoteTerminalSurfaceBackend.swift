@@ -65,6 +65,8 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private var lastPagedGrid: DisplayGrid?
     private var awaitingInitialCheckpoint = false
     private let pagedRendererFactory: PagedRendererFactory
+    @MainActor private weak var pagedAttachment: MacPagedAttachment?
+    @MainActor private var publishPaging: (PagedTerminalCoordinator?) -> Void = { _ in }
     private var prepareAttachmentGrid: (DisplayGrid?) -> Void = { _ in }
 
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {
@@ -335,6 +337,8 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
                     handleTextFrame(text)
                 case .binary:
                     break
+                case .paged:
+                    throw PagedTerminalEnvelope.Error.invalid
                 }
             } catch {
                 reportUnexpectedClose()
@@ -358,20 +362,26 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
             self.updatePagedPresentation(synchronizeOwner: grid == nil)
         }
         let renderer = pagedRendererFactory(native, prepare)
-        let attachment = MacPagedAttachment(renderer: renderer, finishGrid: { prepare(nil) }) { [client] request in
+        let attachment = MacPagedAttachment(renderer: renderer, historyLoading: .onDemand, finishGrid: { prepare(nil) }) { [client] request in
             try await client.send(.text(PagedTerminalEnvelope(request: request).encoded()))
         }
-        defer { attachment.close() }
+        pagedAttachment = attachment
+        publishPaging(attachment.coordinator)
+        defer { attachment.close(); pagedAttachment = nil; publishPaging(nil) }
         do {
             while !Task.isCancelled {
                 let frame = try await client.receive()
                 try Task.checkCancellation()
                 switch frame {
-                case .binary(let bytes): try await native.writeAndWait(bytes)
+                case .binary(let bytes):
+                    try await native.writeAndWait(bytes)
+                    await attachment.viewportDidChange(requestHistory: false)
                 case .text(let text):
                     if let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
                         try await attachment.handle(event)
                     } else { handleTextFrame(text) }
+                case .paged(let event):
+                    try await attachment.handle(event)
                 }
             }
         } catch {
@@ -400,7 +410,10 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
             guard current.cols != snapshot.grid.cols || current.rows != snapshot.grid.rows else { return nil }
             return (snapshot.epoch, current.cols, current.rows)
         }
-        if let (epoch, cols, rows) = resize { enqueueOwnerResize(epoch: epoch, cols: cols, rows: rows) }
+        if let (epoch, cols, rows) = resize {
+            pagedAttachment?.prepareInitialOwnerResize(cols: cols, rows: rows)
+            enqueueOwnerResize(epoch: epoch, cols: cols, rows: rows)
+        }
     }
 
     private func reportUnexpectedClose() {
@@ -589,6 +602,17 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
 }
 
 extension RemoteTerminalSurfaceBackend: SurfaceHandleZmxBackend {
+    @MainActor func bindPagedHistory(_ handler: @escaping (PagedTerminalCoordinator?) -> Void) {
+        publishPaging = handler
+        handler(pagedAttachment?.coordinator)
+    }
+    @MainActor func historyViewportDidChange(requestHistory: Bool) {
+        Task { [weak self] in
+            guard let self, self.lock.withLock({ if case .running = self.lifecycle { return true }; return false }) else { return }
+            await self.pagedAttachment?.viewportDidChange(requestHistory: requestHistory)
+        }
+    }
+
     func write(_ data: Data) throws {
         try write(data, claimEngagement: true)
     }

@@ -414,7 +414,7 @@ extension GrafttyApp {
                         ghosttyConfig:
                             terminalManager.mobilePresentationConfig(),
                         keybindings: GhosttyKeybindingsResponse(
-                            chords: terminalManager.keybindBridge.allChords
+                            bindings: terminalManager.keybindBridge.allBindings
                         )
                     )
                 }
@@ -625,29 +625,27 @@ extension GrafttyApp {
     ) -> WebRTCHostAgentPool {
         let trustedPeerStore = services.trustedPeerStore
         let sshConnectionRegistry = services.sshConnectionRegistry
-        let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
-            await services.appStateChanges.subscribePanesState(snapshot: {
-                let projects = SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin)
-                let navigation = SidebarSnapshot(projects: (appStateBinding.wrappedValue.sidebarNavigation?.order ?? .init()).sorted(projects))
-                return .snapshot(buildWorktreePanesSnapshot(), sidebar: navigation)
-            }, onChange: onChange)
-        }
+        let localPanesFeed = SharedPanesStateFeed(changes: services.appStateChanges, snapshot: {
+            let projects = SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin)
+            let navigation = SidebarSnapshot(projects: (appStateBinding.wrappedValue.sidebarNavigation?.order ?? .init()).sorted(projects))
+            return .snapshot(buildWorktreePanesSnapshot(), sidebar: navigation)
+        })
+        let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { await localPanesFeed.subscribe($0) }
 
-        let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = { onChange in
-            await services.appStateChanges.subscribePanesState(snapshot: {
-                let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
-                let navigation = SidebarHostController.shared.snapshot(state: appStateBinding, owner: localWorktreeOrigin, remote: remote.projects,
-                    authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
-                let worktrees = buildWorktreePanesSnapshot() + remote.worktrees
-                let order = Dictionary(navigation.projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
-                let sorted = worktrees.enumerated().sorted {
-                    let a = order[SidebarProjection.projectID($0.element), default: .max]
-                    let b = order[SidebarProjection.projectID($1.element), default: .max]
-                    return a == b ? $0.offset < $1.offset : a < b
-                }.map(\.element)
-                return .snapshot(sorted, sidebar: navigation)
-            }, onChange: onChange)
-        }
+        let relayedPanesFeed = SharedPanesStateFeed(changes: services.appStateChanges, snapshot: {
+            let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
+            let navigation = SidebarHostController.shared.snapshot(state: appStateBinding, owner: localWorktreeOrigin, remote: remote.projects,
+                authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
+            let worktrees = buildWorktreePanesSnapshot() + remote.worktrees
+            let order = Dictionary(navigation.projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
+            let sorted = worktrees.enumerated().sorted {
+                let a = order[SidebarProjection.projectID($0.element), default: .max]
+                let b = order[SidebarProjection.projectID($1.element), default: .max]
+                return a == b ? $0.offset < $1.offset : a < b
+            }.map(\.element)
+            return .snapshot(sorted, sidebar: navigation)
+        })
+        let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = { await relayedPanesFeed.subscribe($0) }
 
         let paneControlMutator: PaneControlChannelHandler.Mutator = Self.makePaneControlMutator(
             appState: appStateBinding,

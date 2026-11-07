@@ -11,6 +11,7 @@ import UIKit
 /// Retains software input context so UIKit can find and revise dictation's
 /// previously committed hypotheses. Ghostty still renders and sends input.
 final class MobileTerminalInputView: UITerminalView {
+    var onHistoryScroll: (() -> Void)?
     var isAutocorrectionEnabled = false {
         didSet {
             guard oldValue != isAutocorrectionEnabled, isFirstResponder else { return }
@@ -77,6 +78,14 @@ final class MobileTerminalInputView: UITerminalView {
         automaticallyRepeatsHardwareKeys = false
         // Retained dictation context already supplies zero-based document positions.
         usesTextInputDocumentAnchor = false
+        for gesture in gestureRecognizers ?? [] where gesture is UIPanGestureRecognizer && !TerminalInputContainerView.isPointerDragSelection(gesture) {
+            gesture.addTarget(self, action: #selector(historyScrollDidChange(_:)))
+        }
+    }
+
+    @objc private func historyScrollDidChange(_ gesture: UIPanGestureRecognizer) {
+        guard gesture.state == .began || gesture.state == .changed else { return }
+        onHistoryScroll?()
     }
 
     @available(*, unavailable)

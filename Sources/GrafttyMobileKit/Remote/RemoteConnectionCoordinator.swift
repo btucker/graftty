@@ -441,7 +441,7 @@ public final class RemoteConnectionCoordinator {
         desiredConnectionsAllowed && connectionsAllowed && connectionGeneration == generation
     }
 
-    /// Only a host with verified wake details can be asleep rather than offline.
+    /// Whether this host has wake metadata. This says nothing about its power state.
     public func hasWakeAddresses(_ host: Host) -> Bool {
         pinnedHost(for: host)?.wakeOnLAN != nil
     }

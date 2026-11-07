@@ -64,7 +64,7 @@ public struct AddWorktreeSheetView: View {
     private var routes: [Route] { targets.first { $0.id == selectedProjectID }?.routes ?? [] }
     private var selectedRoute: Route? { routes.first { $0.id == selectedRouteID } }
 
-    /// Opening the sheet only dials a sleeping host when every host is asleep.
+    /// Opening the sheet only dials a cached host when every host needs reconnection.
     private func chooseDefaultRoute() {
         guard let selectedProjectID else { selectedRouteID = nil; return }
         let lastUsed = UserDefaults.standard.string(forKey: "addWorktree.lastHost.\(selectedProjectID)")

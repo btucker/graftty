@@ -1198,8 +1198,8 @@ struct SessionClientTests {
 
     @Test("""
 @spec IOS-7.7: When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.
-""")
-    func pagedScreenLiveInputAndReconnect() async throws {
+""", arguments: [false, true])
+    func pagedScreenLiveInputAndReconnect(binary: Bool) async throws {
         let first = DelayedReceiveWS(paged: true)
         let second = DelayedReceiveWS(paged: true)
         let sequence = WebSocketSequence([first, second])
@@ -1215,7 +1215,7 @@ struct SessionClientTests {
         try await waitUntil("initial paged receive") { first.receiveCalls == 1 }
         let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 1, cols: 120, rows: 24,
             ready: Data([1]), hasPrimaryHistory: true, hasAlternateHistory: false)
-        first.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        first.deliver(binary ? .paged(.checkpoint(checkpoint)) : .text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
         try await waitUntil("installed current screen") { renderer.installed == [1] && first.receiveCalls == 2 }
         #expect(client.paging?.status == .available)
         #expect(first.sent.compactMap { frame -> PagedTerminalEnvelope? in
@@ -1223,7 +1223,7 @@ struct SessionClientTests {
             return try? PagedTerminalEnvelope.parse(text)
         }.isEmpty)
         renderer.nearTop = true
-        await client.paging?.loadIfNeeded()
+        await client.historyViewportDidChange()
         #expect(client.paging?.status == .loading)
 
         renderer.holdResize = true
@@ -1257,7 +1257,7 @@ struct SessionClientTests {
         renderer.nearTop = false
         client.resume()
         try await waitUntil("replacement paged receive") { second.receiveCalls == 1 }
-        second.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        second.deliver(binary ? .paged(.checkpoint(checkpoint)) : .text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
         try await waitUntil("replacement checkpoint") { renderer.installed == [1, 1] }
         #expect(client.session === retainedSession)
         #expect(renderer.generations[1] > renderer.generations[0])

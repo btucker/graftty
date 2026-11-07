@@ -73,6 +73,8 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private var parkedReads: [Channel] = []
     /// Nil keeps this client on SSH flow control alone.
     private let outputWindowBytes: Int?
+    private var outputPacing: TerminalOutputPacing?
+    private let useBinaryPaging: Bool
     private var consumedOutputBytes: UInt64 = 0
     private var acknowledgedOutputBytes: UInt64 = 0
     /// NIOSSH delivers channel requests ahead of data it still holds, so an
@@ -82,6 +84,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private var pendingReceivers: [(id: UUID, continuation: CheckedContinuation<WebSocketFrame, Error>)] = []
     var bufferedByteCountForTesting: Int { lock.withLock { receiveBuffer.byteCount } }
     var pendingReceiverCountForTesting: Int { lock.withLock { pendingReceivers.count } }
+    var outputWindowForTesting: Int? { lock.withLock { outputPacing?.windowBytes } }
     private var didFailReceive: (any Error)?
     private var closed = false
 
@@ -89,12 +92,18 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public private(set) var usesPagedHistory = false
     public var supportsPagedHistory: Bool { usesPagedHistory }
 
+    /// Adaptive output credit is an opt-in experiment for a serial receiver.
+    /// Its timing ends at the next receive call, which may precede parsing if
+    /// the caller queues work. Both apps retain fixed credit by default.
     public init(parentChannel: Channel, parentHandler: NIOSSHHandler, sessionName: String,
-                outputWindowBytes: Int? = TerminalOutputCredit.clientWindowBytes) {
+                outputWindowBytes: Int? = TerminalOutputCredit.clientWindowBytes,
+                useBinaryPaging: Bool = true, adaptiveOutputWindow: Bool = false) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.sessionName = sessionName
         self.outputWindowBytes = outputWindowBytes.flatMap { TerminalOutputCredit.parseWindow(String($0)) }
+        outputPacing = self.outputWindowBytes.map { TerminalOutputPacing(windowBytes: $0, adaptive: adaptiveOutputWindow) }
+        self.useBinaryPaging = useBinaryPaging
     }
 
     func setHistorySetupTask(_ task: Task<Void, Never>) {
@@ -108,10 +117,20 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     func connectHistory(parentChannel: Channel, parentHandler: NIOSSHHandler) async throws {
         let token = UUID().uuidString
-        let child = try await openBulkSubsystem(
-            parentChannel: parentChannel, parentHandler: parentHandler,
-            subsystem: GrafttyWebRTC.historySubsystemPrefix + token
-        ) { [self] child, _ in InboundRelay.install(on: child, owner: self) }
+        let child: Channel
+        do {
+            child = try await openBulkSubsystem(
+                parentChannel: parentChannel, parentHandler: parentHandler,
+                subsystem: GrafttyWebRTC.historySubsystemPrefix + token
+            ) { [self] child, _ in InboundRelay.install(on: child, owner: self) }
+        } catch {
+            try Task.checkCancellation()
+            // No token has reached the terminal yet. The host still sends
+            // history on its primary channel, so optional negotiation must
+            // not close a working terminal and start a reconnect loop.
+            NSLog("[Graftty] history channel unavailable; retaining primary channel: %@", String(describing: error))
+            return
+        }
         let accepted = lock.withLock {
             guard !closed else { return false }
             historyChannel = child
@@ -208,6 +227,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             if let outputWindowBytes {
                 try await Self.sendEnv(channel: child, name: TerminalOutputCredit.environmentName, value: String(outputWindowBytes))
             }
+            if paged && useBinaryPaging {
+                try await Self.sendEnv(channel: child, name: PagedTerminalBinary.environmentName, value: PagedTerminalBinary.encodingName)
+            }
             try await Self.sendEnv(channel: child, name: "GRAFTTY_SESSION", value: sessionName)
             try await Self.sendPty(channel: child, term: "xterm-256color", cols: 80, rows: 24)
         } catch {
@@ -281,6 +303,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             // control carrier too, not as `.channel` PTY bytes (which
             // would corrupt terminal output on the wire).
             try await sendRawControlFrame(payload)
+        case .paged:
+            // Paging events flow host-to-client; requests remain JSON.
+            throw PagedTerminalEnvelope.Error.invalid
         }
     }
 
@@ -289,6 +314,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { cont in
                 let flow = lock.withLock { () -> OutputFlow? in
+                    if !Task.isCancelled, outputPacing?.adaptive == true {
+                        outputPacing?.consumerReady(atNanoseconds: DispatchTime.now().uptimeNanoseconds)
+                    }
                     if Task.isCancelled { cont.resume(throwing: CancellationError()) }
                     else if let next = popOutputLocked() {
                         cont.resume(returning: next)
@@ -296,7 +324,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
                     }
                     else if let error = didFailReceive { cont.resume(throwing: error) }
                     else if closed { cont.resume(throwing: ClientError.channelClosed) }
-                    else { pendingReceivers.append((id, cont)) }
+                    else {
+                        pendingReceivers.append((id, cont))
+                        // A faster consumer may release withheld credit while
+                        // the host is waiting. Do not require another frame.
+                        return takeOutputFlowLocked()
+                    }
                     return nil
                 }
                 flow?.perform()
@@ -464,6 +497,10 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         deliverInbound(.text(text))
     }
 
+    func deliverInboundPaging(_ event: PagedTerminalEvent) {
+        deliverInbound(.paged(event))
+    }
+
     private func deliverInbound(_ frame: WebSocketFrame) {
         var flow: OutputFlow?
         let overflow = lock.withLock {
@@ -498,7 +535,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     private func popOutputLocked() -> WebSocketFrame? {
         let frame = receiveBuffer.popFirst()
-        if case .binary(let bytes)? = frame { consumedOutputBytes &+= UInt64(bytes.count) }
+        if case .binary(let bytes)? = frame {
+            consumedOutputBytes &+= UInt64(bytes.count)
+            if outputPacing?.adaptive == true {
+                outputPacing?.didDeliver(bytes: bytes.count, atNanoseconds: DispatchTime.now().uptimeNanoseconds)
+            }
+        }
         return frame
     }
 
@@ -523,13 +565,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             swap(&reads, &parkedReads)
         }
         var acknowledgement: (Channel, UInt64)?
-        // A window eighth keeps acknowledgements cheap, and the host can never
-        // be blocked on less than this. An unsent total retries on the next pop.
-        if let outputWindowBytes,
-           consumedOutputBytes &- acknowledgedOutputBytes >= UInt64(outputWindowBytes / 8),
+        // The fixed policy keeps its window-eighth batching. Adaptive pacing
+        // may withhold consumed bytes, but never grants bytes not delivered.
+        if let total = outputPacing?.acknowledgement(consumed: consumedOutputBytes, acknowledged: acknowledgedOutputBytes),
            let channel = childChannel ?? openingChannel {
-            acknowledgedOutputBytes = consumedOutputBytes
-            acknowledgement = (channel, consumedOutputBytes)
+            acknowledgedOutputBytes = total
+            acknowledgement = (channel, total)
         }
         return OutputFlow(reads: reads, acknowledgement: acknowledgement)
     }
@@ -692,6 +733,14 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
         stdErrDecoder.append(data)
         let (frames, oversized) = stdErrDecoder.drain()
         for payload in frames {
+            if PagedTerminalBinary.isBinary(payload) {
+                guard let event = try? PagedTerminalBinary.decode(payload) else {
+                    poisonAndClose(context: context)
+                    return
+                }
+                owner.deliverInboundPaging(event)
+                continue
+            }
             guard let text = String(data: payload, encoding: .utf8) else { continue }
             owner.deliverInboundText(text)
         }

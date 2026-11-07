@@ -756,7 +756,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.26** While a remote Mac follows a paged terminal, the application shall retain the last in-band source grid through ownership updates and restore-pin release until it becomes the display owner.
 
-**TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.
+**TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until that checkpoint is installed, then release the viewport without fetching older history.
 
 **TERM-12.28** When an unloaded local Mac pane attaches to a paging-capable daemon, the default host-managed backend shall use native screen restoration and background history import without replaying history as terminal output.
 
@@ -782,7 +782,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.39** When the Mac takes control of a restored paged terminal from mobile, the application shall resize to the Mac viewport and keep the terminal attachment available for input and live output.
 
-**TERM-12.40** While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.
+**TERM-12.40** While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering, wait for available space without polling, and release a waiting reader when the attachment closes.
 
 **TERM-12.41** While a local Mac follows a paged terminal, the application shall preserve the last in-band source grid when a temporary restore pin is released, independently of ownership metadata.
 
@@ -821,6 +821,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.58** When a Mac remote attachment closes during native parsing, the application shall stop admitting surface calls, drain the mailbox while joining parsing, and reject cancelled or late output before the surface is freed.
 
 **TERM-12.59** When a Mac paged surface retires after native grid completion but before its renderer resumes, the application shall reject pending presentation callbacks.
+
+**TERM-12.60** When a remote viewer scrolls toward unloaded history, the application shall request one page at a time and continue only while the viewport needs history, without initial prefetch or recurring polling.
+
+**TERM-12.61** When peers negotiate binary terminal paging, the application shall carry checkpoint and history bytes without base64 expansion while preserving their identities, limits, and complete payloads.
+
+**TERM-12.62** When an SSH client requests binary-v1 paging before attachment, the host shall encode checkpoints and pages as binary while retaining JSON for clients that omit or request an unsupported encoding.
+
+**TERM-12.63** If local eager history fails to send or times out, then the application shall release the restored source grid without waiting for another terminal event.
+
+**TERM-12.64** When a mobile follower's current content fits within its viewport, vertical scroll intent shall request older history without requiring an offset change, while layout and horizontal gestures shall not request history.
+
+**TERM-12.65** When an initial remote Mac owner resize changes the checkpoint width before history is read, the application shall refresh that checkpoint at the new width and keep older rows reachable on scroll demand.
+
+**TERM-12.66** When a resolved history navigation shortcut is pressed, the application shall arm on-demand history loading while leaving native key handling intact, and shall publish those resolved shortcuts to paired viewers.
+
+**TERM-12.67** If an expired history recovery finishes after a newer recovery begins, then the application shall ignore the stale completion and preserve the newer recovery state.
 
 ### TERM-13.x — Native Windows terminal backend
 
@@ -2800,7 +2816,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.32** While an iPad workspace is visible, the application shall show worktree history Back and Forward buttons to the left of the worktree name, enabled only when a visited worktree is available in that direction.
 
-**IPAD-1.33** While the app shows worktrees from several paired hosts, the application shall merge their rows and projects, show cached rows for sleeping hosts, and keep each row tied to the host that delivered it.
+**IPAD-1.33** While the app shows worktrees from several paired hosts, the application shall merge their rows and projects, show cached rows for disconnected hosts with wake details, and keep each row tied to the host that delivered it.
 
 **IPAD-1.34** While a different host's worktree is selected, the application shall leave shared worktree state alone when other hosts push frames.
 
@@ -3444,6 +3460,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.36** When a mobile interaction fetches worktrees or sends a management request after a failed background dial, the application shall bypass the failure cooldown without replaying a management mutation.
 
+**REMOTE-2.37** While a paired host has saved wake details but no live report, the application shall label its cached projects and worktrees as not connected without inferring that the host is asleep, and retain their reconnect actions.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3586,6 +3604,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.22** When an auxiliary history channel closes before the terminal channel, the application shall preserve terminal output and apply the terminal channel's eventual exit status.
 
+**REMOTE-9.23** If adaptive terminal output pacing is explicitly enabled, then the client shall reduce credits for a slow consumer without acknowledging undelivered bytes or moving cumulative acknowledgements backward.
+
+**REMOTE-9.24** While adaptive terminal output pacing measures consumer speed, the client shall exclude time spent awaiting network output and restore available credit when the consumer speeds up.
+
+**REMOTE-9.25** When an adaptive terminal consumer speeds up with no buffered output, the client shall send newly available credit without waiting for another inbound frame.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -3645,6 +3669,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.25** When a pane-control RPC times out, the client shall invalidate its channel before resuming the caller and send later mutations on a fresh channel so a late reply cannot answer another request.
 
 **REMOTE-11.26** When a pane-control caller is cancelled while awaiting a reply, the client shall consume that reply before sending a later mutation so cancellation cannot shift reply pairing.
+
+**REMOTE-11.27** If an optional history channel cannot open before its deadline, then the application shall preserve the active terminal and deliver history over its primary channel.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -3770,7 +3796,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.47** While a paired host has saved wake addresses, the client shall keep its last reported projects and worktrees across launches, and shall delete them when the host is forgotten.
 
-**REMOTE-13.48** While a host is asleep, the application shall keep its rows visible and dim with the last reported text, and shall name it asleep, and shall list other unreachable hosts on one offline line.
+**REMOTE-13.48** While a host has no live report but has saved wake details, the application shall keep its cached rows visible and dim, label them not connected, and list other unreachable hosts on one offline line.
 
 **REMOTE-13.49** While the Mac or mobile host manager is open, the application shall list each downstream host with its intermediary Mac and preserve separate routes to the same destination.
 
@@ -5497,6 +5523,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PERF-1.21** When a paired device subscribes to panes-state, the application shall send the initial snapshot before the subscription returns, and afterwards re-read the snapshot only when an application state change is published or the safety-net tick fires, sending it only when it differs from the last snapshot sent.
 
 **PERF-1.22** While no window is open, when a control-socket request changes `AppState`, the application shall send the change to panes-state subscribers without waiting for the safety-net tick.
+
+**PERF-1.23** While multiple paired viewers subscribe to the same panes-state projection, the host shall build and encode each changed snapshot once, share it among those viewers, and stop observing when the last viewer leaves.
+
+**PERF-1.24** While a panes-state viewer is stalled sending a snapshot, the host shall retain only its newest pending snapshot and let other viewers receive updates independently.
+
+**PERF-1.25** When the native transport latency probe is explicitly run, the probe shall report transport, parsing, and matching rendered-pixel latency separately without treating renderer completion as physical display presentation.
 
 ## PORTS — PORTS
 
