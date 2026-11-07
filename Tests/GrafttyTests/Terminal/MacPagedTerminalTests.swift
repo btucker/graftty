@@ -163,7 +163,7 @@ struct MacPagedTerminalTests {
             try stream.resize(windowSize: .init(cols: checkpoint.cols, rows: rows))
             var resized = false
             while let event = await events.next() {
-                if case .output(let data) = event { terminal.access.write(data) }
+                if case .output(let data) = event { try await terminal.access.writeAndWait(data) }
                 if case .grid(let cols, let height) = event {
                     try await renderer.setSourceGrid(cols: cols, rows: height)
                     resized = cols == checkpoint.cols && height == rows
@@ -179,7 +179,7 @@ struct MacPagedTerminalTests {
             var receivedPage: PagedTerminalPage?
             while let event = await events.next() {
                 switch event {
-                case .output(let data): terminal.access.write(data)
+                case .output(let data): try await terminal.access.writeAndWait(data)
                 case .grid(let cols, let rows): try await renderer.setSourceGrid(cols: cols, rows: rows)
                 case .page(let page): receivedPage = page
                 case .unavailable(let failure) where requiresRecovery:
@@ -222,7 +222,7 @@ struct MacPagedTerminalTests {
             var freshCheckpoint: PagedTerminalCheckpoint?
             while let event = await events.next() {
                 if case .checkpoint(let checkpoint) = event { freshCheckpoint = checkpoint; break }
-                if case .output(let data) = event { terminal.access.write(data) }
+                if case .output(let data) = event { try await terminal.access.writeAndWait(data) }
             }
             let checkpoint = try #require(freshCheckpoint)
             try await renderer.install(checkpoint, generation: generation)
@@ -249,7 +249,7 @@ struct MacPagedTerminalTests {
             try await stream.send(Data("\(marker)\n".utf8))
             while let event = await events.next() {
                 guard case .output(let data) = event else { continue }
-                terminal.access.write(data)
+                try await terminal.access.writeAndWait(data)
                 if terminal.text().contains("live-\(marker)") { receivedLiveResponse = true; break }
             }
             #expect(receivedLiveResponse)
@@ -297,7 +297,7 @@ struct MacPagedTerminalTests {
         var receivedLiveResponse = false
         while let event = await events.next() {
             try await coordinator.handle(event)
-            if case .output(let data) = event { terminal.access.write(data) }
+            if case .output(let data) = event { try await terminal.access.writeAndWait(data) }
             if terminal.text().contains("live-old-daemon-still-live") { receivedLiveResponse = true; break }
         }
         #expect(receivedLiveResponse)
@@ -312,7 +312,7 @@ struct MacPagedTerminalTests {
         defer { terminal.close() }
         let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
         try await renderer.resize(cols: 80, rows: 24)
-        terminal.access.write(Data("\u{1b}[?2026h\u{1b}[?2048h".utf8))
+        try await terminal.access.writeAndWait(Data("\u{1b}[?2026h\u{1b}[?2048h".utf8))
         ghostty_surface_set_size(terminal.raw, 330, 400)
         let fontAction = "increase_font_size:1"
         _ = fontAction.withCString { ghostty_surface_binding_action(terminal.raw, $0, UInt(fontAction.utf8.count)) }
@@ -320,7 +320,7 @@ struct MacPagedTerminalTests {
         // event. Parser state must remain fixed while physical size changes.
         try await Task.sleep(for: .milliseconds(100))
         #expect(ghostty_surface_grid_matches(terminal.raw, 80, 24))
-        terminal.access.write(Data("\u{1b}[?2026$p\u{1b}[18t".utf8))
+        try await terminal.access.writeAndWait(Data("\u{1b}[?2026$p\u{1b}[18t".utf8))
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while !terminal.responses.contains("\u{1b}[8;24;80t"), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
@@ -340,7 +340,7 @@ struct MacPagedTerminalTests {
         let parserOnly = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: { _ in })
         try await parserOnly.resize(cols: physical.columns + 2, rows: physical.rows + 3)
         #expect(ghostty_surface_grid_matches(terminal.raw, physical.columns + 2, physical.rows + 3))
-        terminal.access.write(Data("\u{1b}[18t".utf8))
+        try await terminal.access.writeAndWait(Data("\u{1b}[18t".utf8))
         let pinnedReply = "\u{1b}[8;\(physical.rows + 3);\(physical.columns + 2)t"
         let pinnedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
         while !terminal.responses.contains(pinnedReply), ContinuousClock.now < pinnedDeadline {
@@ -353,7 +353,7 @@ struct MacPagedTerminalTests {
         ghostty_surface_set_size(terminal.raw, 310, 390)
         let fallback = ghostty_surface_size(terminal.raw)
         try await renderer.releaseSourceGrid()
-        terminal.access.write(Data("\u{1b}[18t".utf8))
+        try await terminal.access.writeAndWait(Data("\u{1b}[18t".utf8))
         let fallbackReply = "\u{1b}[8;\(fallback.rows);\(fallback.columns)t"
         let fallbackDeadline = ContinuousClock.now.advanced(by: .seconds(2))
         while !String(decoding: terminal.responses.snapshot().dropFirst(reportStart), as: UTF8.self).contains(fallbackReply),
@@ -387,8 +387,8 @@ struct MacPagedTerminalTests {
         let styled = "\u{1b}7\u{1b}[H" + (0..<512).map {
             "\u{1b}[38;2;\($0 % 256);\($0 / 256);2mX"
         }.joined() + "\u{1b}[0m\u{1b}8"
-        terminal.access.write(Data(styled.utf8))
-        if editRows { terminal.access.write(Data("\u{1b}7\u{1b}[H\u{1b}[2L\u{1b}[M\u{1b}8".utf8)) }
+        try await terminal.access.writeAndWait(Data(styled.utf8))
+        if editRows { try await terminal.access.writeAndWait(Data("\u{1b}7\u{1b}[H\u{1b}[2L\u{1b}[M\u{1b}8".utf8)) }
         let visible = terminal.text()
         #expect(visible.contains(String(repeating: "X", count: 64)))
         var ordinal: UInt64 = 0
@@ -423,7 +423,7 @@ struct MacPagedTerminalTests {
         defer { terminal.close() }
         let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
         try await renderer.install(checkpoint, generation: 1)
-        terminal.access.write(Data(invalidation.utf8))
+        try await terminal.access.writeAndWait(Data(invalidation.utf8))
         let visible = terminal.text()
         try await stream.requestHistory(.init(incarnation: checkpoint.incarnation, checkpointID: checkpoint.id,
             requestID: 1, ordinal: 0, screen: 0))
