@@ -3786,6 +3786,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.55** When a Mac opens a remote worktree or its viewer terminal on demand, the application shall make a user-selection connection attempt that may wake the saved host.
 
+**REMOTE-13.56** When Mac or mobile opens a host with several available paths, the application shall try its paired direct connection before any relay, even when a relay was used previously.
+
+**REMOTE-13.57** If a direct host connection fails, then Mac and mobile shall try paired intermediary Macs, reconnect the destination through a matching saved pairing, and wait for that relay to become connected without repeating the reconnect request.
+
+**REMOTE-13.58** When a relay reports a destination with a different saved fingerprint or a pairing-required state, the application shall reject that path without initiating a downstream connection.
+
+**REMOTE-13.59** When an open or reconnect chooses another path to the same worktree, the application shall match its owner and stable worktree identity, then use the chosen path's current worktree and pane identifiers.
+
+**REMOTE-13.60** When a Mac opens a worktree available directly and through an intermediary, the application shall use the direct host's identifiers if it connects, otherwise reconnect through the intermediary and use its identifiers.
+
+**REMOTE-13.61** When mobile opens a host that is reachable directly or through a paired Mac, the application shall prefer direct access and fall back to the intermediary's worktree identifiers when direct access fails.
+
+**REMOTE-13.62** When a selected Mac terminal loses its delivery path, the application shall resolve a direct-first replacement route and reconnect using its identifiers, while keeping a healthy active relay when direct access later returns.
+
+**REMOTE-13.63** When the selected mobile worktree loses its direct or relayed path, the application shall reconnect through an available route without replacing a newer selection, and shall keep a healthy relayed session when direct access returns.
+
+**REMOTE-13.64** When mobile saves a recent pane, the application shall retain its destination owner alongside the delivery host so reopening can resolve a different direct or relayed path.
+
 ### REMOTE-14.x — Shared project navigation
 
 **REMOTE-14.1** When a host publishes sidebar metadata, the application shall preserve the original worktree snapshot fields and decode older snapshots without navigation metadata.

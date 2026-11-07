@@ -4,6 +4,17 @@ import Testing
 @testable import GrafttyMobileKit
 
 struct MobileStopNotificationTests {
+    @Test("Notification identity follows a changed relay path while rejecting another owner")
+    func notificationMatchesStableIdentityAcrossRoutes() {
+        let owner = RemoteDeviceID(value: "lan-mac")
+        let route = MobileStopNotificationRoute(hostID: UUID(), worktreePath: "/task", worktreeID: "task", originDeviceID: owner, paneID: nil)
+        let relayed = WorktreePanes(path: "relay-worktree-task", displayName: "task", repoDisplayName: "Project", displayBranch: "task", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            origin: .init(deviceID: owner, deviceLabel: "LAN", relayDepth: 1), sidebar: .init(id: "task", projectID: "project"))
+        #expect(route.matches(relayed))
+        #expect(!route.matches(relayed.with(origin: .init(deviceID: .init(value: "other"), deviceLabel: "Other", relayDepth: 1))))
+    }
+
     #if canImport(UIKit)
     @Test("@spec NOTIF-1.21: While the mobile application has not installed its notification delegate, creating notification state and receiving snapshots shall not access the system notification service.")
     @MainActor func notificationStateDoesNotRequireApplicationStartup() async {

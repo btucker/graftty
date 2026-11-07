@@ -31,6 +31,7 @@ final class RemoteMacsModel: ObservableObject {
 
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
     let downstreamConnections = DownstreamHostConnections<RemoteMacIdentity>()
+    private let hostRouteResolver = HostRouteResolver<RemoteMacIdentity>()
     @Published private(set) var trustedLinuxHosts: [RemoteDeviceID: PinnedHost] = [:]
     private let maintenancePins: PinnedHostStore
     private let hostSnapshotCache: HostSnapshotCache
@@ -1336,13 +1337,13 @@ final class RemoteMacsModel: ObservableObject {
         worktreePanesByRemote.filter { paneFeedFailures[$0.key] == nil }
     }
 
-    func promotedWorktreesForRelay(includeRelayed: Bool = false) -> [WorktreePanes] {
+    func promotedWorktreesForRelay(includeRelayed: Bool = false, deduplicate: Bool = true) -> [WorktreePanes] {
         let rows = relayRouter.promotedWorktrees(
             snapshots: healthyWorktreeSnapshots,
             remoteMacs: savedRemoteMacs,
             includeRelayed: includeRelayed
         )
-        return includeRelayed ? MergedWorktreeList.deduplicated(rows) : rows
+        return includeRelayed && deduplicate ? MergedWorktreeList.deduplicated(rows) : rows
     }
 
     /// Raw worktree paths belong to the peer that delivered them, even when
@@ -1364,6 +1365,86 @@ final class RemoteMacsModel: ObservableObject {
             return savedRemoteMacs.first { RemoteMacIdentity($0) == route.identity }
         }
         return savedRemoteMacs.first { $0.id == project.owner?.deviceID }
+    }
+
+    private var hostRouteCandidates: [HostRouteResolver<RemoteMacIdentity>.Host] {
+        let live = savedRemoteMacs.filter { connectionState(for: RemoteMacIdentity($0)) == .connected }
+        let offline = savedRemoteMacs.filter { connectionState(for: RemoteMacIdentity($0)) != .connected }
+        return (live + offline).map { .init(id: RemoteMacIdentity($0), peer: .init(deviceID: $0.id, fingerprint: $0.fingerprint)) }
+    }
+
+    private func savedRouteHost(_ candidate: HostRouteResolver<RemoteMacIdentity>.Host) throws -> RemoteMac {
+        guard let mac = savedRemoteMacs.first(where: { RemoteMacIdentity($0) == candidate.id }),
+              mac.id == candidate.peer.deviceID, mac.fingerprint == candidate.peer.fingerprint else { throw ProjectControlError.unavailable }
+        return mac
+    }
+
+    private func connectRouteHost(_ candidate: HostRouteResolver<RemoteMacIdentity>.Host) async throws {
+        _ = try await connectFromUserSelection(to: savedRouteHost(candidate))
+        if paneFeedFailures[candidate.id] != nil { try await connectionRegistry.renewPaneFeed(identity: candidate.id) }
+    }
+
+    private func sendRouteRequest(_ candidate: HostRouteResolver<RemoteMacIdentity>.Host, _ request: WorktreeManagementRequest) async throws -> WorktreeManagementResponse {
+        _ = try savedRouteHost(candidate)
+        return try await sendWorktreeManagement(identity: candidate.id, request: request)
+    }
+
+    private func routeRows(_ candidate: HostRouteResolver<RemoteMacIdentity>.Host) async throws -> [WorktreePanes] {
+        _ = try savedRouteHost(candidate)
+        guard connectionState(for: candidate.id) == .connected, paneFeedFailures[candidate.id] == nil else { throw ProjectControlError.unavailable }
+        if case .snapshot(let rows, _) = await connectionRegistry.panesSnapshot(for: candidate.id) {
+            applyPaneSnapshot(rows, from: candidate.id)
+        }
+        return worktreePanesByRemote[candidate.id] ?? []
+    }
+
+    private func routeOperations(owner: RemoteDeviceID, pins: Set<RemoteMacConnectionSummary.ID>) -> HostRouteResolver<RemoteMacIdentity>.Operations {
+        let validate: @MainActor () throws -> Void = { [self] in
+            try Task.checkCancellation()
+            guard Set(hostRouteCandidates.filter { $0.peer.deviceID == owner }.map(\.peer)) == pins else {
+                throw ProjectControlError.unavailable
+            }
+        }
+        return .init(connect: { [self] host in
+            try validate()
+            try await connectRouteHost(host)
+            try validate()
+        }, send: { [self] host, request in
+            try validate()
+            let reply = try await sendRouteRequest(host, request)
+            try validate()
+            return reply
+        }, fetch: { [self] host in
+            try validate()
+            let rows = try await routeRows(host)
+            try validate()
+            return rows
+        })
+    }
+
+    func connectHostUsingAvailableRoutes(_ remoteMac: RemoteMac) async throws {
+        let candidates = hostRouteCandidates
+        let peer = RemoteMacConnectionSummary.ID(deviceID: remoteMac.id, fingerprint: remoteMac.fingerprint)
+        let pins = Set(candidates.filter { $0.peer.deviceID == remoteMac.id }.map(\.peer))
+        guard pins.contains(peer) else { throw ProjectControlError.unavailable }
+        let operations = routeOperations(owner: remoteMac.id, pins: pins)
+        _ = try await hostRouteResolver.resolve(target: .init(peer), hosts: candidates,
+            connect: operations.connect, send: operations.send)
+    }
+
+    func resolveWorktreeRoute(_ worktree: WorktreePanes, from remoteMac: RemoteMac, excluding: Set<RemoteMacIdentity> = []) async throws -> (mac: RemoteMac, worktree: WorktreePanes) {
+        let candidates = hostRouteCandidates
+        let owner = worktree.origin?.deviceID ?? remoteMac.id
+        let originalPins = Set(candidates.filter { $0.peer.deviceID == owner }.map(\.peer))
+        let source = candidates.first { $0.id == RemoteMacIdentity(remoteMac) }
+        let operations = routeOperations(owner: owner, pins: originalPins)
+        let resolved = try await hostRouteResolver.resolveWorktree(worktree, source: source, hosts: candidates, excluding: excluding,
+            connect: operations.connect, send: operations.send, fetch: operations.fetch)
+        let currentPins = Set(hostRouteCandidates.filter { $0.peer.deviceID == owner }.map(\.peer))
+        guard originalPins == currentPins, currentPins.isEmpty || currentPins.contains(resolved.route.destination) else {
+            throw ProjectControlError.unavailable
+        }
+        return (try savedRouteHost(resolved.route.host), resolved.worktree)
     }
 
     private func refreshRelayRoutes() {

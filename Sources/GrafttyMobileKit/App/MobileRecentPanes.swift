@@ -10,6 +10,7 @@ final class MobileRecentPanes {
         let hostID: UUID
         let hostLabel: String
         let visit: SidebarRecentHistory.Entry
+        var origin: WorktreeOrigin? = nil
         var id: String { hostID.uuidString + ":" + visit.id }
         var label: String {
             [visit.item.title, visit.item.projectName, visit.item.worktreeName, hostLabel].joined(separator: " · ")
@@ -20,6 +21,7 @@ final class MobileRecentPanes {
         let hostID: UUID
         var label: String
         var history: SidebarRecentHistory
+        var origins: [String: WorktreeOrigin]? = nil
     }
     private var hosts: [HostHistory]
     private let defaults: UserDefaults
@@ -32,7 +34,7 @@ final class MobileRecentPanes {
 
     var entries: [Entry] {
         hosts.flatMap { host in
-            host.history.entries.map { Entry(hostID: host.hostID, hostLabel: host.label, visit: $0) }
+            host.history.entries.map { Entry(hostID: host.hostID, hostLabel: host.label, visit: $0, origin: host.origins?[$0.id]) }
         }.sorted { $0.visit.viewedAt > $1.visit.viewedAt }
     }
 
@@ -50,6 +52,9 @@ final class MobileRecentPanes {
         let index = hosts.firstIndex { $0.hostID == hostID }!
         hosts[index].label = hostLabel
         hosts[index].history.open(item, at: date)
+        var origins = hosts[index].origins ?? [:]
+        origins[item.id] = worktree.origin
+        hosts[index].origins = origins
         for entry in entries.dropFirst(20) {
             if let index = hosts.firstIndex(where: { $0.hostID == entry.hostID }) {
                 hosts[index].history.remove(entry.visit.id)
@@ -83,6 +88,10 @@ final class MobileRecentPanes {
     }
 
     private func persist() {
+        for index in hosts.indices {
+            let retained = Set(hosts[index].history.entries.map(\.id))
+            hosts[index].origins = hosts[index].origins?.filter { retained.contains($0.key) }
+        }
         hosts.removeAll { $0.history.entries.isEmpty }
         defaults.set(try? JSONEncoder().encode(hosts), forKey: Self.key)
     }
@@ -96,6 +105,7 @@ final class MobileRecentPanes {
         guard isCurrent() else { throw CancellationError() }
         let item = entry.visit.item
         let worktree = rows.first { row in
+            if let origin = entry.origin, row.origin?.deviceID != origin.deviceID { return false }
             guard SidebarProjection.projectID(row) == item.projectID else { return false }
             if let metadata = row.sidebar, metadata.paneIDs != nil || metadata.paneSlotIDs != nil {
                 return SidebarProjection.paneSlotID(for: item, in: metadata) != nil

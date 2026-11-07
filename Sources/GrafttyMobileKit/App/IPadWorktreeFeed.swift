@@ -13,6 +13,7 @@ struct IPadWorktreeFeed: ViewModifier {
     private var rows: [WorktreePanes]? {
         // Keep the last rows while the selected host is unreachable.
         guard let hostID, let feed, feed.state.isLive(hostID) else { return nil }
+        guard !feed.shouldRecoverSelection(appState) else { return nil }
         return feed.state.rawRows(of: hostID)
     }
 

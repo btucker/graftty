@@ -8,6 +8,7 @@ struct WakeFlow: Identifiable {
     let remoteMac: RemoteMac
     let worktreePath: String
     let phase: Phase
+    var failureMessage: String? = nil
 }
 
 /// Shown in place of the terminal while a sleeping host wakes.
@@ -21,10 +22,10 @@ struct WakingWorktreeView: View {
             switch flow.phase {
             case .waking:
                 ProgressView().controlSize(.small)
-                Text("Waking \(flow.remoteMac.label)…")
+                Text("Connecting to \(flow.remoteMac.label)…")
             case .failed:
                 Text("\(flow.remoteMac.label) didn't respond.")
-                Text("Waking only works on its local network.")
+                Text(flow.failureMessage ?? "No direct or relayed connection is available.")
                     .font(.caption).foregroundColor(theme.foreground.opacity(0.6))
                 Button("Try Again", action: onTryAgain)
             }

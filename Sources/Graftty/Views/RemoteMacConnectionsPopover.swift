@@ -134,7 +134,10 @@ struct RemoteMacConnectionsPopover: View {
                 Button(title) {
                     if state == .needsPairing { onAddRemoteMac() }
                     else {
-                        Task { _ = await model.reconnectRemoteMac(deviceID: mac.id, fingerprint: mac.fingerprint) }
+                        Task {
+                            do { try await model.connectHostUsingAvailableRoutes(mac) }
+                            catch { downstream.error = error.localizedDescription }
+                        }
                     }
                 }.controlSize(.small)
             }

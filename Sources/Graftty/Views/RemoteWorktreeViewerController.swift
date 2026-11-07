@@ -191,6 +191,28 @@ final class RemoteWorktreeViewerController: ObservableObject {
     private let presentError: @MainActor (String) -> Void
     private let viewportBounds: @MainActor () -> CGRect?
     private let sleep: @MainActor (Duration) async -> Void
+    var resolveWorktreeRoute: (@MainActor (RemoteMac, WorktreePanes, Set<RemoteMacIdentity>) async throws -> (mac: RemoteMac, worktree: WorktreePanes))?
+    private var lastSelectedRoute: (mac: RemoteMac, worktree: WorktreePanes)?
+    private var routeRecoveryTask: Task<Void, Never>?
+    private var pendingRouteSelection: UUID?
+    private var failedTerminalRouteHosts: Set<RemoteMacIdentity> = []
+
+    func beginRouteSelection() -> UUID {
+        let token = UUID()
+        pendingRouteSelection = token
+        failedTerminalRouteHosts.removeAll()
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil
+        return token
+    }
+
+    func endRouteSelection(_ token: UUID) {
+        guard pendingRouteSelection == token else { return }
+        pendingRouteSelection = nil
+    }
+
+    func cancelRouteRecovery() {
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil
+    }
 
     init(
         model: RemoteWorktreeViewerModel,
@@ -198,7 +220,8 @@ final class RemoteWorktreeViewerController: ObservableObject {
         workspaceDefaults: UserDefaults = .standard,
         presentError: @escaping @MainActor (String) -> Void = RemoteWorktreeViewerController.presentAlert,
         viewportBounds: @escaping @MainActor () -> CGRect? = { NSApp.keyWindow?.contentView?.bounds },
-        sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+        sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) },
+        resolveWorktreeRoute: (@MainActor (RemoteMac, WorktreePanes, Set<RemoteMacIdentity>) async throws -> (mac: RemoteMac, worktree: WorktreePanes))? = nil
     ) {
         self.model = model
         self.surfaces = surfaces
@@ -206,6 +229,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         self.presentError = presentError
         self.viewportBounds = viewportBounds
         self.sleep = sleep
+        self.resolveWorktreeRoute = resolveWorktreeRoute
     }
 
     static func presentAlert(_ message: String) {
@@ -268,6 +292,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
     // MARK: - Selection intents
 
     func selectRemoteMac(_ remoteMac: RemoteMac) {
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil; lastSelectedRoute = nil
         let previousIdentity = selectedRemoteIdentity
         let previousWorktreePath = selectedRemoteWorktreePath
         setRemoteSurfacesVisible(false)
@@ -303,7 +328,9 @@ final class RemoteWorktreeViewerController: ObservableObject {
         }
     }
 
-    func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool, inspectingCreation: Bool = true) {
+    func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool, inspectingCreation: Bool = true, opensClosedWorktree: Bool = true) {
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil
+        lastSelectedRoute = Self.receivedWorktree(worktreePath, in: model.worktreePanesByRemote[RemoteMacIdentity(remoteMac)]).map { (remoteMac, $0) }
         guard canSelectRemoteWorktree(remoteMac, worktreePath: worktreePath) else { return }
         let identity = RemoteMacIdentity(remoteMac)
         let previousIdentity = selectedRemoteIdentity
@@ -332,7 +359,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
             )
         }
         synchronizeRemoteWorktree(remoteMac: remoteMac, worktreePath: worktreePath)
-        if selectedWorktreeSnapshot?.state == .closed,
+        if opensClosedWorktree, selectedWorktreeSnapshot?.state == .closed,
            selectedWorktreeSnapshot?.agents?.contains(where: \.isCompleted) != true,
            (!inspectingCreation || selectedWorktreeSnapshot?.showsCreationProgress != true),
            !openingRemoteWorktrees.contains(target) {
@@ -366,6 +393,8 @@ final class RemoteWorktreeViewerController: ObservableObject {
     }
 
     func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String, acknowledging: Bool) {
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil
+        lastSelectedRoute = Self.receivedWorktree(worktreePath, in: model.worktreePanesByRemote[RemoteMacIdentity(remoteMac)]).map { (remoteMac, $0) }
         let previousIdentity = selectedRemoteIdentity
         let previousWorktreePath = selectedRemoteWorktreePath
         setRemoteSurfacesVisible(false)
@@ -425,6 +454,9 @@ final class RemoteWorktreeViewerController: ObservableObject {
 
     /// A click (or other explicit focus) on a projected remote pane.
     func focusTerminal(_ terminalID: PaneSlotID) {
+        let wasRecovering = routeRecoveryTask != nil
+        cancelRouteRecovery()
+        defer { if wasRecovering { scheduleRouteRecovery() } }
         suppressPendingRemoteSplitFocus()
         if let sessionName = remoteSessionName(for: terminalID) {
             selectedRemotePaneSessionName = sessionName
@@ -453,11 +485,15 @@ final class RemoteWorktreeViewerController: ObservableObject {
     @discardableResult
     func setAppVisible(_ isVisible: Bool) -> Bool {
         appIsVisible = isVisible
+        if !isVisible { routeRecoveryTask?.cancel(); routeRecoveryTask = nil }
         guard selectedRemoteWorktreePath != nil else { return false }
         setRemoteSurfacesVisible(isVisible)
         if isVisible,
            let remoteMac = selectedRemoteMac,
            let worktreePath = selectedRemoteWorktreePath {
+            if Self.receivedWorktree(worktreePath, in: model.worktreePanesByRemote[RemoteMacIdentity(remoteMac)]) == nil {
+                scheduleRouteRecovery()
+            }
             synchronizeRemoteWorktree(
                 remoteMac: remoteMac,
                 worktreePath: worktreePath,
@@ -541,6 +577,16 @@ final class RemoteWorktreeViewerController: ObservableObject {
     private func reconcileRemoteSelection(
         worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]]
     ) {
+        if let mac = selectedRemoteMac, let path = selectedRemoteWorktreePath {
+            if let row = Self.receivedWorktree(path, in: worktreePanesByRemote[RemoteMacIdentity(mac)]) {
+                lastSelectedRoute = (mac, row)
+            } else if resolveWorktreeRoute != nil, lastSelectedRoute != nil {
+                destroyRemoteSurfaces(identity: RemoteMacIdentity(mac), worktreePath: path)
+                splitTree = SplitTree(root: nil)
+                scheduleRouteRecovery()
+                return
+            }
+        }
         reconcileRemoteCloseProjections(
             worktreePanesByRemote: worktreePanesByRemote
         )
@@ -855,10 +901,12 @@ final class RemoteWorktreeViewerController: ObservableObject {
                         remoteMac.label,
                         String(describing: error)
                     )
-                    scheduleRemoteTerminalRetry(
-                        source: key,
-                        remoteMac: remoteMac
-                    )
+                    if resolveWorktreeRoute != nil {
+                        failedTerminalRouteHosts.insert(identity)
+                        scheduleRouteRecovery()
+                    } else {
+                        scheduleRemoteTerminalRetry(source: key, remoteMac: remoteMac)
+                    }
                 }
             }
         }
@@ -1143,6 +1191,10 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 worktreePath: source.worktreePath
             )
         }
+        if resolveWorktreeRoute != nil {
+            scheduleRouteRecovery()
+            return
+        }
         // Install the retry gate before rebuilding the layout. Snapshots
         // may update its slots during backoff, but must not reopen a stream.
         scheduleRemoteTerminalRetry(source: source, remoteMac: remoteMac)
@@ -1186,17 +1238,50 @@ final class RemoteWorktreeViewerController: ObservableObject {
         }
     }
 
+    private func scheduleRouteRecovery() {
+        guard routeRecoveryTask == nil, pendingRouteSelection == nil, appIsVisible, let resolveWorktreeRoute,
+              let previous = lastSelectedRoute, let identity = selectedRemoteIdentity,
+              let path = selectedRemoteWorktreePath else { return }
+        let pane = selectedRemotePaneSessionName
+        routeRecoveryTask = Task { @MainActor [weak self, sleep] in
+            var attempt = 0
+            while !Task.isCancelled {
+                await sleep(.milliseconds(min(30_000, 750 * (1 << attempt))))
+                guard !Task.isCancelled, let self, appIsVisible,
+                      selectedRemoteIdentity == identity, selectedRemoteWorktreePath == path else { return }
+                do {
+                    let resolved = try await resolveWorktreeRoute(previous.mac, previous.worktree, failedTerminalRouteHosts)
+                    guard !Task.isCancelled, selectedRemoteIdentity == identity, selectedRemoteWorktreePath == path else { return }
+                    routeRecoveryTask = nil
+                    if let pane, let replacement = WorktreeRouteIdentity.paneSession(pane, from: previous.worktree, to: resolved.worktree) {
+                        selectRemotePane(resolved.mac, worktreePath: resolved.worktree.path, sessionName: replacement, acknowledging: false)
+                    } else { selectRemoteWorktree(resolved.mac, worktreePath: resolved.worktree.path, acknowledging: false, opensClosedWorktree: false) }
+                    return
+                } catch is CancellationError {
+                    if Task.isCancelled { return }
+                    attempt = min(attempt + 1, 6)
+                }
+                catch HostRouteResolver<RemoteMacIdentity>.Failure.worktreeUnavailable {
+                    routeRecoveryTask = nil
+                    apply(RemoteMacSidebarSelectionState())
+                    return
+                } catch { attempt = min(attempt + 1, 6) }
+            }
+        }
+    }
+
     private func resetRemoteTerminalBackoffAfterStableStream(
         source: RemoteTerminalKey,
         terminalID: PaneSlotID
     ) {
-        guard remoteTerminalRetryAttempts[source] != nil else { return }
+        guard remoteTerminalRetryAttempts[source] != nil || !failedTerminalRouteHosts.isEmpty else { return }
         Task { @MainActor [weak self, sleep] in
             await sleep(.seconds(30))
             guard let self,
                   remoteTerminalSlots[source] == terminalID,
                   surfaces.hasRemoteSurface(terminalID) else { return }
             remoteTerminalRetryAttempts[source] = nil
+            failedTerminalRouteHosts.removeAll()
         }
     }
 
@@ -1917,6 +2002,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
     }
 
     func destroyAllRemoteSurfaces() {
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil
         for terminalID in remoteTerminalSlots.values {
             surfaces.destroySurface(terminalID: terminalID)
         }

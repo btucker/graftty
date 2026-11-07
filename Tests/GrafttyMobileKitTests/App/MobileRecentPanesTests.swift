@@ -5,6 +5,25 @@ import Testing
 
 @MainActor
 struct MobileRecentPanesTests {
+    @Test("@spec REMOTE-13.64: When mobile saves a recent pane, the application shall retain its destination owner alongside the delivery host so reopening can resolve a different direct or relayed path.")
+    func recentPaneRetainsDestinationAcrossRelayChanges() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "recent-route.\(UUID())"))
+        let history = MobileRecentPanes(defaults: defaults)
+        let owner = WorktreeOrigin(deviceID: .init(value: "lan-mac"), deviceLabel: "LAN Mac", relayDepth: 0)
+        let original = worktree("one", route: "direct-pane").with(origin: owner)
+        let delivery = UUID()
+        history.record(hostID: delivery, hostLabel: "Direct", worktree: original, sessionName: "direct-pane")
+        let restored = MobileRecentPanes(defaults: defaults)
+        let entry = try #require(restored.entries.first)
+        #expect(entry.hostID == delivery)
+        #expect(entry.origin == owner)
+        let relayed = worktree("one", route: "relay-pane").with(path: "relay-worktree-one",
+            origin: .init(deviceID: owner.deviceID, deviceLabel: owner.deviceLabel, relayDepth: 1))
+        let target = try await MobileRecentPanes.resolve(entry, fetch: { [relayed] }, reopen: { _ in Issue.record("Already running") }, isCurrent: { true })
+        #expect(target.worktree.path == relayed.path)
+        #expect(target.pane.sessionName == "relay-pane")
+    }
+
     @Test("@spec IOS-4.50: While a mobile terminal is displayed, long-pressing Back shall offer the most recently opened distinct panes with host, project, worktree, and pane labels, retain visits across relaunches, and open the selected stable pane identity without changing ordinary Back taps or allowing stale targets or superseded navigation to redirect the user.")
     func recentVisitsAreDistinctPersistentAndHostScoped() throws {
         let defaults = try #require(UserDefaults(suiteName: "recent-panes.\(UUID())"))
