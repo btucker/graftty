@@ -73,6 +73,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private var parkedReads: [Channel] = []
     /// Nil keeps this client on SSH flow control alone.
     private let outputWindowBytes: Int?
+    private var outputPacing: TerminalOutputPacing?
     private let useBinaryPaging: Bool
     private var consumedOutputBytes: UInt64 = 0
     private var acknowledgedOutputBytes: UInt64 = 0
@@ -83,6 +84,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private var pendingReceivers: [(id: UUID, continuation: CheckedContinuation<WebSocketFrame, Error>)] = []
     var bufferedByteCountForTesting: Int { lock.withLock { receiveBuffer.byteCount } }
     var pendingReceiverCountForTesting: Int { lock.withLock { pendingReceivers.count } }
+    var outputWindowForTesting: Int? { lock.withLock { outputPacing?.windowBytes } }
     private var didFailReceive: (any Error)?
     private var closed = false
 
@@ -90,13 +92,17 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public private(set) var usesPagedHistory = false
     public var supportsPagedHistory: Bool { usesPagedHistory }
 
+    /// Adaptive output credit is an opt-in experiment for a serial receiver.
+    /// Its timing ends at the next receive call, which may precede parsing if
+    /// the caller queues work. Both apps retain fixed credit by default.
     public init(parentChannel: Channel, parentHandler: NIOSSHHandler, sessionName: String,
                 outputWindowBytes: Int? = TerminalOutputCredit.clientWindowBytes,
-                useBinaryPaging: Bool = true) {
+                useBinaryPaging: Bool = true, adaptiveOutputWindow: Bool = false) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.sessionName = sessionName
         self.outputWindowBytes = outputWindowBytes.flatMap { TerminalOutputCredit.parseWindow(String($0)) }
+        outputPacing = self.outputWindowBytes.map { TerminalOutputPacing(windowBytes: $0, adaptive: adaptiveOutputWindow) }
         self.useBinaryPaging = useBinaryPaging
     }
 
@@ -308,6 +314,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { cont in
                 let flow = lock.withLock { () -> OutputFlow? in
+                    if !Task.isCancelled, outputPacing?.adaptive == true {
+                        outputPacing?.consumerReady(atNanoseconds: DispatchTime.now().uptimeNanoseconds)
+                    }
                     if Task.isCancelled { cont.resume(throwing: CancellationError()) }
                     else if let next = popOutputLocked() {
                         cont.resume(returning: next)
@@ -315,7 +324,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
                     }
                     else if let error = didFailReceive { cont.resume(throwing: error) }
                     else if closed { cont.resume(throwing: ClientError.channelClosed) }
-                    else { pendingReceivers.append((id, cont)) }
+                    else {
+                        pendingReceivers.append((id, cont))
+                        // A faster consumer may release withheld credit while
+                        // the host is waiting. Do not require another frame.
+                        return takeOutputFlowLocked()
+                    }
                     return nil
                 }
                 flow?.perform()
@@ -521,7 +535,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     private func popOutputLocked() -> WebSocketFrame? {
         let frame = receiveBuffer.popFirst()
-        if case .binary(let bytes)? = frame { consumedOutputBytes &+= UInt64(bytes.count) }
+        if case .binary(let bytes)? = frame {
+            consumedOutputBytes &+= UInt64(bytes.count)
+            if outputPacing?.adaptive == true {
+                outputPacing?.didDeliver(bytes: bytes.count, atNanoseconds: DispatchTime.now().uptimeNanoseconds)
+            }
+        }
         return frame
     }
 
@@ -546,13 +565,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             swap(&reads, &parkedReads)
         }
         var acknowledgement: (Channel, UInt64)?
-        // A window eighth keeps acknowledgements cheap, and the host can never
-        // be blocked on less than this. An unsent total retries on the next pop.
-        if let outputWindowBytes,
-           consumedOutputBytes &- acknowledgedOutputBytes >= UInt64(outputWindowBytes / 8),
+        // The fixed policy keeps its window-eighth batching. Adaptive pacing
+        // may withhold consumed bytes, but never grants bytes not delivered.
+        if let total = outputPacing?.acknowledgement(consumed: consumedOutputBytes, acknowledged: acknowledgedOutputBytes),
            let channel = childChannel ?? openingChannel {
-            acknowledgedOutputBytes = consumedOutputBytes
-            acknowledgement = (channel, consumedOutputBytes)
+            acknowledgedOutputBytes = total
+            acknowledgement = (channel, total)
         }
         return OutputFlow(reads: reads, acknowledgement: acknowledgement)
     }

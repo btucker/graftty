@@ -15,44 +15,10 @@ struct TerminalTransportProbeTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TERMINAL_FLOW_PROBES"] != nil),
           .timeLimit(.minutes(3)), arguments: [false, true])
     func probeDirectAndWebRTC(direct: Bool) async throws {
-        let hostKey = Curve25519.Signing.PrivateKey()
-        let clientKey = Curve25519.Signing.PrivateKey()
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = TrustedPeerStore(directory: directory)
-        let peer = TrustedPeer(id: .init(value: "transport-probe"), kind: .mac,
-            publicKey: try .init(rawRepresentation: clientKey.publicKey.rawRepresentation),
-            displayName: "probe", capabilities: .defaultsAfterPairing, pairedAt: Date(), lastSeenAt: nil)
-        try store.add(peer)
-        let fingerprint = RemoteIdentityFingerprint(of: try .init(rawRepresentation: hostKey.publicKey.rawRepresentation))
-        let factory: @Sendable (String) async throws -> GrafttyKit.TerminalByteStream = { TransportProbeStream(bulk: $0 == "bulk") }
-        let open: @Sendable (String) async throws -> TerminalSessionClient
-        let close: @Sendable () async -> Void
         let started = ContinuousClock.now
-        if direct {
-            let host = DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: store,
-                streamFactory: factory, panesStateSubscribe: { _ in .init {} },
-                paneControlMutator: { _ in .ok }, displayOwnershipStore: SessionDisplayOwnershipStore())
-            let client = DirectSSHHostConnection(clientKey: clientKey, expectedHostFingerprint: fingerprint)
-            do {
-                let port = try await host.start(host: "127.0.0.1", port: 0)
-                try await client.connect(host: "127.0.0.1", port: port)
-            } catch { await client.close(); await host.close(); throw error }
-            open = { try await client.openTerminalSession(sessionName: $0) }
-            close = { await client.close(); await host.close() }
-        } else {
-            let host = WebRTCHostAgent(hostKey: hostKey, trustedPeerStore: store,
-                streamFactory: factory, panesStateSubscribe: { _ in .init {} },
-                paneControlMutator: { _ in .ok }, displayOwnershipStore: SessionDisplayOwnershipStore())
-            let client = RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: fingerprint)
-            do {
-                let offer = try await client.createOffer()
-                let answer = try await host.acceptOffer(offer, clientDeviceID: peer.id)
-                try await client.applyAnswer(answer)
-            } catch { await client.close(); await host.close(); throw error }
-            open = { try await client.openTerminalSession(sessionName: $0) }
-            close = { await client.close(); await host.close() }
-        }
+        let connection = try await TerminalTransportProbeConnection.make(direct: direct)
+        let open = connection.open
+        let close = connection.close
         let watchdog = Task {
             do { try await Task.sleep(for: .seconds(60)) } catch { return }
             await close()
@@ -87,6 +53,52 @@ struct TerminalTransportProbeTests {
 
     private static func milliseconds(_ duration: Duration) -> Double {
         Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
+    }
+}
+
+/// Fresh identities and synthetic streams isolate benchmarks from paired hosts.
+struct TerminalTransportProbeConnection: Sendable {
+    let open: @Sendable (String) async throws -> TerminalSessionClient
+    let close: @Sendable () async -> Void
+
+    static func make(direct: Bool) async throws -> Self {
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = TrustedPeerStore(directory: directory)
+        let peer = TrustedPeer(id: .init(value: "transport-probe"), kind: .mac,
+            publicKey: try .init(rawRepresentation: clientKey.publicKey.rawRepresentation),
+            displayName: "probe", capabilities: .defaultsAfterPairing, pairedAt: Date(), lastSeenAt: nil)
+        try store.add(peer)
+        let fingerprint = RemoteIdentityFingerprint(of: try .init(rawRepresentation: hostKey.publicKey.rawRepresentation))
+        let factory: @Sendable (String) async throws -> GrafttyKit.TerminalByteStream = { TransportProbeStream(bulk: $0 == "bulk") }
+        let open: @Sendable (String) async throws -> TerminalSessionClient
+        let close: @Sendable () async -> Void
+        if direct {
+            let host = DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: store,
+                streamFactory: factory, panesStateSubscribe: { _ in .init {} },
+                paneControlMutator: { _ in .ok }, displayOwnershipStore: SessionDisplayOwnershipStore())
+            let client = DirectSSHHostConnection(clientKey: clientKey, expectedHostFingerprint: fingerprint)
+            do {
+                let port = try await host.start(host: "127.0.0.1", port: 0)
+                try await client.connect(host: "127.0.0.1", port: port)
+            } catch { await client.close(); await host.close(); try? FileManager.default.removeItem(at: directory); throw error }
+            open = { try await client.openTerminalSession(sessionName: $0) }
+            close = { await client.close(); await host.close(); try? FileManager.default.removeItem(at: directory) }
+        } else {
+            let host = WebRTCHostAgent(hostKey: hostKey, trustedPeerStore: store,
+                streamFactory: factory, panesStateSubscribe: { _ in .init {} },
+                paneControlMutator: { _ in .ok }, displayOwnershipStore: SessionDisplayOwnershipStore())
+            let client = RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: fingerprint)
+            do {
+                let offer = try await client.createOffer()
+                let answer = try await host.acceptOffer(offer, clientDeviceID: peer.id)
+                try await client.applyAnswer(answer)
+            } catch { await client.close(); await host.close(); try? FileManager.default.removeItem(at: directory); throw error }
+            open = { try await client.openTerminalSession(sessionName: $0) }
+            close = { await client.close(); await host.close(); try? FileManager.default.removeItem(at: directory) }
+        }
+        return Self(open: open, close: close)
     }
 }
 

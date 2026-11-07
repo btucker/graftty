@@ -22,7 +22,7 @@ final class GhosttyConfig {
     /// of a freshly-constructed config (TERM-9.1).
     internal var ownershipTransferred: Bool = false
 
-    init() {
+    init(loadUserConfig: Bool = true) {
         config = ghostty_config_new()
 
         // `load_default_files` only walks the XDG paths
@@ -33,11 +33,13 @@ final class GhosttyConfig {
         // duplicate or symlink the file. So we load the default files first,
         // then layer Ghostty-macOS's config on top — later loads override
         // earlier ones.
-        ghostty_config_load_default_files(config)
-        Self.loadGhosttyMacOSConfigIfPresent(into: config)
-        // Resolve any `config-file = …` include directives that appeared in
-        // the files we just loaded. No-op if there aren't any.
-        ghostty_config_load_recursive_files(config)
+        if loadUserConfig {
+            ghostty_config_load_default_files(config)
+            Self.loadGhosttyMacOSConfigIfPresent(into: config)
+            // Resolve any `config-file = …` include directives that appeared in
+            // the files we just loaded. No-op if there aren't any.
+            ghostty_config_load_recursive_files(config)
+        }
 
         ghostty_config_finalize(config)
     }

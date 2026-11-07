@@ -3604,6 +3604,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.22** When an auxiliary history channel closes before the terminal channel, the application shall preserve terminal output and apply the terminal channel's eventual exit status.
 
+**REMOTE-9.23** If adaptive terminal output pacing is explicitly enabled, then the client shall reduce credits for a slow consumer without acknowledging undelivered bytes or moving cumulative acknowledgements backward.
+
+**REMOTE-9.24** While adaptive terminal output pacing measures consumer speed, the client shall exclude time spent awaiting network output and restore available credit when the consumer speeds up.
+
+**REMOTE-9.25** When an adaptive terminal consumer speeds up with no buffered output, the client shall send newly available credit without waiting for another inbound frame.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -5521,6 +5527,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PERF-1.23** While multiple paired viewers subscribe to the same panes-state projection, the host shall build and encode each changed snapshot once, share it among those viewers, and stop observing when the last viewer leaves.
 
 **PERF-1.24** While a panes-state viewer is stalled sending a snapshot, the host shall retain only its newest pending snapshot and let other viewers receive updates independently.
+
+**PERF-1.25** When the native transport latency probe is explicitly run, the probe shall report transport, parsing, and matching rendered-pixel latency separately without treating renderer completion as physical display presentation.
 
 ## PORTS — PORTS
 
