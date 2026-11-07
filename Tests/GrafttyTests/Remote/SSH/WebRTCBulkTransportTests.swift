@@ -30,7 +30,9 @@ struct WebRTCBulkTransportTests {
             of: try .init(rawRepresentation: hostKey.publicKey.rawRepresentation)))
         let deadline = Task {
             do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            historyFallbackStage("[history-fallback] watchdog closing client")
             await client.close()
+            historyFallbackStage("[history-fallback] watchdog closing host")
             await host.close()
         }
         defer { deadline.cancel() }
@@ -49,13 +51,16 @@ struct WebRTCBulkTransportTests {
                 try pipeline.addHandler(HistoryOpenBlackhole(), position: .before(ssh))
             }.get()
             let terminal = try await client.openTerminalSession(sessionName: "foreground", preferPaged: true)
+            historyFallbackStage("[history-fallback] opened terminal")
             defer { terminal.close() }
             _ = try await terminal.receive() // Initial checkpoint uses the primary channel.
+            historyFallbackStage("[history-fallback] received checkpoint")
             // Exercise the real five-second open deadline, then verify the
             // same terminal still carries both output and history.
             try await Task.sleep(for: .seconds(6))
             try await terminal.send(.binary(Data("still-live".utf8)))
             #expect(try await terminal.receive() == .binary(Data("still-live".utf8)))
+            historyFallbackStage("[history-fallback] received live echo")
             let request = PagedTerminalHistoryRequest(incarnation: 1, checkpointID: 2,
                 requestID: 3, ordinal: 0, screen: 0)
             try await terminal.send(.text(try PagedTerminalEnvelope(request: .history(request)).encoded()))
@@ -63,9 +68,13 @@ struct WebRTCBulkTransportTests {
                 throw BulkTestError.unexpected
             }
             #expect(page.data == Data([1, 2, 3]))
+            historyFallbackStage("[history-fallback] received history")
             #expect(await client.state == .connected)
+            historyFallbackStage("[history-fallback] closing client")
             await client.close()
+            historyFallbackStage("[history-fallback] closed client; closing host")
             await host.close()
+            historyFallbackStage("[history-fallback] closed host")
         } catch {
             await client.close()
             await host.close()
@@ -188,4 +197,9 @@ private final class LegacyBulkEchoStream: GrafttyKit.TerminalByteStream, @unchec
     init() { (inboundBytes, continuation) = AsyncStream.makeStream() }
     func send(_ bytes: Data) async throws { continuation.yield(bytes) }
     func close() async { continuation.finish() }
+}
+
+private func historyFallbackStage(_ message: String) {
+    // Keep the last completed phase even if native shutdown blocks forever.
+    FileHandle.standardError.write(Data((message + "\n").utf8))
 }
