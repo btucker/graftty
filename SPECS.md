@@ -2272,6 +2272,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.28** When a remote-branch snapshot gains refs for one repository, the application shall force PR polling only for that repository rather than bypass the cadence gate for every repository in the workspace.
 
+**PR-8.29** When displaying a PR/MR number in the breadcrumb or branch picker, the application shall use ungrouped decimal digits regardless of locale.
+
 ## IOS — iOS App
 
 ### IOS-1.x — Target and platform

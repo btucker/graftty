@@ -21,7 +21,7 @@ struct PRButton: View {
                 )
                 .modifier(PulseIfPending(isPending: info.checks == .pending))
 
-            Text("#\(info.number)\(compact ? "" : terminalSuffix)")
+            referenceLabel
                 .font(.caption)
                 .fontWeight(.medium)
                 .foregroundColor(info.state.isTerminal ? info.state.statusColor : theme.foreground)
@@ -59,9 +59,9 @@ struct PRButton: View {
                 .stroke(theme.foreground.opacity(0.12), lineWidth: compact ? 0 : 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .help("#\(info.number) · \(info.title)\n\(accessibilityChecks)\(terminalSuffix)\(conflictDescription)")
+        .help(Text(verbatim: "#\(info.number) · \(info.title)\n\(accessibilityChecks)\(terminalSuffix)\(conflictDescription)"))
         .accessibilityLabel(
-            "Pull request \(info.number), \(accessibilityChecks)\(terminalSuffix)\(conflictDescription), \(info.title). Click to open in browser."
+            Text(verbatim: "Pull request \(info.number), \(accessibilityChecks)\(terminalSuffix)\(conflictDescription), \(info.title). Click to open in browser.")
         )
         .contentShape(Rectangle())
         .onTapGesture { NSWorkspace.shared.open(info.url) }
@@ -69,6 +69,10 @@ struct PRButton: View {
             Button("Refresh now") { onRefresh() }
             Button("Copy URL") { Pasteboard.copy(info.url.absoluteString) }
         }
+    }
+
+    var referenceLabel: Text {
+        Text(verbatim: "#\(info.number)\(compact ? "" : terminalSuffix)")
     }
 
     private var background: Color {
