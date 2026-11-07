@@ -73,6 +73,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private var parkedReads: [Channel] = []
     /// Nil keeps this client on SSH flow control alone.
     private let outputWindowBytes: Int?
+    private let useBinaryPaging: Bool
     private var consumedOutputBytes: UInt64 = 0
     private var acknowledgedOutputBytes: UInt64 = 0
     /// NIOSSH delivers channel requests ahead of data it still holds, so an
@@ -90,11 +91,13 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public var supportsPagedHistory: Bool { usesPagedHistory }
 
     public init(parentChannel: Channel, parentHandler: NIOSSHHandler, sessionName: String,
-                outputWindowBytes: Int? = TerminalOutputCredit.clientWindowBytes) {
+                outputWindowBytes: Int? = TerminalOutputCredit.clientWindowBytes,
+                useBinaryPaging: Bool = true) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.sessionName = sessionName
         self.outputWindowBytes = outputWindowBytes.flatMap { TerminalOutputCredit.parseWindow(String($0)) }
+        self.useBinaryPaging = useBinaryPaging
     }
 
     func setHistorySetupTask(_ task: Task<Void, Never>) {
@@ -108,10 +111,20 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     func connectHistory(parentChannel: Channel, parentHandler: NIOSSHHandler) async throws {
         let token = UUID().uuidString
-        let child = try await openBulkSubsystem(
-            parentChannel: parentChannel, parentHandler: parentHandler,
-            subsystem: GrafttyWebRTC.historySubsystemPrefix + token
-        ) { [self] child, _ in InboundRelay.install(on: child, owner: self) }
+        let child: Channel
+        do {
+            child = try await openBulkSubsystem(
+                parentChannel: parentChannel, parentHandler: parentHandler,
+                subsystem: GrafttyWebRTC.historySubsystemPrefix + token
+            ) { [self] child, _ in InboundRelay.install(on: child, owner: self) }
+        } catch {
+            try Task.checkCancellation()
+            // No token has reached the terminal yet. The host still sends
+            // history on its primary channel, so optional negotiation must
+            // not close a working terminal and start a reconnect loop.
+            NSLog("[Graftty] history channel unavailable; retaining primary channel: %@", String(describing: error))
+            return
+        }
         let accepted = lock.withLock {
             guard !closed else { return false }
             historyChannel = child
@@ -208,6 +221,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             if let outputWindowBytes {
                 try await Self.sendEnv(channel: child, name: TerminalOutputCredit.environmentName, value: String(outputWindowBytes))
             }
+            if paged && useBinaryPaging {
+                try await Self.sendEnv(channel: child, name: PagedTerminalBinary.environmentName, value: PagedTerminalBinary.encodingName)
+            }
             try await Self.sendEnv(channel: child, name: "GRAFTTY_SESSION", value: sessionName)
             try await Self.sendPty(channel: child, term: "xterm-256color", cols: 80, rows: 24)
         } catch {
@@ -281,6 +297,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             // control carrier too, not as `.channel` PTY bytes (which
             // would corrupt terminal output on the wire).
             try await sendRawControlFrame(payload)
+        case .paged:
+            // Paging events flow host-to-client; requests remain JSON.
+            throw PagedTerminalEnvelope.Error.invalid
         }
     }
 
@@ -462,6 +481,10 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     func deliverInboundText(_ text: String) {
         deliverInbound(.text(text))
+    }
+
+    func deliverInboundPaging(_ event: PagedTerminalEvent) {
+        deliverInbound(.paged(event))
     }
 
     private func deliverInbound(_ frame: WebSocketFrame) {
@@ -692,6 +715,14 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
         stdErrDecoder.append(data)
         let (frames, oversized) = stdErrDecoder.drain()
         for payload in frames {
+            if PagedTerminalBinary.isBinary(payload) {
+                guard let event = try? PagedTerminalBinary.decode(payload) else {
+                    poisonAndClose(context: context)
+                    return
+                }
+                owner.deliverInboundPaging(event)
+                continue
+            }
             guard let text = String(data: payload, encoding: .utf8) else { continue }
             owner.deliverInboundText(text)
         }

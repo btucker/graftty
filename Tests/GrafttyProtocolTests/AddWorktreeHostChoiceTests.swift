@@ -15,19 +15,19 @@ struct AddWorktreeHostChoiceTests {
         #expect(AddWorktreeHostChoice.defaultChoice([choice("a"), choice("b")], lastUsedID: "gone")?.choice.id == "a")
     }
     @Test func sleepingLastUsedDefersToAwakeHost() {
-        let result = AddWorktreeHostChoice.defaultChoice([choice("a"), choice("b", .asleep)], lastUsedID: "b")
+        let result = AddWorktreeHostChoice.defaultChoice([choice("a"), choice("b", .wakeable)], lastUsedID: "b")
         #expect(result?.choice.id == "a")
         #expect(result?.wakesOnOpen == false)
     }
     @Test func allAsleepWakesLastUsed() {
-        let result = AddWorktreeHostChoice.defaultChoice([choice("a", .asleep), choice("b", .asleep)], lastUsedID: "b")
+        let result = AddWorktreeHostChoice.defaultChoice([choice("a", .wakeable), choice("b", .wakeable)], lastUsedID: "b")
         #expect(result?.choice.id == "b")
         #expect(result?.wakesOnOpen == true)
     }
     @Test func offlineDisabled() {
         #expect(!choice("a", .offline).isSelectable)
-        #expect(choice("a", .asleep).isSelectable)
-        #expect(AddWorktreeHostChoice.defaultChoice([choice("a", .offline), choice("b", .asleep)], lastUsedID: "a")?.choice.id == "b")
+        #expect(choice("a", .wakeable).isSelectable)
+        #expect(AddWorktreeHostChoice.defaultChoice([choice("a", .offline), choice("b", .wakeable)], lastUsedID: "a")?.choice.id == "b")
         #expect(AddWorktreeHostChoice.defaultChoice([choice("a", .offline)], lastUsedID: nil) == nil)
     }
     @Test func hiddenForOneHost() {

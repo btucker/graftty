@@ -143,6 +143,7 @@ struct SingleSessionView: View {
     /// replacing it with the library default. Nil while we're still
     /// fetching the Mac config; replaced with a real controller
     /// once the fetch lands.
+    @State private var historyScrollChords: [ShortcutChord] = []
     @State private var controller: TerminalController?
     @State private var preferredStyle: UIUserInterfaceStyle = .unspecified
     /// False after "Hide keyboard" so terminal touches cannot regain keyboard
@@ -746,9 +747,8 @@ struct SingleSessionView: View {
                 // updateConfigSource) means `baseConfigTemplate` captures
                 // the Mac config, so scene-phase / trait-collection
                 // color-scheme recomputes preserve the Mac theme.
-                let macConfig = await coordinator?
-                    .presentation(for: step.host)?
-                    .ghosttyConfig
+                let presentation = await coordinator?.presentation(for: step.host)
+                let macConfig = presentation?.ghosttyConfig
                 // `.task(id:)` cancellation is cooperative. A presentation
                 // lookup may still return after backgrounding or locking;
                 // never create/configure a Ghostty surface from that stale
@@ -759,6 +759,7 @@ struct SingleSessionView: View {
                           gateUnlocked: gate.isUnlocked
                       )
                 else { return }
+                historyScrollChords = presentation?.keybindings.historyChords ?? []
                 if controller == nil {
                     let savedFontSize = step.worktreePath.flatMap {
                         fontSizeStore.fontSize(
@@ -1421,6 +1422,12 @@ struct SingleSessionView: View {
                 retainedPanes?.cached(retainedPaneKey)?.container = view
                 client.additionalHistoryRowCapacity = { [weak view] in
                     view?.snapshotScrollView.additionalHistoryRowCapacity ?? 0
+                }
+                view.historyScrollChords = historyScrollChords
+                view.onHistoryViewportChange = { [weak client] requestHistory in
+                    Task { @MainActor in
+                        await client?.historyViewportDidChange(requestHistory: requestHistory)
+                    }
                 }
                 view.onPhysicalViewportReady = { [weak client = client] viewport in
                     client?.physicalViewportDidBecomeReady(viewport)

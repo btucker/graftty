@@ -2,6 +2,8 @@ import AppKit
 import GhosttyKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyRemoteClient
+import Observation
 import GrafttyCommandUI
 import IOKit.hidsystem
 import os
@@ -35,7 +37,14 @@ final class SurfaceUserdataBox {
     }
 }
 
+@Observable @MainActor
+final class MacPagedHistoryPresentation {
+    var coordinator: PagedTerminalCoordinator?
+}
+
 protocol SurfaceHandleZmxBackend: AnyObject {
+    @MainActor func bindPagedHistory(_ handler: @escaping (PagedTerminalCoordinator?) -> Void)
+    @MainActor func historyViewportDidChange(requestHistory: Bool)
     func bindOwnershipLoss(_ handler: @escaping () -> Void)
     func waitForStartup() async -> Bool
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void)
@@ -85,6 +94,8 @@ protocol SurfaceHandleZmxBackend: AnyObject {
 }
 
 extension SurfaceHandleZmxBackend {
+    @MainActor func bindPagedHistory(_ handler: @escaping (PagedTerminalCoordinator?) -> Void) {}
+    @MainActor func historyViewportDidChange(requestHistory: Bool) {}
     func bindOwnershipLoss(_ handler: @escaping () -> Void) {}
     func waitForStartup() async -> Bool { true }
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {}
@@ -186,6 +197,7 @@ final class SurfaceHandle {
     /// through callbacks that want per-surface identity.
     private let userdataPointer: UnsafeMutableRawPointer
     private let surfaceFactory: SurfaceHandleGhosttySurfaceFactory
+    @MainActor let pagedHistory = MacPagedHistoryPresentation()
     private let zmxBackend: SurfaceHandleZmxBackend?
     private var wakeBeforeInput: () -> Bool = { true }
     private var wakeBeforeInteraction: () -> Bool = { true }
@@ -277,12 +289,22 @@ final class SurfaceHandle {
         self.view = surfaceView
         surfaceView.terminalID = terminalID
         surfaceView.terminalManager = terminalManager
+        surfaceView.historyScrollChords = { [weak terminalManager] in
+            MainActor.assumeIsolated { Array(terminalManager?.keybindBridge.historyChords.values ?? [:].values) }
+        }
         surfaceView.configureAgentCompletion(currentWorktreePath: worktreePath, updates: { [weak terminalManager, weak surfaceView] update in
             await terminalManager?.agentCompletionLoader?(surfaceView?.agentCompletion.currentWorktreePath, update) ?? []
         }) { [weak terminalManager, weak surfaceView] in
             await terminalManager?.agentCompletionLoader?(surfaceView?.agentCompletion.currentWorktreePath, nil) ?? []
         }
         if let backend {
+            let historyPresentation = pagedHistory
+            MainActor.assumeIsolated {
+                backend.bindPagedHistory { [weak historyPresentation] in historyPresentation?.coordinator = $0 }
+            }
+            surfaceView.historyScrollNotifier = { [weak backend] in
+                MainActor.assumeIsolated { backend?.historyViewportDidChange(requestHistory: true) }
+            }
             let wake = wakeBeforeInput
             let admitInteraction = wakeBeforeInteraction
             surfaceView.hostManagedInputWriter = { [weak backend] data in
@@ -752,10 +774,15 @@ final class SurfaceHandle {
     }
 
     @MainActor func updateFollowerScrollbar(_ value: ghostty_action_scrollbar_s) {
+        zmxBackend?.historyViewportDidChange(requestHistory: false)
         followerScrollbar = value
         followerPresentation?.updateScrollbar(value)
         scrollbackMapModel.update(viewport: ScrollbackViewport(
             offset: Int(clamping: value.offset), length: Int(clamping: value.len), total: Int(clamping: value.total)))
+    }
+
+    @MainActor func requestViewportHistory() {
+        zmxBackend?.historyViewportDidChange(requestHistory: true)
     }
 
     /// @spec OWN-2.1
@@ -1060,6 +1087,8 @@ final class SurfaceNSView: NSView {
     var hostManagedLayoutNotifier: (() -> Void)?
     var visibleForInputNotifier: (() -> Void)?
     var userInteractionNotifier: (() -> Void)?
+    var historyScrollChords: () -> [ShortcutChord] = { [] }
+    var historyScrollNotifier: (() -> Void)?
     var takeDisplayControlNotifier: (() -> Bool)?
     /// Whether this pane's session can currently be reclaimed for the Mac —
     /// see `reclaimDisplayControlForUserInputIfNeeded` (OWN-2.2).
@@ -1348,6 +1377,7 @@ final class SurfaceNSView: NSView {
     /// For precision scrolling Ghostty doubles the delta: "subjective, it
     /// 'feels' better." Replicated here.
     override func scrollWheel(with event: NSEvent) {
+        defer { historyScrollNotifier?() }
         let compositionContext = hasMarkedText() ? inputContext : nil
         compositionContext?.textInputClientWillStartScrollingOrZooming()
         defer { compositionContext?.textInputClientDidEndScrollingOrZooming() }
@@ -1658,6 +1688,12 @@ final class SurfaceNSView: NSView {
             hostManagedUserInputScope(dispatch)
         } else {
             dispatch()
+        }
+        if action != GHOSTTY_ACTION_RELEASE, handled,
+           let chord = GhosttyTriggerAdapter.chord(from: event), historyScrollChords().contains(chord) {
+            // The native IO thread may update the viewport after this returns.
+            // Arm demand now; its later scrollbar callback rechecks near-top.
+            historyScrollNotifier?()
         }
         return handled
     }

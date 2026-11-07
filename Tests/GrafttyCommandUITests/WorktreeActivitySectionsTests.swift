@@ -87,7 +87,7 @@ struct WorktreeActivitySectionsTests {
 
     @Test("@spec IOS-13.6: While a row comes from a sleeping host, the application shall list it under Recent rather than Needs you or Working, because its last report says nothing about what is happening now.")
     func sleepingRowsStayInRecent() {
-        let asleep = [worktree("asked", asked: 5), worktree("busy", busy: true)].map { row($0, availability: .asleep) }
+        let asleep = [worktree("asked", asked: 5), worktree("busy", busy: true)].map { row($0, availability: .wakeable) }
         let sections = WorktreeActivitySections.make(pinned: [], temporary: asleep,
             context: { SidebarWorktreeContext(worktree: $0) }, holding: nil)
         #expect(names(sections.recent) == ["asked", "busy"])

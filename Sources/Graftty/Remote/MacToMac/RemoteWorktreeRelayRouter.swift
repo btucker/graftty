@@ -473,6 +473,8 @@ final class RelayedTerminalByteStream:
                         }
                     case .binary:
                         break
+                    case .paged(let event):
+                        guard paged, await self.enqueuePagedEvent(event) else { await self.close(); return }
                     }
                 } catch {
                     if paged, case TerminalSessionClient.ClientError.sessionEnded(let status) = error {

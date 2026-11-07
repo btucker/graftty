@@ -131,6 +131,13 @@ extension TerminalInputContainerView {
             command.perform()
             return true
         }
+        if terminalView.markedTextRange == nil, historyScrollChords.contains(where: { chord in
+            UIKeyModifierFlags(chord.modifiers).appCommandModifiers == normalizedModifiers
+                && (historyFunctionKey(usage: event.usage) == chord.key
+                    || UIKeyCommandInputFromChord.input(from: chord).map { inputs.contains(canonicalHardwareCommandInput($0)) } == true)
+        }) {
+            onHistoryViewportChange?(true)
+        }
         let isShiftModifierPress = event.usage == UInt16(UIKeyboardHIDUsage.keyboardLeftShift.rawValue)
             || event.usage == UInt16(UIKeyboardHIDUsage.keyboardRightShift.rawValue)
         if !isShiftModifierPress { cancelPendingApplicationScroll() }
@@ -210,6 +217,17 @@ extension TerminalInputContainerView {
               ascii >= 0x61, ascii <= 0x7A
         else { return nil }
         return ascii & 0x1F
+    }
+
+    private func historyFunctionKey(usage: UInt16) -> String? {
+        let value = Int(usage)
+        switch value {
+        case UIKeyboardHIDUsage.keyboardF1.rawValue...UIKeyboardHIDUsage.keyboardF12.rawValue:
+            return "f\(value - UIKeyboardHIDUsage.keyboardF1.rawValue + 1)"
+        case UIKeyboardHIDUsage.keyboardF13.rawValue...UIKeyboardHIDUsage.keyboardF24.rawValue:
+            return "f\(value - UIKeyboardHIDUsage.keyboardF13.rawValue + 13)"
+        default: return nil
+        }
     }
 
     private func hardwareCommandInputs(for event: TerminalHardwareKeyEvent) -> Set<String> {

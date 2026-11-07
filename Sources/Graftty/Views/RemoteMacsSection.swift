@@ -316,7 +316,7 @@ struct RemoteMacsSection: View {
         let remoteMac: RemoteMac
         let displayName: String
         let hostLabel: String?
-        let isAsleep: Bool
+        let isCached: Bool
         let onOpen: () -> Void
         /// Clicking a status line that names a pane.
         let onOpenPane: (SidebarWorktreeContext) -> Void
@@ -517,8 +517,8 @@ struct RemoteMacsSection: View {
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
         let context = contextForWorktree(worktree)
-        let isAsleep = singleRow?.isAsleep == true
-        let status = SidebarRowStatus.resolve(context: context, worktree: worktree, isAsleep: isAsleep)
+        let isCached = singleRow?.isCached == true
+        let status = SidebarRowStatus.resolve(context: context, worktree: worktree, isCached: isCached)
         let projectID = SidebarProjection.projectID(worktree)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)
@@ -607,7 +607,7 @@ struct RemoteMacsSection: View {
             }
         }
         .padding(.leading, 6)
-        .opacity(isAsleep ? 0.55 : 1)
+        .opacity(isCached ? 0.55 : 1)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
@@ -673,7 +673,7 @@ struct RemoteMacsSection: View {
     }
 
     private func canReorder(_ worktree: WorktreePanes, on remoteMac: RemoteMac) -> Bool {
-        if singleRow?.isAsleep == true { return RemoteWorktreeReorderPolicy.allowsWhileAsleep(worktree, query: query) }
+        if singleRow?.isCached == true { return RemoteWorktreeReorderPolicy.allowsWhileAsleep(worktree, query: query) }
         return model.connectionState(for: RemoteMacIdentity(remoteMac)) == .connected
             && RemoteWorktreeReorderPolicy.allows(worktree, editableProjectIDs: editableProjectIDs, query: query)
     }

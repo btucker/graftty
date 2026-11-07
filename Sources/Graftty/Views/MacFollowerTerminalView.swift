@@ -32,6 +32,7 @@ final class MacFollowerTerminalView: NSView {
     private var adjusting = false
     private var forwardingScrollWheel = false
     private var boundsObserver: NSObjectProtocol?
+    private var scrollStartObserver: NSObjectProtocol?
     private let makeHistorySurface: ((NSView, CGFloat) -> ghostty_surface_t?)?
     private let historyScaledView = NSView()
     private var historyView: NSView?
@@ -100,6 +101,12 @@ final class MacFollowerTerminalView: NSView {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.didScroll() }
         }
+        scrollStartObserver = NotificationCenter.default.addObserver(
+            forName: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.terminalView.historyScrollNotifier?() }
+        }
     }
 
     deinit {
@@ -107,6 +114,7 @@ final class MacFollowerTerminalView: NSView {
         historyView?.removeFromSuperview()
         historyWriter?.close()
         if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
+        if let scrollStartObserver { NotificationCenter.default.removeObserver(scrollStartObserver) }
     }
 
     @available(*, unavailable)
@@ -324,6 +332,7 @@ final class MacFollowerTerminalView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         guard followerGrid != nil, !forwardingScrollWheel else { super.scrollWheel(with: event); return }
+        defer { terminalView.historyScrollNotifier?() }
         forwardingScrollWheel = true
         defer { forwardingScrollWheel = false }
         scrollView.scrollWheel(with: event)
@@ -342,6 +351,7 @@ final class MacFollowerTerminalView: NSView {
             nativeRow = row
             let action = "scroll_to_row:\(row)"
             action.withCString { _ = ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count)) }
+            terminalView.historyScrollNotifier?()
         }
         if let presentation { scaledView.setFrameOrigin(presentation.screenFrame(at: nativeRow).origin) }
         refreshHistory()
@@ -351,6 +361,7 @@ final class MacFollowerTerminalView: NSView {
     /// this view is not following, so the caller scrolls the native viewport instead.
     func reveal(row: UInt64) -> Bool {
         guard followerGrid != nil, rowHeight > 0 else { return false }
+        defer { terminalView.historyScrollNotifier?() }
         let maxY = max(0, document.bounds.height - scrollView.contentView.bounds.height)
         let y = min(maxY, CGFloat(min(row, historyRows)) * rowHeight)
         scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.minX, y: y))

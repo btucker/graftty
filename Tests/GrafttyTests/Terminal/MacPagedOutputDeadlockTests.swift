@@ -14,6 +14,15 @@ struct MacPagedOutputDeadlockTests {
         try await runChild("testRemoteOutput")
     }
 
+    @Test func nativeKeyboardScrollLoadsOlderHistory() async throws {
+        try await runChild("testRemoteKeyboard")
+    }
+
+    @Test("@spec TERM-12.65: When an initial remote Mac owner resize changes the checkpoint width before history is read, the application shall refresh that checkpoint at the new width and keep older rows reachable on scroll demand.")
+    func initialOwnerResizePreservesHistory() async throws {
+        try await runChild("testInitialOwnerResizeHistory")
+    }
+
     @Test("@spec TERM-12.57: When a local Mac paged attachment receives title output that exceeds the native mailbox capacity, the application shall parse it off main and render its final output before reporting shell exit.")
     func localOutputMakesMailboxProgress() async throws {
         try await runChild("testLocalOutput")
@@ -95,7 +104,68 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         try Data("completed".utf8).write(to: directory.appendingPathComponent("completed"))
     }
 
-    func testRemoteOutput() async throws {
+    func testInitialOwnerResizeHistory() async throws {
+        let directory = try probeDirectory()
+        let daemon = try await PagedOutputDaemon.make()
+        defer { daemon.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: daemon.launcher.executable,
+            zmxDir: daemon.launcher.zmxDir, sessionName: "probe", workingDirectory: daemon.launcher.zmxDir))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        guard case .checkpoint(let checkpoint) = await events.next() else { XCTFail("Missing READY"); return }
+        let client = PagedOutputProbeClient(control: true, onSend: { frame in
+            guard case .text(let text) = frame, let request = try PagedTerminalEnvelope.parse(text).request else { return }
+            switch request {
+            case .checkpoint: try await stream.requestCheckpoint()
+            case .history(let request): try await stream.requestHistory(request)
+            }
+        }, onResize: { cols, rows in try? stream.resize(windowSize: .init(cols: UInt16(cols), rows: UInt16(rows))) })
+        let backend = RemoteTerminalSurfaceBackend(client: client)
+        let canvas = try PagedOutputCanvas(configure: backend.configure)
+        let ownerGrid = try DisplayGrid(cols: 120, rows: 24)
+        backend.bindAttachmentGrid { canvas.prepareGrid($0 ?? ownerGrid) }
+        backend.bindSurfaceSync(currentGridSize: { (120, 24) }, requestRefresh: {})
+        defer { backend.close(); canvas.close(); backend.surfaceWasFreed() }
+        var pages: [PagedTerminalPage] = []
+        var checkpoints = 0
+        let forward = Task { @MainActor in
+            while let event = await events.next(), !Task.isCancelled {
+                switch event {
+                case .output(let bytes): client.deliver(.binary(bytes))
+                case .ended: return
+                default:
+                    if case .page(let page) = event { pages.append(page) }
+                    if case .checkpoint = event { checkpoints += 1 }
+                    client.deliver(.paged(event))
+                }
+            }
+        }
+        defer { forward.cancel() }
+        try backend.start(surface: canvas.surface)
+        try await waitUntil { client.helloID != nil }
+        let id = try XCTUnwrap(client.helloID)
+        client.deliver(.text(WebControlEnvelope.ownership(try .init(sessionName: "probe",
+            ownerClientID: id, ownerKind: .mac, grid: .init(cols: 80, rows: 24), epoch: 1, revision: 1)).encoded()))
+        client.deliver(.paged(.checkpoint(checkpoint)))
+        try await waitUntil { checkpoints == 1 }
+        XCTAssertTrue(pages.isEmpty, "The initial rebase must not eagerly transfer history")
+        for ordinal in 0..<100 {
+            let action = "scroll_to_row:0"
+            action.withCString { _ = ghostty_surface_binding_action(canvas.surface, $0, UInt(action.utf8.count)) }
+            backend.historyViewportDidChange(requestHistory: true)
+            try await waitUntil { pages.count > ordinal }
+            if pages[ordinal].complete { break }
+        }
+        try await waitUntil { canvas.oldestHistoryRow().contains("seed-row-0") }
+        XCTAssertEqual(ghostty_surface_size(canvas.surface).columns, 120)
+        try complete(directory)
+    }
+
+    func testRemoteOutput() async throws { try await remoteOutput(keyboard: false) }
+    func testRemoteKeyboard() async throws { try await remoteOutput(keyboard: true) }
+
+    private func remoteOutput(keyboard: Bool) async throws {
         let directory = try probeDirectory()
         let daemon = try await PagedOutputDaemon.make()
         defer { daemon.close() }
@@ -118,7 +188,8 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         client.deliver(.binary(titleOutput + Data("before-grid\r\n".utf8)))
         client.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 80, rows: 24)).encoded()))
         client.deliver(.binary(Data("after-grid\r\n".utf8)))
-        try await waitUntil { client.receiveCount >= 6 && !client.sentFrames.isEmpty }
+        try await waitUntil { client.receiveCount >= 6 }
+        XCTAssertTrue(client.sentFrames.isEmpty, "Live output must not prefetch history")
         let visible = canvas.text()
         XCTAssertFalse(visible.contains("discard-before-ready"), visible)
         XCTAssertTrue(visible.contains("seed-row-999"), visible)
@@ -126,8 +197,26 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         let after = try XCTUnwrap(visible.range(of: "after-grid"))
         XCTAssertLessThan(before.lowerBound, after.lowerBound)
         XCTAssertFalse(canvas.oldestHistoryRow().contains("seed-row-0"))
+        let keyboardView = SurfaceNSView()
+        keyboardView.surface = canvas.surface
+        keyboardView.historyScrollChords = { canvas.historyChords }
+        keyboardView.historyScrollNotifier = { backend.historyViewportDidChange(requestHistory: true) }
+        canvas.setScrollNotification { Task { @MainActor in backend.historyViewportDidChange(requestHistory: false) } }
+        defer { keyboardView.surface = nil }
+        let home = String(UnicodeScalar(NSHomeFunctionKey)!)
+        let keyEvent = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: .command, timestamp: 0, windowNumber: canvas.window.windowNumber,
+            context: nil, characters: home, charactersIgnoringModifiers: home, isARepeat: false, keyCode: 115))
+        XCTAssertEqual(GhosttyTriggerAdapter.chord(from: keyEvent), .init(key: "home", modifiers: .command))
         var received = 6
         for ordinal in 0..<100 {
+            if keyboard {
+                keyboardView.keyDown(with: keyEvent)
+            } else {
+                let scroll = "scroll_to_row:0"
+                scroll.withCString { _ = ghostty_surface_binding_action(canvas.surface, $0, UInt(scroll.utf8.count)) }
+                backend.historyViewportDidChange(requestHistory: true)
+            }
             try await waitUntil { client.sentFrames.count > ordinal }
             guard case .text(let text) = client.sentFrames[ordinal],
                   case .history(let request)? = try PagedTerminalEnvelope.parse(text).request else {
@@ -144,8 +233,12 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
             if page.complete { break }
         }
         XCTAssertTrue(canvas.oldestHistoryRow().contains("seed-row-0"))
-        XCTAssertTrue(canvas.text().contains("after-page"))
-        XCTAssertTrue(canvas.text().contains("after-grid"))
+        // History demand now scrolls the native viewport. Return to the live
+        // screen before checking the output that arrived during page imports.
+        let bottom = "scroll_to_bottom"
+        XCTAssertTrue(bottom.withCString { ghostty_surface_binding_action(canvas.surface, $0, UInt(bottom.utf8.count)) })
+        try await waitUntil { canvas.text().contains("after-page") }
+        XCTAssertTrue(canvas.text().contains("after-grid"), canvas.text())
         XCTAssertEqual(canvas.titles.last, "paged-title-255")
         // A distinct grid must apply before the following VT cursor query.
         // At 40 columns, x at column 40 wraps Y to row 2, column 2.
@@ -304,6 +397,8 @@ private final class PagedOutputCanvas {
     private var observer: NSObjectProtocol?
     private let actions: PagedOutputActions
     var titles: [String] { actions.titles }
+    let historyChords: [ShortcutChord]
+    func setScrollNotification(_ callback: @escaping @Sendable () -> Void) { actions.setScrollNotification(callback) }
 
     init(configure: (inout ghostty_surface_config_s) -> Void = { config in
         config.backend = GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED
@@ -314,7 +409,14 @@ private final class PagedOutputCanvas {
         XCTAssertEqual(ghostty_init(0, nil), 0)
         let actions = PagedOutputActions()
         self.actions = actions
-        app = GhosttyApp(config: GhosttyConfig()) { _, action in actions.record(action); return true }
+        let nativeConfig = GhosttyConfig()
+        let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString + ".conf")
+        try Data("keybind = super+home=scroll_to_top\n".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        ghostty_config_load_file(nativeConfig.config, file.path)
+        ghostty_config_finalize(nativeConfig.config)
+        historyChords = Array(GhosttyKeybindBridge(resolver: GhosttyTriggerAdapter.resolver(config: nativeConfig.config)).historyChords.values)
+        app = GhosttyApp(config: nativeConfig) { _, action in actions.record(action); return true }
         window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 800, height: 600),
                           styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -368,8 +470,11 @@ private final class PagedOutputCanvas {
 private final class PagedOutputActions: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String] = []
+    private var scrollNotification: (@Sendable () -> Void)?
+    func setScrollNotification(_ callback: @escaping @Sendable () -> Void) { lock.withLock { scrollNotification = callback } }
     var titles: [String] { lock.withLock { values } }
     func record(_ action: ghostty_action_s) {
+        if action.tag == GHOSTTY_ACTION_SCROLLBAR { lock.withLock { scrollNotification }?() }
         if action.tag == GHOSTTY_ACTION_SET_TITLE, let title = action.action.set_title.title {
             let value = String(cString: title)
             lock.withLock { values.append(value) }
@@ -427,7 +532,24 @@ private final class PagedOutputSeed: @unchecked Sendable {
 
 private final class PagedOutputProbeClient: WebSocketClient, @unchecked Sendable {
     let supportsPagedHistory: Bool
-    init(paged: Bool = true) { supportsPagedHistory = paged }
+    let supportsWebControlTextFrames: Bool
+    private let onSend: (@Sendable (WebSocketFrame) async throws -> Void)?
+    private let onResize: (@Sendable (Int, Int) async -> Void)?
+    private var hello: DisplayClientID?
+    var helloID: DisplayClientID? { lock.withLock { hello } }
+    init(paged: Bool = true, control: Bool = false,
+         onSend: (@Sendable (WebSocketFrame) async throws -> Void)? = nil,
+         onResize: (@Sendable (Int, Int) async -> Void)? = nil) {
+        supportsPagedHistory = paged
+        supportsWebControlTextFrames = control
+        self.onSend = onSend
+        self.onResize = onResize
+    }
+    func sendHello(clientID: DisplayClientID, kind: DisplayClientKind, role: DisplayClientRole,
+                   visible: Bool, cols: Int, rows: Int) async { lock.withLock { hello = clientID } }
+    func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+        await onResize?(cols, rows)
+    }
     private let lock = NSLock()
     private var frames: [WebSocketFrame] = []
     private var waiter: CheckedContinuation<WebSocketFrame, Error>?
@@ -436,7 +558,10 @@ private final class PagedOutputProbeClient: WebSocketClient, @unchecked Sendable
     private var sent: [WebSocketFrame] = []
     var sentFrames: [WebSocketFrame] { lock.withLock { sent } }
     var receiveCount: Int { lock.withLock { receives } }
-    func send(_ frame: WebSocketFrame) async throws { lock.withLock { sent.append(frame) } }
+    func send(_ frame: WebSocketFrame) async throws {
+        lock.withLock { sent.append(frame) }
+        try await onSend?(frame)
+    }
     func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { continuation in
             lock.lock()

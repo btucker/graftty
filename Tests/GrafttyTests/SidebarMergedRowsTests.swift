@@ -174,7 +174,7 @@ struct SidebarMergedMoveTests {
     }
 }
 
-@Suite("@spec REMOTE-13.48: While a host is asleep, the application shall keep its rows visible and dim with the last reported text, and shall name it asleep, and shall list other unreachable hosts on one offline line.")
+@Suite("@spec REMOTE-13.48: While a host has no live report but has saved wake details, the application shall keep its cached rows visible and dim, label them not connected, and list other unreachable hosts on one offline line.")
 struct SidebarSleepingRowsTests {
     private let local = WorktreeOrigin(deviceID: .init(value: "mac"), deviceLabel: "MacBook", relayDepth: 0)
     private let mini = WorktreeOrigin(deviceID: .init(value: "mini"), deviceLabel: "mini-m1", relayDepth: 1)
@@ -188,26 +188,26 @@ struct SidebarSleepingRowsTests {
         SidebarProject(id: "\(owner.deviceID.value):repo", repositoryID: "/r", name: "app", owner: owner, isAvailable: available, originKey: "k/app")
     }
 
-    @Test func hostTextNamesAsleepWithoutHostOnTemporaryRows() {
+    @Test func hostTextNamesDisconnectedWithoutHostOnTemporaryRows() {
         let merged = SidebarMergedRows.make(projects: [project(local), project(mini, available: false)], localRows: [row("here", local)], remoteRows: [row("sat", mini)],
-            localDeviceID: local.deviceID, availability: { $0.owner?.deviceID == self.mini.deviceID ? .asleep : .reachable })
+            localDeviceID: local.deviceID, availability: { $0.owner?.deviceID == self.mini.deviceID ? .wakeable : .reachable })
         let temporary = merged.sections(for: "origin:k/app").temporary
         let sleeping = try! #require(temporary.first { $0.row.displayName == "sat" })
-        #expect(sleeping.availability == .asleep)
-        #expect(SidebarMergedRows.hostText(sleeping, isLocal: false) == "asleep")
+        #expect(sleeping.availability == .wakeable)
+        #expect(SidebarMergedRows.hostText(sleeping, isLocal: false) == "not connected")
         #expect(SidebarMergedRows.hostText(temporary.first { $0.row.displayName == "here" }!, isLocal: true) == nil)
     }
     @Test func hostTextIncludesHostOnPinnedRows() throws {
         let merged = SidebarMergedRows.make(projects: [project(local), project(mini, available: false)], localRows: [row("pin", local, pinned: true)], remoteRows: [row("sat", mini, pinned: true)],
-            localDeviceID: local.deviceID, availability: { $0.owner?.deviceID == self.mini.deviceID ? .asleep : .reachable })
+            localDeviceID: local.deviceID, availability: { $0.owner?.deviceID == self.mini.deviceID ? .wakeable : .reachable })
         let rows = merged.flattenedRows(for: "origin:k/app")
-        #expect(SidebarMergedRows.hostText(try #require(rows.first { $0.row.displayName == "sat" }), isLocal: false) == "mini-m1 · asleep")
+        #expect(SidebarMergedRows.hostText(try #require(rows.first { $0.row.displayName == "sat" }), isLocal: false) == "mini-m1 · not connected")
         #expect(SidebarMergedRows.hostText(try #require(rows.first { $0.row.displayName == "pin" }), isLocal: true) == "This Mac")
     }
     @Test func offlineLineForOtherHosts() {
         let merged = SidebarMergedRows.make(projects: [project(local), project(mini, available: false), project(vps, available: false)], localRows: [], remoteRows: [],
             localDeviceID: local.deviceID, availability: { project in
-                switch project.owner?.deviceID.value { case "mini": .asleep; case "vps": .offline; default: .reachable }
+                switch project.owner?.deviceID.value { case "mini": .wakeable; case "vps": .offline; default: .reachable }
             })
         #expect(merged.offlineHosts(for: "origin:k/app") == ["vps-2"])
     }
@@ -217,9 +217,9 @@ struct SidebarSleepingRowsTests {
         #expect(SidebarMergedRows.pullTitle(hostLabel: "build-box", isOnSeveralHosts: true) == "Pull Default Branch on build-box")
         #expect(SidebarMergedRows.pullTitle(hostLabel: "This Mac", isOnSeveralHosts: false) == "Pull Default Branch")
     }
-    @Test func projectLabelAsleepVersusOffline() {
-        let asleep = SidebarMergedRows.make(projects: [project(mini, available: false)], localRows: [], remoteRows: [], localDeviceID: local.deviceID, availability: { _ in .asleep })
-        #expect(asleep.projects[0].representative.ownerSubtitle(localDeviceID: nil) == "Asleep")
+    @Test func projectLabelDisconnectedVersusOffline() {
+        let asleep = SidebarMergedRows.make(projects: [project(mini, available: false)], localRows: [], remoteRows: [], localDeviceID: local.deviceID, availability: { _ in .wakeable })
+        #expect(asleep.projects[0].representative.ownerSubtitle(localDeviceID: nil) == "Not connected")
         let offline = SidebarMergedRows.make(projects: [project(vps, available: false)], localRows: [], remoteRows: [], localDeviceID: local.deviceID, availability: { _ in .offline })
         #expect(offline.projects[0].representative.ownerSubtitle(localDeviceID: nil) == "Offline")
     }

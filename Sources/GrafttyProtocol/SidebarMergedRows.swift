@@ -35,11 +35,14 @@ public struct SidebarMergedRows: Sendable {
                                  availabilityByRow: rowAvailability, availabilityByMember: byID.mapValues(availability))
     }
 
-    /// What a row says after its name. Sleeping temporary rows don't name the
+    /// What a row says after its name. Cached temporary rows don't name the
     /// host, in keeping with hosts not mattering while scanning the list.
     public static func hostText(_ row: MergedWorktreeRow, isLocal: Bool) -> String? {
         let host = isLocal ? "This Mac" : row.hostLabel
-        if row.availability == .asleep { return row.showsHostLabel ? "\(host) · asleep" : "asleep" }
+        if row.availability == .wakeable {
+            let status = row.availability.connectionLabel.lowercased()
+            return row.showsHostLabel ? "\(host) · \(status)" : status
+        }
         return row.showsHostLabel ? host : nil
     }
 

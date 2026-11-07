@@ -174,7 +174,7 @@ struct SidebarView: View {
             remoteRows: displayedRemoteRows.values.flatMap { $0 } + sleeping.rows, localDeviceID: localID,
             availability: { project in
                 if project.owner?.deviceID == localID || project.isAvailable { return .reachable }
-                return project.owner.map { sleeping.hostIDs.contains($0.deviceID) } == true ? .asleep : .offline
+                return project.owner.map { sleeping.hostIDs.contains($0.deviceID) } == true ? .wakeable : .offline
             })
     }
 
@@ -263,7 +263,7 @@ struct SidebarView: View {
         let rows = merged.flattenedRows(for: project.id)
         // Choosing a project isn't reason enough to wake its hosts.
         guard let target = rows.first(where: { $0.id == rememberedRowIDs[project.id] }) ?? rows.first,
-              target.availability != .asleep else { return }
+              target.availability != .wakeable else { return }
         openMergedRow(target)
     }
     private func openMergedRow(_ row: MergedWorktreeRow) {
@@ -273,7 +273,7 @@ struct SidebarView: View {
             }
             onSelect(row.row.path)
         } else if let mac = remoteMacsModel.remoteMac(delivering: row.row) {
-            if row.availability == .asleep { onWakeRemoteWorktree(mac, row.row.path) }
+            if row.availability == .wakeable { onWakeRemoteWorktree(mac, row.row.path) }
             else { onSelectRemoteWorktree(mac, row.row.path) }
         }
     }
@@ -284,7 +284,7 @@ struct SidebarView: View {
         if !writes.isEmpty { write(writes); return }
         // Every host for this project is asleep, and the order has to be saved
         // somewhere. It only moves once a host has stored it.
-        if let project = merged.project(id: id), project.availability == .asleep,
+        if let project = merged.project(id: id), project.availability == .wakeable,
            let member = project.members.first(where: { $0.id == lastUsedHost(project) }) ?? project.members.first(where: { $0.rank != nil }),
            let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == member.owner?.deviceID }) {
             Task { @MainActor in
@@ -325,7 +325,7 @@ struct SidebarView: View {
                     Task { @MainActor in
                         do {
                             // Waking also registers the route a sleeping host's row uses.
-                            if mergedSidebar.availability(ofMember: member.id) == .asleep { try await remoteMacsModel.wake(mac) }
+                            if mergedSidebar.availability(ofMember: member.id) == .wakeable { try await remoteMacsModel.wake(mac) }
                             guard let route = remoteMacsModel.relayRouter.resolveRepository(member.repositoryID) else {
                                 throw RemoteMacsModel.ProjectControlError.unavailable
                             }
@@ -852,7 +852,7 @@ struct SidebarView: View {
                 .modifier(MergedRowInsets(projectColumn: showsProjectRail))
         } else if let mac = remoteMacsModel.remoteMac(delivering: row.row) {
             remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.leafName,
-                          hostLabel: SidebarMergedRows.hostText(row, isLocal: false), isAsleep: row.availability == .asleep,
+                          hostLabel: SidebarMergedRows.hostText(row, isLocal: false), isCached: row.availability == .wakeable,
                           onOpen: { openMergedRow(row) },
                           onOpenPane: { context in Task { _ = await openReport(context) } },
                           onDrop: { drop, after in
@@ -903,7 +903,7 @@ struct SidebarView: View {
             guard let mac = remoteMacsModel.remoteMac(delivering: source.row) else { return }
             Task { @MainActor in
                 do {
-                    if source.availability == .asleep { try await remoteMacsModel.wake(mac) }
+                    if source.availability == .wakeable { try await remoteMacsModel.wake(mac) }
                     try await remoteMacsModel.moveWorktree(source.row, relativeTo: target.row, after: after, on: mac)
                 } catch { navigationError = error.localizedDescription }
             }
@@ -915,7 +915,7 @@ struct SidebarView: View {
                     Task { @MainActor in
                         do {
                             // Moving a sleeping host's row needs that host, so it wakes.
-                            if write.row.availability == .asleep { try await remoteMacsModel.wake(mac) }
+                            if write.row.availability == .wakeable { try await remoteMacsModel.wake(mac) }
                             try await remoteMacsModel.setPinnedRank(write.rank, worktree: write.row.row, on: mac)
                         } catch { navigationError = error.localizedDescription }
                     }
@@ -1052,7 +1052,7 @@ struct SidebarView: View {
             defer { remoteProjectOperationInProgress = false }
             do {
                 // Choosing a sleeping host wakes it to load its branches.
-                if mergedSidebar.availability(ofMember: member.id) == .asleep,
+                if mergedSidebar.availability(ofMember: member.id) == .wakeable,
                    let sleeping = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == member.owner?.deviceID }) {
                     try await remoteMacsModel.wake(sleeping)
                 }
@@ -1069,7 +1069,7 @@ struct SidebarView: View {
             return SidebarMenuVisibility.showsAddWorktree(repo: repo)
         }
         // Opening the sheet wakes a sleeping host to load its branches.
-        if merged.availability(ofMember: project.id) == .asleep { return project.supportsWorktreeEditing == true }
+        if merged.availability(ofMember: project.id) == .wakeable { return project.supportsWorktreeEditing == true }
         return remoteMacsModel.editableRepositoryTarget(for: project) != nil
     }
 
@@ -1092,7 +1092,7 @@ struct SidebarView: View {
     ) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: displayName)
-        let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isAsleep: false)
+        let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isCached: false)
         let projectID = localProjectID(repo)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: repo.id.uuidString, name: repo.displayName)

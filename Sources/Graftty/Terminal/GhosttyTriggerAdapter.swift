@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import Carbon.HIToolbox
 import GhosttyKit
 import GrafttyProtocol
 
@@ -39,6 +41,34 @@ enum GhosttyTriggerAdapter {
             return chord(from: trigger)
         }
     }
+
+    static func chord(from event: NSEvent) -> ShortcutChord? {
+        guard event.type == .keyDown else { return nil }
+        var modifiers: ShortcutModifiers = []
+        if event.modifierFlags.contains(.command) { modifiers.insert(.command) }
+        if event.modifierFlags.contains(.control) { modifiers.insert(.control) }
+        if event.modifierFlags.contains(.option) { modifiers.insert(.option) }
+        if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+        // Function/navigation keys do not necessarily provide a Unicode
+        // character (including synthesized AppKit events). Their key codes are
+        // layout independent; resolve them before consulting printable text.
+        if let key = namedEventKeys[Int(event.keyCode)] {
+            return ShortcutChord(key: key, modifiers: modifiers)
+        }
+        guard let scalar = event.characters(byApplyingModifiers: [])?.unicodeScalars.first
+            ?? event.charactersIgnoringModifiers?.unicodeScalars.first else { return nil }
+        return ShortcutChord(codepoint: scalar.value, modifiers: modifiers)
+    }
+
+    private static let namedEventKeys: [Int: String] = [
+        kVK_Home: "home", kVK_End: "end", kVK_PageUp: "pageup", kVK_PageDown: "pagedown",
+        kVK_UpArrow: "arrowup", kVK_DownArrow: "arrowdown", kVK_LeftArrow: "arrowleft", kVK_RightArrow: "arrowright",
+        kVK_Return: "return", kVK_Tab: "tab", kVK_Escape: "escape", kVK_Delete: "backspace", kVK_ForwardDelete: "delete",
+        kVK_F1: "f1", kVK_F2: "f2", kVK_F3: "f3", kVK_F4: "f4", kVK_F5: "f5", kVK_F6: "f6",
+        kVK_F7: "f7", kVK_F8: "f8", kVK_F9: "f9", kVK_F10: "f10", kVK_F11: "f11", kVK_F12: "f12",
+        kVK_F13: "f13", kVK_F14: "f14", kVK_F15: "f15", kVK_F16: "f16", kVK_F17: "f17",
+        kVK_F18: "f18", kVK_F19: "f19", kVK_F20: "f20"
+    ]
 
     // MARK: - Private
 

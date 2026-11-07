@@ -76,7 +76,7 @@ private struct WorktreeBlockClickColumn: View {
                     owner: .init(deviceID: .init(value: "test"), deviceLabel: "Test", relayDepth: 0),
                     displayName: worktree.branch, titles: [:], liveness: [:], prBadge: nil)
                 let context = SidebarWorktreeContext(worktree: row)
-                SidebarWorktreeStatusTarget(status: SidebarRowStatus.resolve(context: context, worktree: row, isAsleep: false), secondary: .secondary) {
+                SidebarWorktreeStatusTarget(status: SidebarRowStatus.resolve(context: context, worktree: row, isCached: false), secondary: .secondary) {
                     if let slot = stop.paneSlotID.flatMap({ id in paneLeaves.first { $0.id.uuidString == id } }) {
                         harness.paneSelections.append(slot)
                     } else {

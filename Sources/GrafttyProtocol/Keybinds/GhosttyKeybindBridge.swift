@@ -18,6 +18,15 @@ public struct GhosttyKeybindBridge: Sendable {
 
     private let chords: [GhosttyAction: ShortcutChord]
 
+    /// The native trigger API exposes one resolved trigger per exact action.
+    /// Keep history navigation separate from application/menu commands.
+    public static let historyActions = ["scroll_to_top", "scroll_page_up", "jump_to_prompt:-1", "scroll_to_selection"]
+    public let historyChords: [String: ShortcutChord]
+    public var allBindings: [String: ShortcutChord] {
+        Dictionary(uniqueKeysWithValues: chords.map { ($0.key.rawValue, $0.value) })
+            .merging(historyChords) { _, history in history }
+    }
+
     public var allChords: [GhosttyAction: ShortcutChord] { chords }
 
     public init(resolver: Resolver) {
@@ -26,6 +35,9 @@ public struct GhosttyKeybindBridge: Sendable {
             map[action] = resolver(action.rawValue)
         }
         self.chords = map
+        self.historyChords = Dictionary(uniqueKeysWithValues: Self.historyActions.compactMap { action in
+            resolver(action).map { (action, $0) }
+        })
     }
 
     /// For callers that already hold resolved chords keyed by action
@@ -33,6 +45,7 @@ public struct GhosttyKeybindBridge: Sendable {
     /// resolver round-trip through raw action names.
     public init(chords: [GhosttyAction: ShortcutChord]) {
         self.chords = chords
+        self.historyChords = [:]
     }
 
     /// The deliberately-shortcutless bridge: "no keybinds", as distinct

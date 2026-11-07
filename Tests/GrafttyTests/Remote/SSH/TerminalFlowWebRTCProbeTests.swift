@@ -114,6 +114,7 @@ struct TerminalFlowWebRTCProbeTests {
                 case .binary(let bytes):
                     ahead += bytes.count
                     try await Task.sleep(for: .seconds(Double(bytes.count) / consumerRate))
+                case .paged: throw PagedTerminalEnvelope.Error.invalid
                 case .text(let text):
                     if case .ownership(let snapshot)? = try? WebControlEnvelope.parse(Data(text.utf8)),
                        snapshot.grid.cols == 90 { break reading }

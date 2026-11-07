@@ -9,6 +9,27 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 struct PagedZmxAttachEngineTests {
+    @Test func eofDrainsFinalEvents() async throws {
+        let exited = DispatchSemaphore(value: 0)
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd)
+            try FakePagedDaemon.send(fd, tag: 1, payload: Data("final output".utf8))
+            try FakePagedDaemon.send(fd, tag: 32, payload: Data([7, 0, 0, 0]))
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"),
+            zmxDir: daemon.directory, sessionName: "session"), onBackpressure: {}, onReaderExit: { exited.signal() })
+        defer { engine.close() }
+        try await engine.start()
+        #expect(await Self.wait(exited))
+        var events = engine.events.makeAsyncIterator()
+        guard case .checkpoint = await events.next() else { Issue.record("Missing checkpoint at EOF"); return }
+        #expect(await events.next() == .output(Data("final output".utf8)))
+        #expect(await events.next() == .ended(7))
+        #expect(await events.next() == nil)
+        #expect(daemon.error == nil)
+    }
+
     @Test func mouseRoutingRequiresCompleteReportsOnly() {
         let press = Data("\u{1b}[<64;24;23M".utf8)
         let release = Data("\u{1b}[<0;24;23m".utf8)
@@ -180,13 +201,15 @@ private final class FakePagedDaemon: @unchecked Sendable {
 }
 
 extension PagedZmxAttachEngineTests {
-    @Test("@spec TERM-12.40: While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.", .timeLimit(.minutes(1)), arguments: [false, true], [false, true])
+    @Test("@spec TERM-12.40: While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering, wait for available space without polling, and release a waiting reader when the attachment closes.", .timeLimit(.minutes(1)), arguments: [false, true], [false, true])
     func outputBurstPreservesAttachment(closeWhileFull: Bool, resizing: Bool) async throws {
+        let startBurst = DispatchSemaphore(value: 0)
         let backpressured = DispatchSemaphore(value: 0)
         let readerExited = DispatchSemaphore(value: 0)
         let count = 512
         let daemon = try FakePagedDaemon { fd in
             try FakePagedDaemon.negotiate(fd)
+            #expect(startBurst.wait(timeout: .now() + 3) == .success)
             if resizing {
                 #expect(try FakePagedDaemon.receive(fd).0 == 2)
                 try FakePagedDaemon.send(fd, tag: 31, payload: Data([79, 0, 165, 0]))
@@ -225,9 +248,11 @@ extension PagedZmxAttachEngineTests {
             Issue.record("Missing checkpoint"); return
         }
         if resizing { try engine.resize(windowSize: .init(cols: 165, rows: 79)) }
+        startBurst.signal()
         // Pause the renderer until the engine has actually filled its event
         // buffer. The peer may still be writing on either OS at this point.
         try #require(await Self.wait(backpressured))
+        #expect(!(await Self.wait(backpressured, timeout: 0.025)), "A full queue should wait for consumption rather than poll")
         if closeWhileFull {
             await engine.close()
             #expect(await Self.wait(readerExited), "close must release the backpressured reader")
@@ -248,10 +273,10 @@ extension PagedZmxAttachEngineTests {
         #expect(daemon.error == nil)
     }
 
-    private static func wait(_ signal: DispatchSemaphore) async -> Bool {
+    private static func wait(_ signal: DispatchSemaphore, timeout: TimeInterval = 3) async -> Bool {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
-                continuation.resume(returning: signal.wait(timeout: .now() + 3) == .success)
+                continuation.resume(returning: signal.wait(timeout: .now() + timeout) == .success)
             }
         }
     }

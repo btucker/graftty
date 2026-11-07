@@ -89,7 +89,7 @@ extension TerminalInputContainerView {
         guard !selectionPanRecognizer.isEnabled else { return }
         selectionPanRecognizer.isEnabled = true
         selectionModeSavedTouchTypes = []
-        ((terminalView.gestureRecognizers ?? []) + [snapshotScrollView.panGestureRecognizer]).forEach { recognizer in
+        ((terminalView.gestureRecognizers ?? []) + [snapshotScrollView.panGestureRecognizer, snapshotScrollView.historyIntentPan]).forEach { recognizer in
             if let pan = recognizer as? UIPanGestureRecognizer,
                !pan.allowedScrollTypesMask.isEmpty {
                 // A non-empty scroll mask only ADDS indirect scroll-event

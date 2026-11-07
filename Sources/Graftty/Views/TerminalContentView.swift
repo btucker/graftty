@@ -2,6 +2,7 @@ import SwiftUI
 import GrafttyCommandUI
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyRemoteClient
 
 /// The worktree's agent pane, which carries the scrollback map, and the timeline it maps.
 struct AgentScrollbackMap {
@@ -163,6 +164,9 @@ struct TerminalContentView: View {
                             }
                         }
                     }
+                    .overlay(alignment: .bottom) {
+                        MacPagedHistoryBanner(presentation: handle.pagedHistory).padding(12)
+                    }
                     .overlay(alignment: .topTrailing) {
                         if let map = agentScrollbackMap, map.terminalID == terminalID {
                             ScrollbackMapOverlayHost(model: handle.scrollbackMapModel, timeline: map.timeline)
@@ -262,5 +266,37 @@ private struct SplitRatioContainer<Left: View, Right: View>: View {
         .onChange(of: sourceRatio) { _, newRatio in
             ratio = newRatio
         }
+    }
+}
+
+/// Failures concern older history; keep the live terminal available beneath it.
+private struct MacPagedHistoryBanner: View {
+    let presentation: MacPagedHistoryPresentation
+
+    var body: some View {
+        if let paging = presentation.coordinator {
+            switch paging.status {
+            case .requiresRecovery, .pageTooLarge:
+                message("Older history needs a fresh snapshot", button: "Reload from live screen") {
+                    await paging.recover()
+                }
+            case .unavailable:
+                message("Couldn't load older history", button: "Retry") { await paging.retry() }
+            case .limit:
+                Text("History memory limit reached")
+                    .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            default: EmptyView()
+            }
+        }
+    }
+
+    private func message(_ text: String, button: String, action: @escaping @MainActor () async -> Void) -> some View {
+        HStack(spacing: 10) {
+            Text(text)
+            Button(button) { Task { await action() } }
+        }
+        .font(.callout)
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 }

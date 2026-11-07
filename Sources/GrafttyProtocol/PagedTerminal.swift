@@ -148,10 +148,15 @@ public struct PagedTerminalEnvelope: Codable, Equatable, Sendable {
     public static func parse(_ text: String) throws -> Self {
         guard text.utf8.count <= StdErrControlFraming.maxFrameLength else { throw Error.tooLarge }
         let value = try JSONDecoder().decode(Self.self, from: Data(text.utf8))
-        guard value.terminalPaging == 1, (value.event == nil) != (value.request == nil) else {
+        try value.validate()
+        return value
+    }
+
+    func validate() throws {
+        guard terminalPaging == 1, (event == nil) != (request == nil) else {
             throw Error.invalid
         }
-        switch value.event {
+        switch event {
         case .grid(let cols, let rows):
             guard cols > 0, rows > 0,
                   cols <= WebControlEnvelope.maxGridDimension,
@@ -165,17 +170,16 @@ public struct PagedTerminalEnvelope: Codable, Equatable, Sendable {
                   !checkpoint.ready.isEmpty,
                   checkpoint.ready.count <= PagedTerminalLimits.readyBytes else { throw Error.invalid }
         case .page(let page):
-            guard valid(page.request), page.data.count <= PagedTerminalLimits.pageBytes,
+            guard Self.valid(page.request), page.data.count <= PagedTerminalLimits.pageBytes,
                   page.complete || !page.data.isEmpty else { throw Error.invalid }
         case .unavailable(let failure):
-            guard valid(failure.request) else { throw Error.invalid }
+            guard Self.valid(failure.request) else { throw Error.invalid }
         case .output, .ended:
             throw Error.invalid
         case nil:
             break
         }
-        if case .history(let request) = value.request, !valid(request) { throw Error.invalid }
-        return value
+        if case .history(let request) = request, !Self.valid(request) { throw Error.invalid }
     }
 
     private static func valid(_ request: PagedTerminalHistoryRequest) -> Bool {

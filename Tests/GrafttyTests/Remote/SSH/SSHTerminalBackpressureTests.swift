@@ -125,6 +125,7 @@ struct SSHTerminalBackpressureTests {
                 reading: while true {
                     switch try await fixture.client.receive() {
                     case .binary(let bytes): deliveredBeforeControl += bytes.count
+                    case .paged: throw PagedTerminalEnvelope.Error.invalid
                     case .text(let text):
                         // The host rewrites client IDs, so identify the takeover by its grid.
                         if case .ownership(let snapshot)? = try? WebControlEnvelope.parse(Data(text.utf8)),
@@ -146,8 +147,19 @@ struct SSHTerminalBackpressureTests {
     /// SCTP retransmits lost packets, so at this layer loss appears as delay.
     @Test(.enabled(if: probesEnabled), .timeLimit(.minutes(3)), arguments: [true, false], [0, 25, 100])
     func probeDelayedLink(negotiated: Bool, oneWayMilliseconds: Int) async throws {
+        try await measureDelayedLink(windowBytes: negotiated ? TerminalOutputCredit.clientWindowBytes : nil,
+                                     oneWayMilliseconds: oneWayMilliseconds)
+    }
+
+    @Test(.enabled(if: probesEnabled), .timeLimit(.minutes(3)), arguments: [128, 256, 1024], [0, 25, 100])
+    func probeWindowTradeoff(kibibytes: Int, oneWayMilliseconds: Int) async throws {
+        try await measureDelayedLink(windowBytes: kibibytes * 1024, oneWayMilliseconds: oneWayMilliseconds)
+    }
+
+    private func measureDelayedLink(windowBytes: Int?, oneWayMilliseconds: Int) async throws {
         let fixture = try await SSHBackpressureFixture.make(
-            sibling: true, negotiatesOutputWindow: negotiated, oneWayDelay: .milliseconds(oneWayMilliseconds)
+            sibling: true, negotiatesOutputWindow: windowBytes != nil, oneWayDelay: .milliseconds(oneWayMilliseconds),
+            windowBytes: windowBytes ?? TerminalOutputCredit.clientWindowBytes
         )
         do {
             await fixture.client.sendHello(clientID: DisplayClientID("primary"), kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
@@ -174,13 +186,14 @@ struct SSHTerminalBackpressureTests {
                 case .binary(let bytes):
                     ahead += bytes.count
                     try await Task.sleep(for: .seconds(Double(bytes.count) / Double(consumerRate)))
+                case .paged: throw PagedTerminalEnvelope.Error.invalid
                 case .text(let text):
                     if case .ownership(let snapshot)? = try? WebControlEnvelope.parse(Data(text.utf8)),
                        snapshot.grid.cols == 90 { break reading }
                 }
             }
             let lag = takeoverStart.duration(to: .now).components
-            print("[terminal-flow] {\"scenario\":\"delayedLink\",\"negotiated\":\(negotiated),\"oneWayMilliseconds\":\(oneWayMilliseconds),\"keepingUpMegabytesPerSecond\":\(Double(keepingUp) / 1_048_576 / seconds),\"consumerBytesPerSecond\":\(consumerRate),\"bytesAheadOfTakeover\":\(ahead),\"takeoverSeconds\":\(Double(lag.seconds) + Double(lag.attoseconds) / 1e18)}")
+            print("[terminal-flow] {\"scenario\":\"delayedLink\",\"windowBytes\":\(windowBytes ?? 0),\"oneWayMilliseconds\":\(oneWayMilliseconds),\"keepingUpMegabytesPerSecond\":\(Double(keepingUp) / 1_048_576 / seconds),\"consumerBytesPerSecond\":\(consumerRate),\"bytesAheadOfTakeover\":\(ahead),\"takeoverSeconds\":\(Double(lag.seconds) + Double(lag.attoseconds) / 1e18)}")
         } catch {
             await fixture.close()
             throw error
@@ -342,6 +355,7 @@ struct SSHTerminalBackpressureTests {
                                 throw SSHBackpressureFailure("unexpected extra terminal output")
                             }
                             bytes.append(chunk)
+                        case .paged: throw PagedTerminalEnvelope.Error.invalid
                         case .text:
                             throw SSHBackpressureFailure("unexpected terminal control frame")
                         }
@@ -390,17 +404,19 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
     private(set) var client: TerminalSessionClient!
 
     private let negotiatesOutputWindow: Bool
+    private let windowBytes: Int
     private let oneWayDelay: Duration
 
-    private init(stalling phase: SSHTerminalBackpressureTests.AttachmentPhase?, negotiatesOutputWindow: Bool, oneWayDelay: Duration) {
+    private init(stalling phase: SSHTerminalBackpressureTests.AttachmentPhase?, negotiatesOutputWindow: Bool, oneWayDelay: Duration, windowBytes: Int) {
         self.negotiatesOutputWindow = negotiatesOutputWindow
+        self.windowBytes = windowBytes
         self.oneWayDelay = oneWayDelay
         attachGate = phase == .shellFactory ? SSHBackpressureAttachGate() : nil
         childConfirmationGate = phase == .childConfirmation ? SSHBackpressureChildGate() : nil
     }
 
-    static func make(stalling phase: SSHTerminalBackpressureTests.AttachmentPhase? = nil, sibling: Bool = false, negotiatesOutputWindow: Bool = true, oneWayDelay: Duration = .zero) async throws -> SSHBackpressureFixture {
-        let fixture = SSHBackpressureFixture(stalling: phase, negotiatesOutputWindow: negotiatesOutputWindow, oneWayDelay: oneWayDelay)
+    static func make(stalling phase: SSHTerminalBackpressureTests.AttachmentPhase? = nil, sibling: Bool = false, negotiatesOutputWindow: Bool = true, oneWayDelay: Duration = .zero, windowBytes: Int = TerminalOutputCredit.clientWindowBytes) async throws -> SSHBackpressureFixture {
+        let fixture = SSHBackpressureFixture(stalling: phase, negotiatesOutputWindow: negotiatesOutputWindow, oneWayDelay: oneWayDelay, windowBytes: windowBytes)
         do {
             try await fixture.start()
             if sibling { try await fixture.openSibling() }
@@ -507,7 +523,7 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
         self.clientHandler = clientHandler
         let client = TerminalSessionClient(parentChannel: clientParent,
             parentHandler: clientHandler.handler, sessionName: "backpressure",
-            outputWindowBytes: negotiatesOutputWindow ? TerminalOutputCredit.clientWindowBytes : nil)
+            outputWindowBytes: negotiatesOutputWindow ? windowBytes : nil)
         self.client = client
         connecting = Task {
             do { try await client.connect(); probe.connection.complete(.success(())) }
@@ -578,6 +594,7 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
             case .binary(let bytes):
                 try verify(bytes, at: position)
                 position += bytes.count
+            case .paged: throw PagedTerminalEnvelope.Error.invalid
             case .text(let text):
                 if case .ownership(let snapshot)? = try? WebControlEnvelope.parse(Data(text.utf8)),
                    snapshot.grid.cols == 90 { return position }

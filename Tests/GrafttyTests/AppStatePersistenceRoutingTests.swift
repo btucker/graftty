@@ -392,15 +392,15 @@ struct WindowlessChangeSignalTests {
         var sent = frames.makeAsyncIterator()
         // No ticks: only a published change can produce a second frame. The
         // row projection carries the pin, so the unpin changes the snapshot.
-        let subscription = await changes.subscribePanesState(
-            settle: { _ in }, ticks: AsyncStream { _ in },
+        let feed = SharedPanesStateFeed(changes: changes,
+            settle: { _ in }, ticks: { AsyncStream { _ in } },
             snapshot: {
                 .snapshot(box.state.repos.flatMap { repo in
                     repo.worktrees.map { WorktreePanes(entry: $0, repo: repo, inputs: WorktreeRowInputs(
                         origin: owner, projectID: repo.path, displayName: $0.branch)) }
                 })
-            },
-            onChange: { frame.yield($0) })
+            })
+        let subscription = await feed.subscribe { frame.yield($0.message) }
         defer { subscription.cancel() }
         let initial = await sent.next()
 

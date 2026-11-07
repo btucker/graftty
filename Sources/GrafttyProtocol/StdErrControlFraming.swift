@@ -13,9 +13,10 @@ import Foundation
 /// **Wire format**, authoritative here (both ends previously hand-mirrored
 /// this — see the type doc comments this replaces):
 ///
-///     <u32 BE length><UTF-8 bytes>
+///     <u32 BE length><payload bytes>
 ///
-/// `length` is the byte count of the UTF-8 payload that follows — NOT
+/// The payload is UTF-8 JSON, or a negotiated binary paging envelope.
+/// `length` is the byte count of the payload that follows — NOT
 /// including the 4-byte header itself. Multiple frames are simply
 /// concatenated; there is no delimiter or padding between them.
 ///
@@ -24,6 +25,16 @@ import Foundation
 /// and their test targets — can depend on it via `GrafttyProtocol` without
 /// pulling in platform- or transport-specific dependencies.
 public enum StdErrControlFraming {
+    public static func encode(_ payload: Data) -> Data? {
+        guard payload.count <= maxFrameLength else { return nil }
+        let length = UInt32(payload.count)
+        var framed = Data([UInt8(length >> 24), UInt8(truncatingIfNeeded: length >> 16),
+                           UInt8(truncatingIfNeeded: length >> 8), UInt8(truncatingIfNeeded: length)])
+        framed.reserveCapacity(4 + payload.count)
+        framed.append(payload)
+        return framed
+    }
+
     /// Upper bound on a single frame's declared payload length. Control
     /// envelopes are small JSON (hello/takeControl/ownership — hundreds of
     /// bytes); 1 MiB is orders of magnitude above any real frame while

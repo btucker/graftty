@@ -2,9 +2,14 @@ import Foundation
 
 public enum HostAvailability: Sendable, Equatable {
     case reachable
-    /// Unreachable, with wake details saved. Its last known rows stay visible.
-    case asleep
+    /// No live report, with wake details saved. This does not establish whether
+    /// the host is asleep. Its cached rows remain available for reconnection.
+    case wakeable
     case offline
+
+    public var connectionLabel: String {
+        self == .reachable ? "Connected" : "Not connected"
+    }
 }
 
 /// One project in the UI, possibly checked out on several hosts. Each member
@@ -105,7 +110,7 @@ public enum ProjectMerge {
                               localDeviceID: RemoteDeviceID?) -> MergedProject {
         let states = members.map(availability)
         let state: HostAvailability = states.contains(.reachable) ? .reachable
-            : states.contains(.asleep) ? .asleep : .offline
+            : states.contains(.wakeable) ? .wakeable : .offline
         let valid = members.filter { $0.rank.map(FractionalRank.isValid) == true }
         let timed = valid.filter { $0.rankChangedAt != nil }
         let winner = timed.max { $0.rankChangedAt! < $1.rankChangedAt! }
@@ -119,7 +124,7 @@ public enum ProjectMerge {
             isAvailable: state != .offline,
             supportsWorktreeEditing: members.contains { $0.supportsWorktreeEditing == true },
             originKey: members[0].originKey, rank: winner?.rank, rankChangedAt: winner?.rankChangedAt)
-        representative.statusLabel = state == .asleep ? "Asleep" : nil
+        representative.statusLabel = state == .wakeable ? state.connectionLabel : nil
         return MergedProject(id: id, name: name, members: members, availability: state,
                              rank: winner?.rank, rankChangedAt: winner?.rankChangedAt,
                              iconMember: icon, representative: representative)

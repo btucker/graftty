@@ -20,6 +20,51 @@ import XCTest
 /// lands, and the side-effect assertions poll thread-safe fakes — no busy-poll
 /// of the embedded loop, no race.
 final class TerminalSessionHandlerTests: XCTestCase {
+    /// @spec TERM-12.62: When an SSH client requests binary-v1 paging before attachment, the host shall encode checkpoints and pages as binary while retaining JSON for clients that omit or request an unsupported encoding.
+    func testBinaryPagingNegotiation() async throws {
+        for encoding in [nil, "binary-v1", "future-version"] as [String?] {
+            let stream = TestPagedStream()
+            let checkpoint = PagedTerminalEvent.checkpoint(.init(incarnation: 1, id: 2, cols: 80, rows: 24,
+                ready: Data(repeating: 255, count: 8192), hasPrimaryHistory: true, hasAlternateHistory: false))
+            let page = PagedTerminalEvent.page(.init(incarnation: 1, checkpointID: 2, requestID: 3,
+                ordinal: 0, screen: 0, data: Data([0, 255, 128]), complete: true))
+            let channel = try await Self.channel(TerminalSessionHandler(
+                streamFactory: { _ in throw FactoryError.notFound }, pagedFactory: { _ in stream },
+                ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
+                deviceID: RemoteDeviceID(value: "binary-test")))
+            let deadline = Task {
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                try? await channel.close().get()
+            }
+            defer { deadline.cancel() }
+            do {
+                if let encoding { try await sendEnvRequest(channel, name: PagedTerminalBinary.environmentName, value: encoding) }
+                try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+                try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+                try await sendShellRequest(channel)
+                for event in [checkpoint, page, .grid(cols: 90, rows: 30)] {
+                    stream.continuation.yield(event)
+                    let frame = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+                    XCTAssertEqual(frame.type, .stdErr)
+                    guard case .byteBuffer(let bytes) = frame.data else { throw WaitTimedOut() }
+                    var decoder = StdErrControlFraming.Decoder()
+                    decoder.append(bytes.readableBytesView)
+                    let payload = try XCTUnwrap(decoder.drain().frames.first)
+                    let expectedBinary = encoding == "binary-v1" && event != .grid(cols: 90, rows: 30)
+                    XCTAssertEqual(PagedTerminalBinary.isBinary(payload), expectedBinary)
+                    let decoded = PagedTerminalBinary.isBinary(payload)
+                        ? try PagedTerminalBinary.decode(payload)
+                        : try PagedTerminalEnvelope.parse(String(decoding: payload, as: UTF8.self)).event
+                    XCTAssertEqual(decoded, event)
+                }
+            } catch {
+                _ = try? await channel.finish()
+                throw error
+            }
+            _ = try? await channel.finish()
+        }
+    }
+
     /// @spec SSH-1.6: While forwarding terminal output over SSH, the host shall await each write of at most 16 KiB before sending the next, preserving byte and control-event order so other terminal channels can run between writes.
     func testOutputIsPacedInBoundedWrites() async throws {
         for paged in [false, true] {
