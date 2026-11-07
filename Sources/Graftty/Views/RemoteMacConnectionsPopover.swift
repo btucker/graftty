@@ -1,11 +1,22 @@
 import SwiftUI
 import GrafttyKit
+import GrafttyProtocol
+import GrafttyRemoteClient
 
 struct RemoteMacConnectionsPopover: View {
+    private typealias Connections = DownstreamHostConnections<RemoteMacIdentity>
     @ObservedObject var model: RemoteMacsModel
+    private var downstream: Connections { model.downstreamConnections }
     let onAddRemoteMac: () -> Void
     var onSetupLinuxHost: (() -> Void)? = nil
     var onUpdateHost: ((RemoteMac) -> Void)? = nil
+
+    private var hosts: [Connections.Host] {
+        model.savedRemoteMacs.map { mac in
+            let identity = RemoteMacIdentity(mac)
+            return .init(id: identity, label: mac.label, isConnected: model.connectionState(for: identity) == .connected)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -20,8 +31,17 @@ struct RemoteMacConnectionsPopover: View {
                         ForEach(model.savedRemoteMacs) { mac in
                             machineRow(mac)
                         }
+                        if !downstream.routes.isEmpty {
+                            Divider()
+                            Text("Through another Mac")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                            ForEach(downstream.routes) { route in
+                                downstreamRow(route)
+                            }
+                        }
                     }.padding(.vertical, 4)
-                }.frame(height: min(CGFloat(model.savedRemoteMacs.count) * 64 + 8, 328))
+                }.frame(height: min(CGFloat(model.savedRemoteMacs.count + downstream.routes.count) * 64 + (downstream.routes.isEmpty ? 8 : 48), 420))
             }
             Divider()
             Button(action: onAddRemoteMac) {
@@ -35,6 +55,58 @@ struct RemoteMacConnectionsPopover: View {
                 }.buttonStyle(.plain).padding(12)
             }
         }.frame(width: 340)
+        .alert("Couldn't connect host", isPresented: Binding(
+            get: { downstream.error != nil },
+            set: { if !$0 { downstream.error = nil } }
+        )) {
+            Button("OK", role: .cancel) { downstream.error = nil }
+        } message: { Text(downstream.error ?? "") }
+        .task(id: hosts) {
+            while !Task.isCancelled {
+                await downstream.refresh(hosts: hosts, send: send)
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    private func send(_ identity: RemoteMacIdentity, _ request: WorktreeManagementRequest) async throws -> WorktreeManagementResponse {
+        guard let mac = model.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }) else {
+            throw RemoteMacsModel.ProjectControlError.unavailable
+        }
+        if case .connectRemoteMac = request {
+            _ = try await model.connectFromUserSelection(to: mac)
+        } else if model.connectionState(for: identity) != .connected {
+            throw RemoteMacsModel.ProjectControlError.unavailable
+        }
+        return try await model.sendWorktreeManagement(identity: identity, request: request)
+    }
+
+    private func downstreamRow(_ route: Connections.Route) -> some View {
+        let state = route.target.state
+        return HStack(spacing: 10) {
+            Image(systemName: "network").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(route.target.label).lineLimit(1)
+                Text("via \(route.host.label) · \(route.host.isConnected ? RemoteMacConnectionState(state).statusText : "Mac not connected")")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if downstream.connecting.contains(route.id) || (route.host.isConnected && state == .connecting) {
+                ProgressView().controlSize(.small)
+            } else if state == .needsPairing {
+                Text("Pair on \(route.host.label)").font(.caption).foregroundStyle(.secondary)
+            } else if !route.host.isConnected || state != .connected {
+                Button(state == .failed ? "Retry" : "Connect") {
+                    Task {
+                        await downstream.connect(route, send: send)
+                        await downstream.refresh(hosts: hosts, send: send)
+                    }
+                }
+                .controlSize(.small)
+                .accessibilityLabel("Connect to \(route.label)")
+            }
+        }
+        .padding(.horizontal, 12).frame(height: 64)
     }
 
     private func machineRow(_ mac: RemoteMac) -> some View {
@@ -73,6 +145,17 @@ struct RemoteMacConnectionsPopover: View {
 }
 
 extension RemoteMacConnectionState {
+    init(_ state: RemoteMacConnectionSummary.State) {
+        switch state {
+        case .offline: self = .offline
+        case .discovered: self = .discovered
+        case .connecting: self = .connecting
+        case .connected: self = .connected
+        case .failed: self = .failed
+        case .needsPairing: self = .needsPairing
+        }
+    }
+
     var statusText: String {
         switch self {
         case .offline: "Offline"

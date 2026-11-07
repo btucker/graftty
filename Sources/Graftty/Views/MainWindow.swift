@@ -605,7 +605,7 @@ struct MainWindow: View {
             guard remoteMacsModel.connectionState(for: identity) == .connected,
                   let mac = remoteMacsModel.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }),
                   let worktree = remoteMacsModel.worktreePanesByRemote[identity]?.first(where: {
-                      $0.path == path && ($0.origin?.relayDepth ?? 0) == 0
+                      $0.path == path && ($0.origin?.relayDepth ?? 0) <= 1
                   }), worktree.state.hasOnDiskWorktree else { return nil }
             return BreadcrumbHistoryItem(target: target, repoName: worktree.repoDisplayName,
                 worktreeName: worktree.displayName, branchName: worktree.displayBranch, remoteMacName: mac.label)
@@ -767,7 +767,7 @@ struct MainWindow: View {
             guard let mac = remoteMacsModel.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == remoteIdentity }),
                   remoteMacsModel.connectionState(for: remoteIdentity) == .connected,
                   let row = remoteMacsModel.worktreePanesByRemote[remoteIdentity]?.first(where: {
-                      $0.path == path && ($0.origin?.relayDepth ?? 0) == 0
+                      $0.path == path && ($0.origin?.relayDepth ?? 0) <= 1
                   }), row.state.hasOnDiskWorktree, !row.state.isInFlight else { return false }
             selectRemoteWorktree(mac, worktreePath: path)
             return true
@@ -912,7 +912,7 @@ struct MainWindow: View {
             }
             guard generation == attentionOpenGeneration,
                   remoteMacsModel.worktreePanesByRemote[route.identity]?.first(where: { $0.path == route.path })?.layout != nil else { return false }
-            guard let current = remoteMacsModel.promotedWorktreesForRelay().first(where: { $0.path == item.worktreeID }) else { return false }
+            guard let current = remoteMacsModel.promotedWorktreesForRelay(includeRelayed: true).first(where: { $0.path == item.worktreeID }) else { return false }
             var resolvedItem = item
             if let paneID = SidebarProjection.attentionPaneRoute(for: item, in: current) {
                 guard let pane = remoteMacsModel.relayRouter.resolvePane(paneID) else { return false }

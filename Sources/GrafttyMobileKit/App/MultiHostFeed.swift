@@ -14,6 +14,7 @@ import SwiftUI
 public final class MultiHostFeed {
     public private(set) var state = MultiHostFeedState()
     public private(set) var hosts: [Host] = []
+    let downstreamConnections = DownstreamHostConnections<UUID>()
     /// True once every host has either answered or failed at least once.
     public private(set) var hasSettled = false
 
@@ -126,7 +127,7 @@ public final class MultiHostFeed {
     /// Fresh rows from one host, dialing it if needed.
     public func fetchRows(on host: Host) async throws -> [WorktreePanes] {
         guard let coordinator else { throw RelayedWorktreeManagementClient.ClientError.pairedConnectionUnavailable }
-        return try await coordinator.worktreePanes(for: host)
+        return try await coordinator.worktreePanes(for: host, wake: .now)
     }
 
     /// An interaction needs this host. True once its live rows have arrived.

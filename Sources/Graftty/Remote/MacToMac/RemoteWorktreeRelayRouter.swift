@@ -19,6 +19,7 @@ struct RelayedWorktreeTarget: Sendable, Equatable {
 struct RelayedRepositoryTarget: Sendable, Equatable {
     let identity: RemoteMacIdentity
     let repositoryID: String
+    var downstreamOwnerID: RemoteDeviceID? = nil
 }
 
 /// Builds one-hop snapshots and owns the exact alias lookup tables used by
@@ -62,7 +63,8 @@ final class RemoteWorktreeRelayRouter {
 
     func promotedWorktrees(
         snapshots: [RemoteMacIdentity: [WorktreePanes]],
-        remoteMacs: [RemoteMac]
+        remoteMacs: [RemoteMac],
+        includeRelayed: Bool = false
     ) -> [WorktreePanes] {
         pruneExpiredPendingRoutes()
         let activeIdentities = Set(snapshots.keys)
@@ -90,10 +92,10 @@ final class RemoteWorktreeRelayRouter {
             let identity = RemoteMacIdentity(remoteMac)
             for original in snapshots[identity] ?? [] {
                 let worktree = Self.normalizingSidebarIdentity(original, ownerID: remoteMac.id, ownerLabel: remoteMac.label)
-                // A V2 peer may itself publish one-hop rows. Only its local
-                // rows become our direct rows; promoting a depth-1 row would
-                // create remote-of-remote traversal and A↔B loops.
-                guard worktree.origin?.relayDepth ?? 0 == 0 else { continue }
+                let depth = worktree.origin?.relayDepth ?? 0
+                guard depth <= 1 else { continue }
+                // Keep local viewer aliases valid even when building an outward
+                // snapshot, which must omit these rows to avoid relay loops.
 
                 let worktreeAlias = Self.alias(
                     kind: "worktree",
@@ -120,22 +122,23 @@ final class RemoteWorktreeRelayRouter {
                     )
                 }
                 var sidebar = worktree.sidebar
-                sidebar?.paneIDs = worktree.sidebar?.paneIDs.map { Dictionary($0.map { (Self.alias(kind: "pane", identity: identity, value: $0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
-                promoted.append(worktree.with(
+                sidebar?.paneIDs = worktree.sidebar?.paneIDs.map { Dictionary($0.map { (Self.paneAlias(identity: identity, worktreePath: worktree.path, sessionName: $0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
+                let row = worktree.with(
                     path: worktreeAlias,
                     repositoryID: repositoryAlias,
                     layout: layout,
                     origin: WorktreeOrigin(
-                        deviceID: remoteMac.id,
-                        deviceLabel: remoteMac.label,
-                        relayDepth: 1
+                        deviceID: depth == 0 ? remoteMac.id : worktree.origin!.deviceID,
+                        deviceLabel: depth == 0 ? remoteMac.label : worktree.origin!.deviceLabel,
+                        relayDepth: depth + 1
                     ),
                     route: WorktreeRoute(
                         repositoryID: repositoryAlias,
                         worktreeID: worktreeAlias
                     ),
                     sidebar: sidebar
-                ))
+                )
+                if depth == 0 || includeRelayed { promoted.append(row) }
             }
         }
 
@@ -144,15 +147,19 @@ final class RemoteWorktreeRelayRouter {
         return promoted
     }
 
-    func promoteProjects(_ projects: [SidebarProject], from remoteMac: RemoteMac) -> [SidebarProject] {
+    func promoteProjects(_ projects: [SidebarProject], from remoteMac: RemoteMac, includeRelayed: Bool = false) -> [SidebarProject] {
         let identity = RemoteMacIdentity(remoteMac)
-        return projects.filter { ($0.owner?.relayDepth ?? 0) == 0 }.map { project in
+        return projects.compactMap { project in
+            let depth = project.owner?.relayDepth ?? 0
+            guard depth <= 1 else { return nil }
             var result = project
             let alias = Self.alias(kind: "repository", identity: identity, value: project.repositoryID)
-            repositoriesByAlias[alias] = .init(identity: identity, repositoryID: project.repositoryID)
+            repositoriesByAlias[alias] = .init(identity: identity, repositoryID: project.repositoryID,
+                downstreamOwnerID: depth == 0 ? nil : project.owner?.deviceID)
             result.repositoryID = alias
-            result.owner = WorktreeOrigin(deviceID: remoteMac.id, deviceLabel: remoteMac.label, relayDepth: 1)
-            return result
+            result.owner = WorktreeOrigin(deviceID: depth == 0 ? remoteMac.id : project.owner!.deviceID,
+                deviceLabel: depth == 0 ? remoteMac.label : project.owner!.deviceLabel, relayDepth: depth + 1)
+            return depth == 0 || includeRelayed ? result : nil
         }
     }
 
@@ -186,7 +193,7 @@ final class RemoteWorktreeRelayRouter {
             worktreesByAlias[alias] = nil
         }
         repositoriesByAlias = repositoriesByAlias.filter {
-            $0.value.identity != identity
+            $0.value.identity != identity || $0.value.downstreamOwnerID != nil
         }
         mountedWorktreesByAlias = mountedWorktreesByAlias.filter {
             $0.value.identity != identity
@@ -254,11 +261,7 @@ final class RemoteWorktreeRelayRouter {
             identity: identity,
             value: path
         )
-        let paneAlias = Self.alias(
-            kind: "pane",
-            identity: identity,
-            value: paneSessionName
-        )
+        let paneAlias = Self.paneAlias(identity: identity, worktreePath: path, sessionName: paneSessionName)
         worktreesByAlias[worktreeAlias] = RelayedWorktreeTarget(
             identity: identity,
             path: path
@@ -285,11 +288,7 @@ final class RemoteWorktreeRelayRouter {
         worktreePath: String,
         sessionName: String
     ) -> String {
-        let alias = Self.alias(
-            kind: "pane",
-            identity: identity,
-            value: sessionName
-        )
+        let alias = Self.paneAlias(identity: identity, worktreePath: worktreePath, sessionName: sessionName)
         let target = RelayedPaneTarget(
             identity: identity,
             worktreePath: worktreePath,
@@ -318,11 +317,7 @@ final class RemoteWorktreeRelayRouter {
             attentionSource,
             attentionTimestamp
         ):
-            let alias = Self.alias(
-                kind: "pane",
-                identity: identity,
-                value: sessionName
-            )
+            let alias = Self.paneAlias(identity: identity, worktreePath: worktreePath, sessionName: sessionName)
             nextPanes[alias] = RelayedPaneTarget(
                 identity: identity,
                 worktreePath: worktreePath,
@@ -365,6 +360,10 @@ final class RemoteWorktreeRelayRouter {
         pendingWorktreesByAlias = pendingWorktreesByAlias.filter {
             $0.value.expiresAt > cutoff
         }
+    }
+
+    private static func paneAlias(identity: RemoteMacIdentity, worktreePath: String, sessionName: String) -> String {
+        alias(kind: "pane", identity: identity, value: worktreePath + "\u{0}" + sessionName)
     }
 
     private static func alias(

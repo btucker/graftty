@@ -206,9 +206,11 @@ struct SidebarView: View {
         // Git can hang, and this loop is what keeps the sidebar current. The
         // result arrives as a state change, which runs this again.
         Task { await iconStore.refreshOriginKeys(state: $appState) }
-        let remote = await remoteMacsModel.sidebarRelaySnapshot()
+        var remote = await remoteMacsModel.sidebarRelaySnapshot(includeRelayed: true)
+        remote.projects.removeAll { $0.owner?.deviceID == owner.deviceID }
+        remote.worktrees.removeAll { $0.origin?.deviceID == owner.deviceID }
         let snapshot = iconStore.snapshot(state: $appState, owner: owner, remote: remote.projects,
-            authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
+            authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)).union(remote.projects.compactMap { $0.owner?.deviceID }))
         if projects != snapshot.projects { projects = snapshot.projects }
         let authoritativeProjects = Set(appState.repos.map(localProjectID))
             .union(remote.projects.filter {
@@ -270,7 +272,7 @@ struct SidebarView: View {
                 appState.repos[index].isCollapsed = false
             }
             onSelect(row.row.path)
-        } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == row.hostID }) {
+        } else if let mac = remoteMacsModel.remoteMac(delivering: row.row) {
             if row.availability == .asleep { onWakeRemoteWorktree(mac, row.row.path) }
             else { onSelectRemoteWorktree(mac, row.row.path) }
         }
@@ -318,8 +320,8 @@ struct SidebarView: View {
             }
         }
         ForEach((mergedProject?.members ?? []).filter { $0.owner?.deviceID != owner.deviceID && merged.availability(ofMember: $0.id) != .offline }, id: \.id) { member in
-            if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == member.owner?.deviceID }) {
-                Button(SidebarMergedRows.pullTitle(hostLabel: mac.label, isOnSeveralHosts: several)) {
+            if let mac = remoteMacsModel.remoteMac(delivering: member) {
+                Button(SidebarMergedRows.pullTitle(hostLabel: member.owner?.deviceLabel ?? mac.label, isOnSeveralHosts: several)) {
                     Task { @MainActor in
                         do {
                             // Waking also registers the route a sleeping host's row uses.
@@ -438,7 +440,7 @@ struct SidebarView: View {
         let _ = paneTitleInvalidations.generation
         // Project local and relayed rows once; every section below shares them.
         let local = localWorktrees
-        let promoted = remoteMacsModel.promotedWorktreesForRelay()
+        let promoted = remoteMacsModel.promotedWorktreesForRelay(includeRelayed: true).filter { $0.origin?.deviceID != owner.deviceID }
         let counts = activityCounts(local + promoted)
         let promotedContexts = relayedRowContexts(promoted)
         let merged = makeMerged(local: local)
@@ -848,7 +850,7 @@ struct SidebarView: View {
             worktreeBlock(worktree, repo: repo, displayName: row.leafName, activityCounts: counts,
                           hostLabel: SidebarMergedRows.hostText(row, isLocal: true))
                 .modifier(MergedRowInsets(projectColumn: showsProjectRail))
-        } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == row.hostID }) {
+        } else if let mac = remoteMacsModel.remoteMac(delivering: row.row) {
             remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.leafName,
                           hostLabel: SidebarMergedRows.hostText(row, isLocal: false), isAsleep: row.availability == .asleep,
                           onOpen: { openMergedRow(row) },
@@ -888,14 +890,17 @@ struct SidebarView: View {
 
     private func isReachable(host: RemoteDeviceID?) -> Bool {
         host == owner.deviceID || remoteMacsModel.savedRemoteMacs.contains {
-            $0.id == host && remoteMacsModel.connectionState(for: RemoteMacIdentity($0)) == .connected
+            let identity = RemoteMacIdentity($0)
+            return remoteMacsModel.connectionState(for: identity) == .connected
+                && ($0.id == host || (remoteMacsModel.paneFeedFailure(for: identity) == nil
+                    && remoteMacsModel.worktreePanesByRemote[identity]?.contains(where: { $0.origin?.deviceID == host }) == true))
         }
     }
 
     private func apply(_ move: SidebarMergedRows.PinnedMove) {
         switch move {
         case .legacy(let source, let target, let after):
-            guard let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == source.hostID }) else { return }
+            guard let mac = remoteMacsModel.remoteMac(delivering: source.row) else { return }
             Task { @MainActor in
                 do {
                     if source.availability == .asleep { try await remoteMacsModel.wake(mac) }
@@ -906,7 +911,7 @@ struct SidebarView: View {
             for write in writes {
                 if write.row.hostID == owner.deviceID, let repositoryID = write.row.row.repositoryID {
                     SidebarHostNavigation.setPinnedRank(write.rank, worktreeID: write.row.row.path, repositoryID: repositoryID, in: &appState)
-                } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == write.row.hostID }) {
+                } else if let mac = remoteMacsModel.remoteMac(delivering: write.row.row) {
                     Task { @MainActor in
                         do {
                             // Moving a sleeping host's row needs that host, so it wakes.

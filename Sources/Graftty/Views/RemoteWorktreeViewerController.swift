@@ -243,17 +243,17 @@ final class RemoteWorktreeViewerController: ObservableObject {
     var selectedWorktreeSnapshot: WorktreePanes? {
         guard let identity = selectedRemoteIdentity,
               let path = selectedRemoteWorktreePath else { return nil }
-        return Self.directWorktree(path, in: model.worktreePanesByRemote[identity])
+        return Self.receivedWorktree(path, in: model.worktreePanesByRemote[identity])
     }
 
-    /// The host's own row for `worktreePath`. Relayed copies of the same
-    /// path belong to another Mac and are never the viewer's to drive.
-    private static func directWorktree(
+    /// Paths and session names are scoped to the peer that delivered the row.
+    /// A depth-one row carries that peer's aliases for its downstream host.
+    private static func receivedWorktree(
         _ worktreePath: String,
         in worktrees: [WorktreePanes]?
     ) -> WorktreePanes? {
         worktrees?.first {
-            $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) == 0
+            $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) <= 1
         }
     }
 
@@ -287,7 +287,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
 
     /// In-flight rows (creating, deleting) cannot be selected.
     func canSelectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String) -> Bool {
-        guard let row = Self.directWorktree(worktreePath,
+        guard let row = Self.receivedWorktree(worktreePath,
             in: model.worktreePanesByRemote[RemoteMacIdentity(remoteMac)]) else { return true }
         return !row.state.isInFlight || row.showsCreationProgress
     }
@@ -548,7 +548,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
             worktreePanesByRemote: worktreePanesByRemote
         )
         openingRemoteWorktrees = openingRemoteWorktrees.filter { target in
-            Self.directWorktree(
+            Self.receivedWorktree(
                 target.worktreePath,
                 in: worktreePanesByRemote[target.identity]
             )?.state == .closed
@@ -618,7 +618,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 continue
             }
             let sessionNames = Set(
-                Self.directWorktree(target.worktreePath, in: worktrees)?
+                Self.receivedWorktree(target.worktreePath, in: worktrees)?
                     .layout?.leaves.map(\.sessionName) ?? []
             )
             if pendingRemoteCloseProjections[target]?
@@ -639,7 +639,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
             identity: identity,
             worktreePath: worktreePath
         )
-        guard let layout = Self.directWorktree(
+        guard let layout = Self.receivedWorktree(
             worktreePath,
             in: model.worktreePanesByRemote[identity]
         )?.layout else {
@@ -1170,7 +1170,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
             scheduledRemoteTerminalRetries[source] = nil
             guard selectedRemoteIdentity == source.identity,
                   selectedRemoteWorktreePath == source.worktreePath,
-                  Self.directWorktree(
+                  Self.receivedWorktree(
                     source.worktreePath,
                     in: model.worktreePanesByRemote[source.identity]
                   )?.layout?.leaves.contains(where: {
@@ -1679,7 +1679,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
             guard let index = pendingRemoteSplitFocus.firstIndex(
                 where: { $0.id == candidate.id }
             ),
-            let layout = Self.directWorktree(
+            let layout = Self.receivedWorktree(
                 candidate.target.worktreePath,
                 in: worktreePanesByRemote[candidate.target.identity]
             )?.layout,
@@ -1953,7 +1953,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
 
 extension RemoteMacsModel: RemoteWorktreeViewerModel {
     func connectViewer(to remoteMac: RemoteMac) async throws {
-        _ = try await connect(to: remoteMac)
+        _ = try await connectFromUserSelection(to: remoteMac)
     }
 
     func openViewerTerminalSession(identity: RemoteMacIdentity, sessionName: String) async throws

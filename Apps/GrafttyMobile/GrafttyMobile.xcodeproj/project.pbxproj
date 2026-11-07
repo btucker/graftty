@@ -92,6 +92,7 @@
 		9CAB4286C051BF25058BBD67 /* MobilePaneAttentionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194EE3FE3BE63175CDFFFD56 /* MobilePaneAttentionTests.swift */; };
 		9FC5E92497F5755C7182F797 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2E297959F982E90ED939C39C /* LaunchScreen.storyboard */; };
 		A15C2184ACE671D1B5A9E657 /* SSHAuthLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F926FB896E74D9503480EE19 /* SSHAuthLoopbackTests.swift */; };
+		A17B3AFF0CD135908E1DE9DA /* DownstreamHostConnectionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9921D790A6A82071FF565D5D /* DownstreamHostConnectionsTests.swift */; };
 		A2A8FAB0407FCC81AF649074 /* TerminalPixelSizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712112670C0A9DDB567FECDB /* TerminalPixelSizeTests.swift */; };
 		A4AD950A23C2135CEE502E61 /* BrowserControlInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4982A9F2DC39025093CF538 /* BrowserControlInteractionTests.swift */; };
 		A5E562FED5DC4896A34A9EAF /* IPadRootLayoutSettlingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC28973D4EE88CA9668F7DBD /* IPadRootLayoutSettlingTests.swift */; };
@@ -297,6 +298,7 @@
 		FCEA6370F15FD47532C3E4D8 /* RemoteHostConnectionLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteHostConnectionLoopbackTests.swift; sourceTree = "<group>"; };
 		FF7A5068D34751DE52E6705E /* PinnedHostStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedHostStoreTests.swift; sourceTree = "<group>"; };
 		FFA9EBD5ED690FBE824B636C /* PanesStateConvergenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanesStateConvergenceTests.swift; sourceTree = "<group>"; };
+		9921D790A6A82071FF565D5D /* DownstreamHostConnectionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownstreamHostConnectionsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -626,6 +628,7 @@
 				55ACC7CB64EC668F86941A9E /* ClientIdentityStoreTests.swift */,
 				DDEDB7E8E23CBF60EAE27AE4 /* ClientPairingSessionTests.swift */,
 				2AA7C834A8856AF7C62472A5 /* DirectSSHHostConnectionTests.swift */,
+				9921D790A6A82071FF565D5D /* DownstreamHostConnectionsTests.swift */,
 				A3F859A510953425E04054E5 /* GrafttyRemoteClientExportsTests.swift */,
 				79B8AF262726BA932EB21841 /* LocalPairingClientTests.swift */,
 				60928076E719B063ECA95EDA /* LoopbackPeerTests.swift */,
@@ -885,6 +888,7 @@
 				C41BF6706EDBE2AE5CFDB8A8 /* ClientIdentityStoreTests.swift in Sources */,
 				7666FAD2A496E34A4BF2B1DC /* ClientPairingSessionTests.swift in Sources */,
 				8FDA72B02F3A4F641627076C /* DirectSSHHostConnectionTests.swift in Sources */,
+				A17B3AFF0CD135908E1DE9DA /* DownstreamHostConnectionsTests.swift in Sources */,
 				E07139A524FE1DC983512192 /* GrafttyRemoteClientExportsTests.swift in Sources */,
 				2C255FE368B4B692B456569E /* InMemorySSHLink.swift in Sources */,
 				98AC04E6F02683813FED4084 /* LocalPairingClientTests.swift in Sources */,

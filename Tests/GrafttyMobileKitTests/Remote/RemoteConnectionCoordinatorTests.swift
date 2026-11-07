@@ -98,6 +98,62 @@ struct RemoteConnectionCoordinatorTests {
         #expect(dials.count == requested, "a background read keeps the cooldown")
     }
 
+    @Test("@spec REMOTE-2.36: When a mobile interaction fetches worktrees or sends a management request after a failed background dial, the application shall bypass the failure cooldown without replaying a management mutation.")
+    func demandReadsAndManagementBypassCooldown() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: Curve25519.Signing.PrivateKey())
+        let dials = CallCounter()
+        let coordinator = RemoteConnectionCoordinator(directory: dir,
+            signaling: SignalingClient(transport: { _, _ in dials.increment(); throw URLError(.cannotConnectToHost) }),
+            now: { Date(timeIntervalSince1970: 1_800_000_000) })
+        #expect(await coordinator.connection(for: host, wake: .never) == nil)
+        let quiet = dials.count
+        _ = try? await coordinator.sendWorktreeManagement(.listRemoteMacConnections, to: host, wake: .never)
+        #expect(dials.count == quiet, "background management polls preserve the cooldown")
+        let feed = MultiHostFeed(coordinator: coordinator)
+        _ = try? await feed.fetchRows(on: host)
+        #expect(dials.count > quiet)
+        let fetched = dials.count
+        _ = try? await coordinator.sendWorktreeManagement(.listRemoteMacConnections, to: host)
+        #expect(dials.count > fetched)
+    }
+
+    @Test("Concurrent demand callers share one retry after a failed ordinary dial", .timeLimit(.minutes(1)))
+    func demandCallersShareRetryAfterFailedOrdinaryDial() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: Curve25519.Signing.PrivateKey())
+        let gate = Gate()
+        let dials = CallCounter()
+        let coordinator = RemoteConnectionCoordinator(directory: dir,
+            signaling: SignalingClient(transport: { _, _ in
+                dials.increment()
+                await gate.wait()
+                throw URLError(.cannotConnectToHost)
+            }))
+        let ordinary = Task { await coordinator.connection(for: host, wake: .whileDialing) }
+        try await gate.waitUntilEntered()
+        let (started, signal) = AsyncStream<Void>.makeStream()
+        let demand = Task { @MainActor in
+            signal.yield(())
+            return await coordinator.connection(for: host, wake: .now)
+        }
+        let secondDemand = Task { @MainActor in
+            signal.yield(())
+            return await coordinator.connection(for: host, wake: .now)
+        }
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+        _ = await iterator.next()
+        await gate.open()
+        #expect(await ordinary.value == nil)
+        #expect(await demand.value == nil)
+        #expect(await secondDemand.value == nil)
+        #expect(dials.count == 2, "one failed ordinary dial and one shared demand retry")
+    }
+
+
     // MARK: - Fast-nil for unpaired hosts
 
     @Test(.timeLimit(.minutes(1)))

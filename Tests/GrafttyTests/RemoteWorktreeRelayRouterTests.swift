@@ -8,6 +8,19 @@ import Testing
 @Suite("Remote worktree one-hop relay")
 @MainActor
 struct RemoteWorktreeRelayRouterTests {
+    @Test("Listing onward repositories preserves local downstream project routes")
+    func onwardRepositoryListPreservesDownstreamRoute() throws {
+        let remote = try makeRemoteMac()
+        let router = RemoteWorktreeRelayRouter()
+        let owner = WorktreeOrigin(deviceID: .init(value: "worker"), deviceLabel: "Worker", relayDepth: 1)
+        let project = SidebarProject(id: "worker:project", repositoryID: "worker-repo-alias", name: "Project", owner: owner)
+        let promoted = try #require(router.promoteProjects([project], from: remote, includeRelayed: true).first)
+        let before = try #require(router.resolveRepository(promoted.repositoryID))
+        _ = router.promotedRepositories([], from: remote)
+        #expect(router.resolveRepository(promoted.repositoryID) == before)
+        #expect(before.downstreamOwnerID == owner.deviceID)
+    }
+
     @Test("@spec REMOTE-13.32: When a paged relay reports checkpoint or grid dimensions, the application shall publish the size callback only after earlier output events have been consumed.", arguments: [false, true])
     func pagedSizeCallbacksFollowQueuedOutput(checkpoint: Bool) async throws {
         let client = RelayWebSocketClient()
