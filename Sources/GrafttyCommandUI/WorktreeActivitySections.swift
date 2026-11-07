@@ -49,13 +49,13 @@ public struct WorktreeActivitySections: Sendable, Equatable {
         // A sleeping host's status never says working, so only creation has to ask.
         func livePlacement(_ row: MergedWorktreeRow) -> Placement {
             let rowContext = context(row.row)
-            let isAsleep = row.availability == .asleep
-            switch SidebarRowStatus.resolve(context: rowContext, worktree: row.row, isAsleep: isAsleep) {
+            let isCached = row.availability == .wakeable
+            switch SidebarRowStatus.resolve(context: rowContext, worktree: row.row, isCached: isCached) {
             case .question, .notification:
                 asked[row.id] = rowDate(row.row, context: rowContext)?.timeIntervalSinceReferenceDate ?? -.infinity
                 return .needsYou
             case .working: return .working
-            case .whereWeAre, .none: return row.row.state == .creating && !isAsleep ? .working : .recent
+            case .whereWeAre, .none: return row.row.state == .creating && !isCached ? .working : .recent
             }
         }
         for row in pinned.flattenedRows {

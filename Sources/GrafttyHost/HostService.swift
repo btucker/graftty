@@ -94,14 +94,14 @@ final class HostService {
         let attachment = RemoteAttachmentRegistry()
         let subscribe: PanesStateChannelHandler.Subscribe = { onChange in
             let initial = await runtime.panesMessage()
-            await onChange(initial)
+            await onChange(PanesStatePublication(initial))
             let task = Task {
                 var last = initial
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(1))
                     guard !Task.isCancelled else { return }
                     let next = await runtime.panesMessage()
-                    if next != last { last = next; await onChange(next) }
+                    if next != last { last = next; await onChange(PanesStatePublication(next)) }
                 }
             }
             return .init { task.cancel() }

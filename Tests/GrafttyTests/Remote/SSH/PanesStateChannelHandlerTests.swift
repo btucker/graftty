@@ -162,7 +162,7 @@ private final class FakeSubscription: @unchecked Sendable {
     private let lock = NIOLock()
     private var _subscribed = false
     private var _cancelled = false
-    private var _onChange: (@Sendable (PanesStateMessage) async -> Void)?
+    private var _onChange: (@Sendable (PanesStatePublication) async -> Void)?
     private let initialSnapshot: [WorktreePanes]
 
     var subscribed: Bool { lock.withLock { _subscribed } }
@@ -173,7 +173,7 @@ private final class FakeSubscription: @unchecked Sendable {
     }
 
     func subscribe(
-        _ onChange: @escaping @Sendable (PanesStateMessage) async -> Void
+        _ onChange: @escaping @Sendable (PanesStatePublication) async -> Void
     ) async -> PanesStateChannelHandler.Cancellable {
         lock.withLock {
             _subscribed = true
@@ -214,7 +214,7 @@ private final class SuspendingFakeSubscription: @unchecked Sendable {
     }
 
     func subscribe(
-        _ onChange: @escaping @Sendable (PanesStateMessage) async -> Void
+        _ onChange: @escaping @Sendable (PanesStatePublication) async -> Void
     ) async -> PanesStateChannelHandler.Cancellable {
         // Fire the initial snapshot so the handler can write it, then suspend
         // until release() is called — simulating a slow subscribe path.

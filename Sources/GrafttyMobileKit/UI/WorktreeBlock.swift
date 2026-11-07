@@ -19,7 +19,7 @@ struct WorktreeBlock: View {
     let context: SidebarWorktreeContext
     let onSelect: () -> Void
     /// A row from a sleeping host's last report: dim, and tapping wakes it.
-    var isAsleep = false
+    var isCached = false
     /// Text after the name: see `SidebarMergedRows.hostText`. The Projects
     /// screen also names the project here.
     var hostText: String? = nil
@@ -58,7 +58,7 @@ struct WorktreeBlock: View {
         .padding(.trailing, projectColumn ? 8 : 2)
         .padding(.vertical, 5)
         .frame(minHeight: 44)
-        .opacity(isAsleep ? 0.55 : 1)
+        .opacity(isCached ? 0.55 : 1)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(highlightFill)
@@ -133,7 +133,7 @@ struct WorktreeBlock: View {
     }
 
     private var status: SidebarRowStatus {
-        SidebarRowStatus.resolve(context: context, worktree: worktree, isAsleep: isAsleep)
+        SidebarRowStatus.resolve(context: context, worktree: worktree, isCached: isCached)
     }
 
     @ViewBuilder

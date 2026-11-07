@@ -18,7 +18,7 @@ struct SidebarRowStatusTests {
         WorktreeBrief(recap: AttentionRecap(title: "t", completed: "Tests pass.", next: "n"), at: Date(timeIntervalSince1970: 1))
     }
     private func status(_ row: WorktreePanes, asleep: Bool = false) -> SidebarRowStatus {
-        SidebarRowStatus.resolve(context: SidebarWorktreeContext(worktree: row), worktree: row, isAsleep: asleep)
+        SidebarRowStatus.resolve(context: SidebarWorktreeContext(worktree: row), worktree: row, isCached: asleep)
     }
 
     @Test func onlyAQuestionOrPaneNotificationOpensAPane() {

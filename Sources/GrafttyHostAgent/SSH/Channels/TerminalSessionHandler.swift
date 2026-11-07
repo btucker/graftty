@@ -66,6 +66,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private var historyChannel: Channel?
     /// Nil unless the client negotiated an output window before `shell`.
     private var outputCredit: TerminalOutputCreditGate?
+    private var usesBinaryPaging = false
     private var historyForwardingTask: Task<Void, Never>?
     private var historyForwardingContinuation: AsyncStream<Data>.Continuation?
     private var historyPending = false
@@ -207,6 +208,9 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             }
             if envEvent.name == "GRAFTTY_SESSION" {
                 envSessionName = envEvent.value
+            }
+            if envEvent.name == PagedTerminalBinary.environmentName, stream == nil, pagedFactory != nil {
+                usesBinaryPaging = envEvent.value == PagedTerminalBinary.encodingName
             }
             // Acknowledge the env request if a reply was requested.
             // (Other env names are accepted silently — no-op.)
@@ -594,6 +598,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
 
     private func startPagedForwarding(stream: any PagedTerminalStream, channel: Channel, loop: EventLoop) {
         let credit = outputCredit
+        let binaryPaging = usesBinaryPaging
         inboundForwardingTask = Task { [weak self] in
             do {
                 for await event in stream.events {
@@ -602,11 +607,17 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                     case .output(let bytes):
                         try await Self.writeOutput(bytes, to: channel, credit: credit)
                     case .checkpoint, .page, .unavailable, .grid:
-                        let text = try PagedTerminalEnvelope(event: event).encoded()
-                        guard let framed = StdErrControlFraming.encode(text) else { throw PagedTerminalEnvelope.Error.tooLarge }
+                        let payload: Data
+                        switch event {
+                        case .checkpoint where binaryPaging, .page where binaryPaging:
+                            // Checkpoint and page bytes avoid JSON base64 expansion.
+                            payload = try PagedTerminalBinary.encode(event)
+                        default:
+                            payload = Data(try PagedTerminalEnvelope(event: event).encoded().utf8)
+                        }
+                        guard let framed = StdErrControlFraming.encode(payload) else { throw PagedTerminalEnvelope.Error.tooLarge }
                         // Subsystem negotiation already proves carrier support.
                         // READY must not wait for an ownership hello.
-                        let data = SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(bytes: framed)))
                         let historyOutput = try await loop.submit { [weak self] in
                             switch event {
                             case .checkpoint: self?.checkpointPending = false
@@ -623,10 +634,11 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                         // Only history pages move across transports. Checkpoints,
                         // grid changes and live bytes keep their original order.
                         if case .page = event, let historyOutput {
-                            guard case .enqueued = historyOutput.yield(Data(framed)) else {
+                            guard case .enqueued = historyOutput.yield(framed) else {
                                 throw PagedTerminalEnvelope.Error.tooLarge
                             }
                         } else {
+                            let data = SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(bytes: framed)))
                             try await channel.writeAndFlush(data).get()
                         }
                         if case .grid(let cols, let rows) = event {

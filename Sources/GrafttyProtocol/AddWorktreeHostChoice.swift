@@ -28,7 +28,7 @@ public struct AddWorktreeHostChoice: Identifiable, Sendable, Equatable {
         }
     }
 
-    /// `wakesOnOpen` is true only when every selectable host is asleep, because
+    /// `wakesOnOpen` is true only when every selectable host needs reconnection, because
     /// opening the sheet needs a host to load branches from.
     public static func defaultChoice(_ choices: [AddWorktreeHostChoice], lastUsedID: String?)
         -> (choice: AddWorktreeHostChoice, wakesOnOpen: Bool)? {

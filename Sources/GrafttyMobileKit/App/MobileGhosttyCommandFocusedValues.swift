@@ -198,7 +198,7 @@ struct MobileGhosttyCommandButtons: View {
     }
 }
 
-private enum UIKeyCommandInputFromChord {
+enum UIKeyCommandInputFromChord {
     static func input(from chord: ShortcutChord) -> String? {
         if chord.key.count == 1 {
             return chord.key
@@ -241,7 +241,7 @@ private enum UIKeyCommandInputFromChord {
     }
 }
 
-private extension UIKeyModifierFlags {
+extension UIKeyModifierFlags {
     var normalizedAppCommandModifiers: UIKeyModifierFlags {
         intersection([.shift, .control, .alternate, .command])
     }

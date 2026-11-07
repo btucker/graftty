@@ -2,12 +2,86 @@ import CryptoKit
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
+import NIOCore
+import NIOSSH
 import Testing
 @testable import GrafttyHostAgent
 @testable import GrafttyRemoteClient
 
 @Suite("Negotiated WebRTC bulk transport", .serialized)
 struct WebRTCBulkTransportTests {
+    @Test("@spec REMOTE-11.27: If an optional history channel cannot open before its deadline, then the application shall preserve the active terminal and deliver history over its primary channel.", .timeLimit(.minutes(1)))
+    func stalledHistoryOpenPreservesTerminal() async throws {
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TrustedPeerStore(directory: dir)
+        let peer = TrustedPeer(id: .init(value: "stalled-history"), kind: .mac,
+            publicKey: try .init(rawRepresentation: clientKey.publicKey.rawRepresentation),
+            displayName: "test", capabilities: .defaultsAfterPairing, pairedAt: Date(), lastSeenAt: nil)
+        try store.add(peer)
+        let host = WebRTCHostAgent(hostKey: hostKey, trustedPeerStore: store,
+            streamFactory: { _ in LegacyBulkEchoStream() }, pagedFactory: { _ in BulkEchoStream() },
+            panesStateSubscribe: { _ in .init(cancel: {}) },
+            paneControlMutator: { _ in fatalError("not used") },
+            displayOwnershipStore: SessionDisplayOwnershipStore())
+        let client = RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: .init(
+            of: try .init(rawRepresentation: hostKey.publicKey.rawRepresentation)))
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            historyFallbackStage("[history-fallback] watchdog closing client")
+            await client.close()
+            historyFallbackStage("[history-fallback] watchdog closing host")
+            await host.close()
+        }
+        defer { deadline.cancel() }
+        do {
+            let offer = try await client.createOffer()
+            let answer = try await host.acceptOffer(offer, clientDeviceID: peer.id)
+            try await client.applyAnswer(answer)
+            let readyDeadline = ContinuousClock.now + .seconds(5)
+            while await !client.hasBulkTransportForTesting, ContinuousClock.now < readyDeadline {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            let bulk = try #require(await client.bulkTransportForTesting)
+            try await bulk.channel.eventLoop.submit {
+                let pipeline = bulk.channel.pipeline.syncOperations
+                let ssh = try pipeline.handler(type: NIOSSHHandler.self)
+                try pipeline.addHandler(HistoryOpenBlackhole(), position: .before(ssh))
+            }.get()
+            let terminal = try await client.openTerminalSession(sessionName: "foreground", preferPaged: true)
+            historyFallbackStage("[history-fallback] opened terminal")
+            defer { terminal.close() }
+            _ = try await terminal.receive() // Initial checkpoint uses the primary channel.
+            historyFallbackStage("[history-fallback] received checkpoint")
+            // Exercise the real five-second open deadline, then verify the
+            // same terminal still carries both output and history.
+            try await Task.sleep(for: .seconds(6))
+            try await terminal.send(.binary(Data("still-live".utf8)))
+            #expect(try await terminal.receive() == .binary(Data("still-live".utf8)))
+            historyFallbackStage("[history-fallback] received live echo")
+            let request = PagedTerminalHistoryRequest(incarnation: 1, checkpointID: 2,
+                requestID: 3, ordinal: 0, screen: 0)
+            try await terminal.send(.text(try PagedTerminalEnvelope(request: .history(request)).encoded()))
+            guard case .paged(.page(let page)) = try await terminal.receive() else {
+                throw BulkTestError.unexpected
+            }
+            #expect(page.data == Data([1, 2, 3]))
+            historyFallbackStage("[history-fallback] received history")
+            #expect(await client.state == .connected)
+            historyFallbackStage("[history-fallback] closing client")
+            await client.close()
+            historyFallbackStage("[history-fallback] closed client; closing host")
+            await host.close()
+            historyFallbackStage("[history-fallback] closed host")
+        } catch {
+            await client.close()
+            await host.close()
+            throw error
+        }
+    }
+
     @Test("@spec REMOTE-11.17: When both peers support bulk transport, the client shall authenticate a second ordered WebRTC channel for background traffic; if the host rejects negotiation, the client shall retain the legacy transport.",
           .timeLimit(.minutes(1)), arguments: [true, false])
     func negotiatesAndFallsBack(enabled: Bool) async throws {
@@ -43,11 +117,9 @@ struct WebRTCBulkTransportTests {
             try await client.applyAnswer(answer)
             let foreground = try await client.openTerminalSession(sessionName: "foreground", preferPaged: true)
             let background = try await client.openTerminalSession(sessionName: "preview", background: true)
-            if case .text(let checkpoint) = try await foreground.receive() {
-                guard case .checkpoint = try PagedTerminalEnvelope.parse(checkpoint).event else {
-                    Issue.record("expected checkpoint"); throw BulkTestError.unexpected
-                }
-            } else { Issue.record("expected checkpoint text") }
+            guard case .paged(.checkpoint) = try await foreground.receive() else {
+                throw BulkTestError.unexpected
+            }
             if enabled {
                 let boundDeadline = ContinuousClock.now.advanced(by: .seconds(2))
                 while !foreground.hasHistoryChannelForTesting, ContinuousClock.now < boundDeadline {
@@ -57,12 +129,10 @@ struct WebRTCBulkTransportTests {
             }
             let request = PagedTerminalHistoryRequest(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0, screen: 0)
             try await foreground.send(.text(try PagedTerminalEnvelope(request: .history(request)).encoded()))
-            if case .text(let page) = try await foreground.receive() {
-                guard case .page(let value) = try PagedTerminalEnvelope.parse(page).event else {
-                    Issue.record("expected history page"); throw BulkTestError.unexpected
-                }
-                #expect(value.data == Data([1, 2, 3]))
-            } else { Issue.record("expected history text") }
+            guard case .paged(.page(let value)) = try await foreground.receive() else {
+                throw BulkTestError.unexpected
+            }
+            #expect(value.data == Data([1, 2, 3]))
             #expect(await client.hasBulkTransportForTesting == enabled)
             #expect(host.activeRemotePeers.entries.count == (enabled ? 2 : 1))
             for terminal in [foreground, background] {
@@ -90,6 +160,13 @@ struct WebRTCBulkTransportTests {
             await host.close()
             throw error
         }
+    }
+}
+
+private final class HistoryOpenBlackhole: ChannelOutboundHandler, @unchecked Sendable {
+    typealias OutboundIn = ByteBuffer
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        promise?.succeed(())
     }
 }
 private enum BulkTestError: Error { case unexpected }
@@ -120,4 +197,9 @@ private final class LegacyBulkEchoStream: GrafttyKit.TerminalByteStream, @unchec
     init() { (inboundBytes, continuation) = AsyncStream.makeStream() }
     func send(_ bytes: Data) async throws { continuation.yield(bytes) }
     func close() async { continuation.finish() }
+}
+
+private func historyFallbackStage(_ message: String) {
+    // Keep the last completed phase even if native shutdown blocks forever.
+    FileHandle.standardError.write(Data((message + "\n").utf8))
 }

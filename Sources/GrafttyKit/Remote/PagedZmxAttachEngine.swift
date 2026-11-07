@@ -12,9 +12,8 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     public enum Error: Swift.Error { case unsupported, alreadyStarted, closed, invalidFrame, socket(Int32) }
     public var usesHostClipboard: Bool { true }
     public let events: AsyncStream<PagedTerminalEvent>
-    private let continuation: AsyncStream<PagedTerminalEvent>.Continuation
+    private let outputBuffer: TerminalEventBuffer<PagedTerminalEvent>
     private let config: Config
-    private let onBackpressure: (@Sendable () -> Void)?
     private let onReaderExit: (@Sendable () -> Void)?
     private let lock = NSLock()
     private var descriptor: Int32 = -1
@@ -49,11 +48,20 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
     init(config: Config, onBackpressure: (@Sendable () -> Void)?, onReaderExit: (@Sendable () -> Void)?) {
         self.config = config
-        self.onBackpressure = onBackpressure
         self.onReaderExit = onReaderExit
-        let pair = AsyncStream<PagedTerminalEvent>.makeStream(bufferingPolicy: .bufferingOldest(256))
-        events = pair.stream
-        continuation = pair.continuation
+        let buffer = TerminalEventBuffer<PagedTerminalEvent>(size: { event in
+            switch event {
+            case .output(let bytes): bytes.count + 128
+            case .checkpoint(let value): value.ready.count + 128
+            case .page(let value): value.data.count + 128
+            default: 128
+            }
+        })
+        outputBuffer = buffer
+        events = AsyncStream(unfolding: { await buffer.next() },
+            onCancel: { buffer.onCancel?(); buffer.finish(discard: true) })
+        buffer.onBackpressure = onBackpressure
+        buffer.onCancel = { [weak self] in self?.closeSync() }
     }
 
     public func start() async throws {
@@ -138,7 +146,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
             defer {
                 self?.lock.withLock { self?.descriptor = -1 }
                 GrafttyPOSIX.close(fd)
-                self?.closeSync()
+                self?.closeSync(discard: false)
                 self?.onReaderExit?()
             }
             do {
@@ -198,7 +206,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     public func close() { closeSync() }
     deinit { closeSync() }
 
-    private func closeSync() {
+    private func closeSync(discard: Bool = true) {
         let detach = lock.withLock { () -> Bool in
             guard !closed else { return false }
             closed = true
@@ -211,7 +219,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         }
         if detach { attachmentRegistry?.detach(sessionName: config.sessionName) }
         inputState?.removeSession(config.sessionName)
-        continuation.finish()
+        outputBuffer.finish(discard: discard)
     }
 
     private func sendFrame(tag: UInt8, payload: Data) throws {
@@ -294,25 +302,11 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
     private func emit(_ event: PagedTerminalEvent) {
         if case .checkpoint(let checkpoint) = event { updateSize(cols: checkpoint.cols, rows: checkpoint.rows) }
-        // A takeover redraw can outpace the renderer while it applies the
-        // new grid. bufferingOldest rejects the submitted event when full;
-        // retry that same event on this dedicated reader thread so the
-        // socket supplies backpressure without losing bytes or ordering.
-        while !lock.withLock({ closed }) {
-            switch continuation.yield(event) {
-            case .enqueued: return
-            case .dropped:
-                onBackpressure?()
-                Thread.sleep(forTimeInterval: 0.001)
-            case .terminated:
-                closeSync()
-                return
-            @unknown default:
-                closeSync()
-                return
-            }
-        }
+        // Only this dedicated blocking reader waits. Consumption signals
+        // space immediately, with no timer wakeups while the renderer stalls.
+        if !outputBuffer.append(event) { closeSync() }
     }
+
     private func updateSize(cols: UInt16, rows: UInt16) {
         let callback = lock.withLock { () -> ((UInt16, UInt16) -> Void)? in
             guard !closed else { return nil }

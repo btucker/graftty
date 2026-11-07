@@ -18,6 +18,7 @@ extension SurfaceHandle: TerminalScrollback {
     }
 
     func scroll(toRow row: Int) {
+        defer { requestViewportHistory() }
         if followerPresentation?.reveal(row: UInt64(max(0, row))) == true { return }
         Self.scroll(surface, toRow: row)
     }

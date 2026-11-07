@@ -19,13 +19,13 @@ struct SidebarAttentionDismissalTests {
         let navigation = SidebarNavigationState(prefix: "dismissal.\(UUID())")
         let row = asking()
         let context = navigation.worktreeContext(row)
-        #expect(SidebarRowStatus.resolve(context: context, worktree: row, isAsleep: false).needsAttention)
+        #expect(SidebarRowStatus.resolve(context: context, worktree: row, isCached: false).needsAttention)
         #expect(SidebarAttentionDismissal.isAvailable(context))
         #expect(SidebarAttentionDismissal.title == "Dismiss Request")
 
         navigation.dismissRequest(in: context)
         let dismissed = navigation.worktreeContext(row)
-        #expect(!SidebarRowStatus.resolve(context: dismissed, worktree: row, isAsleep: false).needsAttention)
+        #expect(!SidebarRowStatus.resolve(context: dismissed, worktree: row, isCached: false).needsAttention)
         #expect(!SidebarAttentionDismissal.isAvailable(dismissed))
 
         let later = asking(at: 200)

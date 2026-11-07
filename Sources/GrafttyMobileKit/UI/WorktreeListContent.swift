@@ -620,9 +620,9 @@ public struct WorktreeListContent: View {
             return
         }
         guard let project = merged.project(id: id) else { return }
-        // Every host for this project is asleep. A rank needs somewhere to be
+        // Every host for this project needs reconnection. A rank needs somewhere to be
         // stored, so wake one; it only moves once that host has it.
-        if project.availability == .asleep, let member = project.members.first(where: { $0.rank != nil }), let host = feed.host(for: member) {
+        if project.availability == .wakeable, let member = project.members.first(where: { $0.rank != nil }), let host = feed.host(for: member) {
             Task { @MainActor in
                 guard await feed.wake(host) else {
                     showErrorToast("\(host.label) didn't respond, so the project stayed in place.")
@@ -703,7 +703,7 @@ public struct WorktreeListContent: View {
         let rows = merged.flattenedRows(for: project.id)
         // Choosing a project isn't reason enough to wake its hosts.
         if let target = rows.first(where: { $0.id == navigation.rememberedWorktrees[project.id] }) ?? rows.first,
-           target.availability != .asleep {
+           target.availability != .wakeable {
             beginSelectingWorktree(target.row)
         }
     }
@@ -948,7 +948,7 @@ public struct WorktreeListContent: View {
             projectColumn: true,
             context: navigation.worktreeContext(wt),
             onSelect: { beginSelectingWorktree(wt) },
-            isAsleep: row.availability == .asleep,
+            isCached: row.availability == .wakeable,
             hostText: namesProject ? nil : SidebarMergedRows.hostText(row, isLocal: false),
             eyebrow: namesProject
                 ? [merged.project(id: merged.mergedID(forMember: memberID))?.name, SidebarMergedRows.hostText(row, isLocal: false)]

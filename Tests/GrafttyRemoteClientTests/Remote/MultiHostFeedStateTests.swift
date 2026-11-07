@@ -3,7 +3,7 @@ import Testing
 import GrafttyProtocol
 @testable import GrafttyRemoteClient
 
-@Suite("@spec IPAD-1.33: While the app shows worktrees from several paired hosts, the application shall merge their rows and projects, show cached rows for sleeping hosts, and keep each row tied to the host that delivered it.")
+@Suite("@spec IPAD-1.33: While the app shows worktrees from several paired hosts, the application shall merge their rows and projects, show cached rows for disconnected hosts with wake details, and keep each row tied to the host that delivered it.")
 struct MultiHostFeedStateTests {
     private let hostA = UUID(), hostB = UUID()
     private let deviceA = RemoteDeviceID(value: "a"), deviceB = RemoteDeviceID(value: "b")
@@ -53,8 +53,26 @@ struct MultiHostFeedStateTests {
         state.setCache(.init(projects: [project(deviceB)], rows: [row("sat", device: deviceB)]), for: hostB)
         #expect(state.rows.map(\.displayName) == ["sat"])
         let merged = state.merged(localDeviceID: nil)
-        #expect(merged.projects[0].availability == .asleep)
-        #expect(merged.sections(for: merged.projects[0].id).temporary[0].availability == .asleep)
+        #expect(merged.projects[0].availability == .wakeable)
+        #expect(merged.sections(for: merged.projects[0].id).temporary[0].availability == .wakeable)
+    }
+
+    @Test("@spec REMOTE-2.37: While a paired host has saved wake details but no live report, the application shall label its cached projects and worktrees as not connected without inferring that the host is asleep, and retain their reconnect actions.")
+    func wakeMetadataDoesNotAssertHostSleep() throws {
+        var state = state(wakeableB: true)
+        state.setCache(.init(projects: [project(deviceB)], rows: [row("cached", device: deviceB)]), for: hostB)
+        for _ in 0..<2 {
+            let merged = state.merged(localDeviceID: nil)
+            let project = try #require(merged.projects.first)
+            let row = try #require(merged.sections(for: project.id).temporary.first)
+            #expect(project.representative.statusLabel == "Not connected")
+            #expect(state.availability(of: hostB).connectionLabel == "Not connected")
+            #expect(SidebarMergedRows.hostText(row, isLocal: false)?.contains("not connected") == true)
+            #expect(project.representative.isAvailable)
+            #expect(state.hostID(for: row.row) == hostB)
+            // A failed connection must not turn wake capability into sleep evidence.
+            state.markUnavailable(hostB)
+        }
     }
     @Test func cacheIsIgnoredWithoutWakeAddresses() {
         var state = state(wakeableB: false)
@@ -73,7 +91,7 @@ struct MultiHostFeedStateTests {
         state.apply(rows: [row("new", device: deviceB)], projects: [project(deviceB)], from: hostB)
         state.markUnavailable(hostB)
         #expect(state.rows.map(\.displayName) == ["new"])
-        #expect(state.merged(localDeviceID: nil).projects[0].availability == .asleep)
+        #expect(state.merged(localDeviceID: nil).projects[0].availability == .wakeable)
     }
     @Test func otherUnavailableHostHidesRowsAndIsOffline() {
         var state = state(wakeableB: false)
@@ -115,7 +133,7 @@ struct MultiHostFeedStateTests {
         state.apply(rows: [row("two", device: deviceB)], projects: [project(deviceB)], from: hostB)
         state.setWakeable(true, for: hostB)
         state.markUnavailable(hostB)
-        #expect(state.isAsleep(hostB))
+        #expect(state.needsReconnect(hostB))
         #expect(state.rows.map(\.displayName) == ["two"])
     }
     @Test func sleepingRowsAreNotLive() {

@@ -91,7 +91,6 @@ public final class SessionClient {
     }
     @ObservationIgnored
     internal var additionalHistoryRowCapacity: (() -> UInt32)?
-    private var historyPollTask: Task<Void, Never>?
     private var installingCheckpointGrid: GridSize?
     private var snapshotGrid: GridSize?
     private var usesPagedHistory = false
@@ -628,20 +627,13 @@ public final class SessionClient {
                                 guard self.isCurrentTransport(generation) else { return }
                                 self.session.receive(data)
                             }
+                        case .paged(let event):
+                            guard self.usesPagedHistory else { throw URLError(.badServerResponse) }
+                            try await self.receivePagingEvent(event, generation: generation)
                         case .text(let text):
                             if self.usesPagedHistory,
                                let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
-                                let appliedGrid = try await self.paging?.handle(event)
-                                self.tracePagedEvent(event)
-                                guard self.isCurrentTransport(generation) else { return }
-                                if case .checkpoint = event, appliedGrid != nil {
-                                    self.hasPagedCheckpoint = true
-                                    self.terminalReplay.snapshotDidInstall()
-                                }
-                                if let appliedGrid {
-                                    self.snapshotGrid = GridSize(cols: appliedGrid.cols, rows: appliedGrid.rows)
-                                }
-                                self.installingCheckpointGrid = nil
+                                try await self.receivePagingEvent(event, generation: generation)
                             } else {
                                 guard try await self.receiveTextFrame(text, generation: generation) else { return }
                                 if !initialReplay.isEmpty, self.authoritativeGrid != nil {
@@ -808,7 +800,6 @@ public final class SessionClient {
                 self.usesPagedHistory = client.supportsPagedHistory
                 self.hasPagedCheckpoint = false
                 self.setWS(client)
-                if self.usesPagedHistory { self.startHistoryPaging() }
                 await self.sendHelloIfSupported(on: client)
                 guard self.isCurrentTransport(generation) else {
                     client.close()
@@ -1205,21 +1196,26 @@ public final class SessionClient {
         ownershipSnapshot = nil
     }
 
-    private func startHistoryPaging() {
-        historyPollTask?.cancel()
-        historyPollTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-                guard let self, !self.stopped else { return }
-                // Preview tiles never prefetch a terminal's old history.
-                if self.role != .preview { await self.paging?.loadIfNeeded() }
-            }
+    private func receivePagingEvent(_ event: PagedTerminalEvent, generation: UInt64) async throws {
+        let appliedGrid = try await self.paging?.handle(event)
+        self.tracePagedEvent(event)
+        guard self.isCurrentTransport(generation) else { return }
+        if case .checkpoint = event, appliedGrid != nil {
+            self.hasPagedCheckpoint = true
+            self.terminalReplay.snapshotDidInstall()
         }
+        if let appliedGrid {
+            self.snapshotGrid = GridSize(cols: appliedGrid.cols, rows: appliedGrid.rows)
+        }
+        self.installingCheckpointGrid = nil
+    }
+
+    public func historyViewportDidChange(requestHistory: Bool = true) async {
+        guard !stopped, usesPagedHistory, hasPagedCheckpoint, role != .preview else { return }
+        await paging?.viewportDidChange(requestHistory: requestHistory)
     }
 
     private func stopHistoryPaging() {
-        historyPollTask?.cancel()
-        historyPollTask = nil
         paging?.disconnect()
         usesPagedHistory = false
         hasPagedCheckpoint = false

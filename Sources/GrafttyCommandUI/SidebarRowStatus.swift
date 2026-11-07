@@ -37,9 +37,9 @@ public enum SidebarRowStatus: Equatable, Sendable {
         }
     }
 
-    /// `isAsleep` means the row came from the host's last report: nothing is
+    /// `isCached` means the row came from the host's last report: nothing is
     /// known to be running, so only the saved where-we-are text is meaningful.
-    public static func resolve(context: SidebarWorktreeContext, worktree: WorktreePanes, isAsleep: Bool) -> SidebarRowStatus {
+    public static func resolve(context: SidebarWorktreeContext, worktree: WorktreePanes, isCached: Bool) -> SidebarRowStatus {
         let completed = context.brief?.completed.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         // A stop stays unread until viewed, whether or not it asked anything.
         // It outranks pane liveness, which lags behind it, unless the agent resumed.
@@ -47,7 +47,7 @@ public enum SidebarRowStatus: Equatable, Sendable {
         func whereWeAre(isUnread: Bool) -> SidebarRowStatus {
             completed.isEmpty ? .none : .whereWeAre(completed, isUnread: isUnread)
         }
-        if isAsleep { return whereWeAre(isUnread: false) }
+        if isCached { return whereWeAre(isUnread: false) }
         if let question = context.question { return .question(question, paneID: context.questionPaneID) }
         if let notice = context.pending.first(where: { $0.agentStop == nil && $0.occurrence?.source != .agentStop }),
            let text = notice.occurrence?.text {

@@ -219,7 +219,7 @@ private final class AgentIntegrationMacHost {
                 try await engine.start()
                 return engine
             }, panesStateSubscribe: { onChange in
-                await onChange(await runtime.panesMessage())
+                await onChange(PanesStatePublication(await runtime.panesMessage()))
                 return .init(cancel: {})
             }, paneControlMutator: { await runtime.control($0) },
             worktreeManagementMutator: { await runtime.manage($0) }, displayOwnershipStore: ownership)

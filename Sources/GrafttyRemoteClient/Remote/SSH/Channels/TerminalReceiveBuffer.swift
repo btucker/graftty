@@ -52,6 +52,14 @@ struct TerminalReceiveBuffer {
         switch frame {
         case .binary(let data): data.count
         case .text(let text): text.utf8.count
+        case .paged(let event):
+            // The binary codec bounds metadata to 4 KiB. Account for it as
+            // well as the retained payload without serializing a second time.
+            switch event {
+            case .checkpoint(let value): value.ready.count + 4096
+            case .page(let value): value.data.count + 4096
+            default: 4096
+            }
         }
     }
 

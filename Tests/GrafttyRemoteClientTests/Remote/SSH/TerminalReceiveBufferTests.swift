@@ -61,6 +61,21 @@ struct TerminalReceiveBufferTests {
         #expect(buffer.popFirst() == nil)
     }
 
+    @Test func pagingPayloadsAreBudgetedAndNeverCoalescedWithVT() {
+        let event = PagedTerminalEvent.page(.init(incarnation: 1, checkpointID: 2, requestID: 3,
+            ordinal: 0, screen: 0, data: Data(repeating: 0xff, count: 8192), complete: true))
+        var buffer = TerminalReceiveBuffer(byteLimit: 8192 + 4096 + 2, frameLimit: 10)
+        let first = buffer.append(.binary(Data([1])))
+        let page = buffer.append(.paged(event))
+        let tail = buffer.append(.binary(Data([2])))
+        let overflow = buffer.append(.paged(event))
+        #expect(first && page && tail && !overflow)
+        #expect(buffer.popFirst() == .binary(Data([1])))
+        #expect(buffer.popFirst() == .paged(event))
+        #expect(buffer.popFirst() == .binary(Data([2])))
+        #expect(buffer.byteCount == 0)
+    }
+
     @Test func budgetsIncludeUTF8ControlAndEmptyFrameMetadata() {
         var bytes = TerminalReceiveBuffer(byteLimit: 4, frameLimit: 3)
         let first = bytes.append(.text("é"))

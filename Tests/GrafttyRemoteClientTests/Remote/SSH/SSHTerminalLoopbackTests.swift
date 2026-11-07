@@ -553,6 +553,10 @@ struct SSHTerminalLoopbackTests {
     @Test(.timeLimit(.minutes(3)))
     func oversizedInboundControlFrameClosesChildChannelAndEndsTheClientStream() async throws {
         try await runPoisonedControlFrameLoopback()
+        // Recognized binary magic with an unsupported version must fail the
+        // channel, not disappear as invalid UTF-8 and leave restore waiting.
+        let malformed = Data([0x89, 0x47, 0x50, 0x47, 255, 0, 0, 0, 1, 0])
+        try await runPoisonedControlFrameLoopback(bytes: StdErrControlFraming.encode(malformed)!)
     }
 
     /// Before this fix, `TerminalSessionClient.gridDimension` only clamped
@@ -746,6 +750,7 @@ struct SSHTerminalLoopbackTests {
         let received: Data
         switch frame {
         case .binary(let d): received = d
+        case .paged: throw PagedTerminalEnvelope.Error.invalid
         case .text(let s): received = Data(s.utf8)
         }
 
@@ -955,6 +960,7 @@ struct SSHTerminalLoopbackTests {
     /// — proving `InboundRelay` closed the child channel instead of
     /// silently dropping control parsing forever.
     private func runPoisonedControlFrameLoopback(
+        bytes: Data = Data([0xff, 0xff, 0xff, 0xff]),
         responseDeadline: Duration = .seconds(20)
     ) async throws {
         let connection = try await makeLoopbackConnection { childChannel, channelType in
@@ -962,7 +968,7 @@ struct SSHTerminalLoopbackTests {
                 return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
             }
             return childChannel.eventLoop.makeCompletedFuture {
-                try childChannel.pipeline.syncOperations.addHandler(PoisonInjectingSessionHandler())
+                try childChannel.pipeline.syncOperations.addHandler(PoisonInjectingSessionHandler(bytes: bytes))
             }
         }
 
@@ -1179,13 +1185,16 @@ private final class PoisonInjectingSessionHandler: ChannelInboundHandler, @unche
     typealias InboundIn = SSHChannelData
     typealias OutboundOut = SSHChannelData
 
+    let bytes: Data
+    init(bytes: Data) { self.bytes = bytes }
+
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let shellEvent = event as? SSHChannelRequestEvent.ShellRequest {
             if shellEvent.wantReply {
                 context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
             }
-            var buffer = context.channel.allocator.buffer(capacity: 4)
-            buffer.writeBytes([0xFF, 0xFF, 0xFF, 0xFF])
+            var buffer = context.channel.allocator.buffer(capacity: bytes.count)
+            buffer.writeBytes(bytes)
             let data = SSHChannelData(type: .stdErr, data: .byteBuffer(buffer))
             context.writeAndFlush(wrapOutboundOut(data), promise: nil)
         }

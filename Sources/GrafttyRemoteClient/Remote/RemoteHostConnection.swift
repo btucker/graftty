@@ -695,7 +695,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         do {
             try await client.connectHistory(parentChannel: bulk.channel, parentHandler: handler.handler)
         } catch {
-            // A partially bound side channel cannot safely be abandoned:
+            // Pre-binding negotiation failures retain the primary channel
+            // inside connectHistory. A partially bound channel cannot be abandoned:
             // reopen this terminal so every requested page has a receiver.
             client.close()
         }

@@ -28,8 +28,7 @@ public struct HostPickerView: View {
 
     private func status(of host: Host) -> String {
         guard let feed else { return "Paired" }
-        if feed.state.isLive(host.id) { return "Connected" }
-        return feed.state.isAsleep(host.id) ? "Asleep" : "Not connected"
+        return feed.state.availability(of: host.id).connectionLabel
     }
 
     public var body: some View {
