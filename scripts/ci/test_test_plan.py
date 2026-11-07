@@ -85,6 +85,9 @@ class MacRunnerTests(unittest.TestCase):
                     }
                     self.assertEqual(json.loads(command[command.index("--swift-testing-batch") + 1]),
                                      expected_environment)
+                    attachments = Path(command[command.index("--attachments-path") + 1])
+                    self.assertTrue(attachments.is_relative_to(Path(".ci-results/macos")))
+                    (attachments / "native-child.log").write_text("Native child diagnostics\n")
                     if outcome == "pty":
                         # Cross the real macOS PTY boundary: SIP strips DYLD_*
                         # passed only in the environment of /usr/bin/script.

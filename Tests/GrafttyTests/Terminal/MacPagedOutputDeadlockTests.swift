@@ -64,7 +64,15 @@ struct MacPagedOutputDeadlockTests {
                                       zmxDir: directory.appendingPathComponent("daemon"))
             launcher.kill(sessionName: "probe")
             try? FileManager.default.removeItem(at: launcher.zmxDir)
-            if succeeded { try? FileManager.default.removeItem(at: directory) }
+            if succeeded {
+                try? FileManager.default.removeItem(at: directory)
+            } else {
+                for name in ["child.log", "sample.txt"] {
+                    if let diagnostics = try? String(contentsOf: directory.appendingPathComponent(name), encoding: .utf8) {
+                        Attachment.record(diagnostics, named: "\(method)-\(name)")
+                    }
+                }
+            }
         }
         let deadline = ContinuousClock.now + .seconds(15)
         while child.isRunning, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
@@ -86,8 +94,9 @@ struct MacPagedOutputDeadlockTests {
         }
         let diagnostics = try String(contentsOf: log, encoding: .utf8)
         #expect(child.terminationReason == .exit && child.terminationStatus == 0, "Native probe failed: \(diagnostics)")
-        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("completed").path))
-        succeeded = child.terminationReason == .exit && child.terminationStatus == 0
+        let completed = FileManager.default.fileExists(atPath: directory.appendingPathComponent("completed").path)
+        #expect(completed)
+        succeeded = child.terminationReason == .exit && child.terminationStatus == 0 && completed
     }
 }
 
@@ -148,13 +157,16 @@ final class MacPagedOutputDeadlockChild: XCTestCase {
         client.deliver(.text(WebControlEnvelope.ownership(try .init(sessionName: "probe",
             ownerClientID: id, ownerKind: .mac, grid: .init(cols: 80, rows: 24), epoch: 1, revision: 1)).encoded()))
         client.deliver(.paged(.checkpoint(checkpoint)))
-        try await waitUntil { checkpoints == 1 }
+        // Host receipt precedes the awaited native import. Scroll only after
+        // the backend requests another frame, or READY can reset the viewport
+        // after our scroll and PAGE can preserve an obsolete top position.
+        try await waitUntil { checkpoints == 1 && client.isWaitingForFrame }
         XCTAssertTrue(pages.isEmpty, "The initial rebase must not eagerly transfer history")
         for ordinal in 0..<100 {
             let action = "scroll_to_row:0"
             action.withCString { _ = ghostty_surface_binding_action(canvas.surface, $0, UInt(action.utf8.count)) }
             backend.historyViewportDidChange(requestHistory: true)
-            try await waitUntil { pages.count > ordinal }
+            try await waitUntil { pages.count > ordinal && client.isWaitingForFrame }
             if pages[ordinal].complete { break }
         }
         try await waitUntil { canvas.oldestHistoryRow().contains("seed-row-0") }
@@ -558,6 +570,7 @@ private final class PagedOutputProbeClient: WebSocketClient, @unchecked Sendable
     private var sent: [WebSocketFrame] = []
     var sentFrames: [WebSocketFrame] { lock.withLock { sent } }
     var receiveCount: Int { lock.withLock { receives } }
+    var isWaitingForFrame: Bool { lock.withLock { waiter != nil } }
     func send(_ frame: WebSocketFrame) async throws {
         lock.withLock { sent.append(frame) }
         try await onSend?(frame)

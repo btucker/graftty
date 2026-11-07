@@ -100,8 +100,11 @@ def main():
                     continue
                 name = f"swift-{index}" + (f"-{module}" if module is not None else "")
                 result = evidence / f"{name}.xml"
+                attachments = evidence / "attachments" / name
+                attachments.mkdir(parents=True, exist_ok=True)
                 subprocess.run(["/usr/bin/script", "-q", str(evidence / f"{name}.log"), *command,
                                 "--no-parallel", "--filter", pattern,
+                                "--attachments-path", str(attachments),
                                 "--xunit-output", str(result)], stdin=stdin, check=True)
                 result_paths.append(result)
             print("::endgroup::", flush=True)
