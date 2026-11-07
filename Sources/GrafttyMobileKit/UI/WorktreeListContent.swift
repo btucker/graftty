@@ -42,7 +42,6 @@ public struct WorktreeListContent: View {
     @Bindable private var navigation: SidebarNavigationState
     @State private var collapsedPinned: [String: Bool] = [:]
     @State private var collapsedFolders: Set<String> = []
-    @State private var wakeFailure: WakeFailure?
     /// Shared with the screens pushed above the list, so their headers draw
     /// the same images; a local cache stands in when none is provided.
     @Environment(\.projectIconCache) private var sharedProjectIconCache
@@ -91,12 +90,6 @@ public struct WorktreeListContent: View {
         let stderr: String
         let shortStatus: String
         let requestContext: DeleteRequestContext
-    }
-
-    private struct WakeFailure: Identifiable {
-        let id = UUID()
-        let worktree: WorktreePanes
-        let host: Host
     }
 
     private struct OpeningWorktreeKey: Hashable {
@@ -271,14 +264,6 @@ public struct WorktreeListContent: View {
         .onChange(of: showsProjectRail) { _, _ in
             selectionIntentGeneration &+= 1
             navigation.resetSelection()
-        }
-        .alert(wakeFailure.map { "\($0.host.label) didn't respond." } ?? "", isPresented: Binding(
-            get: { wakeFailure != nil }, set: { if !$0 { wakeFailure = nil } }
-        ), presenting: wakeFailure) { failure in
-            Button("Try Again") { wakeAndOpen(failure.worktree, on: failure.host) }
-            Button("Cancel", role: .cancel) { }
-        } message: { _ in
-            Text("Waking only works on its local network.")
         }
         .confirmationDialog(
             pendingDelete?.action.dialogTitle ?? "",
@@ -736,28 +721,19 @@ public struct WorktreeListContent: View {
               listed.state.hasOnDiskWorktree else {
             showErrorToast("This worktree is no longer available."); return false
         }
-        guard feed.state.projects.first(where: { $0.id == item.projectID }).map({ feed.state.availability(of: $0) }) != .offline,
-              let route = route(for: listed) else {
+        guard let route = route(for: listed) else {
             showErrorToast("The owning Mac is offline."); return false
         }
+        let routeIntent = feed.beginRouteSelection()
+        defer { feed.endRouteSelection(routeIntent) }
         selectionIntentGeneration &+= 1
         let generation = selectionIntentGeneration
-        let host = route.host
-        let provider: RemoteConnectionProvider? = route.provider
-        // A sleeping host's row is only its last report, so wake it for the real one.
-        var worktree = listed
-        if feed.state.needsReconnect(host.id) {
-            let woke = await feed.wake(host)
-            guard generation == selectionIntentGeneration else { return false }
-            let identity = MergedWorktreeList.identity(listed)
-            guard woke else { showErrorToast("\(host.label) didn't respond."); return false }
-            guard let live = feed.state.rows.first(where: { MergedWorktreeList.identity($0) == identity }) else {
-                showErrorToast("This worktree is no longer available on \(host.label)."); return false
-            }
-            worktree = live
-        }
         do {
-            var target = worktree
+            let resolved = try await feed.resolveWorktreeRoute(listed, from: route.host)
+            guard generation == selectionIntentGeneration else { return false }
+            let host = resolved.host
+            let provider: RemoteConnectionProvider? = feed.provider(for: host)
+            var target = resolved.worktree
             if target.state == .closed {
                 let response = try await RelayedWorktreeManagementClient.send(.open(worktreeID: target.path), using: provider)
                 guard generation == selectionIntentGeneration else { return false }
@@ -1015,53 +991,35 @@ public struct WorktreeListContent: View {
         }
     }
 
-    /// Tapping a sleeping host's row is an interaction that needs it, so it
-    /// wakes, and the worktree opens once the host has reported.
-    private func wakeAndOpen(_ worktree: WorktreePanes, on host: Host) {
-        let key = OpeningWorktreeKey(hostID: host.id, path: worktree.path)
-        guard !openingWorktrees.contains(key) else { return }
-        openingWorktrees.insert(key)
-        wakeFailure = nil
-        Task { @MainActor in
-            defer { openingWorktrees.remove(key) }
-            guard await feed.wake(host) else {
-                wakeFailure = WakeFailure(worktree: worktree, host: host)
-                return
-            }
-            let identity = MergedWorktreeList.identity(worktree)
-            if let live = feed.state.rows.first(where: { MergedWorktreeList.identity($0) == identity }) {
-                beginSelectingWorktree(live)
-            } else {
-                showErrorToast("This worktree is no longer available on \(host.label).")
-            }
-        }
-    }
-
     private func beginSelectingWorktree(_ worktree: WorktreePanes) {
         guard let route = route(for: worktree) else {
             showErrorToast("The host for this worktree isn't connected.")
-            return
-        }
-        if feed.state.needsReconnect(route.host.id) {
-            wakeAndOpen(worktree, on: route.host)
             return
         }
         rememberWorktree(worktree)
         selectionIntentGeneration &+= 1
         let generation = selectionIntentGeneration
         let selectionHost = route.host
-        let provider: RemoteConnectionProvider? = route.provider
         if worktree.showsCreationProgress {
             onSelect(selectionHost, worktree)
             return
         }
+        let routeIntent = feed.beginRouteSelection()
+        let routeOpeningKey = OpeningWorktreeKey(hostID: selectionHost.id, path: worktree.path)
+        openingWorktrees.insert(routeOpeningKey)
         Task {
-            await selectWorktree(
-                worktree,
-                generation: generation,
-                selectionHost: selectionHost,
-                provider: provider
-            )
+            defer { feed.endRouteSelection(routeIntent); openingWorktrees.remove(routeOpeningKey) }
+            do {
+                let resolved = try await feed.resolveWorktreeRoute(worktree, from: selectionHost)
+                guard generation == selectionIntentGeneration else { return }
+                openingWorktrees.remove(routeOpeningKey)
+                await selectWorktree(resolved.worktree, generation: generation,
+                    selectionHost: resolved.host, provider: feed.provider(for: resolved.host))
+            } catch is CancellationError { return }
+            catch {
+                guard generation == selectionIntentGeneration else { return }
+                showErrorToast(error.localizedDescription)
+            }
         }
     }
 

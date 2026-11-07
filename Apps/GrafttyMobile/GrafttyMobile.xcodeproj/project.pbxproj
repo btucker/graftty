@@ -144,6 +144,7 @@
 		FBA39AD9402E9419991768C0 /* MultiPaneDetailViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A52344F5699042983845BC7 /* MultiPaneDetailViewTests.swift */; };
 		FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */; };
 		FF99CD7CE5915384657B470A /* IPadWorktreeFeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2902569AF8C29643CA0A9827 /* IPadWorktreeFeedTests.swift */; };
+		AE3912D4534448BF311A5354 /* HostRouteResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FBA22EAEF78D5E65C38CB2 /* HostRouteResolverTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -299,6 +300,7 @@
 		FF7A5068D34751DE52E6705E /* PinnedHostStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedHostStoreTests.swift; sourceTree = "<group>"; };
 		FFA9EBD5ED690FBE824B636C /* PanesStateConvergenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanesStateConvergenceTests.swift; sourceTree = "<group>"; };
 		9921D790A6A82071FF565D5D /* DownstreamHostConnectionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownstreamHostConnectionsTests.swift; sourceTree = "<group>"; };
+		89FBA22EAEF78D5E65C38CB2 /* HostRouteResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostRouteResolverTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -629,6 +631,7 @@
 				DDEDB7E8E23CBF60EAE27AE4 /* ClientPairingSessionTests.swift */,
 				2AA7C834A8856AF7C62472A5 /* DirectSSHHostConnectionTests.swift */,
 				9921D790A6A82071FF565D5D /* DownstreamHostConnectionsTests.swift */,
+				89FBA22EAEF78D5E65C38CB2 /* HostRouteResolverTests.swift */,
 				A3F859A510953425E04054E5 /* GrafttyRemoteClientExportsTests.swift */,
 				79B8AF262726BA932EB21841 /* LocalPairingClientTests.swift */,
 				60928076E719B063ECA95EDA /* LoopbackPeerTests.swift */,
@@ -889,6 +892,7 @@
 				7666FAD2A496E34A4BF2B1DC /* ClientPairingSessionTests.swift in Sources */,
 				8FDA72B02F3A4F641627076C /* DirectSSHHostConnectionTests.swift in Sources */,
 				A17B3AFF0CD135908E1DE9DA /* DownstreamHostConnectionsTests.swift in Sources */,
+				AE3912D4534448BF311A5354 /* HostRouteResolverTests.swift in Sources */,
 				E07139A524FE1DC983512192 /* GrafttyRemoteClientExportsTests.swift in Sources */,
 				2C255FE368B4B692B456569E /* InMemorySSHLink.swift in Sources */,
 				98AC04E6F02683813FED4084 /* LocalPairingClientTests.swift in Sources */,

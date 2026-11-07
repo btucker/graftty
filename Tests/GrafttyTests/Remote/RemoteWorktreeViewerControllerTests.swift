@@ -11,6 +11,106 @@ import Testing
 @Suite("Remote worktree viewer mutation queue")
 @MainActor
 struct RemoteWorktreeViewerControllerTests {
+    @Test("A newer explicit open prevents adoption of an older recovery")
+    func explicitOpenCancelsOldRouteRecovery() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        let original = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        var attempted = false
+        var intent: UUID?
+        viewer.controller.resolveWorktreeRoute = { _, _, _ in
+            attempted = true
+            intent = viewer.controller.beginRouteSelection()
+            return (viewer.mac, original.with(path: "old-recovery"))
+        }
+        viewer.surfaces.closeUnexpectedly(try viewer.terminal("a"))
+        await viewer.settle()
+        viewer.clock.fire(.milliseconds(750))
+        await viewer.settle()
+        #expect(attempted)
+        #expect(viewer.controller.selectedRemoteWorktreePath == original.path)
+        viewer.controller.endRouteSelection(try #require(intent))
+    }
+
+    @Test("Focusing another pane during recovery retains reconnect and the newer focus")
+    func focusDuringRouteRecoveryRetainsReconnect() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let row = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        var recoveries = 0
+        viewer.controller.resolveWorktreeRoute = { _, _, _ in recoveries += 1; return (viewer.mac, row) }
+        viewer.surfaces.closeUnexpectedly(try viewer.terminal("a"))
+        await viewer.settle()
+        viewer.controller.focusTerminal(try viewer.terminal("b"))
+        await viewer.settle()
+        viewer.clock.fire(.milliseconds(750))
+        await viewer.settle()
+        #expect(recoveries == 1)
+        #expect(viewer.surfaces.liveTerminal(forSession: "a") != nil)
+        #expect(viewer.controller.selectedRemotePaneSessionName == "b")
+    }
+
+    @Test("A terminal establishment failure explores another path before retrying the failed host")
+    func terminalOpenFailureUsesRouteRecovery() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        let row = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        var failures: Set<RemoteMacIdentity> = []
+        viewer.controller.resolveWorktreeRoute = { _, _, excluded in
+            failures = excluded
+            return (viewer.mac, row)
+        }
+        viewer.model.failingTerminalOpens = 1
+        viewer.surfaces.closeUnexpectedly(try viewer.terminal("a"))
+        await viewer.settle()
+        viewer.clock.fire(.milliseconds(750))
+        await viewer.settle()
+        viewer.clock.fire(.milliseconds(750))
+        await viewer.settle()
+        #expect(failures == [viewer.identity])
+        #expect(viewer.surfaces.liveTerminal(forSession: "a") != nil)
+    }
+
+    @Test("Recovery never reopens a worktree whose final pane closed")
+    func closedWorktreeIsNotReopenedByRecovery() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        viewer.controller.resolveWorktreeRoute = { _, _, _ in
+            (viewer.mac, viewer.model.worktreePanesByRemote[viewer.identity]!.first!)
+        }
+        viewer.surfaces.closeUnexpectedly(try viewer.terminal("a"))
+        viewer.publish(nil, state: .closed)
+        await viewer.settle()
+        viewer.clock.fire(.milliseconds(750))
+        await viewer.settle()
+        #expect(viewer.model.openedWorktrees.isEmpty)
+    }
+
+    @Test("@spec REMOTE-13.62: When a selected Mac terminal loses its delivery path, the application shall resolve a direct-first replacement route and reconnect using its identifiers, while keeping a healthy active relay when direct access later returns.")
+    func droppedPathRecoversWithoutMigratingHealthySession() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("direct-pane"))
+        let original = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        let gateway = RemoteMac(id: .init(value: "gateway"), label: "Tailscale Mac", fingerprint: try .init(rawBytes: Data(repeating: 3, count: 32)))
+        let gatewayIdentity = RemoteMacIdentity(gateway)
+        let relayed = original.with(path: "relay-worktree-feature",
+            layout: .leaf(sessionName: "relay-pane", title: "Terminal", attentionText: nil, isBusy: false, attentionSource: nil),
+            origin: .init(deviceID: viewer.mac.id, deviceLabel: viewer.mac.label, relayDepth: 1))
+        viewer.model.savedRemoteMacs.append(gateway)
+        viewer.model.worktreePanesByRemote[gatewayIdentity] = [relayed]
+        var recoveries = 0
+        viewer.controller.resolveWorktreeRoute = { _, _, _ in recoveries += 1; return (gateway, relayed) }
+        viewer.model.worktreePanesByRemote[viewer.identity] = nil
+        viewer.controller.reconcile(worktreePanesByRemote: viewer.model.worktreePanesByRemote)
+        await viewer.settle()
+        viewer.clock.fire(.milliseconds(750))
+        await viewer.settle()
+        #expect(recoveries == 1)
+        #expect(viewer.controller.selectedRemoteIdentity == gatewayIdentity)
+        #expect(viewer.controller.selectedRemoteWorktreePath == relayed.path)
+        #expect(viewer.surfaces.liveTerminal(forSession: "relay-pane") != nil)
+        viewer.model.worktreePanesByRemote[viewer.identity] = [original]
+        viewer.controller.reconcile(worktreePanesByRemote: viewer.model.worktreePanesByRemote)
+        await viewer.settle()
+        #expect(recoveries == 1)
+        #expect(viewer.controller.selectedRemoteIdentity == gatewayIdentity)
+    }
+
     @Test("@spec REMOTE-13.54: When a Mac selects a worktree relayed by its paired intermediary, the viewer shall display its terminal layout and send pane commands using that intermediary's session identifiers.")
     func downstreamWorktreeOpensThroughIntermediary() async throws {
         let downstream = WorktreeOrigin(deviceID: .init(value: "worker"), deviceLabel: "Worker", relayDepth: 1)

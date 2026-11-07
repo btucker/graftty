@@ -2,6 +2,7 @@
 import GhosttyTerminal
 import GrafttyCommandUI
 import GrafttyProtocol
+import GrafttyRemoteClient
 import SwiftUI
 
 public struct RootView: View {
@@ -14,6 +15,7 @@ public struct RootView: View {
     @State private var activatingNotificationRoute: MobileStopNotificationRoute?
     @State private var activatingNotificationIntent: UInt64?
     @State private var navigationIntent = MobileNavigationIntent()
+    @State private var selectionNavigationPath = NavigationPath()
     @State private var recentPaneOpeningID: UUID?
     @State private var recentPaneError: String?
     @State private var contextWorktreeError: String?
@@ -82,7 +84,12 @@ public struct RootView: View {
             .environment(\.multiHostFeed, feed)
             .modifier(RootFeedObserver(feed: feed, hostStore: hostStore, appState: iPadAppState,
                 isReady: scenePhase != .background && gate.state == .unlocked,
-                isRegular: horizontalSizeClass == .regular))
+                isRegular: horizontalSizeClass == .regular,
+                canRecover: {
+                    recentPaneOpeningID == nil && notifications.pendingRoute == nil
+                        && (horizontalSizeClass == .regular || (!navigationPath.isEmpty && navigationPath == selectionNavigationPath))
+                },
+                onRecovered: { syncCompactNavigationToSelection() }))
     }
 
     private var rootContent: some View {
@@ -136,6 +143,7 @@ public struct RootView: View {
             }
         }
         .onChange(of: notificationSelection) { _, _ in
+            selectionNavigationPath = navigationPath
             recentPaneOpeningID = nil
             notificationPaneActivation.discard(unlessHostID: iPadAppState.selectedHostId,
                                                sessionName: iPadAppState.focusedPaneId)
@@ -245,14 +253,23 @@ public struct RootView: View {
             }
             defer { if recentPaneOpeningID == openingID { recentPaneOpeningID = nil } }
             do {
-                let target = try await WorktreeContextActions.resolve(path, source: source, fetch: {
-                    try await fetchWorktrees(on: host)
+                let known = MergedWorktreeList.deduplicated((feed.state.snapshot(of: host.id)?.rows ?? []) + iPadAppState.latestWorktrees)
+                let original = WorktreeContextActions.target(path, source: source, rows: known)
+                    ?? (path == source.path ? source : nil)
+                let resolved: (host: Host, worktree: WorktreePanes)?
+                if notificationIO == nil, let original { resolved = try await feed.resolveWorktreeRoute(original, from: host) }
+                else { resolved = nil }
+                let routeHost = resolved?.host ?? host
+                let targetPath = resolved?.worktree.path ?? path
+                let targetSource = resolved?.worktree ?? source
+                let target = try await WorktreeContextActions.resolve(targetPath, source: targetSource, fetch: {
+                    try await fetchWorktrees(on: routeHost)
                 }, reopen: { path in
-                    try await reopenWorktree(path, on: host, notReady: WorktreeContextActions.Failure.notReady)
+                    try await reopenWorktree(path, on: routeHost, notReady: WorktreeContextActions.Failure.notReady)
                 }, isCurrent: isCurrent)
                 guard isCurrent() else { return }
                 iPadAppState.latestWorktrees = target.rows
-                if let path = Self.applyContextWorktree(target.worktree, host: host, appState: iPadAppState,
+                if let path = Self.applyContextWorktree(target.worktree, host: routeHost, appState: iPadAppState,
                         compact: horizontalSizeClass != .regular, showsProjectRail: showsProjectRail) {
                     navigationPath = path
                 }
@@ -271,6 +288,7 @@ public struct RootView: View {
     /// and returns the rebuilt navigation stack.
     static func applyContextWorktree(_ row: WorktreePanes, host: Host, appState: IPadAppState,
                                      compact: Bool, showsProjectRail: Bool) -> NavigationPath? {
+        appState.selectedHostId = host.id
         let project = SidebarProjection.projects([row]).first
         if let project { appState.sidebarNavigation.showProject(project.id) }
         guard compact else {
@@ -287,7 +305,7 @@ public struct RootView: View {
     /// injected I/O when present, otherwise the shared coordinator.
     private func fetchWorktrees(on host: Host) async throws -> [WorktreePanes] {
         if let notificationIO { return try await notificationIO.fetch(host) }
-        return try await coordinator.worktreePanes(for: host)
+        return try await coordinator.worktreePanes(for: host, wake: .now)
     }
 
     /// Reopens a closed worktree on `host`; a refused open throws `notReady`.
@@ -324,6 +342,7 @@ public struct RootView: View {
             return
         }
         do {
+            let host = notificationIO == nil ? try await feed.resolveHostRoute(host, destination: entry.origin?.deviceID) : host
             let target = try await MobileRecentPanes.resolve(entry, fetch: {
                 try await fetchWorktrees(on: host)
             }, reopen: { path in
@@ -389,6 +408,7 @@ public struct RootView: View {
             return
         }
         do {
+            let host = notificationIO == nil ? try await feed.resolveHostRoute(host, destination: route.originDeviceID) : host
             let target = try await MobileNotificationActivation.resolve(route, fetch: {
                 try await fetchWorktrees(on: host)
             }, reopen: { path in
@@ -658,10 +678,27 @@ private struct RootFeedObserver: ViewModifier {
     let appState: IPadAppState
     let isReady: Bool
     let isRegular: Bool
+    let canRecover: @MainActor () -> Bool
+    let onRecovered: @MainActor () -> Void
 
     private struct Key: Hashable {
         let hosts: [Host]
         let isReady: Bool
+    }
+
+    private struct RecoveryKey: Hashable {
+        let host: UUID?
+        let worktree: String?
+        let pane: String?
+        let focus: Int
+        let ready: Bool
+        let needsRecovery: Bool
+    }
+
+    private var recoveryKey: RecoveryKey {
+        .init(host: appState.selectedHostId, worktree: appState.selectedWorktreePath,
+              pane: appState.focusedPaneId, focus: appState.focusRequestCount,
+              ready: isReady && canRecover() && feed.permitsRouteRecovery, needsRecovery: feed.shouldRecoverSelection(appState))
     }
 
     func body(content: Content) -> some View {
@@ -682,9 +719,26 @@ private struct RootFeedObserver: ViewModifier {
                 guard isReady else { return }
                 await feed.observe()
             }
+            .task(id: recoveryKey) {
+                guard recoveryKey.ready, recoveryKey.needsRecovery else { return }
+                var delay: UInt64 = 750
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(for: .milliseconds(delay))
+                        if try await feed.recoverSelection(appState, requestsTerminalFocus: isRegular, isCurrent: canRecover) {
+                            onRecovered()
+                            return
+                        }
+                        return
+                    } catch is CancellationError { return }
+                    catch HostRouteResolver<UUID>.Failure.worktreeUnavailable { return }
+                    catch { delay = min(delay * 2, 30_000) }
+                }
+            }
             .onChange(of: feed.state) { _, state in
                 // The regular layout's IPadWorktreeFeed does more with each frame.
-                guard !isRegular, let id = appState.selectedHostId, state.isLive(id) else { return }
+                guard !isRegular, let id = appState.selectedHostId, state.isLive(id),
+                      !feed.shouldRecoverSelection(appState) else { return }
                 let rows = state.rawRows(of: id)
                 // Another host's frame leaves this host's rows as they were.
                 if appState.latestWorktrees != rows { appState.latestWorktrees = rows }

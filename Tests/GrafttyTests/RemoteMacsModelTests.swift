@@ -11,6 +11,44 @@ import Testing
 @Suite("RemoteMacsModel")
 @MainActor
 struct RemoteMacsModelTests {
+    @Test("@spec REMOTE-13.60: When a Mac opens a worktree available directly and through an intermediary, the application shall use the direct host's identifiers if it connects, otherwise reconnect through the intermediary and use its identifiers.", arguments: [false, true])
+    func worktreeOpenChoosesDirectOrRelay(directAvailable: Bool) async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let destination = try remoteMac(id: .init(value: "lan-mac"), label: "LAN Mac")
+        let gateway = try remoteMac(id: .init(value: "tailscale-mac"), label: "Gateway", fingerprintByte: 0x44)
+        try store.add(gateway)
+        try store.add(destination)
+        let directRow = WorktreePanes(path: "/repo/feature", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            origin: .init(deviceID: destination.id, deviceLabel: destination.label, relayDepth: 0),
+            sidebar: .init(id: "lan:feature", projectID: "lan:project"))
+        let relayRow = directRow.with(path: "relay-worktree-lan-feature",
+            origin: .init(deviceID: destination.id, deviceLabel: destination.label, relayDepth: 1))
+        let directStore = WorktreePanesStore(driver: RemoteMacsModelTestPanesStateDriver())
+        await directStore.applySnapshot([directRow])
+        let relayStore = WorktreePanesStore(driver: RemoteMacsModelTestPanesStateDriver())
+        await relayStore.applySnapshot([relayRow])
+        let recorder = RemoteMacsModelManagementRecorder(response: .remoteMacConnections([
+            .init(deviceID: destination.id, fingerprint: destination.fingerprint, label: destination.label, lastKnownHost: nil, state: .connected)
+        ]))
+        var attempts: [RemoteDeviceID] = []
+        let registry = RemoteMacConnectionRegistry { mac, identity in
+            attempts.append(mac.id)
+            if mac.id == destination.id && !directAvailable { throw URLError(.cannotConnectToHost) }
+            return .init(id: UUID(), identity: identity, remoteMac: mac, createdAt: Date(),
+                connection: RemoteMacsModelRecordingConnection(managementRecorder: recorder),
+                paneEnvironment: .init(worktreePanesStore: mac.id == destination.id ? directStore : relayStore, paneControlClient: nil))
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        defer { model.disconnect(identity: RemoteMacIdentity(destination)); model.disconnect(identity: RemoteMacIdentity(gateway)) }
+        let resolved = try await model.resolveWorktreeRoute(directRow, from: destination)
+        #expect(attempts.first == destination.id)
+        #expect(resolved.mac.id == (directAvailable ? destination.id : gateway.id))
+        #expect(resolved.worktree.path == (directAvailable ? directRow.path : relayRow.path))
+        #expect(model.worktreePanesByRemote[RemoteMacIdentity(resolved.mac)]?.contains(where: { $0.path == resolved.worktree.path }) == true)
+    }
+
     @Test("Direct project and row deliveries win over a relay of the same host")
     func downstreamProjectDoesNotOverrideDirectMetadata() async throws {
         let intermediary = try remoteMac()

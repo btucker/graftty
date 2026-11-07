@@ -2,6 +2,7 @@
 import CryptoKit
 import Foundation
 import GrafttyProtocol
+import GrafttyRemoteClient
 import Testing
 import WebRTC
 @testable import GrafttyMobileKit
@@ -18,6 +19,160 @@ import WebRTC
 @MainActor
 @Suite("RemoteConnectionCoordinator — negotiate-on-demand, dedup, registry, eviction (W3 Task 2).", .serialized)
 struct RemoteConnectionCoordinatorTests {
+    @Test("@spec REMOTE-13.61: When mobile opens a host that is reachable directly or through a paired Mac, the application shall prefer direct access and fall back to the intermediary's worktree identifiers when direct access fails.", arguments: [false, true])
+    func mobileWorktreeUsesDirectOrGateway(directAvailable: Bool) async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let destination = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let gateway = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let coordinator = RemoteConnectionCoordinator(directory: dir)
+        let owner = try #require(destination.remoteDeviceID)
+        let peer = try #require(coordinator.pairedPeerIdentity(for: destination))
+        let direct = WorktreePanes(path: "/repo/feature", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            origin: .init(deviceID: owner, deviceLabel: "LAN Mac", relayDepth: 0),
+            sidebar: .init(id: "lan:feature", projectID: "lan:project"))
+        let relayed = direct.with(path: "relay-worktree-lan-feature", origin: .init(deviceID: owner, deviceLabel: "LAN Mac", relayDepth: 1))
+        var attempts: [UUID] = []
+        let operations = HostRouteResolver<UUID>.Operations(connect: { host in
+            attempts.append(host.id)
+            if host.id == destination.id && !directAvailable { throw URLError(.cannotConnectToHost) }
+        }, send: { _, request in
+            #expect(request == .listRemoteMacConnections)
+            return .remoteMacConnections([.init(deviceID: owner, fingerprint: peer.fingerprint, label: "LAN Mac", lastKnownHost: nil, state: .connected)])
+        }, fetch: { host in host.id == destination.id ? [direct] : [relayed] })
+        let feed = MultiHostFeed(coordinator: coordinator, routeOperations: operations)
+        feed.setHosts([gateway, destination])
+        let resolved = try await feed.resolveWorktreeRoute(direct, from: destination)
+        #expect(attempts.first == destination.id)
+        #expect(resolved.host.id == (directAvailable ? destination.id : gateway.id))
+        #expect(resolved.worktree.path == (directAvailable ? direct.path : relayed.path))
+        #expect(feed.state.hostID(for: resolved.worktree) == resolved.host.id)
+    }
+
+    @Test("@spec REMOTE-13.63: When the selected mobile worktree loses its direct or relayed path, the application shall reconnect through an available route without replacing a newer selection, and shall keep a healthy relayed session when direct access returns.", arguments: ["lost-feed", "terminal-only", "new-selection", "back", "same-gateway"])
+    func mobileSelectedSessionRecoversAndStaysOnHealthyRelay(scenario: String) async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let destination = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let gateway = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let coordinator = RemoteConnectionCoordinator(directory: dir)
+        let owner = try #require(destination.remoteDeviceID)
+        let peer = try #require(coordinator.pairedPeerIdentity(for: destination))
+        let direct = WorktreePanes(path: "/repo/feature", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "direct-pane", title: "Terminal", attentionText: nil, isBusy: false, attentionSource: nil),
+            origin: .init(deviceID: owner, deviceLabel: "LAN Mac", relayDepth: 0),
+            sidebar: .init(id: "lan:feature", projectID: "lan:project", paneIDs: ["direct-pane": "pane-slot"]))
+        let relayed = direct.with(path: "relay-worktree-feature",
+            layout: .leaf(sessionName: "relay-pane", title: "Terminal", attentionText: nil, isBusy: false, attentionSource: nil),
+            origin: .init(deviceID: owner, deviceLabel: "LAN Mac", relayDepth: 1),
+            sidebar: .init(id: "lan:feature", projectID: "lan:project", paneIDs: ["relay-pane": "pane-slot"]))
+        var calls = 0
+        var onFetch: () -> Void = {}
+        defer { onFetch = {} }
+        var canRecover = true
+        let operations = HostRouteResolver<UUID>.Operations(connect: { host in
+            calls += 1
+            if host.id == destination.id { throw URLError(.cannotConnectToHost) }
+        }, send: { _, _ in
+            .remoteMacConnections([.init(deviceID: owner, fingerprint: peer.fingerprint, label: "LAN Mac", lastKnownHost: nil, state: .connected)])
+        }, fetch: { _ in onFetch(); return [relayed] })
+        let feed = MultiHostFeed(coordinator: coordinator, routeOperations: operations)
+        feed.setHosts([destination, gateway])
+        let state = IPadAppState()
+        let original = scenario == "same-gateway" ? direct.with(path: "old-relay-alias",
+            origin: .init(deviceID: owner, deviceLabel: "LAN Mac", relayDepth: 1)) : direct
+        state.latestWorktrees = [original]
+        state.select(hostID: scenario == "same-gateway" ? gateway.id : destination.id,
+                     worktreePath: original.path, paneID: "direct-pane")
+        if scenario == "same-gateway" {
+            onFetch = {
+                feed.receive(.frame(.snapshot([relayed])), from: gateway)
+                #expect(feed.shouldRecoverSelection(state), "A fresh frame must not cancel recovery before alias adoption")
+            }
+        }
+        if scenario == "terminal-only" {
+            feed.receive(.frame(.snapshot([direct])), from: destination)
+            #expect(!feed.shouldRecoverSelection(state))
+            feed.terminalConnectionChanged(host: destination.id, worktree: direct.path, pane: "direct-pane", reconnecting: true)
+            #expect(!feed.permitsTerminalDial(host: destination.id, worktree: direct.path, pane: "direct-pane"))
+        }
+        if scenario == "new-selection" {
+            onFetch = {
+                let intent = feed.beginRouteSelection()
+                feed.endRouteSelection(intent)
+            }
+        } else if scenario == "back" { onFetch = { canRecover = false } }
+        #expect(feed.shouldRecoverSelection(state))
+        let adopted = try await feed.recoverSelection(state, isCurrent: { canRecover })
+        if scenario == "new-selection" || scenario == "back" {
+            #expect(!adopted)
+            #expect(state.selectedHostId == destination.id)
+            #expect(state.selectedWorktreePath == direct.path)
+            return
+        }
+        #expect(adopted)
+        #expect(state.selectedHostId == gateway.id)
+        #expect(state.selectedWorktreePath == relayed.path)
+        #expect(state.focusedPaneId == "relay-pane")
+        #expect(feed.permitsTerminalDial(host: destination.id, worktree: direct.path, pane: "direct-pane"))
+        let before = calls
+        feed.receive(.frame(.snapshot([direct])), from: destination)
+        #expect(!feed.shouldRecoverSelection(state))
+        #expect(try await !feed.recoverSelection(state))
+        #expect(calls == before)
+        #expect(state.selectedHostId == gateway.id)
+    }
+
+
+
+    @Test("Forgetting the destination during establishment prevents downstream reconnect")
+    func forgottenDestinationCannotReconnectThroughGateway() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let destination = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let gateway = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let coordinator = RemoteConnectionCoordinator(directory: dir)
+        let owner = try #require(destination.remoteDeviceID)
+        var requests = 0
+        let operations = HostRouteResolver<UUID>.Operations(connect: { host in
+            if host.id == destination.id { throw URLError(.cannotConnectToHost) }
+            try PinnedHostStore(directory: dir).remove(id: owner)
+        }, send: { _, _ in requests += 1; return .ok }, fetch: { _ in [] })
+        let feed = MultiHostFeed(coordinator: coordinator, routeOperations: operations)
+        feed.setHosts([destination, gateway])
+        await #expect(throws: (any Error).self) { _ = try await feed.resolveHostRoute(destination) }
+        #expect(requests == 0)
+    }
+
+    @Test("Recent and notification host resolution falls back when the direct feed fails", arguments: [false, true])
+    func hostOpenFallsBackAfterDirectFeedFailure(failsAfterEstablishment: Bool) async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let destination = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let gateway = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let coordinator = RemoteConnectionCoordinator(directory: dir)
+        let peer = try #require(coordinator.pairedPeerIdentity(for: destination))
+        let relayed = WorktreePanes(path: "relay-worktree-feature", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            origin: .init(deviceID: peer.deviceID, deviceLabel: "LAN Mac", relayDepth: 1),
+            sidebar: .init(id: "lan:feature", projectID: "lan:project"))
+        var reads = 0
+        let operations = HostRouteResolver<UUID>.Operations(connect: { _ in }, send: { _, _ in
+            .remoteMacConnections([.init(deviceID: peer.deviceID, fingerprint: peer.fingerprint, label: "LAN Mac", lastKnownHost: nil, state: .connected)])
+        }, fetch: { host in
+            if host.id == destination.id {
+                reads += 1
+                if !failsAfterEstablishment || reads > 1 { throw URLError(.networkConnectionLost) }
+                return []
+            }
+            return [relayed]
+        })
+        let feed = MultiHostFeed(coordinator: coordinator, routeOperations: operations)
+        feed.setHosts([destination, gateway])
+        #expect(try await feed.resolveHostRoute(destination).id == gateway.id)
+    }
 
     @Test("@spec REMOTE-11.14: When the user retries a failed mobile worktree connection, the application shall bypass the failure cooldown and sign a request to replace only that device's existing host connection.", .timeLimit(.minutes(1)))
     func explicitRetryBypassesCooldownAndSignsReplacement() async throws {

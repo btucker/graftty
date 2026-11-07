@@ -456,6 +456,11 @@ public final class RemoteConnectionCoordinator {
         pinnedHost(for: host) != nil
     }
 
+    func pairedPeerIdentity(for host: Host) -> RemoteMacConnectionSummary.ID? {
+        guard let pin = pinnedHost(for: host) else { return nil }
+        return .init(deviceID: pin.id, fingerprint: .init(of: pin.publicKey))
+    }
+
     /// Verifies that a Bonjour routing hint still advertises the exact host
     /// key pinned during pairing. Discovery never establishes or changes
     /// trust; a mismatch therefore cannot refresh the saved address.

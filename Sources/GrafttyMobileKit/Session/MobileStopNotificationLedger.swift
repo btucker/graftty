@@ -11,7 +11,10 @@ struct MobileStopNotificationRoute: Codable, Equatable, Sendable {
     var paneSlotID: String? = nil
 
     func matches(_ row: WorktreePanes) -> Bool {
-        row.path == worktreePath
+        if let worktreeID, let originDeviceID {
+            return row.sidebar?.id == worktreeID && row.origin?.deviceID == originDeviceID
+        }
+        return row.path == worktreePath
             && (worktreeID == nil || row.sidebar?.id == worktreeID)
             && (originDeviceID == nil || row.origin?.deviceID == originDeviceID)
     }

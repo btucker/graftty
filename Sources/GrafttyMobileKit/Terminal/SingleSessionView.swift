@@ -81,6 +81,7 @@ struct SingleSessionView: View {
     /// preview and narrowly scoped test contexts; production refuses the
     /// dial when pairing is absent or negotiation fails.
     @Environment(\.remoteConnectionCoordinator) private var coordinator
+    @Environment(\.multiHostFeed) private var multiHostFeed
     /// Not-yet-honored focus requests owned by app-scoped state (the iPad
     /// layout passes `appState.pendingFocusRequests`). A pending delta, not
     /// a monotonic total, so view recreation cannot replay honored requests.
@@ -791,6 +792,14 @@ struct SingleSessionView: View {
                 if client.paging?.status == .requiresRecovery { await client.paging?.recover() }
             }
             .onChange(of: client?.connectionState) { _, state in
+                if let path = step.worktreePath, isPaneFocused {
+                    let reconnecting: Bool
+                    if case .reconnecting = state { reconnecting = true } else { reconnecting = false }
+                    if state != nil {
+                        multiHostFeed?.terminalConnectionChanged(host: step.host.id, worktree: path,
+                            pane: step.sessionName, reconnecting: reconnecting)
+                    }
+                }
                 if state != .live {
                     paneContainerBox.view?.cancelPendingApplicationScroll()
                     agentCompletion.cancel(preserveLiteral: false)
@@ -975,6 +984,16 @@ struct SingleSessionView: View {
             connection = .live
             return
         }
+        let baseProvider = remoteConnectionProvider ?? makeRemoteConnectionProvider(coordinator: coordinator,
+            host: step.host, sessionName: step.sessionName)
+        let feed = multiHostFeed
+        let hostID = step.host.id
+        let path = step.worktreePath
+        let sessionName = step.sessionName
+        let routeProvider: RemoteConnectionProvider = {
+            if let feed, let path, !(await feed.permitsTerminalDial(host: hostID, worktree: path, pane: sessionName)) { return nil }
+            return await baseProvider()
+        }
         let makeClient = { SessionClient.live(
             sessionName: step.sessionName,
             role: Self.sessionRole,
@@ -987,11 +1006,7 @@ struct SingleSessionView: View {
             // degraded/evicted connection heals via a real
             // re-negotiation (fresh WebRTC + fresh SSH userauth)
             // instead of redialing the same dead actor forever.
-            remoteConnectionProvider: remoteConnectionProvider ?? makeRemoteConnectionProvider(
-                coordinator: coordinator,
-                host: step.host,
-                sessionName: step.sessionName
-            )
+            remoteConnectionProvider: routeProvider
         ) }
         let new: SessionClient
         if let retainedPanes {
