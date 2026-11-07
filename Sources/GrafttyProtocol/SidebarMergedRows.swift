@@ -9,11 +9,15 @@ public struct SidebarMergedRows: Sendable {
     private let availabilityByRow: [String: HostAvailability]
     private let availabilityByMember: [String: HostAvailability]
 
-    /// `remoteRows` holds each connected host's rows. Rows a host relays from a
-    /// third machine are left out: the Mac only lists hosts it's paired with.
+    /// Prefer direct deliveries when a host is also reachable through a Mac.
+    /// A peer may report this Mac's own rows back to it; those are excluded.
     public static func make(projects: [SidebarProject], localRows: [WorktreePanes], remoteRows: [WorktreePanes],
                      localDeviceID: RemoteDeviceID?, availability: (SidebarProject) -> HostAvailability) -> SidebarMergedRows {
-        let rows = localRows + remoteRows.filter { ($0.origin?.relayDepth ?? 0) == 0 }
+        let remote = remoteRows.filter {
+            ($0.origin?.relayDepth ?? 0) <= 1
+                && ($0.origin?.deviceID == nil || $0.origin?.deviceID != localDeviceID)
+        }
+        let rows = MergedWorktreeList.deduplicated(localRows + remote)
         let known = Set(projects.map(\.id))
         let inferred = SidebarProjection.projects(rows).filter { !known.contains($0.id) }
         let all = projects + inferred

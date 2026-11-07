@@ -158,7 +158,7 @@ struct RemoteOpenButton: View {
             while !Task.isCancelled {
                 do {
                     let response = try await sendWorktreeManagement(
-                        .openResource(worktreeID: worktree, request: .list), to: host
+                        .openResource(worktreeID: worktree, request: .list), to: host, wake: .never
                     )
                     guard !Task.isCancelled else { return }
                     if case .openResource(.offers(let value)) = response {
@@ -348,9 +348,10 @@ struct RemoteOpenButton: View {
     }
 
 
-    private func sendWorktreeManagement(_ request: WorktreeManagementRequest, to host: Host) async throws -> WorktreeManagementResponse {
+    private func sendWorktreeManagement(_ request: WorktreeManagementRequest, to host: Host,
+                                       wake: RemoteConnectionCoordinator.WakePolicy = .now) async throws -> WorktreeManagementResponse {
         if let managementTransport { return try await managementTransport(request, host) }
-        return try await coordinator.sendWorktreeManagement(request, to: host)
+        return try await coordinator.sendWorktreeManagement(request, to: host, wake: wake)
     }
 
     private func openTerminalLink(_ request: TerminalBrowserRequest) {

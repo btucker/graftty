@@ -11,6 +11,18 @@ import Testing
 @Suite("Remote worktree viewer mutation queue")
 @MainActor
 struct RemoteWorktreeViewerControllerTests {
+    @Test("@spec REMOTE-13.54: When a Mac selects a worktree relayed by its paired intermediary, the viewer shall display its terminal layout and send pane commands using that intermediary's session identifiers.")
+    func downstreamWorktreeOpensThroughIntermediary() async throws {
+        let downstream = WorktreeOrigin(deviceID: .init(value: "worker"), deviceLabel: "Worker", relayDepth: 1)
+        let viewer = try await ViewerHarness.opened(layout: .leaf("relayed-pane"), origin: downstream)
+        #expect(viewer.controller.selectedWorktreeSnapshot?.origin == downstream)
+        let terminal = try viewer.terminal("relayed-pane")
+        viewer.surfaces.send(.resize(direction: .right, amount: 5), from: terminal)
+        await viewer.settle()
+        #expect(viewer.model.requests == [.resize(target: "relayed-pane", direction: .right, amount: 5, viewportExtent: 1000)])
+        try await viewer.answer(0, .ok)
+    }
+
     @Test func sidebarReadDoesNotSuppressPersistingNewlyDiscoveredTabs() async throws {
         let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
         let defaults = try #require(UserDefaults(suiteName: "RemoteWorkspaceReadSave-\(UUID())"))
@@ -786,13 +798,14 @@ private final class ViewerHarness {
         failingCreates: Int = 0,
         openResponse: WorktreeManagementResponse = .ok,
         surfaces: FakeViewerSurfaces? = nil,
-        creationProgress: WorktreeCreationProgress? = nil
+        creationProgress: WorktreeCreationProgress? = nil,
+        origin: WorktreeOrigin? = nil
     ) async throws -> ViewerHarness {
         let surfaces = surfaces ?? FakeViewerSurfaces()
         let harness = try ViewerHarness(surfaces: surfaces, state: state)
         surfaces.failingCreates = failingCreates
         harness.model.openWorktreeResponse = openResponse
-        harness.model.worktreePanesByRemote = [harness.identity: [harness.worktree(layout).with(creationProgress: creationProgress)]]
+        harness.model.worktreePanesByRemote = [harness.identity: [harness.worktree(layout).with(origin: origin, creationProgress: creationProgress)]]
         harness.controller.reconcile(worktreePanesByRemote: harness.model.worktreePanesByRemote)
         harness.controller.selectRemoteWorktree(harness.mac, worktreePath: path, acknowledging: false)
         await harness.settle()

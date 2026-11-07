@@ -47,7 +47,7 @@ struct WorktreePreviewMenu: View {
             guard ready, let coordinator else { return }
             while !Task.isCancelled {
                 do {
-                    let response = try await coordinator.sendWorktreeManagement(.openResource(worktreeID: worktree, request: .list), to: host)
+                    let response = try await coordinator.sendWorktreeManagement(.openResource(worktreeID: worktree, request: .list), to: host, wake: .never)
                     guard !Task.isCancelled else { return }
                     if case .openResource(.offers(let incoming)) = response {
                         offers = incoming

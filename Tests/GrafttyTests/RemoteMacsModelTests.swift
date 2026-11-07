@@ -11,6 +11,59 @@ import Testing
 @Suite("RemoteMacsModel")
 @MainActor
 struct RemoteMacsModelTests {
+    @Test("Direct project and row deliveries win over a relay of the same host")
+    func downstreamProjectDoesNotOverrideDirectMetadata() async throws {
+        let intermediary = try remoteMac()
+        let worker = try remoteMac(id: .init(value: "worker"), fingerprintByte: 0x44)
+        let (model, registry) = try await projectControlModel(remotes: [intermediary, worker], recorder: .init())
+        defer { model.disconnect(identity: RemoteMacIdentity(intermediary)); model.disconnect(identity: RemoteMacIdentity(worker)) }
+        func row(_ path: String, depth: Int, label: String) -> WorktreePanes {
+            WorktreePanes(path: path, displayName: "feature", repoDisplayName: label, repositoryID: path, displayBranch: "feature", state: .running,
+                isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                origin: .init(deviceID: worker.id, deviceLabel: worker.label, relayDepth: depth),
+                sidebar: .init(id: "worker:feature", projectID: "worker:project", isPinned: false))
+        }
+        registry.onPaneSnapshot(RemoteMacIdentity(intermediary), [row("alias", depth: 1, label: "Stale metadata")])
+        registry.onPaneSnapshot(RemoteMacIdentity(worker), [row("/repo", depth: 0, label: "Current metadata")])
+        let snapshot = await model.sidebarRelaySnapshot(includeRelayed: true)
+        #expect(snapshot.projects.count == 1)
+        #expect(snapshot.projects.first?.name == "Current metadata")
+        #expect(snapshot.projects.first?.owner?.relayDepth == 1)
+        #expect(snapshot.worktrees.count == 1)
+        #expect(snapshot.worktrees.first?.origin?.relayDepth == 1)
+        #expect(model.promotedWorktreesForRelay(includeRelayed: true).count == 1)
+    }
+
+    @Test("@spec REMOTE-13.52: When a Mac opens a downstream worktree, the application shall route terminal and management identifiers through the paired intermediary, retain the downstream owner, and omit that worktree from onward relay snapshots.")
+    func downstreamWorktreeKeepsOwnerAndIntermediary() async throws {
+        let remote = try remoteMac()
+        let recorder = RemoteMacsModelManagementRecorder(response: .ok)
+        let (model, registry) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        let identity = RemoteMacIdentity(remote)
+        defer { model.disconnect(identity: identity) }
+        let downstream = WorktreeOrigin(deviceID: .init(value: "worker"), deviceLabel: "Worker", relayDepth: 1)
+        let row = WorktreePanes(path: "worker-alias", displayName: "feature", repoDisplayName: "Project", repositoryID: "repository-alias", displayBranch: "feature", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "pane-alias", title: "Worker pane", attentionText: nil, isBusy: false, attentionSource: nil),
+            origin: downstream, sidebar: .init(id: "worker:feature", projectID: "worker:project", isPinned: false))
+        registry.onPaneSnapshot(identity, [row])
+        #expect(model.remoteMac(delivering: row) == remote)
+        let local = await model.sidebarRelaySnapshot(includeRelayed: true)
+        let promoted = try #require(local.worktrees.first)
+        #expect(promoted.origin?.deviceID == downstream.deviceID)
+        #expect(promoted.origin?.relayDepth == 2)
+        #expect(local.projects.first?.owner?.deviceID == downstream.deviceID)
+        #expect(await model.sidebarRelaySnapshot().worktrees.isEmpty)
+        #expect(await model.sidebarRelaySnapshot().projects.isEmpty)
+        // An outward snapshot must not invalidate the local viewer's aliases.
+        #expect(model.relayRouter.resolveWorktree(promoted.path)?.path == row.path)
+        let pane = try #require(promoted.layout?.leaves.first?.sessionName)
+        #expect(model.relayRouter.resolvePane(pane)?.sessionName == "pane-alias")
+        #expect(model.relayRouter.resolvePane(pane)?.identity == identity)
+        #expect(await model.sendRelayedWorktreeManagement(.open(worktreeID: promoted.path)) == .ok)
+        #expect(await recorder.requests() == [.open(worktreeID: row.path)])
+    }
+
     @Test("Relayed agent creation forwards the provider and operation and returns promoted worktree and pane identities.")
     func relayedAgentLaunchUsesOwningHost() async throws {
         let remote = try remoteMac()
@@ -116,6 +169,14 @@ struct RemoteMacsModelTests {
     @Test func interactionWakesWithoutReplacingConnection() async throws {
         let (model, remote, recorder) = try await wakeRecordingModel()
         _ = try await model.connect(to: remote, allowsWake: true)
+        #expect(recorder.dials == [true])
+    }
+
+    @Test("@spec REMOTE-13.55: When a Mac opens a remote worktree or its viewer terminal on demand, the application shall make a user-selection connection attempt that may wake the saved host.", arguments: [false, true])
+    func openingRemoteContentRequestsAnImmediateConnection(viewer: Bool) async throws {
+        let (model, remote, recorder) = try await wakeRecordingModel()
+        if viewer { try await model.connectViewer(to: remote) }
+        else { _ = await model.openWorktree(on: remote, worktreePath: "/repo/worktree") }
         #expect(recorder.dials == [true])
     }
 
@@ -411,6 +472,30 @@ struct RemoteMacsModelTests {
         #expect(third.worktrees.compactMap { $0.sidebar?.id } == ["stable-worktree"])
         #expect(driver.readCount == 2)
         model.disconnect(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test("Unavailable downstream project metadata cannot authorize cached project deletion")
+    func staleDownstreamProjectHasNoRemovalAuthority() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let owner = WorktreeOrigin(deviceID: .init(value: "worker"), deviceLabel: "Worker", relayDepth: 1)
+        let project = SidebarProject(id: "worker:project", repositoryID: "worker-alias", name: "Project", owner: owner, isAvailable: false)
+        let driver = SidebarSnapshotSequenceDriver(next: .init(projects: [project]))
+        let paneStore = WorktreePanesStore(driver: driver)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelTestConnection(), paneEnvironment: .init(worktreePanesStore: paneStore, paneControlClient: nil))
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
+        await paneStore.applySnapshot([])
+        await paneStore.applySnapshot([])
+        let snapshot = await model.sidebarRelaySnapshot(includeRelayed: true)
+        #expect(snapshot.projects.first?.id == project.id)
+        #expect(snapshot.authoritativeOwnerIDs == [remote.id])
     }
 
     @Test func remoteNotificationResolvesCurrentProjectInitials() async throws {

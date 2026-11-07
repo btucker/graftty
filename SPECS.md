@@ -3442,6 +3442,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.35** When removing a worktree needs a sleeping host, the application shall wake that host before sending the removal.
 
+**REMOTE-2.36** When a mobile interaction fetches worktrees or sends a management request after a failed background dial, the application shall bypass the failure cooldown without replaying a management mutation.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3769,6 +3771,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.47** While a paired host has saved wake addresses, the client shall keep its last reported projects and worktrees across launches, and shall delete them when the host is forgotten.
 
 **REMOTE-13.48** While a host is asleep, the application shall keep its rows visible and dim with the last reported text, and shall name it asleep, and shall list other unreachable hosts on one offline line.
+
+**REMOTE-13.49** While the Mac or mobile host manager is open, the application shall list each downstream host with its intermediary Mac and preserve separate routes to the same destination.
+
+**REMOTE-13.50** When a user connects a downstream host from Mac or mobile, the application shall send its device ID and fingerprint through the selected intermediary, prevent duplicate pending requests on that route, and display rejected or unavailable replies.
+
+**REMOTE-13.51** While a Mac receives a downstream host's worktrees through a paired Mac, the application shall show those worktrees in unified projects, prefer direct deliveries, and exclude rows owned by this Mac.
+
+**REMOTE-13.52** When a Mac opens a downstream worktree, the application shall route terminal and management identifiers through the paired intermediary, retain the downstream owner, and omit that worktree from onward relay snapshots.
+
+**REMOTE-13.53** When an intermediary disconnects after reporting downstream hosts, the application shall retain its known routes for an explicit reconnect, keep background polling quiet, and remove the routes when that intermediary is forgotten.
+
+**REMOTE-13.54** When a Mac selects a worktree relayed by its paired intermediary, the viewer shall display its terminal layout and send pane commands using that intermediary's session identifiers.
+
+**REMOTE-13.55** When a Mac opens a remote worktree or its viewer terminal on demand, the application shall make a user-selection connection attempt that may wake the saved host.
 
 ### REMOTE-14.x — Shared project navigation
 
