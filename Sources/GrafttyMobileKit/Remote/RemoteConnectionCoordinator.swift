@@ -298,7 +298,8 @@ public final class RemoteConnectionCoordinator {
         if let inFlight = inFlightAttempts[host.id] {
             let result = await inFlight.task.value
             guard permitsConnections(in: generation) else { return nil }
-            if result != nil || wake != .now || inFlight.wake != .never { return result }
+            if result != nil || wake != .now || inFlight.wake == .now { return result }
+            if inFlightAttempts[host.id]?.id == inFlight.id { inFlightAttempts[host.id] = nil }
             failureCooldowns[host.id] = nil
             return await connection(for: host, replacingExistingConnection: replacingExistingConnection, wake: .now)
         }
@@ -491,9 +492,10 @@ public final class RemoteConnectionCoordinator {
     public func worktreePanes(
         for host: Host,
         onProgress: RemoteWorktreeLoadProgress? = nil,
-        reconnect: Bool = false
+        reconnect: Bool = false,
+        wake: WakePolicy = .whileDialing
     ) async throws -> [WorktreePanes] {
-        try await subscribedPanesStore(for: host, onProgress: onProgress, reconnect: reconnect).current
+        try await subscribedPanesStore(for: host, onProgress: onProgress, reconnect: reconnect, wake: wake).current
     }
 
     /// The host's panes-state store once it has applied its first snapshot,
@@ -580,10 +582,11 @@ public final class RemoteConnectionCoordinator {
     /// panes-state subscription above is the only long-lived control channel.
     public func sendWorktreeManagement(
         _ request: WorktreeManagementRequest,
-        to host: Host
+        to host: Host,
+        wake: WakePolicy = .now
     ) async throws -> WorktreeManagementResponse {
         guard isPaired(host) else { throw ConnectionError.pairingRequired }
-        guard let connection = await connection(for: host) else {
+        guard let connection = await connection(for: host, wake: wake) else {
             throw ConnectionError.unavailable
         }
         return try await connection.sendWorktreeManagement(request)

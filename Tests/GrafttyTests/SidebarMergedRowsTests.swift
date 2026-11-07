@@ -55,9 +55,17 @@ struct SidebarMergedRowsTests {
         #expect(merged.projects.map(\.id) == ["legacy"])
         #expect(merged.sections(for: "legacy").temporary.count == 1)
     }
-    @Test func relayedRowsAreLeftOut() {
+    @Test("@spec REMOTE-13.51: While a Mac receives a downstream host's worktrees through a paired Mac, the application shall show those worktrees in unified projects, prefer direct deliveries, and exclude rows owned by this Mac.")
+    func relayedRowsRemainVisible() {
         let merged = make(projects: [project("b", box)], remote: [row("two", box, project: "b", depth: 1)])
-        #expect(merged.sections(for: merged.projects[0].id).temporary.isEmpty)
+        #expect(merged.sections(for: merged.projects[0].id).temporary.map(\.hostID) == [box.deviceID])
+        let both = make(projects: [project("b", box)], remote: [
+            row("two", box, project: "b", depth: 1), row("two", box, project: "b"),
+            row("loop", local, project: "b", depth: 1),
+        ])
+        let rows = both.sections(for: both.projects[0].id).temporary
+        #expect(rows.count == 1)
+        #expect(rows.first?.row.origin?.relayDepth == 0)
     }
     @Test func frozenOrderHoldsTemporaryRows() {
         let merged = make(projects: [project("m", local)], local: [row("a", local, project: "m", activity: 1), row("b", local, project: "m", activity: 2)])

@@ -30,6 +30,7 @@ final class RemoteMacsModel: ObservableObject {
     }
 
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
+    let downstreamConnections = DownstreamHostConnections<RemoteMacIdentity>()
     @Published private(set) var trustedLinuxHosts: [RemoteDeviceID: PinnedHost] = [:]
     private let maintenancePins: PinnedHostStore
     private let hostSnapshotCache: HostSnapshotCache
@@ -781,7 +782,7 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
-    func repositories(on remoteMac: RemoteMac) async throws
+    func repositories(on remoteMac: RemoteMac, includeRelayed: Bool = false) async throws
         -> [RemoteRepositoryInfo] {
         _ = try await connect(to: remoteMac)
         let response = try await sendWorktreeManagement(
@@ -792,7 +793,7 @@ final class RemoteMacsModel: ObservableObject {
             if case .error(_, let message, _, _) = response { throw ProjectControlError.host(message) }
             throw ProjectControlError.unexpectedResponse
         }
-        return repositories.filter { ($0.origin?.relayDepth ?? 0) == 0 }
+        return repositories.filter { ($0.origin?.relayDepth ?? 0) <= (includeRelayed ? 1 : 0) }
     }
 
     /// Resolve management aliases before comparing raw repository IDs. The
@@ -800,7 +801,7 @@ final class RemoteMacsModel: ObservableObject {
     func editableRepositoryTarget(for project: SidebarProject) -> RelayedRepositoryTarget? {
         guard project.isAvailable, project.supportsWorktreeEditing == true,
               let route = relayRouter.resolveRepository(project.repositoryID),
-              project.owner?.deviceID == route.identity.id,
+              project.owner?.deviceID == (route.downstreamOwnerID ?? route.identity.id),
               savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == route.identity }),
               connectionState(for: route.identity) == .connected else { return nil }
         return route
@@ -813,7 +814,7 @@ final class RemoteMacsModel: ObservableObject {
         }
         // Capture the owner and repository before suspension. A selection
         // change must not retarget the sheet to a different project.
-        let repositories = try await refreshRepositories(on: mac)
+        let repositories = try await refreshRepositories(on: mac, includeRelayed: route.downstreamOwnerID != nil)
         guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == route.identity }),
               connectionState(for: route.identity) == .connected else { throw ProjectControlError.unavailable }
         guard let repository = repositories.first(where: { $0.id == route.repositoryID }) else {
@@ -850,9 +851,9 @@ final class RemoteMacsModel: ObservableObject {
     }
 
     @discardableResult
-    func refreshRepositories(on remoteMac: RemoteMac) async throws
+    func refreshRepositories(on remoteMac: RemoteMac, includeRelayed: Bool = false) async throws
         -> [RemoteRepositoryInfo] {
-        let repositories = try await repositories(on: remoteMac)
+        let repositories = try await repositories(on: remoteMac, includeRelayed: includeRelayed)
         repositoriesByRemote[RemoteMacIdentity(remoteMac)] = repositories
         return repositories
     }
@@ -919,7 +920,7 @@ final class RemoteMacsModel: ObservableObject {
         worktreePath: String
     ) async -> WorktreeManagementResponse {
         do {
-            _ = try await connect(to: remoteMac)
+            _ = try await connectFromUserSelection(to: remoteMac)
             return try await sendWorktreeManagement(
                 identity: RemoteMacIdentity(remoteMac),
                 request: .open(worktreeID: worktreePath)
@@ -968,7 +969,7 @@ final class RemoteMacsModel: ObservableObject {
     /// Contents and removal authority come from the same per-owner read. A
     /// first frame arriving later must not turn an earlier empty read into an
     /// authoritative deletion of that owner's cached projects and order.
-    func sidebarRelaySnapshot() async -> SidebarRelaySnapshot {
+    func sidebarRelaySnapshot(includeRelayed: Bool = false) async -> SidebarRelaySnapshot {
         var result = SidebarRelaySnapshot()
         var snapshots: [RemoteMacIdentity: [WorktreePanes]] = [:]
         for mac in savedRemoteMacs where connectionState(for: RemoteMacIdentity(mac)) == .connected
@@ -988,13 +989,37 @@ final class RemoteMacsModel: ObservableObject {
             }
             snapshots[identity] = rows
             let projects = sidebar?.projects ?? SidebarProjection.projects(rows)
-            let promoted = relayRouter.promoteProjects(projects, from: mac)
+            let promoted = relayRouter.promoteProjects(projects, from: mac, includeRelayed: includeRelayed)
             result.projects += promoted
-            rememberSnapshot(of: mac, projects: promoted, rows: rows.filter { ($0.origin?.relayDepth ?? 0) == 0 })
-            if sidebar != nil { result.authoritativeOwnerIDs.insert(mac.id) }
+            rememberSnapshot(of: mac, projects: promoted.filter { $0.owner?.deviceID == mac.id }, rows: rows.filter { ($0.origin?.relayDepth ?? 0) == 0 })
+            if sidebar != nil {
+                result.authoritativeOwnerIDs.insert(mac.id)
+                if includeRelayed { result.authoritativeOwnerIDs.formUnion(promoted.filter(\.isAvailable).compactMap { $0.owner?.deviceID }) }
+            }
         }
-        result.worktrees = relayRouter.promotedWorktrees(snapshots: snapshots, remoteMacs: savedRemoteMacs)
+        result.worktrees = relayRouter.promotedWorktrees(snapshots: snapshots, remoteMacs: savedRemoteMacs, includeRelayed: includeRelayed)
+        if includeRelayed {
+            result.projects = preferredProjectRoutes(result.projects)
+            result.worktrees = MergedWorktreeList.deduplicated(result.worktrees)
+        }
         return result
+    }
+
+    private func preferredProjectRoutes(_ projects: [SidebarProject]) -> [SidebarProject] {
+        var best: [String: SidebarProject] = [:]
+        var order: [String] = []
+        for project in projects {
+            guard let previous = best[project.id] else {
+                best[project.id] = project
+                order.append(project.id)
+                continue
+            }
+            if (project.isAvailable && !previous.isAvailable)
+                || (project.isAvailable == previous.isAvailable && (project.owner?.relayDepth ?? 0) < (previous.owner?.relayDepth ?? 0)) {
+                best[project.id] = project
+            }
+        }
+        return order.compactMap { best[$0] }
     }
 
     struct SleepingSnapshot {
@@ -1311,11 +1336,34 @@ final class RemoteMacsModel: ObservableObject {
         worktreePanesByRemote.filter { paneFeedFailures[$0.key] == nil }
     }
 
-    func promotedWorktreesForRelay() -> [WorktreePanes] {
-        relayRouter.promotedWorktrees(
+    func promotedWorktreesForRelay(includeRelayed: Bool = false) -> [WorktreePanes] {
+        let rows = relayRouter.promotedWorktrees(
             snapshots: healthyWorktreeSnapshots,
-            remoteMacs: savedRemoteMacs
+            remoteMacs: savedRemoteMacs,
+            includeRelayed: includeRelayed
         )
+        return includeRelayed ? MergedWorktreeList.deduplicated(rows) : rows
+    }
+
+    /// Raw worktree paths belong to the peer that delivered them, even when
+    /// their origin names a third host. Prefer its direct connection if present.
+    func remoteMac(delivering row: WorktreePanes) -> RemoteMac? {
+        let matches = savedRemoteMacs.filter { mac in
+            let identity = RemoteMacIdentity(mac)
+            return connectionState(for: identity) == .connected && paneFeedFailures[identity] == nil
+                && worktreePanesByRemote[identity]?.contains(where: {
+                    $0.path == row.path && $0.origin?.deviceID == row.origin?.deviceID
+                }) == true
+        }
+        return matches.first(where: { $0.id == row.origin?.deviceID }) ?? matches.first
+            ?? savedRemoteMacs.first(where: { $0.id == row.origin?.deviceID && (row.origin?.relayDepth ?? 0) == 0 })
+    }
+
+    func remoteMac(delivering project: SidebarProject) -> RemoteMac? {
+        if let route = relayRouter.resolveRepository(project.repositoryID) {
+            return savedRemoteMacs.first { RemoteMacIdentity($0) == route.identity }
+        }
+        return savedRemoteMacs.first { $0.id == project.owner?.deviceID }
     }
 
     private func refreshRelayRoutes() {
