@@ -119,6 +119,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// property. All accesses go through actor-isolated methods, so
     /// the lack of internal Sendable enforcement is safe here.
     private var sshHandlerBox: SSHHandlerBox?
+    private var teardownTask: Task<Void, Never>?
 
     public init(
         clientKey: Curve25519.Signing.PrivateKey,
@@ -518,15 +519,17 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         )
     }
 
-    public func close() {
+    /// Waits for the shared teardown, including cleanup already started by a failure.
+    public func close() async {
         setState(.closed)
+        await teardownTask?.value
     }
 
     /// Routes every `state` mutation through one place so `onStateChange`
     /// fires exactly once per notify-worthy transition. `.idle` /
     /// `.connecting` update `state` silently — nothing downstream needs
     /// those. `.connected` / `.failed` / `.closed` notify; the latter two
-    /// also tear down every live resource first, and — critically — are
+    /// also detach live resources and start ordered teardown first, and are
     /// refused entirely once `state` is already terminal. That refusal is
     /// what keeps an ICE `.failed` and a DataChannel close (which can
     /// both fire for the same dead peer connection, in either order) from
@@ -548,22 +551,21 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// `true` once `state` has reached a terminal value. See `setState`.
     private var isTerminal: Bool { state.isTerminal }
 
-    /// Tears down every live resource: the SSH transport, any in-flight
-    /// continuations, timeout tasks, and the WebRTC peer/data channel.
-    /// Called exactly once, from `setState`, on the first `.failed` or
-    /// `.closed` transition.
+    /// Detaches live resources and starts ordered asynchronous teardown.
+    /// Called once, from `setState`, on the first `.failed` or `.closed`
+    /// transition, before notifying observers or allowing another actor turn.
     private func performTeardown() {
         bulkSetupTask?.cancel()
         bulkSetupTask = nil
-        if let bulk = bulkTransport { Task { await bulk.close() } }
+        let bulk = bulkTransport
+        let transport = sshTransport
+        let dc = dataChannel
+        let pc = peerConnection
         bulkTransport = nil
         bulkHandlerBox = nil
         bulkTransportID = nil
-        if let transport = sshTransport {
-            Task { await transport.close() }
-            sshTransport = nil
-            sshHandlerBox = nil
-        }
+        sshTransport = nil
+        sshHandlerBox = nil
         if let pending = iceGatheringContinuation {
             iceGatheringContinuation = nil
             delegate.onIceGatheringComplete = nil
@@ -571,14 +573,22 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         }
         openTimeoutTask?.cancel()
         openTimeoutTask = nil
-        dataChannel?.close()
-        peerConnection?.close()
         dataChannel = nil
         peerConnection = nil
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
         pendingRemoteCandidates.removeAll()
         remoteDescriptionApplied = false
+        // Closing the native peer while its NIO transports are closing their
+        // data channels can overlap synchronous WebRTC shutdown calls. Drain
+        // both transports first, using one task for every close caller.
+        teardownTask = Task { [self] in
+            if let bulk { await bulk.close() }
+            if let transport { await transport.close() }
+            else { dc?.close() }
+            // Retain the factory and delegates through native shutdown.
+            withExtendedLifetime(self) { pc?.close() }
+        }
     }
 
     /// `RTCIceConnectionState.failed` means ICE has exhausted every

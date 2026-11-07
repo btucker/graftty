@@ -10,6 +10,62 @@ import Testing
 
 @Suite("Negotiated WebRTC bulk transport", .serialized)
 struct WebRTCBulkTransportTests {
+    @Test("@spec REMOTE-11.28: When a remote connection closes, the client shall finish closing its SSH transports before closing the peer connection, and concurrent close callers shall await the same teardown.", .timeLimit(.minutes(1)))
+    func closeWaitsForTransportTeardown() async throws {
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TrustedPeerStore(directory: dir)
+        let peer = TrustedPeer(id: .init(value: "ordered-close"), kind: .mac,
+            publicKey: try .init(rawRepresentation: clientKey.publicKey.rawRepresentation),
+            displayName: "test", capabilities: .defaultsAfterPairing, pairedAt: Date(), lastSeenAt: nil)
+        try store.add(peer)
+        let host = WebRTCHostAgent(hostKey: hostKey, trustedPeerStore: store,
+            streamFactory: { _ in LegacyBulkEchoStream() }, pagedFactory: { _ in BulkEchoStream() },
+            panesStateSubscribe: { _ in .init(cancel: {}) }, paneControlMutator: { _ in fatalError("not used") },
+            displayOwnershipStore: SessionDisplayOwnershipStore())
+        let client = RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: .init(
+            of: try .init(rawRepresentation: hostKey.publicKey.rawRepresentation)))
+        do {
+            let offer = try await client.createOffer()
+            let answer = try await host.acceptOffer(offer, clientDeviceID: peer.id)
+            try await client.applyAnswer(answer)
+            let deadline = ContinuousClock.now + .seconds(5)
+            while await !client.hasBulkTransportForTesting, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            let bulk = try #require(await client.bulkTransportForTesting)
+            let primary = try #require(await client.sshTransportForTesting)
+            let gate = TransportCloseGate()
+            defer { gate.release() }
+            bulk.eventLoop.execute { gate.wait() }
+            let enteredDeadline = ContinuousClock.now + .seconds(1)
+            while !gate.hasEntered, ContinuousClock.now < enteredDeadline { await Task.yield() }
+            #expect(gate.hasEntered)
+            let first = Task { await client.close(); gate.recordReturn() }
+            let second = Task { await client.close(); gate.recordReturn() }
+            let observationDeadline = ContinuousClock.now + .milliseconds(150)
+            while !gate.hasReturned, ContinuousClock.now < observationDeadline {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            #expect(!gate.hasReturned, "Close must wait while a transport's event loop is still busy")
+            #expect(await client.state == .closed, "Logical close must precede asynchronous teardown")
+            first.cancel()
+            gate.release()
+            await first.value
+            await second.value
+            #expect(!bulk.channel.isActive)
+            #expect(!primary.channel.isActive)
+            #expect(await client.state == .closed)
+            await host.close()
+        } catch {
+            await client.close()
+            await host.close()
+            throw error
+        }
+    }
+
     @Test("@spec REMOTE-11.27: If an optional history channel cannot open before its deadline, then the application shall preserve the active terminal and deliver history over its primary channel.", .timeLimit(.minutes(1)))
     func stalledHistoryOpenPreservesTerminal() async throws {
         let hostKey = Curve25519.Signing.PrivateKey()
@@ -202,4 +258,19 @@ private final class LegacyBulkEchoStream: GrafttyKit.TerminalByteStream, @unchec
 private func historyFallbackStage(_ message: String) {
     // Keep the last completed phase even if native shutdown blocks forever.
     FileHandle.standardError.write(Data((message + "\n").utf8))
+}
+
+private final class TransportCloseGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var entered = false
+    private var returned = false
+    var hasEntered: Bool { lock.withLock { entered } }
+    var hasReturned: Bool { lock.withLock { returned } }
+    func recordReturn() { lock.withLock { returned = true } }
+    func wait() {
+        lock.withLock { entered = true }
+        _ = semaphore.wait(timeout: .now() + 2)
+    }
+    func release() { semaphore.signal() }
 }

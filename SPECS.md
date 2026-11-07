@@ -3672,6 +3672,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.27** If an optional history channel cannot open before its deadline, then the application shall preserve the active terminal and deliver history over its primary channel.
 
+**REMOTE-11.28** When a remote connection closes, the client shall finish closing its SSH transports before closing the peer connection, and concurrent close callers shall await the same teardown.
+
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
