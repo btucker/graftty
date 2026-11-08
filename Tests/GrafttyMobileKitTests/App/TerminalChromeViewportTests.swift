@@ -16,6 +16,66 @@ import UIKit
 @Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
 @MainActor
 struct RenderedTerminalViewportTests {
+    @Test("An embedded input request stays below the controls without resizing the mobile terminal")
+    func embeddedQuestionKeepsTerminalSize() async throws {
+        let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let state = EmbeddedQuestionState()
+        let controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        let content = EmbeddedQuestionFixture(state: state) { question in
+            let context = SidebarWorktreeContext(worktree: .init(path: "/repo", displayName: "Task", repoDisplayName: "Repo",
+                displayBranch: "task", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+                layout: .leaf(sessionName: "asking", title: "Claude", attentionText: question, isBusy: false, attentionSource: .agentStop)))
+            SingleSessionView(step: SessionStep(host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!),
+                worktreePath: "/repo", sessionName: "viewport", title: "Claude"), navigationPath: .constant(NavigationPath()),
+                isFullScreen: false, isEmbeddedPane: true,
+                embeddedPaneHeader: AnyView(Text("Claude").frame(height: 44)),
+                embeddedPaneBanner: AnyView(WorkspaceInputRequest(context: context, selectedSession: "viewport", onSelect: { state.selection = $0 })),
+                initialClient: client, initialController: controller)
+        }
+        let fixture = makeHostingFixture(content: AnyView(content), embedded: true)
+        defer { fixture.window.isHidden = true }
+        let container = try await renderedContainer(in: fixture.host.view)
+        client.session.receive(Data("first line\r\nsecond line\r\nReady > ".utf8))
+        try await waitForLayout("terminal output") { client.session.readViewportText()?.contains("Ready >") == true }
+        let original = container.bounds
+        let grid = try #require(container.terminalGridMetrics)
+        for question in ["Pick an approach?", "A longer question that wraps across the pane before the agent can continue.", nil] {
+            state.question = question
+            try await waitForLayout("input request update") {
+                fixture.host.view.layoutIfNeeded()
+                let labels = accessibilityObjects(in: fixture.host.view).compactMap(\.accessibilityLabel)
+                return question.map { labels.contains($0) } ?? !labels.contains("A longer question that wraps across the pane before the agent can continue.")
+            }
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(try await renderedContainer(in: fixture.host.view) === container)
+            #expect(container.bounds == original)
+            #expect(container.terminalGridMetrics?.columns == grid.columns)
+            #expect(container.terminalGridMetrics?.rows == grid.rows)
+            if let question {
+                let request = try #require(accessibilityObjects(in: fixture.host.view).first { $0.accessibilityLabel == question })
+                let header = try #require(accessibilityObjects(in: fixture.host.view).first { $0.accessibilityLabel == "Claude" })
+                #expect(request.accessibilityFrame.minY >= header.accessibilityFrame.maxY)
+                let goToQuestion = try #require(accessibilityObjects(in: fixture.host.view).first { $0.accessibilityLabel == "Go to question" })
+                #expect(goToQuestion.accessibilityActivate())
+                #expect(state.selection == "asking")
+            }
+        }
+    }
+
+    private final class EmbeddedQuestionState: ObservableObject {
+        @Published var question: String?
+        @Published var selection: String?
+    }
+
+    private struct EmbeddedQuestionFixture<Content: View>: View {
+        @ObservedObject var state: EmbeddedQuestionState
+        @ViewBuilder var content: (String?) -> Content
+        var body: some View { content(state.question) }
+    }
+
     @Test("Pending questions stay clear of a lone prompt and completed-agent actions.", arguments: [false, true])
     func pendingQuestionDoesNotCoverContent(completed: Bool) async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })

@@ -102,9 +102,12 @@ struct MultiPaneDetailView: View {
                     VStack(spacing: 0) {
                         if let agent = worktree.agents?.first(where: { $0.presentationSessionName == sessionName && $0.isCompleted }) {
                             if let group = currentWorkspace.group(containing: sessionName) { tabHeader(group) }
-                            if currentWorkspace.group(containing: sessionName)?.id == inputRequestGroupID { inputRequestBanner }
                             MobileAgentConversationView(host: host, worktreePath: worktree.path, agent: agent)
                                 .onTapGesture { onSelectPane(sessionName) }
+                                .overlay(alignment: .top) {
+                                    if currentWorkspace.group(containing: sessionName)?.id == inputRequestGroupID { inputRequestBanner }
+                                }
+                                .clipped()
                         } else {
                         MultiPaneLeafView(
                             host: host,

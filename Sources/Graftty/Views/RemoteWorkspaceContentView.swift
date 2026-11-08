@@ -203,6 +203,10 @@ struct RemoteWorkspaceContentView: View {
                 if let session = layout.sessions.first(where: { slot($0) == id }) { select(session) }
             }, agentScrollbackMap: agentScrollbackMap,
             paneHeader: headers ? { id in AnyView(header(id)) } : nil,
+            paneBanner: headers ? { id in
+                guard let group = layout.groups.first(where: { slot($0.selected) == id }), group.id == inputRequestGroupID else { return nil }
+                return AnyView(WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: select))
+            } : nil,
             paneContent: { id in
                 guard let agent = worktree.agents?.first(where: { $0.presentationSessionName.flatMap(slot) == id && $0.isCompleted }) else { return nil }
                 return AnyView(AgentConversationView(agent: agent) { action in try await conversationRequest(agent.id, action) })
@@ -323,10 +327,6 @@ struct RemoteWorkspaceContentView: View {
                     guard let session = sessions.first?.session, layout.sessions.contains(session) else { return false }
                     workspace?.move(session, to: group.id); select(session); return true
                 }
-            // LAYOUT-2.196: an agent's input request sits under its pane's tabs.
-            if group.id == inputRequestGroupID {
-                WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: select)
-            }
           }
         }
     }
