@@ -3836,7 +3836,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.64** When mobile saves a recent pane, the application shall retain its destination owner alongside the delivery host so reopening can resolve a different direct or relayed path.
 
-**REMOTE-13.65** While the mobile host list is open, the application shall indent each relay host beneath its paired intermediary Mac and preserve a separate reconnect action for each route.
+**REMOTE-13.65** While the mobile host list is open, the application shall render each relay host as an indented row beneath its paired intermediary Mac and preserve a separate reconnect action for each route.
 
 ### REMOTE-14.x — Shared project navigation
 

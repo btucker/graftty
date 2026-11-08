@@ -18,6 +18,7 @@ struct DownstreamHostRows: View {
                                    isReconnecting: connections.connecting.contains(route.id)) {
                 onReconnect(route)
             }
+            .padding(.leading, 24)
         }
     }
 }

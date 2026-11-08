@@ -10,7 +10,7 @@ import UIKit
 @Suite("HostPickerView", .serialized)
 struct HostPickerViewCallbackTests {
 
-    @Test("@spec REMOTE-13.65: While the mobile host list is open, the application shall indent each relay host beneath its paired intermediary Mac and preserve a separate reconnect action for each route.")
+    @Test("@spec REMOTE-13.65: While the mobile host list is open, the application shall render each relay host as an indented row beneath its paired intermediary Mac and preserve a separate reconnect action for each route.")
     func relayHostsAppearBeneathTheirIntermediaries() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -51,11 +51,20 @@ struct HostPickerViewCallbackTests {
         let children = objects.filter { $0.accessibilityLabel == "Worker" }
             .sorted { $0.accessibilityFrame.minY < $1.accessibilityFrame.minY }
         #expect(children.count == 2)
+        let list = try #require(objects.compactMap { $0 as? UICollectionView }.first)
+        func cell(at frame: CGRect) -> IndexPath? {
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            return list.indexPathForItem(at: list.convert(center, from: window.screen.coordinateSpace))
+        }
         for (index, parent) in store.hosts.enumerated() {
             let parentFrame = try #require(objects.first { $0.accessibilityLabel == parent.label }).accessibilityFrame
             let childFrame = try #require(children.indices.contains(index) ? children[index] : nil).accessibilityFrame
+            // A child swipe must not expose its intermediary's forget action.
+            #expect(try #require(cell(at: childFrame)) != #require(cell(at: parentFrame)))
             #expect(childFrame.minY > parentFrame.maxY)
-            #expect(childFrame.minX >= parentFrame.minX + 24)
+            // Include the existing 20-point icon and 10-point gap so icon
+            // spacing alone cannot satisfy the 24-point nesting requirement.
+            #expect(childFrame.minX >= parentFrame.minX + 24 + 30 - 1)
             if index + 1 < store.hosts.count {
                 let nextParent = try #require(objects.first { $0.accessibilityLabel == store.hosts[index + 1].label })
                 #expect(childFrame.maxY < nextParent.accessibilityFrame.minY)

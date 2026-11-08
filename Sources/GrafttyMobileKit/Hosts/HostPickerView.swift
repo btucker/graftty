@@ -45,36 +45,18 @@ public struct HostPickerView: View {
                     Text("No paired Macs yet.").foregroundStyle(.secondary)
                 }
                 ForEach(store.hosts) { host in
-                    // Keep one list row per saved host so swipe-to-forget
-                    // offsets still refer to store.hosts, not relay children.
-                    VStack(alignment: .leading, spacing: 12) {
-                        savedHostRow(host)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if let feed {
-                            DownstreamHostRows(feed: feed, hostID: host.id) { route in
-                                Task {
-                                    await feed.downstreamConnections.connect(route, send: sendDownstream)
-                                    await refreshDownstreamHosts()
-                                }
+                    savedHostRow(host)
+                        .swipeActions {
+                            Button(role: .destructive) { forget(host) } label: {
+                                Label("Forget", systemImage: "trash")
                             }
-                            .padding(.leading, 24)
+                            .accessibilityLabel("Forget \(host.label)")
                         }
-                    }
-                    .accessibilityElement(children: .contain)
-                }
-                .onDelete { offsets in
-                    let removed = offsets.map { store.hosts[$0] }
-                    for host in removed {
-                        Task {
-                            do {
-                                if let coordinator {
-                                    try await coordinator.forget(host)
-                                }
-                                try store.delete(host.id)
-                            } catch {
-                                forgetError =
-                                    "Couldn't forget \(host.label): "
-                                    + error.localizedDescription
+                    if let feed {
+                        DownstreamHostRows(feed: feed, hostID: host.id) { route in
+                            Task {
+                                await feed.downstreamConnections.connect(route, send: sendDownstream)
+                                await refreshDownstreamHosts()
                             }
                         }
                     }
@@ -159,6 +141,17 @@ public struct HostPickerView: View {
 
     private func isPaired(_ host: Host) -> Bool {
         coordinator?.isPaired(host) ?? (host.remoteDeviceID != nil)
+    }
+
+    private func forget(_ host: Host) {
+        Task {
+            do {
+                if let coordinator { try await coordinator.forget(host) }
+                try store.delete(host.id)
+            } catch {
+                forgetError = "Couldn't forget \(host.label): " + error.localizedDescription
+            }
+        }
     }
 }
 
