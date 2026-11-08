@@ -501,10 +501,7 @@ public actor WebRTCHostAgent {
         // detached, never whatever is live when it resumes.
         let transport = sshTransport
         let bulk = bulkTransport
-        let bulkDC = bulkDataChannel
         bulkTransport = nil
-        bulkDataChannel = nil
-        bulkDataChannelInbox = nil
         bulkInstallStarted = false
         bulkChannels = BulkTerminalChannels()
         primaryPeerBox = AuthenticatedPeerBox()
@@ -512,14 +509,9 @@ public actor WebRTCHostAgent {
         let registration = authenticatedRegistration
         authenticatedRegistration = nil
         signalingClientDeviceID = nil
-        let pc = peerConnection
-        peerConnection = nil
-        let dc = dataChannel
-        dataChannel = nil
-        dataChannelInbox = nil
+        let nativeShutdown = detachNativeShutdown()
 
         if let bulk { await bulk.close() }
-        bulkDC?.close()
         if let transport {
             await transport.close()
         }
@@ -534,8 +526,29 @@ public actor WebRTCHostAgent {
             let registry = sshConnectionRegistry
             Task { await registry.deregister(deviceID: deviceID, token: token) }
         }
-        pc?.close()
-        dc?.close()
+        await nativeShutdown.run()
+    }
+
+    /// Detach before suspension so reconnect can install a fresh lifecycle.
+    /// Keep raw native references out of close()'s async frame: even their
+    /// destruction can synchronously wait for WebRTC and its GCD queues.
+    private func detachNativeShutdown() -> WebRTCShutdown {
+        let pc = peerConnection
+        let dc = dataChannel
+        let bulkDC = bulkDataChannel
+        let inbox = dataChannelInbox
+        let bulkInbox = bulkDataChannelInbox
+        peerConnection = nil
+        dataChannel = nil
+        bulkDataChannel = nil
+        dataChannelInbox = nil
+        bulkDataChannelInbox = nil
+        return WebRTCShutdown { [self] in
+            bulkDC?.close()
+            dc?.close()
+            pc?.close()
+            withExtendedLifetime((self, inbox, bulkInbox)) {}
+        }
     }
 
     /// Begins a fresh connection lifecycle — called exactly once per accepted

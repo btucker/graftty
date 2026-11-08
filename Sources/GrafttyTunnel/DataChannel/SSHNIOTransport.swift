@@ -22,6 +22,24 @@ extension RTCDataChannel: DataChannelSink {
     func sinkClose() { close() }
 }
 
+/// A transport and its relay share this owner. The last release can come from
+/// a late inbox callback or an actor task, so native proxy destruction must
+/// leave the cooperative executor even when close() already completed.
+private final class DataChannelHandle: DataChannelSink {
+    private let sink: DataChannelSink
+
+    init(_ sink: DataChannelSink) { self.sink = sink }
+    var sinkReadyState: RTCDataChannelState { sink.sinkReadyState }
+    var sinkBufferedAmount: UInt64 { sink.sinkBufferedAmount }
+    func sinkSend(_ buffer: RTCDataBuffer) -> Bool { sink.sinkSend(buffer) }
+    func sinkClose() { sink.sinkClose() }
+
+    deinit {
+        let sink = sink
+        WebRTCShutdown { withExtendedLifetime(sink) {} }.schedule()
+    }
+}
+
 /// Adapter that bridges WebRTC's `RTCDataChannel` (a message-stream API)
 /// to a swift-nio `Channel` (a byte-stream API) so that handlers like
 /// `NIOSSHHandler` can run over an SCTP-backed DataChannel.
@@ -92,7 +110,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// `channel.eventLoop`.
     public var eventLoop: EventLoop { embeddedLoop }
 
-    private let dataChannel: RTCDataChannel
+    private let dataChannel: DataChannelHandle
     private let embeddedLoop: NIOAsyncTestingEventLoop
     private let embedded: NIOAsyncTestingChannel
     private let outboundRelay: OutboundRelayHandler
@@ -166,7 +184,8 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// channel delivered before this point, so no delegate-attachment
     /// race can drop the peer's first bytes (the SSH banner deadlock).
     public init(dataChannel: RTCDataChannel, inbox: DataChannelInbox, onClose: (@Sendable () -> Void)? = nil) {
-        self.dataChannel = dataChannel
+        let handle = DataChannelHandle(dataChannel)
+        self.dataChannel = handle
         self.onClose = onClose
         let loop = NIOAsyncTestingEventLoop()
         self.embeddedLoop = loop
@@ -185,7 +204,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // the DataChannel rather than letting it accumulate in the
         // embedded core's pendingOutboundBuffer.
         let relay = OutboundRelayHandler(
-            sink: dataChannel,
+            sink: handle,
             mtu: Self.mtu
         )
         self.outboundRelay = relay
@@ -260,7 +279,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
                 }
                 self.startCalled = true
 
-                switch self.dataChannel.readyState {
+                switch self.dataChannel.sinkReadyState {
                 case .open:
                     self.fireChannelActive()
                     continuation.resume()
@@ -422,7 +441,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // pending in the embedded pipeline get rejected by the relay
         // handler's readyState check rather than queued onto a closed
         // channel.
-        dataChannel.close()
+        dataChannel.sinkClose()
         // The inbox stays attached as the channel delegate; late
         // WebRTC-thread events forward into `handleDataChannelOpen` /
         // `handleDataChannelClosed` / `deliverInbound`, all of which
@@ -500,7 +519,7 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
          pendingByteLimit: Int = 8 * 1024 * 1024,
          diagnosticNow: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         precondition(mtu > 0 && bufferedByteLimit >= mtu && pendingByteLimit > 0)
-        self.sink = sink
+        self.sink = sink as? DataChannelHandle ?? DataChannelHandle(sink)
         self.mtu = mtu
         self.bufferedByteLimit = UInt64(bufferedByteLimit)
         self.pendingByteLimit = pendingByteLimit
