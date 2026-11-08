@@ -50,6 +50,10 @@ struct WorkspaceContentView: View {
                         focusedPaneSlotID: worktree.presentationPane, theme: theme, onFocusTerminal: focus,
                         previewWorktreePath: worktree.path, agentScrollbackMap: agentScrollbackMap,
                         paneHeader: { slot in AnyView(groupHeader(for: slot)) },
+                        paneBanner: { slot in
+                            guard let group = layout.group(containing: slot), group.id == inputRequestGroupID else { return nil }
+                            return AnyView(inputRequestBanner)
+                        },
                         paneContent: { slot in
                             guard let agent = agent(slot), agent.completion != nil || agent.status == .closed else { return nil }
                             return AnyView(CompletedAgentContent(agent: agent, launching: launching,
@@ -154,8 +158,6 @@ struct WorkspaceContentView: View {
                 .onDrop(of: [WorkspaceTabDrag.contentType], isTargeted: nil) { providers in
                     receive(providers) { session in if let id = group?.id { mutate { $0.move(session, to: id) }; focus(session) } }
                 }
-            // LAYOUT-2.196: an agent's input request sits under its pane's tabs.
-            if let group, group.id == inputRequestGroupID { inputRequestBanner }
         }
     }
 

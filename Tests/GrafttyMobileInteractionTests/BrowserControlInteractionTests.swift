@@ -77,9 +77,9 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         let beta = app.buttons["workspace.tab.beta"]
         let alpha = app.buttons["workspace.tab.alpha"]
         XCTAssertTrue(beta.waitForExistence(timeout: 10) && alpha.exists, app.debugDescription)
-        let request = app.staticTexts["Pick a color?"]
+        let request = app.buttons["Pick a color?"]
         XCTAssertTrue(request.waitForExistence(timeout: 5), "The input request is not shown")
-        XCTAssertEqual(app.staticTexts.matching(identifier: "Pick a color?").count, 1, "The request shows more than once")
+        XCTAssertEqual(app.buttons.matching(identifier: "Pick a color?").count, 1, "The request shows more than once")
         XCTAssertGreaterThanOrEqual(request.frame.minY, beta.frame.maxY - 1, "The request is above the asking pane's tabs")
         XCTAssertLessThan(request.frame.minY - beta.frame.maxY, 40, "The request is not directly under the tabs")
         let navigation = app.navigationBars["Workspace"]

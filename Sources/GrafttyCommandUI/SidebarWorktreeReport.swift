@@ -178,11 +178,23 @@ public struct SidebarWorktreePorts: View {
     }
 }
 
+/// Overlay hosts use the visible request height to keep other floating controls
+/// below it without changing the terminal's grid.
+public struct WorkspaceInputRequestHeightKey: PreferenceKey {
+    public static let defaultValue: CGFloat = 0
+    public static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 /// A request remains visible without changing the selected agent or terminal.
+/// Mount over pane content, not in the tab row's vertical layout: inline agent
+/// TUIs can reprint their transcript into scrollback after a grid change.
 public struct WorkspaceInputRequest: View {
     public let context: SidebarWorktreeContext?
     public let selectedSession: String?
     public let onSelect: (String) -> Void
+    @State private var showsQuestion = false
 
     public init(context: SidebarWorktreeContext?, selectedSession: String?, onSelect: @escaping (String) -> Void) {
         self.context = context; self.selectedSession = selectedSession; self.onSelect = onSelect
@@ -192,15 +204,33 @@ public struct WorkspaceInputRequest: View {
         if let context, let question = context.question {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "hand.raised").foregroundStyle(.orange)
-                Text(question).font(.callout).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(question) { showsQuestion = true }
+                .font(.callout).lineLimit(1)
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(question)
+                .popover(isPresented: $showsQuestion) {
+                    ScrollView {
+                        Text(question).font(.body).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                    }.frame(width: 300, height: 220)
+                        .presentationCompactAdaptation(.popover)
+                }
                 if let session = context.questionPaneID, session != selectedSession {
                     Button("Go to question") { onSelect(session) }.font(.caption)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(Color.orange.opacity(0.06))
+            .background(Color.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: WorkspaceInputRequestHeightKey.self, value: geometry.size.height)
+                }
+            }
             .accessibilityElement(children: .contain)
+            .onChange(of: question) { _, _ in showsQuestion = false }
+            .onDisappear { showsQuestion = false }
         }
     }
 }

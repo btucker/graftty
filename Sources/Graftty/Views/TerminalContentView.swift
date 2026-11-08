@@ -23,11 +23,13 @@ struct TerminalContentView: View {
     var previewWorktreePath: String? = nil
     var agentScrollbackMap: AgentScrollbackMap? = nil
     var paneHeader: ((PaneSlotID) -> AnyView)? = nil
+    var paneBanner: ((PaneSlotID) -> AnyView?)? = nil
     var paneContent: ((PaneSlotID) -> AnyView?)? = nil
     var paneDropTarget: ((PaneSlotID, AnyView) -> AnyView)? = nil
     /// Breathing room between leading-edge pane content and the sidebar
     /// divider. Pane headers stay flush so tab rows reach the window edge.
     var leadingContentInset: CGFloat = 0
+    @State private var inputRequestHeights: [PaneSlotID: CGFloat] = [:]
 
     private var previewPane: PaneSlotID? {
         ImagePreviewLayout.visiblePane(tree: splitTree.wrappedValue, focused: focusedPaneSlotID)
@@ -122,6 +124,9 @@ struct TerminalContentView: View {
             }
             .padding(.leading, inset)
             .background(inset > 0 ? theme.background : .clear)
+            .overlay(alignment: .top) { paneBanner?(terminalID) }
+            .onPreferenceChange(WorkspaceInputRequestHeightKey.self) { inputRequestHeights[terminalID] = $0 }
+            .clipped()
         })
         return paneDropTarget?(terminalID, content) ?? content
     }
@@ -149,6 +154,7 @@ struct TerminalContentView: View {
                     // tracks ownership changes reactively via
                     // TerminalManager's store observer.
                     .overlay(alignment: .top) {
+                        Group {
                         if tm.attachmentFailures[terminalID] != nil {
                             HStack(spacing: 12) {
                                 Label("Terminal disconnected", systemImage: "exclamationmark.triangle")
@@ -163,6 +169,8 @@ struct TerminalContentView: View {
                                 _ = tm.takeDisplayControl(for: terminalID)
                             }
                         }
+                        }
+                        .padding(.top, inputRequestHeights[terminalID] ?? 0)
                     }
                     .overlay(alignment: .bottom) {
                         MacPagedHistoryBanner(presentation: handle.pagedHistory).padding(12)
@@ -171,6 +179,7 @@ struct TerminalContentView: View {
                         if let map = agentScrollbackMap, map.terminalID == terminalID {
                             ScrollbackMapOverlayHost(model: handle.scrollbackMapModel, timeline: map.timeline)
                                 .padding(10)
+                                .padding(.top, inputRequestHeights[terminalID] ?? 0)
                         }
                     }
                     // A retry replaces the native view while preserving the

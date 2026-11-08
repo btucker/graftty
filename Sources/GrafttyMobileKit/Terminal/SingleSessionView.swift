@@ -105,6 +105,7 @@ struct SingleSessionView: View {
     @State private var containedContentBottom: CGFloat = 0
     @State private var topSafeAreaInset: CGFloat = 0
     @State private var compactHeaderHeight: CGFloat = 0
+    @State private var inputRequestHeight: CGFloat = 0
     private var containerBottomInset: CGFloat { max(0, windowBottom - containedContentBottom) }
     private var isCompactShellRoute: Bool { compactWorkspace != nil && sessionAgent == nil }
     /// Embedded panes let their shared multi-pane parent manage the keyboard
@@ -565,7 +566,7 @@ struct SingleSessionView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.pane.header")
             }
-            if isEmbeddedPane, let embeddedPaneBanner { embeddedPaneBanner }
+            Group {
             if isCompactShellRoute {
                 ContentUnavailableView("Select an agent", systemImage: "terminal",
                     description: Text("Choose an agent or open Terminal from the agent menu above."))
@@ -608,6 +609,11 @@ struct SingleSessionView: View {
                 endedBanner.padding(.top, compactContentTopInset)
             }
             }
+            }
+            .overlay(alignment: .top) {
+                if isEmbeddedPane, let embeddedPaneBanner { embeddedPaneBanner }
+            }
+            .clipped()
         }
         // IOS-6.9: explicit bottom padding lifts the terminal above
         // the keyboard. SwiftUI's automatic `.keyboard` safe-area
@@ -636,7 +642,7 @@ struct SingleSessionView: View {
             .overlay(alignment: .top) {
                 if let client, client.connectionState != .live {
                     reconnectBanner(client: client)
-                        .padding(.top, 64)
+                        .padding(.top, topOverlayInset)
                         .padding(.horizontal, 16)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -645,7 +651,7 @@ struct SingleSessionView: View {
                 if let client, let paging = client.paging, isPaneFocused,
                    client.connectionState == .live, client.imagePasteProgress == nil {
                     PagedHistoryBanner(paging: paging)
-                        .padding(.top, 64)
+                        .padding(.top, topOverlayInset)
                         .padding(.horizontal, 16)
                 }
             }
@@ -659,7 +665,7 @@ struct SingleSessionView: View {
                         .padding(12)
                         .frame(maxWidth: 260)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.top, 64)
+                        .padding(.top, topOverlayInset)
                     } else if let error = client.imagePasteError {
                         HStack {
                             Text(error).font(.callout)
@@ -671,7 +677,7 @@ struct SingleSessionView: View {
                         .padding(12)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal, 16)
-                        .padding(.top, 64)
+                        .padding(.top, topOverlayInset)
                     }
                 }
             }
@@ -693,7 +699,8 @@ struct SingleSessionView: View {
                     let controlsHeight = step.worktreePath != nil && coordinator != nil ? floatingControlsHeight : 0
                     ScrollbackMapOverlayHost(model: model, timeline: timeline,
                                              isVisible: scenePhase == .active && connection == .live)
-                        .padding(.top, ScrollbackMapLayout.topInset(belowControlsAt: 12, controlsHeight: controlsHeight))
+                        .padding(.top, max(ScrollbackMapLayout.topInset(belowControlsAt: 12, controlsHeight: controlsHeight),
+                                          inputRequestHeight > 0 ? topOverlayInset : 0))
                 }
             }
             .overlay(alignment: .bottom) {
@@ -705,6 +712,7 @@ struct SingleSessionView: View {
                     terminalChrome
                 }
             }
+            .onPreferenceChange(WorkspaceInputRequestHeightKey.self) { inputRequestHeight = $0 }
             .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)
             .animation(.easeInOut(duration: 0.15), value: keyboardAllowed)
             .onKeyboardBottomInsetChange(isEnabled: !isEmbeddedPane) { newInset in
@@ -835,6 +843,11 @@ struct SingleSessionView: View {
 
     private var floatingChromeClearance: CGFloat { compactWorkspace == nil ? 68 : max(68, compactHeaderHeight + 12) }
     private var compactContentTopInset: CGFloat { compactWorkspace == nil ? 0 : topSafeAreaInset + floatingChromeClearance }
+    private var topOverlayInset: CGFloat {
+        guard inputRequestHeight > 0 else { return 64 }
+        let controlsHeight = isEmbeddedPane ? max(44, floatingControlsHeight) + inputRequestHeight : topSafeAreaInset + compactHeaderHeight
+        return max(64, controlsHeight + 12)
+    }
 
     private func compactFloatingHeader(_ workspace: WorktreePanes) -> some View {
         let generation = agentLaunchSelection.generation
@@ -853,7 +866,6 @@ struct SingleSessionView: View {
                 remoteOpenControls.fixedSize()
             }
             WorkspaceInputRequest(context: worktreeContext, selectedSession: step.sessionName, onSelect: selectWorkspaceSession)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         }
         .padding(.horizontal, 12).padding(.top, 12)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { compactHeaderHeight = $0 }

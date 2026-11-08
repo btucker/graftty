@@ -838,6 +838,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.67** If an expired history recovery finishes after a newer recovery begins, then the application shall ignore the stale completion and preserve the newer recovery state.
 
+**TERM-12.68** When an agent input request appears, changes, or clears on Mac or mobile, the application shall present a single-line banner below the pane controls with the full question available on selection, without changing the terminal's size or covering its recovery controls.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
