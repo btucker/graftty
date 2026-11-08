@@ -2756,9 +2756,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.19** While a terminal is open, the application shall show no activity indicator beside the agent's name, because the terminal itself shows whether the agent is working.
 
-**IOS-13.20** While a worktree's agent has stopped with a question, its ask card shall show the question, the agent's catch-up or else what it last completed, and Explain more shall send the catch-up prompt to that agent's pane before opening it.
+**IOS-13.20** While a worktree's agent has stopped with a question, its ask card shall show the question, the agent's catch-up or else what it last completed, and Explain more shall send the catch-up prompt to that agent's pane and open that pane at once.
 
-**IOS-13.21** While an agent waits at its harness's own prompt rather than a stopped turn, its ask card's Explain more shall open the pane without typing into it.
+**IOS-13.21** While an agent waits at its harness's own prompt rather than a stopped turn, its ask card shall open that prompt's pane, and its Explain more shall open it without typing into it.
 
 ## IPAD — iPad Layout
 
@@ -4852,9 +4852,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.38** When an agent reports a recap carrying a drawing of up to 16384 bytes, the application shall deliver that recap and its stopped turn through the file handoff.
 
-**AGENT-3.39** When an agent reports a need with a catch-up, the application shall retain the catch-up, limited to 600 characters, while decoding older recaps without one.
+**AGENT-3.39** When an agent reports a need with a catch-up, the application shall retain the catch-up, limited to 600 characters and allowing line breaks, while decoding older recaps without one.
 
-**AGENT-3.40** When a client asks a host to explain a stopped agent's question, the host shall type the catch-up prompt into that agent's pane and submit it, and shall refuse a pane it cannot find.
+**AGENT-3.40** When a client asks a host to explain a stopped agent's question, the host shall type the catch-up prompt into that agent's pane and submit it, and shall refuse a pane it cannot find or one waiting at its harness's own prompt.
 
 **AGENT-3.41** When the application renders agent recap guidance, it shall ask for a `catchUp` with every `need` and for Explain more as an option in every agent question that offers choices.
 

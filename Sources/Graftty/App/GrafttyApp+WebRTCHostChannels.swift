@@ -402,8 +402,7 @@ extension GrafttyApp {
                 }
             case let .explainRequest(worktreeID, paneID):
                 let router = await MainActor.run { SocketRequestRouter(appState: appStateBinding, terminalManager: terminalManager, services: services) }
-                let state = await MainActor.run { appStateBinding.wrappedValue }
-                return await AttentionExplainDelivery.deliver(worktreeID: worktreeID, paneID: paneID, state: state, platform: router)
+                return await AttentionExplainDelivery.deliver(worktreeID: worktreeID, paneID: paneID, platform: router)
             case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
                 return await MainActor.run {
                     GrafttyApp.persistingChanges(to: appStateBinding) {

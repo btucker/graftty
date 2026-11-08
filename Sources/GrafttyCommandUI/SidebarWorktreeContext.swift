@@ -8,11 +8,13 @@ public struct SidebarWorktreeContext: Equatable {
     public let pending: [SidebarActivityItem]
     public let question: String?
     public let questionPaneID: String?
+    /// The pending request `question` comes from, so opening it lands on the asking pane.
+    public let questionItem: SidebarActivityItem?
     /// The agent's catch-up for `question`, when it stopped with one.
     public let questionCatchUp: String?
     /// True when `question` came from a stopped turn, so the agent is at its
     /// own input; false for a harness prompt such as a permission request.
-    public let questionIsStoppedTurn: Bool
+    public var questionIsStoppedTurn: Bool { questionItem?.agentStop != nil }
     /// The session of the pane whose agent last stopped, where its transcript scrolls.
     public let agentPaneID: String?
     public let isRunning: Bool
@@ -62,12 +64,12 @@ public struct SidebarWorktreeContext: Equatable {
                 && !(candidate.agentStop != nil && (resumed || busy))
                 && !(candidate.agentStop.map { $0.timestamp < (stop?.timestamp ?? -.infinity) } ?? false)
         }
-        let stoppedQuestion = pending.contains { $0.id == target.id && $0.occurrence == target.occurrence }
-            ? stop?.recap?.need : nil
+        let stopRequest = pending.first { $0.id == target.id && $0.occurrence == target.occurrence }
+        let stoppedQuestion = stopRequest != nil ? stop?.recap?.need : nil
         let providerRequest = pending.first { $0.agentStop == nil && $0.occurrence?.source == .agentStop }
         self.question = stoppedQuestion ?? providerRequest?.occurrence?.text
         self.questionPaneID = stoppedQuestion != nil ? route : providerRequest?.paneID
-        self.questionIsStoppedTurn = stoppedQuestion != nil
+        self.questionItem = stoppedQuestion != nil ? stopRequest : providerRequest
         self.questionCatchUp = stoppedQuestion != nil ? stop?.recap?.catchUp : nil
     }
 

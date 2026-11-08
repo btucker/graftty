@@ -48,6 +48,13 @@ struct MobileAskDeck: View {
             .scrollPosition(id: $position)
             .scrollIndicators(.hidden)
             .scrollClipDisabled()
+            .onChange(of: entries.map(\.id)) { old, new in
+                // The card in view was answered or dismissed: follow the card that
+                // took its place, or the dots keep pointing at the first card.
+                guard let current = position, !new.contains(current) else { return }
+                let index = old.firstIndex(of: current) ?? 0
+                position = new.isEmpty ? nil : new[min(index, new.count - 1)]
+            }
             if entries.count > 1 {
                 HStack(spacing: 6) {
                     ForEach(entries.indices, id: \.self) { index in
@@ -90,7 +97,9 @@ private struct MobileAskCardView: View {
                 }
                 .buttonStyle(.bordered)
                 Button(action: onOpen) {
+                    // A primary tint is white in dark mode; keep the label legible on it.
                     Text("Open").frame(maxWidth: .infinity)
+                        .foregroundStyle(Color(uiColor: .systemBackground))
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.primary)

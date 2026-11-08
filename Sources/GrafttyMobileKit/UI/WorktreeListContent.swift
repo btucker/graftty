@@ -59,6 +59,8 @@ public struct WorktreeListContent: View {
     @State private var rowHold: WorktreeActivitySections.Hold?
     @State private var isTouchingList = false
     @State private var showsAllProjectsNeedingYou = false
+    /// Asks whose Explain more prompt is on its way, so a second tap doesn't type it twice.
+    @State private var explainingAsks: Set<String> = []
     @State private var orderMutationID: UUID?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var worktreeScrollSpace = UUID()
@@ -207,18 +209,22 @@ public struct WorktreeListContent: View {
     }
 
     private func openAsk(_ entry: MobileAskDeck.Entry) {
-        Task { await openReportTarget(MobilePaneAttention.openTarget(for: entry.context), worktrees: feed.state.rows) }
+        Task { await openReportTarget(entry.card.openTarget, worktrees: feed.state.rows) }
     }
 
     /// Types the catch-up prompt into a stopped agent, then opens its terminal
     /// at once so the explanation is read as it arrives (IOS-13.20, IOS-13.21).
     private func explainAsk(_ entry: MobileAskDeck.Entry) {
+        guard !explainingAsks.contains(entry.id) else { return }
         if case .sendPrompt(let paneID) = entry.card.explain, let provider = route(for: entry.row.row)?.provider {
             let request = WorktreeManagementRequest.explainRequest(worktreeID: entry.row.row.path, paneID: paneID)
+            explainingAsks.insert(entry.id)
             Task {
+                defer { explainingAsks.remove(entry.id) }
                 do {
-                    if case .error(_, let message, _, _) = try await RelayedWorktreeManagementClient.send(request, using: provider) {
-                        showErrorToast(message)
+                    if case .error(let code, let message, _, _) = try await RelayedWorktreeManagementClient.send(request, using: provider) {
+                        // A host from before explain_request can't decode it.
+                        showErrorToast(code == "malformed-request" ? "Update Graftty on this Mac to use Explain more." : message)
                     }
                 } catch {
                     showErrorToast("Couldn't ask the agent to explain.")

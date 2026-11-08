@@ -18,12 +18,17 @@ struct AttentionAskCardTests {
                      paneSlotID: "slot", providerSessionKey: "agent")
     }
 
-    @Test("@spec AGENT-3.39: When an agent reports a need with a catch-up, the application shall retain the catch-up, limited to 600 characters, while decoding older recaps without one.")
+    @Test("@spec AGENT-3.39: When an agent reports a need with a catch-up, the application shall retain the catch-up, limited to 600 characters and allowing line breaks, while decoding older recaps without one.")
     func recapCarriesAnOptionalCatchUp() throws {
         var recap = AttentionRecap(title: "T", completed: "C", next: "N", need: "Which?")
         recap.catchUp = String(repeating: "a", count: 600)
         #expect(recap.isValid)
         recap.catchUp = String(repeating: "a", count: 601)
+        #expect(!recap.isValid)
+        // A catch-up lists choices, so a line break must not reject the whole report.
+        recap.catchUp = "Two choices:\n1. Merge now.\n2. Wait for CI."
+        #expect(recap.isValid)
+        recap.catchUp = "Merge now\u{7}"
         #expect(!recap.isValid)
         let old = try JSONDecoder().decode(AttentionRecap.self, from: Data(#"{"title":"T","completed":"C","next":"N"}"#.utf8))
         #expect(old.catchUp == nil)
@@ -32,7 +37,7 @@ struct AttentionAskCardTests {
         #expect(new.catchUp == "Where things stand.")
     }
 
-    @Test("@spec IOS-13.20: While a worktree's agent has stopped with a question, its ask card shall show the question, the agent's catch-up or else what it last completed, and Explain more shall send the catch-up prompt to that agent's pane before opening it.")
+    @Test("@spec IOS-13.20: While a worktree's agent has stopped with a question, its ask card shall show the question, the agent's catch-up or else what it last completed, and Explain more shall send the catch-up prompt to that agent's pane and open that pane at once.")
     func stoppedQuestionSendsThePrompt() throws {
         let navigation = SidebarNavigationState(prefix: "ask-card.\(UUID())")
         let asked = worktree(stop: stop(need: "Build and run, or rethink?", catchUp: "The suite gates 2.0."),
@@ -52,7 +57,7 @@ struct AttentionAskCardTests {
         #expect(AttentionAskCard(context: navigation.worktreeContext(worktree(stop: stop(need: nil)))) == nil)
     }
 
-    @Test("@spec IOS-13.21: While an agent waits at its harness's own prompt rather than a stopped turn, its ask card's Explain more shall open the pane without typing into it.")
+    @Test("@spec IOS-13.21: While an agent waits at its harness's own prompt rather than a stopped turn, its ask card shall open that prompt's pane, and its Explain more shall open it without typing into it.")
     func harnessPromptOnlyOpens() throws {
         let navigation = SidebarNavigationState(prefix: "ask-card.\(UUID())")
         let waiting = worktree(stop: nil, layout: .leaf(sessionName: "pane-1", title: "claude",
@@ -60,5 +65,18 @@ struct AttentionAskCardTests {
         let card = try #require(AttentionAskCard(context: navigation.worktreeContext(waiting)))
         #expect(card.question == "Claude needs your permission")
         #expect(card.explain == .openOnly)
+
+        // A worktree-level `graftty notify` lists first; the card still opens the asking pane.
+        let notified = WorktreePanes(path: "/wt", displayName: "task", repoDisplayName: "app", displayBranch: "task",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: "Deploy finished",
+            attentionSource: .userNotify,
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "pane-1", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "pane-2", title: "claude", attentionText: "Claude needs your permission",
+                             isBusy: false, attentionSource: .agentStop)),
+            sidebar: .init(id: "/wt", projectID: "p", paneIDs: ["pane-1": "slot-1", "pane-2": "slot-2"]))
+        let prompt = try #require(AttentionAskCard(context: navigation.worktreeContext(notified)))
+        #expect(prompt.question == "Claude needs your permission")
+        #expect(prompt.openTarget.paneID == "pane-2")
     }
 }
