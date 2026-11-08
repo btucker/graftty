@@ -120,6 +120,8 @@ struct DedicatedChromeNavigationTests {
             let base = "http://127.0.0.1:\(port)/url?state=A%2Bb&value="
             let launched = try await backend.perform(.launch(url: base), authorize: { true })
             let tab = try #require(launched.selectedTabID)
+            // Target creation can return before its initial navigation commits.
+            try await expectValue("location.href", equals: base, backend: backend)
             for length in [8192, 8193] {
                 let original = base + String(repeating: "x", count: length - base.utf8.count)
                 let literal = String(decoding: try JSONEncoder().encode(original), as: UTF8.self)
@@ -147,6 +149,7 @@ struct DedicatedChromeNavigationTests {
         try await withPage { backend, port in
             let launched = try await backend.perform(.launch(url: "http://127.0.0.1:\(port)/first"), authorize: { true })
             let tab = try #require(launched.selectedTabID)
+            try await expectValue("location.href", equals: "http://127.0.0.1:\(port)/first", backend: backend)
             _ = try await backend.evaluateForTesting("window.navigationMarker = 41; history.pushState({}, '', '/second'); location.pathname")
             let second = try await backend.perform(.frame(tabID: tab), authorize: { true })
             #expect(second.canGoBack == true)
@@ -178,8 +181,10 @@ struct DedicatedChromeNavigationTests {
         try await withPage { backend, port in
             let first = try await backend.perform(.launch(url: "http://127.0.0.1:\(port)/first"), authorize: { true })
             let tab = try #require(first.selectedTabID)
+            try await expectValue("location.href", equals: "http://127.0.0.1:\(port)/first", backend: backend)
             _ = try await backend.evaluateForTesting("history.pushState({}, '', '/second'); location.pathname")
             _ = try await backend.perform(.launch(url: "http://127.0.0.1:\(port)/other"), authorize: { true })
+            try await expectValue("location.href", equals: "http://127.0.0.1:\(port)/other", backend: backend)
             for action in [ChromeTabAction.back(tabID: tab), .forward(tabID: tab), .reload(tabID: tab)] {
                 await #expect(throws: (any Error).self) {
                     try await backend.perform(action, authorize: { true })
