@@ -104,6 +104,7 @@ public struct SidebarSnapshot: Codable, Sendable, Equatable {
 /// @spec AGENT-3.9: When an agent reports a recap with a task-specific emoji, the application shall retain it for the current turn and attach it to completion attention once without requesting another turn.
 /// @spec AGENT-3.17: When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
 /// @spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
+/// @spec AGENT-3.39: When an agent reports a need with a catch-up, the application shall retain the catch-up, limited to 600 characters, while decoding older recaps without one.
 public struct AttentionRecap: Codable, Sendable, Hashable {
     /// A change worth remembering, authored separately from the current status.
     /// @spec CONTEXT-23: When a report includes an explicit history entry, the application shall retain its headline and optional detail independently of the current brief, suppress consecutive identical entries without moving their timestamps, and preserve distinct entries and entries separated by user input.
@@ -122,6 +123,10 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     public var completed: String
     public var next: String
     public var need: String?
+    /// What someone who has forgotten this worktree needs to answer `need`:
+    /// the situation, the choices, and the agent's recommendation.
+    public var catchUp: String?
+    public static let maxCatchUpLength = 600
     public var emoji: String?
     public var emojiAlternatives: [String]?
     /// Rename the worktree's purpose only when the task itself changes.
@@ -171,6 +176,7 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
         let requiredValid = [(title, 100), (completed, 300), (next, 300)].allSatisfy { text, limit in validText(text, limit: limit) }
         let contextValid = context.map { validText($0, limit: 200) } ?? true
         let needValid = need.map { validText($0, limit: 300) } ?? true
+        let catchUpValid = catchUp.map { validText($0, limit: Self.maxCatchUpLength) } ?? true
         let candidates = proposedEmojis
         let emojiValid = (emojiAlternatives == nil || emoji != nil)
             && candidates.count <= 4
@@ -182,7 +188,7 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
             validText($0.headline, limit: 160) && ($0.detail.map { validText($0, limit: 300) } ?? true)
         } ?? true
         let iconValid = icon.map { $0.utf8.count <= Self.maxIconBytes } ?? true
-        return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid && historyValid && iconValid
+        return requiredValid && contextValid && needValid && catchUpValid && emojiValid && checkpointValid && decisionsValid && historyValid && iconValid
     }
 }
 
@@ -580,4 +586,11 @@ public enum SidebarProjection {
             }
         }
     }
+}
+
+/// The message Explain more types into an agent that stopped with a question.
+/// It ends by asking for the question again, so the terminal finishes where
+/// the user answers.
+public enum AttentionExplainPrompt {
+    public static let text = "Catch me up before I answer. I've lost the context for this worktree. In under 150 words: what you're working on and why, what you've found, the choices in front of me and what each costs, and what you recommend. Then ask your question again."
 }

@@ -107,7 +107,7 @@ struct MobileAttentionPaneTests {
         #expect(height(onRemove: {}) == height(onRemove: nil))
     }
 
-    @Test("@spec IOS-13.15: While the Projects screen lists worktrees needing the user, the application shall name each one's project on its own line above the worktree, so a long worktree name can't crowd it out.")
+    @Test("@spec IOS-13.15: While the Projects screen lists worktrees needing the user for something other than a question, the application shall name each one's project on its own line above the worktree, so a long worktree name can't crowd it out.")
     func projectNameSitsAboveALongWorktreeName() async throws {
         let row = WorktreePanes(path: "/repo/long", displayName: "merge-recent-activity-attention-and-unified-worktree-reports",
             repoDisplayName: "graftty", displayBranch: "long", state: .running, isMainCheckout: false,

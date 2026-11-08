@@ -186,6 +186,8 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     /// A linked worktree's rendered drawing, answered only for the current revision.
     case worktreeIcon(worktreeID: String, revision: String)
     case acknowledgeOccurrence(worktreeID: String, paneID: String?, occurrence: SidebarAttentionOccurrence)
+    /// Types `AttentionExplainPrompt` into the pane of an agent that stopped with a question.
+    case explainRequest(worktreeID: String, paneID: String)
 }
 
 extension WorktreeManagementRequest: Codable {
@@ -256,6 +258,10 @@ extension WorktreeManagementRequest: Codable {
             try c.encode("worktree_icon", forKey: .type)
             try c.encode(worktreeID, forKey: .worktreeID)
             try c.encode(revision, forKey: .revision)
+        case let .explainRequest(worktreeID, paneID):
+            try c.encode("explain_request", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
+            try c.encode(paneID, forKey: .paneID)
         case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
             try c.encode("acknowledge_occurrence", forKey: .type)
             try c.encode(worktreeID, forKey: .worktreeID)
@@ -332,6 +338,9 @@ extension WorktreeManagementRequest: Codable {
             self = .projectIcon(repositoryID: try c.decode(String.self, forKey: .repositoryID), revision: try c.decode(String.self, forKey: .revision))
         case "acknowledge_occurrence":
             self = .acknowledgeOccurrence(worktreeID: try c.decode(String.self, forKey: .worktreeID), paneID: try c.decodeIfPresent(String.self, forKey: .paneID), occurrence: try c.decode(SidebarAttentionOccurrence.self, forKey: .occurrence))
+        case "explain_request":
+            self = .explainRequest(worktreeID: try c.decode(String.self, forKey: .worktreeID),
+                                   paneID: try c.decode(String.self, forKey: .paneID))
         case "host_presentation":
             self = .hostPresentation
         case "list_repositories":

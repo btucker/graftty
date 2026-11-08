@@ -8,6 +8,11 @@ public struct SidebarWorktreeContext: Equatable {
     public let pending: [SidebarActivityItem]
     public let question: String?
     public let questionPaneID: String?
+    /// The agent's catch-up for `question`, when it stopped with one.
+    public let questionCatchUp: String?
+    /// True when `question` came from a stopped turn, so the agent is at its
+    /// own input; false for a harness prompt such as a permission request.
+    public let questionIsStoppedTurn: Bool
     /// The session of the pane whose agent last stopped, where its transcript scrolls.
     public let agentPaneID: String?
     public let isRunning: Bool
@@ -62,6 +67,8 @@ public struct SidebarWorktreeContext: Equatable {
         let providerRequest = pending.first { $0.agentStop == nil && $0.occurrence?.source == .agentStop }
         self.question = stoppedQuestion ?? providerRequest?.occurrence?.text
         self.questionPaneID = stoppedQuestion != nil ? route : providerRequest?.paneID
+        self.questionIsStoppedTurn = stoppedQuestion != nil
+        self.questionCatchUp = stoppedQuestion != nil ? stop?.recap?.catchUp : nil
     }
 
     /// The sidebar and workspace tabs derive input state from the same live requests.

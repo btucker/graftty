@@ -193,6 +193,41 @@ public struct WorktreeListContent: View {
         }
     }
 
+    private func askDeckEntries(_ rows: [MergedWorktreeRow], merged: SidebarMergedRows) -> [MobileAskDeck.Entry] {
+        rows.compactMap { row in
+            guard row.availability != .wakeable else { return nil }
+            let context = navigation.worktreeContext(row.row)
+            guard let card = AttentionAskCard(context: context) else { return nil }
+            let project = merged.project(id: merged.mergedID(forMember: SidebarProjection.projectID(row.row)))?.name
+            let worktree = row.row.isMainCheckout ? nil : row.row.displayName
+            let source = [project, worktree, SidebarMergedRows.hostText(row, isLocal: false)].compactMap { $0 }.joined(separator: " · ")
+            return .init(row: row, context: context, card: card, source: source,
+                         time: WorktreeActivitySections.rowDate(row.row, context: context))
+        }
+    }
+
+    private func openAsk(_ entry: MobileAskDeck.Entry) {
+        Task { await openReportTarget(MobilePaneAttention.openTarget(for: entry.context), worktrees: feed.state.rows) }
+    }
+
+    /// Types the catch-up prompt into a stopped agent, then opens its terminal
+    /// at once so the explanation is read as it arrives (IOS-13.20, IOS-13.21).
+    private func explainAsk(_ entry: MobileAskDeck.Entry) {
+        if case .sendPrompt(let paneID) = entry.card.explain, let provider = route(for: entry.row.row)?.provider {
+            let request = WorktreeManagementRequest.explainRequest(worktreeID: entry.row.row.path, paneID: paneID)
+            Task {
+                do {
+                    if case .error(_, let message, _, _) = try await RelayedWorktreeManagementClient.send(request, using: provider) {
+                        showErrorToast(message)
+                    }
+                } catch {
+                    showErrorToast("Couldn't ask the agent to explain.")
+                }
+            }
+        }
+        openAsk(entry)
+    }
+
     private func isSelected(_ worktree: WorktreePanes) -> Bool {
         worktree.path == selectedWorktreePath && feed.state.hostID(for: worktree) == selectedHostID
     }
@@ -479,8 +514,23 @@ public struct WorktreeListContent: View {
             List {
                 pendingCreationRows()
                 let needingYou = activitySections(merged, holding: rowHold).needsYou
-                if !needingYou.isEmpty {
-                    let preview = WorktreeActivitySections.preview(needingYou, showsAll: showsAllProjectsNeedingYou)
+                let askEntries = askDeckEntries(needingYou, merged: merged)
+                if !askEntries.isEmpty {
+                    Section {
+                        MobileAskDeck(entries: askEntries, onExplain: explainAsk, onOpen: openAsk,
+                                      onDismiss: { dismissRequest($0.row.row) })
+                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    } header: {
+                        WorktreeListSectionTitle("Waiting on you", count: askEntries.count, tone: .attention).padding(.bottom, 4)
+                    }
+                }
+                // Requests without a question, such as `graftty notify`, stay rows.
+                let askIDs = Set(askEntries.map(\.id))
+                let notices = needingYou.filter { !askIDs.contains($0.id) }
+                if !notices.isEmpty {
+                    let preview = WorktreeActivitySections.preview(notices, showsAll: showsAllProjectsNeedingYou)
                     Section {
                         ForEach(preview.rows) { row in worktreeRow(row, merged: merged, namesProject: true) }
                         if preview.hidden > 0 {
@@ -492,7 +542,7 @@ public struct WorktreeListContent: View {
                     } header: {
                         // A header, not a row: this list's rows sit in a card that
                         // only rounds the corners of its first and last rows.
-                        WorktreeListSectionTitle("Needs you", count: needingYou.count, tone: .attention).padding(.bottom, 4)
+                        WorktreeListSectionTitle("Needs you", count: notices.count, tone: .attention).padding(.bottom, 4)
                     }
                 }
                 Section {
