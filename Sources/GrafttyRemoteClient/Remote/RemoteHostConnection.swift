@@ -579,15 +579,19 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         pendingLocalCandidates.removeAll()
         pendingRemoteCandidates.removeAll()
         remoteDescriptionApplied = false
-        // Closing the native peer while its NIO transports are closing their
-        // data channels can overlap synchronous WebRTC shutdown calls. Drain
-        // both transports first, using one task for every close caller.
-        teardownTask = Task { [self] in
+        // Build the native owner in this synchronous actor turn. The async
+        // task retains only this owner, so its raw peer/channel references
+        // cannot become final releases on the cooperative executor.
+        let nativeShutdown = WebRTCShutdown { [self] in
+            dc?.close()
+            pc?.close()
+            withExtendedLifetime(self) {}
+        }
+        // Drain SSH before native shutdown, using one task for every caller.
+        teardownTask = Task {
             if let bulk { await bulk.close() }
             if let transport { await transport.close() }
-            else { dc?.close() }
-            // Retain the factory and delegates through native shutdown.
-            withExtendedLifetime(self) { pc?.close() }
+            await nativeShutdown.run()
         }
     }
 

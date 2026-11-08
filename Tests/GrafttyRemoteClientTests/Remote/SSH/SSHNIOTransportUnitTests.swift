@@ -10,6 +10,69 @@ import WebRTC
 
 @Suite("SSHNIOTransport unit tests — partial-write closes channel.")
 struct SSHNIOTransportUnitTests {
+    @Test("@spec SSH-1.12: When native WebRTC teardown begins, the application shall run it once outside Swift tasks, release detached resources before resuming its waiters, and finish cleanup even if a waiter is cancelled.", .timeLimit(.minutes(1)))
+    func nativeShutdownJoinsAndReleasesBeforeReturning() async {
+        let result = ShutdownProbe()
+        let entered = AsyncStream<Void>.makeStream()
+        let release = DispatchSemaphore(value: 0)
+        let shutdown = makeShutdown(result: result, entered: entered.continuation, release: release)
+        let first = Task { await shutdown.run(); return result.snapshot.released }
+        var events = entered.stream.makeAsyncIterator()
+        await events.next()
+        let second = Task { await shutdown.run(); return result.snapshot.released }
+        first.cancel()
+        release.signal()
+        #expect(await first.value)
+        #expect(await second.value)
+        let snapshot = result.snapshot
+        #expect(snapshot.calls == 1)
+        #expect(snapshot.outsideTask)
+        #expect(snapshot.releaseOutsideTask)
+        #expect(snapshot.callbackFinished)
+    }
+
+    private func makeShutdown(
+        result: ShutdownProbe,
+        entered: AsyncStream<Void>.Continuation,
+        release: DispatchSemaphore
+    ) -> WebRTCShutdown {
+        let resource = ReleaseProbeSink { outsideTask in result.recordRelease(outsideTask) }
+        return WebRTCShutdown {
+            result.recordCall(withUnsafeCurrentTask { $0 == nil })
+            entered.yield(())
+            // Model native shutdown waiting for a GCD event-log callback.
+            let callback = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async { callback.signal() }
+            result.recordCallback(callback.wait(timeout: .now() + 5) == .success)
+            #expect(release.wait(timeout: .now() + 5) == .success)
+            withExtendedLifetime(resource) {}
+        }
+    }
+
+    @Test("@spec SSH-1.11: When the last SSH data-channel owner is released from a Swift task, the application shall destroy its native channel proxy outside the cooperative executor and release the inbox and relay.", .timeLimit(.minutes(1)))
+    func inboxReleaseDestroysNativeSinkOutsideSwiftTask() async {
+        let releasedOutsideTask = await withCheckedContinuation { continuation in
+            // Reproduce the sampled ownership chain: inbox callback -> relay
+            // -> native sink. Drop the final inbox owner on a Swift task.
+            var inbox: DataChannelInbox? = makeInboxOwningSink { outsideTask in
+                continuation.resume(returning: outsideTask)
+            }
+            #expect(inbox != nil)
+            inbox = nil
+        }
+        #expect(releasedOutsideTask, "Native proxy destruction can synchronously wait for WebRTC's signaling thread")
+    }
+
+    private func makeInboxOwningSink(onRelease: @escaping @Sendable (Bool) -> Void) -> DataChannelInbox {
+        let sink = ReleaseProbeSink(onRelease: onRelease)
+        let relay = OutboundRelayHandler(sink: sink, mtu: 4)
+        let inbox = DataChannelInbox()
+        inbox.attach(onOpen: {}, onClose: {}, onMessage: { _ in }, onBufferedAmountChange: {
+            withExtendedLifetime(relay) {}
+        })
+        return inbox
+    }
+
     @Test("Diagnostic snapshots retain an SDK buffer peak after it drains")
     func snapshotsRetainObservedBufferedPeak() async throws {
         let sink = BufferedSink()
@@ -281,6 +344,36 @@ private final class BufferedSink: DataChannelSink, @unchecked Sendable {
         return true
     }
     func sinkClose() { closed = true }
+}
+
+private final class ReleaseProbeSink: DataChannelSink, @unchecked Sendable {
+    let onRelease: @Sendable (Bool) -> Void
+    init(onRelease: @escaping @Sendable (Bool) -> Void) { self.onRelease = onRelease }
+    var sinkReadyState: RTCDataChannelState { .closed }
+    var sinkBufferedAmount: UInt64 { 0 }
+    func sinkSend(_ buffer: RTCDataBuffer) -> Bool { false }
+    func sinkClose() {}
+    deinit { onRelease(withUnsafeCurrentTask { $0 == nil }) }
+}
+
+private final class ShutdownProbe: @unchecked Sendable {
+    struct Snapshot {
+        var calls = 0
+        var outsideTask = false
+        var released = false
+        var releaseOutsideTask = false
+        var callbackFinished = false
+    }
+    private let lock = NSLock()
+    private var value = Snapshot()
+    var snapshot: Snapshot { lock.withLock { value } }
+    func recordCall(_ outsideTask: Bool) {
+        lock.withLock { value.calls += 1; value.outsideTask = outsideTask }
+    }
+    func recordRelease(_ outsideTask: Bool) {
+        lock.withLock { value.released = true; value.releaseOutsideTask = outsideTask }
+    }
+    func recordCallback(_ finished: Bool) { lock.withLock { value.callbackFinished = finished } }
 }
 
 private final class ProbeClock: @unchecked Sendable {

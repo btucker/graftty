@@ -5928,6 +5928,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SSH-1.10** When a transport latency probe reports percentiles, the application shall include the sample count and nearest-rank p50, p95, p99, and maximum latency without retaining terminal contents.
 
+**SSH-1.11** When the last SSH data-channel owner is released from a Swift task, the application shall destroy its native channel proxy outside the cooperative executor and release the inbox and relay.
+
+**SSH-1.12** When native WebRTC teardown begins, the application shall run it once outside Swift tasks, release detached resources before resuming its waiters, and finish cleanup even if a waiter is cancelled.
+
 ## TEST — TEST
 
 ### TEST-1.x
