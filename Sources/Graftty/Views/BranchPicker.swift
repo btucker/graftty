@@ -86,7 +86,7 @@ struct BranchPicker: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             } else if let pr = entry.pr {
-                Text("#\(pr.number) · \(pr.title)")
+                Self.prLabel(for: pr)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -100,6 +100,10 @@ struct BranchPicker: View {
         .padding(.vertical, 1)
         .opacity(mounted ? 0.5 : 1)
         .allowsHitTesting(!mounted)
+    }
+
+    static func prLabel(for pr: BranchPickerEntry.PRSummary) -> Text {
+        Text(verbatim: "#\(pr.number) · \(pr.title)")
     }
 
     private static let relativeFormatter: RelativeDateTimeFormatter = {
