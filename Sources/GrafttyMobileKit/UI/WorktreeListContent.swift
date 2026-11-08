@@ -525,7 +525,7 @@ public struct WorktreeListContent: View {
                     Section {
                         MobileAskDeck(entries: askEntries, onExplain: explainAsk, onOpen: openAsk,
                                       onDismiss: { dismissRequest($0.row.row) })
-                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                     } header: {
