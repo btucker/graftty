@@ -15,7 +15,8 @@ public enum SSHChannelTypeNames {
     public static let chromeTabs = "chrome-tabs-v1@graftty.dev"
     public static let team = "team@graftty.dev"
 
-    public static let terminalPaged = "terminal-paged-v1@graftty.dev"
+    /// Versioned with `PagedTerminalLimits.codec` (TERM-12.69).
+    public static let terminalPaged = "terminal-paged-v2@graftty.dev"
     /// Server-pushed snapshots of `[WorktreePanes]`. One channel per
     /// `RemoteHostConnection`.
     public static let panesState: String = "panes-state@graftty.dev"

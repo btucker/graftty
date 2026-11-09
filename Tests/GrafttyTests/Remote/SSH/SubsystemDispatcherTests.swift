@@ -23,6 +23,40 @@ final class SubsystemDispatcherTests: XCTestCase {
         _ = try? await channel.finish()
     }
 
+    /// @spec TERM-12.69: If a peer requests the paged-terminal subsystem of another snapshot codec, then the host shall reject the request so the peer selects the VT attach path.
+    func testPagedSubsystemOfAnotherCodecRejectsSoPeerFallsBack() async throws {
+        // Graftty 0.8 peers decode ghostty-8af6897c pages and request v1.
+        // A host with a paging factory must still refuse them.
+        let legacy = await pagedSubsystemReply("terminal-paged-v1@graftty.dev")
+        XCTAssertTrue(legacy.sawFailure, "a v1 peer must be refused")
+        XCTAssertFalse(legacy.sawSuccess)
+
+        let current = await pagedSubsystemReply(SSHChannelTypeNames.terminalPaged)
+        XCTAssertTrue(current.sawSuccess, "the current subsystem must be accepted")
+        XCTAssertNotEqual(SSHChannelTypeNames.terminalPaged, "terminal-paged-v1@graftty.dev")
+    }
+
+    private func pagedSubsystemReply(_ subsystem: String) async -> (sawSuccess: Bool, sawFailure: Bool) {
+        let capture = OutboundEventCapture()
+        let channel = NIOAsyncTestingChannel()
+        let dispatcher = SubsystemDispatcher(
+            streamFactory: RecordingStreamFactory().callable,
+            pagedFactory: { _ in throw CancellationError() },
+            panesStateSubscribe: { _ in PanesStateChannelHandler.Cancellable(cancel: {}) },
+            paneControlMutator: { _ in .ok },
+            ownershipStore: SessionDisplayOwnershipStore(),
+            ownershipBroadcaster: DisplayOwnershipBroadcaster(),
+            deviceIDProvider: { RemoteDeviceID(value: "test-device") }
+        )
+        try? await channel.pipeline.addHandler(capture).get()
+        try? await channel.pipeline.addHandler(dispatcher).get()
+        channel.pipeline.fireUserInboundEventTriggered(SSHChannelRequestEvent.SubsystemRequest(
+            subsystem: subsystem, wantReply: true))
+        try? await waitFor(channel: channel) { capture.sawSuccess || capture.sawFailure }
+        _ = try? await channel.finish()
+        return (capture.sawSuccess, capture.sawFailure)
+    }
+
     // MARK: - Env (terminal session) routing
 
     /// Firing an `EnvironmentRequest("GRAFTTY_SESSION", "alpha")` —
