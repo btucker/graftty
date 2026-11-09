@@ -1,7 +1,8 @@
 diff --git a/src/ipc.zig b/src/ipc.zig
+index d59f3a5..09a64e7 100644
 --- a/src/ipc.zig
 +++ b/src/ipc.zig
-@@ -30,6 +30,13 @@
+@@ -32,6 +32,13 @@ pub const Tag = enum(u8) {
      Capabilities = 23,
      PixelSize = 24,
      Tail = 25,
@@ -12,14 +13,18 @@ diff --git a/src/ipc.zig b/src/ipc.zig
 +    PagedUnavailable = 30,
 +    PagedGrid = 31,
 +    PagedEnded = 32,
-     // Non-exhaustive: this enum comes off the wire via bytesToValue and
-     // @enumFromInt, so out-of-range values are representable
-     // rather than UB. Switches must handle `_` (unknown tag).
-@@ -72,6 +79,11 @@
+     /// Scoped history: the active screen plus a bounded number of
+     /// preceding scrollback rows. Request payload is `Capture`. Upstream
+     /// assigns 22, which running Graftty daemons use for `Snapshot`.
+@@ -93,6 +100,15 @@ pub const Capabilities = packed struct {
      pub const pixel_size: u64 = 1 << 0;
      pub const snapshot: u64 = 1 << 1;
      pub const raw_snapshot_stream: u64 = 1 << 2;
 +    pub const paged_snapshot: u64 = 1 << 3;
++    /// The daemon encodes paged history with `PAGED_CODEC`. Daemons built on
++    /// the Ghostty 8af6897c engine advertise `paged_snapshot` without this
++    /// bit and ignore an unknown codec, so hosts check it before attaching.
++    pub const paged_codec_ghostty_53e55147: u64 = 1 << 4;
 +
 +    pub fn supportsPaging(self: Capabilities) bool {
 +        return self.bits & paged_snapshot != 0;
@@ -27,13 +32,48 @@ diff --git a/src/ipc.zig b/src/ipc.zig
  
      pub fn supportsPixelSize(self: Capabilities) bool {
          return self.bits & pixel_size != 0;
-@@ -444,3 +456,37 @@
-     const last_field_end = @offsetOf(Info, "task_exit_code") + @sizeOf(u8);
-     for (bytes[last_field_end..]) |b| try std.testing.expectEqual(@as(u8, 0), b);
+@@ -421,16 +437,18 @@ test "Info wire size is frozen" {
+ 
+ test "Tag wire values are frozen" {
+     inline for (.{
+-        .{ Tag.Input, 0 },         .{ Tag.Output, 1 },        .{ Tag.Resize, 2 },
+-        .{ Tag.Detach, 3 },        .{ Tag.DetachAll, 4 },     .{ Tag.Kill, 5 },
+-        .{ Tag.Info, 6 },          .{ Tag.Init, 7 },          .{ Tag.History, 8 },
+-        .{ Tag.Run, 9 },           .{ Tag.Ack, 10 },          .{ Tag.Switch, 11 },
+-        .{ Tag.Write, 12 },        .{ Tag.TaskComplete, 13 }, .{ Tag.LabelGet, 14 },
+-        .{ Tag.LabelSet, 15 },     .{ Tag.LabelClear, 16 },   .{ Tag.LabelData, 17 },
+-        .{ Tag.Send, 18 },         .{ Tag.EnvGet, 19 },       .{ Tag.EnvSet, 20 },
+-        .{ Tag.EnvData, 21 },      .{ Tag.Snapshot, 22 },     .{ Tag.Capabilities, 23 },
+-        .{ Tag.PixelSize, 24 },    .{ Tag.Tail, 25 },         .{ Tag.Capture, 33 },
+-        .{ Tag.Unsupported, 255 },
++        .{ Tag.Input, 0 },             .{ Tag.Output, 1 },        .{ Tag.Resize, 2 },
++        .{ Tag.Detach, 3 },            .{ Tag.DetachAll, 4 },     .{ Tag.Kill, 5 },
++        .{ Tag.Info, 6 },              .{ Tag.Init, 7 },          .{ Tag.History, 8 },
++        .{ Tag.Run, 9 },               .{ Tag.Ack, 10 },          .{ Tag.Switch, 11 },
++        .{ Tag.Write, 12 },            .{ Tag.TaskComplete, 13 }, .{ Tag.LabelGet, 14 },
++        .{ Tag.LabelSet, 15 },         .{ Tag.LabelClear, 16 },   .{ Tag.LabelData, 17 },
++        .{ Tag.Send, 18 },             .{ Tag.EnvGet, 19 },       .{ Tag.EnvSet, 20 },
++        .{ Tag.EnvData, 21 },          .{ Tag.Snapshot, 22 },     .{ Tag.Capabilities, 23 },
++        .{ Tag.PixelSize, 24 },        .{ Tag.Tail, 25 },         .{ Tag.PagedAttach, 26 },
++        .{ Tag.PagedReady, 27 },       .{ Tag.PagedHistory, 28 }, .{ Tag.PagedPage, 29 },
++        .{ Tag.PagedUnavailable, 30 }, .{ Tag.PagedGrid, 31 },    .{ Tag.PagedEnded, 32 },
++        .{ Tag.Capture, 33 },          .{ Tag.Unsupported, 255 },
+     }) |p| try std.testing.expectEqual(@as(u8, p[1]), @backingInt(p[0]));
+ }
+ 
+@@ -486,3 +504,51 @@ test "legacy header sends zeroed padding after its 5 wire bytes" {
+     try std.testing.expectEqual(@as(usize, 8), bytes.len);
+     try std.testing.expectEqualSlices(u8, &.{ 1, 4, 3, 2, 1, 0, 0, 0 }, bytes);
  }
 +
 +// Paged frames use fixed little-endian fields. Existing tags stay unchanged.
-+pub const PAGED_CODEC = "ghostty-8af6897c-paging-1";
++pub const PAGED_CODEC = "ghostty-53e55147-paging-1";
++
++/// What a daemon advertises in its `Capabilities` frame on accept.
++pub const daemon_capabilities = Capabilities{
++    .bits = Capabilities.pixel_size | Capabilities.snapshot |
++        Capabilities.paged_snapshot | Capabilities.paged_codec_ghostty_53e55147,
++};
 +pub const PAGED_READY_LIMIT = 512 * 1024;
 +pub const PAGED_PAGE_LIMIT = 256 * 1024;
 +pub const PagedReady = extern struct {
@@ -62,27 +102,36 @@ diff --git a/src/ipc.zig b/src/ipc.zig
 +    try std.testing.expectEqual(@as(usize, 24), @sizeOf(PagedReady));
 +    try std.testing.expectEqual(@as(usize, 40), @sizeOf(PagedHistory));
 +    try std.testing.expectEqual(@as(usize, 48), @sizeOf(PagedPage));
-+    try std.testing.expectEqual(@as(u8, 26), @intFromEnum(Tag.PagedAttach));
++    try std.testing.expectEqual(@as(u8, 26), @backingInt(Tag.PagedAttach));
 +    try std.testing.expect(!(Capabilities{}).supportsPaging());
 +}
++
++test "daemon advertises the Ghostty 53e55147 paging codec" {
++    try std.testing.expectEqualStrings("ghostty-53e55147-paging-1", PAGED_CODEC);
++    try std.testing.expectEqual(@as(u64, 1 << 4), Capabilities.paged_codec_ghostty_53e55147);
++    try std.testing.expect(daemon_capabilities.supportsPaging());
++    // Hosts require both bits; an 8af6897c daemon advertised only paging.
++    try std.testing.expect(daemon_capabilities.bits & Capabilities.paged_codec_ghostty_53e55147 != 0);
++}
 diff --git a/src/loop.zig b/src/loop.zig
+index 5a0b28e..09102bb 100644
 --- a/src/loop.zig
 +++ b/src/loop.zig
 @@ -1,3 +1,4 @@
 +const paging = @import("paging.zig");
  const std = @import("std");
- const ghostty_vt = @import("ghostty-vt");
  const ipc = @import("ipc.zig");
-@@ -383,6 +384,8 @@
-         .max_scrollback_lines = daemon.cfg.max_scrollback_lines,
-     });
+ const log = @import("log.zig");
+@@ -437,6 +438,8 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+     const init_size = ipc.getTerminalSize(pty_fd);
+     var term = try initTerminal(gpa, io, init_size, daemon.cfg);
      defer term.deinit(gpa);
 +    // Checkpoints borrow terminal pins and must die before terminal teardown.
 +    defer for (daemon.clients.items) |client| client.clearCheckpoint();
      var vt_stream = ghostty_vt.TerminalStream.init(.{
          .allocator = gpa,
          .handler = term.vtHandler(),
-@@ -397,6 +400,7 @@
+@@ -451,6 +454,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
      var marker_carry_len: usize = 0;
  
      var had_terminal_client = daemon.hasTerminalClient();
@@ -90,16 +139,18 @@ diff --git a/src/loop.zig b/src/loop.zig
  
      daemon_loop: while (daemon.running) {
          // If the program asked for focus reports (DECSET 1004), send focus-out
-@@ -492,7 +496,7 @@
+@@ -545,9 +549,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+             // buffer is userspace-only: it drains via POLLOUT to the client socket,
              // which has no corresponding kernel-imposed per-write limit.
              client.write_buf = try std.ArrayList(u8).initCapacity(client.alloc, 65536);
-             const server_capabilities = ipc.Capabilities{
+-            const server_capabilities = ipc.Capabilities{
 -                .bits = ipc.Capabilities.pixel_size | ipc.Capabilities.snapshot,
-+                .bits = ipc.Capabilities.pixel_size | ipc.Capabilities.snapshot | ipc.Capabilities.paged_snapshot,
-             };
+-            };
++            const server_capabilities = ipc.daemon_capabilities;
              try ipc.appendMessage(
                  gpa,
-@@ -545,6 +549,7 @@
+                 &client.write_buf,
+@@ -599,6 +601,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                      // write buffers are flushed via the normal POLLOUT path.
                      // On the next iteration, daemon.running will be false.
                      daemon.running = false;
@@ -107,7 +158,7 @@ diff --git a/src/loop.zig b/src/loop.zig
                  } else {
                      // Feed PTY output to terminal emulator for state tracking
                      vt_stream.nextSlice(buf[0..n]);
-@@ -661,10 +666,12 @@
+@@ -715,10 +718,12 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
  
                  while (client.read_buf.next()) |msg| {
                      switch (msg.header.tag) {
@@ -121,16 +172,16 @@ diff --git a/src/loop.zig b/src/loop.zig
                          .Input => try daemon.handleInput(gpa, client, msg.payload),
                          .Send => daemon.handleSend(gpa, msg.payload),
                          .Output => try daemon.handleOutput(gpa, msg.payload, &term, &vt_stream),
-@@ -704,7 +711,7 @@
-                         .Tail => try client.startReceivingPtyOutput(gpa, true),
+@@ -759,7 +764,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                          .History => try daemon.handleHistory(gpa, client, &term, msg.payload),
+                         .Capture => try daemon.handleCapture(gpa, client, &term, msg.payload),
                          .Run => try daemon.handleRun(gpa, io, client, msg.payload),
--                        .Ack, .TaskComplete, .LabelData, .EnvData, .Snapshot => {},
-+                        .Ack, .TaskComplete, .LabelData, .EnvData, .Snapshot, .PagedReady, .PagedPage, .PagedUnavailable, .PagedGrid, .PagedEnded => {},
+-                        .Ack, .TaskComplete, .LabelData, .EnvData, .Snapshot, .Unsupported => {},
++                        .Ack, .TaskComplete, .LabelData, .EnvData, .Snapshot, .PagedReady, .PagedPage, .PagedUnavailable, .PagedGrid, .PagedEnded, .Unsupported => {},
                          .Write => try daemon.handleWrite(gpa, client, msg.payload),
-                         _ => std.log.warn(
-                             "ignoring unknown IPC tag={d}",
-@@ -716,7 +723,7 @@
+                         _ => {
+                             std.log.warn(
+@@ -775,7 +780,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
  
              if (revents & lib_posix.POLL.OUT != 0) {
                  // Flush pending output buffers
@@ -139,7 +190,7 @@ diff --git a/src/loop.zig b/src/loop.zig
                      if (err == error.WouldBlock) break :blk 0;
                      // Error on write, close client
                      const last = daemon.closeClient(gpa, client, i, false);
-@@ -739,6 +746,7 @@
+@@ -804,6 +809,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              }
          }
      }
@@ -147,7 +198,7 @@ diff --git a/src/loop.zig b/src/loop.zig
  }
  
  const ClientResult = struct {
-@@ -775,7 +783,16 @@
+@@ -840,7 +846,16 @@ pub const Client = struct {
      write_buf: std.ArrayList(u8),
      env_str: ?[]u8 = null,
  
@@ -164,10 +215,10 @@ diff --git a/src/loop.zig b/src/loop.zig
          lib_posix.close(self.socket_fd);
          self.read_buf.deinit();
          self.write_buf.deinit(self.alloc);
-@@ -899,6 +916,10 @@
-     task_ended_at: ?u64 = null, // timestamp when task exited
-     pty_fd: i32 = -1, // set by daemonLoop so handleRun can probe the foreground process
+@@ -965,6 +980,10 @@ pub const Daemon = struct {
      shell: []const u8 = "/bin/sh",
+     quiet: bool = false,
+     has_had_client: bool = false,
 +    incarnation: u64 = 0,
 +    next_checkpoint_id: u64 = 0,
 +    mutation_epoch: u64 = 0,
@@ -175,7 +226,7 @@ diff --git a/src/loop.zig b/src/loop.zig
  
      /// Create a Daemon. Caller is responsible for freeing all variables passed
      /// into the init fn.
-@@ -908,6 +929,7 @@
+@@ -974,6 +993,7 @@ pub const Daemon = struct {
              .session_name = sesh_name,
              .socket_path = socket_path,
              .created_at = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
@@ -183,7 +234,7 @@ diff --git a/src/loop.zig b/src/loop.zig
          };
      }
  
-@@ -1135,10 +1157,10 @@
+@@ -1202,10 +1222,10 @@ pub const Daemon = struct {
              dir.deleteFile(new_io, sesh_name) catch |err| {
                  std.log.warn("failed to delete socket file err={s}", .{@errorName(err)});
              };
@@ -196,7 +247,7 @@ diff --git a/src/loop.zig b/src/loop.zig
          }
  
          try daemonLoop(self, gpa, new_io, server_sock_fd, pty_info.master_fd);
-@@ -1386,7 +1408,9 @@
+@@ -1458,7 +1478,9 @@ pub const Daemon = struct {
                  .cols = cols,
                  .rows = rows,
              };
@@ -206,12 +257,10 @@ diff --git a/src/loop.zig b/src/loop.zig
  
              // Mark that we've had a client init, so subsequent clients get terminal state
              self.has_had_client = true;
-@@ -1397,6 +1421,162 @@
-             );
-         }
+@@ -1471,6 +1493,162 @@ pub const Daemon = struct {
          try client.startReceivingPtyOutput(gpa, false);
-+    }
-+
+     }
+ 
 +    fn queuePagedExit(self: *Daemon, gpa: std.mem.Allocator, status: i32) !void {
 +        for (self.clients.items) |client| {
 +            if (!client.is_terminal or !client.capabilities.supportsPaging()) continue;
@@ -239,7 +288,7 @@ diff --git a/src/loop.zig b/src/loop.zig
 +                exit_status = if (std.c.W.IFEXITED(status))
 +                    std.c.W.EXITSTATUS(status)
 +                else if (std.c.W.IFSIGNALED(status))
-+                    128 + @as(i32, @intCast(@intFromEnum(std.c.W.TERMSIG(status))))
++                    128 + @as(i32, @intCast(@backingInt(std.c.W.TERMSIG(status))))
 +                else
 +                    1;
 +                break;
@@ -366,10 +415,12 @@ diff --git a/src/loop.zig b/src/loop.zig
 +        result[result.len - 1] = failure;
 +        try ipc.appendMessage(gpa, &client.write_buf, .PagedUnavailable, &result);
 +        client.has_pending_output = true;
-     }
- 
++    }
++
      pub fn handleCapabilities(
-@@ -1407,7 +1587,7 @@
+         _: *Daemon,
+         gpa: std.mem.Allocator,
+@@ -1479,7 +1657,7 @@ pub const Daemon = struct {
      ) void {
          if (payload.len != @sizeOf(ipc.Capabilities)) return;
          client.capabilities = std.mem.bytesToValue(ipc.Capabilities, payload);
@@ -378,17 +429,17 @@ diff --git a/src/loop.zig b/src/loop.zig
              client.discardDeferredPtyOutput(gpa, .snapshot_pending);
          }
      }
-@@ -1469,7 +1649,9 @@
+@@ -1541,7 +1719,9 @@ pub const Daemon = struct {
  
          const ws = clientWinsize(client, pty_fd, rows, cols);
-         _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
+         _ = cross.ioctl(pty_fd, cross.TIOCSWINSZ, &ws);
 +        if (paging.resizeInvalidatesHistory(term, cols, rows)) self.mutation_epoch +%= 1;
          try resizeTerm(gpa, term, cols, rows);
 +        try self.broadcastPagedGrid(gpa, term);
          std.log.debug(
              "resize rows={d} cols={d} xpixel={d} ypixel={d}",
              .{ rows, cols, ws.ws_xpixel, ws.ws_ypixel },
-@@ -1937,3 +2119,160 @@
+@@ -2062,3 +2242,160 @@ test "handleEnvGet returns leader client's environment variables including unset
      const pay3 = client_req.write_buf.items[@sizeOf(ipc.Header)..];
      try std.testing.expectEqualStrings("DISPLAY=:99\n", pay3);
  }
@@ -529,7 +580,7 @@ diff --git a/src/loop.zig b/src/loop.zig
 +                const reply = try checkpoint.next(.primary, ordinal, ipc.PAGED_PAGE_LIMIT, daemon.mutation_epoch);
 +                if (reply == .done) break;
 +                var page_reader: std.Io.Reader = .fixed(reply.page.bytes);
-+                try std.testing.expectEqual(reply.page.rows, try ghostty_vt.snapshot.history.decodePage(&page_reader, alloc, restored.screens.active));
++                try std.testing.expectEqual(reply.page.rows, try ghostty_vt.snapshot.history.decodePage(&page_reader, try ghostty_vt.snapshot.record.nextHeader(&page_reader), alloc, restored.screens.active, .{}));
 +            }
 +            const original = try term.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
 +            defer alloc.free(original);
@@ -551,6 +602,7 @@ diff --git a/src/loop.zig b/src/loop.zig
 +}
 diff --git a/src/paging.zig b/src/paging.zig
 new file mode 100644
+index 0000000..6da149c
 --- /dev/null
 +++ b/src/paging.zig
 @@ -0,0 +1,446 @@
@@ -826,7 +878,7 @@ new file mode 100644
 +                const retry = (try checkpoint.next(.primary, position, 1024 * 1024, 0)).page;
 +                try std.testing.expectEqualSlices(u8, page.bytes, retry.bytes);
 +                var page_reader: std.Io.Reader = .fixed(page.bytes);
-+                try std.testing.expectEqual(page.rows, try snap.history.decodePage(&page_reader, alloc, restored.screens.active));
++                try std.testing.expectEqual(page.rows, try snap.history.decodePage(&page_reader, try snap.record.nextHeader(&page_reader), alloc, restored.screens.active, .{}));
 +                try std.testing.expectEqual(page.bytes.len, page_reader.seek);
 +                stream.nextSlice("live-between-pages\r\n");
 +                live.nextSlice("live-between-pages\r\n");
@@ -982,7 +1034,7 @@ new file mode 100644
 +        const retry = (try checkpoint.next(.primary, position, 256 * 1024, 0)).page;
 +        try std.testing.expectEqualSlices(u8, page.bytes, retry.bytes);
 +        var reader: std.Io.Reader = .fixed(page.bytes);
-+        try std.testing.expectEqual(page.rows, try snap.history.decodePage(&reader, alloc, restored.screens.active));
++        try std.testing.expectEqual(page.rows, try snap.history.decodePage(&reader, try snap.record.nextHeader(&reader), alloc, restored.screens.active, .{}));
 +        try std.testing.expectEqual(page.bytes.len, reader.seek);
 +        try std.testing.expect(restored.screens.active.pages.page_size <= 50_000_000);
 +        position += 1;
@@ -1001,12 +1053,12 @@ new file mode 100644
 +    try std.testing.expectEqualStrings(original, imported);
 +}
 diff --git a/src/test.zig b/src/test.zig
+index f7a330d..05c1197 100644
 --- a/src/test.zig
 +++ b/src/test.zig
-@@ -9,5 +9,6 @@
-     _ = @import("cfg.zig");
-     _ = @import("daemonize.zig");
+@@ -12,4 +12,5 @@ comptime {
+     _ = @import("lib.zig");
+     _ = @import("client.zig");
      _ = @import("snapshot.zig");
 +    _ = @import("paging.zig");
-     _ = @import("probe.zig");
  }

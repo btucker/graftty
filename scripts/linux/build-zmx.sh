@@ -8,7 +8,7 @@ expected_zig=$(tr -d '[:space:]' < "$repo/scripts/zmx/ZIG_VERSION")
 [[ $(zig version) == "$expected_zig" ]] || { echo "Zig $expected_zig is required" >&2; exit 1; }
 commit=$(tr -d '[:space:]' < "$repo/scripts/zmx/UPSTREAM_COMMIT")
 [[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid zmx revision' >&2; exit 1; }
-patches=(graftty.patch paging.patch upstream-fixes.patch always-run-tests.patch)
+patches=(graftty.patch paging.patch always-run-tests.patch)
 preparing=''
 transient_stage=''
 cleanup() {
@@ -23,8 +23,7 @@ import hashlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 digest = hashlib.sha256(sys.argv[2].encode())
 for name in ('linux/build-zmx.sh', 'zmx/ZIG_VERSION', 'zmx/UPSTREAM_COMMIT',
-             'zmx/graftty.patch', 'zmx/paging.patch', 'zmx/upstream-fixes.patch',
-             'zmx/always-run-tests.patch'):
+             'zmx/graftty.patch', 'zmx/paging.patch', 'zmx/always-run-tests.patch'):
     digest.update((root / 'scripts' / name).read_bytes())
 print(digest.hexdigest())
 PY
@@ -85,7 +84,7 @@ zig_build_with_download_retry() {
     echo "Zmx compile and test: $((SECONDS - started)) seconds"
     started=$SECONDS
     zig_build_with_download_retry build -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe \
-        "-Dversion=$version-g${commit:0:7}-graftty10" --prefix "$stage/install" --summary all
+        "-Dversion=$version-g${commit:0:7}-graftty11" --prefix "$stage/install" --summary all
     echo "Zmx ReleaseSafe build: $((SECONDS - started)) seconds"
 )
 mkdir -p "$(dirname "$output")"

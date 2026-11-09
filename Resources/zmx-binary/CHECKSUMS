@@ -1,8 +1,7 @@
-# zmx 0.7.0-gccf8e9f-graftty10 — built from https://github.com/neurosnap/zmx commit ccf8e9f43a946a86a1aac0c4e4944f4884a12d54
-# Built with Zig 0.16.0.
-# Graftty patch SHA256 6abd0ff8c69689e6c84cc8f165133cb6dea5393155a04ecc8e0d17ef1875a1b5 — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.
-# Paging patch SHA256 820db478ef22605c5b23980954065678aabaafd14fe836c659378db753e174b1 - current screen first and requested scrollback pages.
-# Upstream fixes patch SHA256 05c51b0ce9be64c870ed1c0fc590a2910f712a94bd91c2b00979d0e5f6dce17d - zmx 0.8-1.0.1 fixes backported to the pin.
-f4a6d235860a1578bd2b70a1187fc73d670ac70170144dee4ac6e9285acae80c  zmx-aarch64
-e1cd6f5b389580be5729be7dd82c0d67b5ac9545a4e11c3edf0353ba81023c78  zmx-x86_64
-ce1faac5650bf6293e4037603ce6b6f6558ca910c5a1dfb84ab6de05d27683ad  zmx (universal)
+# zmx 1.0.1-ga35f00a-graftty11 — built from https://github.com/neurosnap/zmx commit a35f00a2118b15a5e9d522a43035c8d7487df9b7
+# Built with Zig 0.17.0.
+# Graftty patch SHA256 40227ff0bafa00aa52ebbdd04b966df8dd8655979ba87852712da9c24cfe80d9 — legacy wire framing + negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.
+# Paging patch SHA256 99e351c8c52071cbfc72c33a7410a6608923e759b6b7c9f04b65481b70115e01 - current screen first and requested scrollback pages (ghostty-53e55147-paging-1).
+95a25db068496a03ed8895fc2788f7404f2d63179feedfa17722c7fa71721238  zmx-aarch64
+964c47b21472a7bc0e1d4f8e94f9cc7855f57f490787f271611a3f07fe2fe36f  zmx-x86_64
+789ba5da06daae52fad43dbc4d4fde8fae3718945c05df838fd032ad516405b5  zmx (universal)
