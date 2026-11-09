@@ -1,0 +1,468 @@
+diff --git a/src/cfg.zig b/src/cfg.zig
+index 4e15662..ca97f55 100644
+--- a/src/cfg.zig
++++ b/src/cfg.zig
+@@ -96,7 +96,15 @@ fn mkdirAll(io: std.Io, sub_dir_path: []const u8, permissions: std.Io.Dir.Permis
+     var component = it.last() orelse return error.BadPathName;
+     while (true) {
+         std.Io.Dir.createDirAbsolute(io, component.path, permissions) catch |err| switch (err) {
+-            error.PathAlreadyExists => {},
++            error.PathAlreadyExists => {
++                // Dangling symlinks return PathAlreadyExists on mkdir but fail on traversal,
++                // causing an infinite loop between previous() and next().
++                const stat = std.Io.Dir.cwd().statFile(io, component.path, .{}) catch |e| switch (e) {
++                    error.FileNotFound => return error.NotDir,
++                    else => |stat_err| return stat_err,
++                };
++                if (stat.kind != .directory) return error.NotDir;
++            },
+             error.FileNotFound => |e| {
+                 component = it.previous() orelse return e;
+                 continue;
+@@ -138,3 +146,24 @@ test "Cfg.init uses custom modes from env vars" {
+     try std.testing.expectEqual(@as(u32, 0o770), cfg.dir_mode);
+     try std.testing.expectEqual(@as(u32, 0o660), cfg.log_mode);
+ }
++
++test "mkdirAll fails on dangling symlink instead of looping" {
++    var tmp = std.testing.tmpDir(.{});
++    defer tmp.cleanup();
++
++    const alloc = std.testing.allocator;
++    // Dir.realPathFile is unsupported on OpenBSD, so build the absolute path
++    // from the cwd instead.
++    const cwd_path = try std.process.currentPathAlloc(std.testing.io, alloc);
++    defer alloc.free(cwd_path);
++    const tmp_path = try std.fs.path.join(alloc, &.{ cwd_path, ".zig-cache", "tmp", &tmp.sub_path });
++    defer alloc.free(tmp_path);
++
++    try tmp.dir.symLink(std.testing.io, "nonexistent", "broken_link", .{});
++
++    const target_path = try std.fs.path.join(alloc, &.{ tmp_path, "broken_link", "sub" });
++    defer alloc.free(target_path);
++
++    const perms = std.Io.Dir.Permissions.fromMode(0o750);
++    try std.testing.expectError(error.NotDir, mkdirAll(std.testing.io, target_path, perms));
++}
+diff --git a/src/loop.zig b/src/loop.zig
+index afdd66d..d47f550 100644
+--- a/src/loop.zig
++++ b/src/loop.zig
+@@ -42,7 +42,12 @@ pub fn clientLoop(
+     lib_posix.sigprocmask(lib_posix.SIG.UNBLOCK, &sigwinch_mask, null);
+ 
+     try signal.openSignalPipe();
++    defer signal.closeSignalPipe();
+     signal.installWakeHandler(@intFromEnum(lib_posix.SIG.WINCH));
++    signal.installWakeHandler(@intFromEnum(lib_posix.SIG.TERM));
++    signal.installWakeHandler(@intFromEnum(lib_posix.SIG.HUP));
++    signal.installWakeHandler(@intFromEnum(lib_posix.SIG.INT));
++    defer signal.restoreDefaultHandlers();
+ 
+     // Make socket non-blocking to avoid blocking on writes
+     var sock_flags = try lib_posix.fcntl(client_sock_fd, lib_posix.F.GETFL, 0);
+@@ -132,7 +137,7 @@ pub fn clientLoop(
+         _ = try lib_posix.poll(poll_fds.items, -1);
+ 
+         if (poll_fds.items[2].revents & lib_posix.POLL.IN != 0) {
+-            signal.drainSignalPipe();
++            try signal.drainSignalPipe();
+             const next_size = ipc.getTerminalSize(lib_posix.STDOUT_FILENO);
+             try appendTerminalSize(gpa, &sock_write_buf, next_size, pixel_protocol);
+         }
+@@ -338,7 +343,8 @@ fn appendReplayGrid(gpa: std.mem.Allocator, out: *std.ArrayList(u8), cols: u16,
+     std.mem.writeInt(u16, grid[0..2], cols, .little);
+     std.mem.writeInt(u16, grid[2..4], rows, .little);
+     try out.appendSlice(gpa, &grid);
+-    try out.appendSlice(gpa, "\x1b[2J\x1b[H");
++    // Reset SGR first so the clear does not paint an inherited background.
++    try out.appendSlice(gpa, "\x1b[0m\x1b[2J\x1b[H");
+ }
+ 
+ test "replay grid preamble encodes source dimensions before VT" {
+@@ -346,7 +352,7 @@ test "replay grid preamble encodes source dimensions before VT" {
+     var out = std.ArrayList(u8).empty;
+     defer out.deinit(gpa);
+     try appendReplayGrid(gpa, &out, 80, 24);
+-    try std.testing.expectEqualSlices(u8, "GFTGRID1\x50\x00\x18\x00\x1b[2J\x1b[H", out.items);
++    try std.testing.expectEqualSlices(u8, "GFTGRID1\x50\x00\x18\x00\x1b[0m\x1b[2J\x1b[H", out.items);
+ }
+ 
+ const PixelProtocol = enum { none, legacy, current };
+@@ -505,7 +511,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+         const num_polled_clients = poll_fds.items.len - 3;
+ 
+         if (poll_fds.items[2].revents & lib_posix.POLL.IN != 0) {
+-            signal.drainSignalPipe();
++            signal.drainSignalPipe() catch {};
+             std.log.info(
+                 "SIGTERM received, shutting down gracefully session={s}",
+                 .{daemon.session_name},
+@@ -782,6 +788,12 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+             }
+ 
+             if (revents & (lib_posix.POLL.HUP | lib_posix.POLL.ERR | lib_posix.POLL.NVAL) != 0) {
++                // A client that writes and exits (`zmx send`, `zmx run -d`) is
++                // reported HUP with part of its message still unread: a pass
++                // reads at most 4 KiB. Closing now drops the rest. Leave it to
++                // the next pass, which reads on until EOF closes the client.
++                if (revents & lib_posix.POLL.IN != 0 and
++                    revents & (lib_posix.POLL.ERR | lib_posix.POLL.NVAL) == 0) continue;
+                 const last = daemon.closeClient(gpa, client, i, false);
+                 if (last) break :daemon_loop;
+             }
+@@ -1913,6 +1925,9 @@ pub const Daemon = struct {
+         // Chunk large files to stay under command-line length limits.
+         // 48000 is divisible by 3 (clean base64 boundaries) and encodes
+         // to ~64KB, well under typical ARG_MAX.
++        // The commands skip queuePtyInput's cap: it would drop the chunks
++        // past PTY_WRITE_BUF_MAX and leave the file cut short. The payload
++        // is already bounded by the IPC header's u32 length.
+         const chunk_size = 48000;
+         var offset: usize = 0;
+         var is_first = true;
+@@ -1926,16 +1941,16 @@ pub const Daemon = struct {
+             defer gpa.free(encoded);
+             _ = std.base64.standard.Encoder.encode(encoded, chunk);
+ 
+-            self.queuePtyInput(gpa, "printf '%s' '");
+-            self.queuePtyInput(gpa, encoded);
++            try self.pty_write_buf.appendSlice(gpa, "printf '%s' '");
++            try self.pty_write_buf.appendSlice(gpa, encoded);
+             if (is_first) {
+-                self.queuePtyInput(gpa, "' | base64 -d > '");
++                try self.pty_write_buf.appendSlice(gpa, "' | base64 -d > '");
+             } else {
+-                self.queuePtyInput(gpa, "' | base64 -d >> '");
++                try self.pty_write_buf.appendSlice(gpa, "' | base64 -d >> '");
+             }
+-            self.queuePtyInput(gpa, file_path);
+-            self.queuePtyInput(gpa, "'");
+-            self.queuePtyInput(gpa, "\r");
++            try self.pty_write_buf.appendSlice(gpa, file_path);
++            try self.pty_write_buf.appendSlice(gpa, "'");
++            try self.pty_write_buf.appendSlice(gpa, "\r");
+ 
+             offset = end;
+             is_first = false;
+diff --git a/src/main.zig b/src/main.zig
+index 7baf621..99dd9f6 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -25,6 +25,17 @@ pub const std_options: std.Options = .{
+ 
+ /// This is the entry point for the CLI.
+ pub fn main(init: std.process.Init) !void {
++    // An attach client unwinds on SIGHUP/SIGTERM/SIGINT so its defers restore
++    // the terminal, then dies by the same signal so callers see the cause.
++    mainImpl(init) catch |err| switch (err) {
++        error.Sighup => signal.reraise(.HUP),
++        error.Sigint => signal.reraise(.INT),
++        error.Sigterm => signal.reraise(.TERM),
++        else => return err,
++    };
++}
++
++fn mainImpl(init: std.process.Init) !void {
+     const gpa = init.gpa;
+     const io = init.io;
+ 
+@@ -1628,7 +1639,7 @@ fn attach(gpa: std.mem.Allocator, io: std.Io, daemon: *Daemon, env_str: []const
+     if (!snapshot_mode and !replay_grid) {
+         // Clear screen before attaching. This provides a clean slate before
+         // the session restore.
+-        const clear_seq = "\x1b[2J\x1b[H";
++        const clear_seq = "\x1b[0m\x1b[2J\x1b[H";
+         _ = try lib_posix.write(lib_posix.STDOUT_FILENO, clear_seq);
+     }
+ 
+diff --git a/src/signal.zig b/src/signal.zig
+index 3ba93e2..a89359b 100644
+--- a/src/signal.zig
++++ b/src/signal.zig
+@@ -6,9 +6,10 @@ const lib_posix = @import("posix.zig");
+ /// never surfaces; the handler writes a byte here and poll() wakes on POLLIN.
+ pub var sig_pipe: [2]lib_posix.fd_t = .{ -1, -1 };
+ 
+-pub fn wakeSignalPipe(_: lib_posix.SIG, _: *const lib_posix.siginfo_t, _: ?*anyopaque) callconv(.c) void {
++pub fn wakeSignalPipe(sig: lib_posix.SIG, _: *const lib_posix.siginfo_t, _: ?*anyopaque) callconv(.c) void {
+     const saved = std.c._errno().*;
+-    _ = std.c.write(sig_pipe[1], "x", 1);
++    const byte = [_]u8{@intCast(@intFromEnum(sig))};
++    _ = std.c.write(sig_pipe[1], &byte, 1);
+     std.c._errno().* = saved;
+ }
+ 
+@@ -37,10 +38,88 @@ pub fn openSignalPipe() !void {
+     sig_pipe = try lib_posix.pipe2(.{ .CLOEXEC = true, .NONBLOCK = true });
+ }
+ 
+-pub fn drainSignalPipe() void {
++pub fn closeSignalPipe() void {
++    const fds = sig_pipe;
++    sig_pipe = .{ -1, -1 };
++    lib_posix.close(fds[0]);
++    lib_posix.close(fds[1]);
++}
++
++pub fn drainSignalPipe() error{ Sighup, Sigint, Sigterm }!void {
+     var b: [16]u8 = undefined;
+     while (true) {
+         const n = lib_posix.read(sig_pipe[0], &b) catch return;
+         if (n == 0) return;
++        for (b[0..n]) |sig| {
++            switch (sig) {
++                @intFromEnum(lib_posix.SIG.HUP) => return error.Sighup,
++                @intFromEnum(lib_posix.SIG.INT) => return error.Sigint,
++                @intFromEnum(lib_posix.SIG.TERM) => return error.Sigterm,
++                else => {},
++            }
++        }
++    }
++}
++
++/// Return SIGTERM/SIGHUP/SIGINT to their default action. Once the client loop
++/// closes the signal pipe its wake handler can no longer report them, so a
++/// later signal (for example, while a restore write blocks) must still kill.
++pub fn restoreDefaultHandlers() void {
++    const act: lib_posix.Sigaction = .{
++        .handler = .{ .handler = lib_posix.SIG.DFL },
++        .mask = lib_posix.sigemptyset(),
++        .flags = 0,
++    };
++    for ([_]lib_posix.SIG{ .TERM, .HUP, .INT }) |sig| lib_posix.sigaction(sig, &act, null);
++}
++
++pub fn reraise(sig: lib_posix.SIG) noreturn {
++    const act: lib_posix.Sigaction = .{
++        .handler = .{ .handler = lib_posix.SIG.DFL },
++        .mask = lib_posix.sigemptyset(),
++        .flags = 0,
++    };
++    lib_posix.sigaction(sig, &act, null);
++
++    var mask = lib_posix.sigemptyset();
++    lib_posix.sigaddset(&mask, sig);
++    lib_posix.sigprocmask(lib_posix.SIG.UNBLOCK, &mask, null);
++    std.posix.raise(sig) catch {};
++    std.process.exit(128 + @as(u8, @intCast(@intFromEnum(sig))));
++}
++
++test "drainSignalPipe reports termination signals after wake-only signals" {
++    try openSignalPipe();
++    defer closeSignalPipe();
++    _ = try lib_posix.write(sig_pipe[1], &[_]u8{@intCast(@intFromEnum(lib_posix.SIG.WINCH))});
++    try drainSignalPipe();
++    inline for (.{
++        .{ lib_posix.SIG.HUP, error.Sighup },
++        .{ lib_posix.SIG.INT, error.Sigint },
++        .{ lib_posix.SIG.TERM, error.Sigterm },
++    }) |case| {
++        _ = try lib_posix.write(sig_pipe[1], &[_]u8{
++            @intCast(@intFromEnum(lib_posix.SIG.WINCH)),
++            @intCast(@intFromEnum(case[0])),
++        });
++        try std.testing.expectError(case[1], drainSignalPipe());
++        drainSignalPipe() catch {};
++    }
++}
++
++test "closeSignalPipe resets the descriptors" {
++    try openSignalPipe();
++    closeSignalPipe();
++    try std.testing.expectEqual(@as(lib_posix.fd_t, -1), sig_pipe[0]);
++    try std.testing.expectEqual(@as(lib_posix.fd_t, -1), sig_pipe[1]);
++}
++
++test "restoreDefaultHandlers stops a closed pipe from swallowing termination signals" {
++    for ([_]lib_posix.SIG{ .TERM, .HUP, .INT }) |sig| installWakeHandler(@intCast(@intFromEnum(sig)));
++    restoreDefaultHandlers();
++    for ([_]lib_posix.SIG{ .TERM, .HUP, .INT }) |sig| {
++        var current: lib_posix.Sigaction = undefined;
++        lib_posix.sigaction(sig, null, &current);
++        try std.testing.expectEqual(lib_posix.SIG.DFL, current.handler.handler);
+     }
+ }
+diff --git a/src/snapshot.zig b/src/snapshot.zig
+index cf08e42..b3efbd8 100644
+--- a/src/snapshot.zig
++++ b/src/snapshot.zig
+@@ -103,3 +103,30 @@ test "snapshot export and import roundtrip" {
+     const has_more = try pumpHistory(alloc, &import_res.decoder, &restored);
+     try testing.expect(!has_more);
+ }
++
++test "snapshot roundtrip preserves the cursor style for re-attach replay" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    const util = @import("util.zig");
++
++    var term: ghostty_vt.Terminal = try .init(testing.io, alloc, .{ .cols = 20, .rows = 4 });
++    defer term.deinit(alloc);
++    var stream = term.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("\x1b[5 qprompt");
++
++    var buffer: std.Io.Writer.Allocating = .init(alloc);
++    defer buffer.deinit();
++    try exportSnapshot(alloc, &buffer.writer, &term, .{});
++
++    var reader: std.Io.Reader = .fixed(buffer.written());
++    var import_res = try startImport(alloc, testing.io, &reader, 64 * 1024);
++    defer import_res.deinit(alloc);
++    var restored = import_res.terminal;
++    defer restored.deinit(alloc);
++    _ = try pumpHistory(alloc, &import_res.decoder, &restored);
++
++    const output = util.serializeTerminalState(alloc, &restored) orelse return error.TestUnexpectedNull;
++    defer alloc.free(output);
++    try testing.expect(std.mem.endsWith(u8, output, "\x1b[5 q"));
++}
+diff --git a/src/util.zig b/src/util.zig
+index ae27670..035106b 100644
+--- a/src/util.zig
++++ b/src/util.zig
+@@ -683,8 +683,23 @@ fn parseDecimal(buf: []const u8, pos: *usize) ?u32 {
+     return value;
+ }
+ 
++/// True when a CSI carries a private marker (`?`, `>`, `=`, `<`). Keyboard
++/// encodings never use one, but the replies a terminal sends on its own do:
++/// kitty keyboard flags (`CSI ? flags u`), DA1 (`CSI ? 62;22 c`), DA2
++/// (`CSI > 1;10;0 c`), DECRPM (`CSI ? 2026;2 $ y`), color scheme (`CSI ? 997;1 n`).
++fn hasPrivateMarker(csi: ghostty_vt.Parser.Action.CSI) bool {
++    for (csi.intermediates) |b| {
++        if (b == '?' or b == '>' or b == '=' or b == '<') return true;
++    }
++    return false;
++}
++
+ /// Detect if the payload contains user input that should be printed to the screen or
+ /// is a key combination like up-arrow, backspace, enter, ctrl+f, etc.
++///
++/// Terminal-generated replies must not count: every attached client's terminal
++/// answers the queries the app broadcasts, so a reply from a passive viewer
++/// would otherwise make it leader and resize the session to its window.
+ pub fn isUserInput(payload: []const u8) bool {
+     var parser = ghostty_vt.Parser.init();
+     var i: usize = 0;
+@@ -703,10 +718,16 @@ pub fn isUserInput(payload: []const u8) bool {
+             switch (action) {
+                 .print => return true, // printable characters
+                 .csi_dispatch => |csi| {
++                    // A reply, not a key: skip it and keep scanning, since a
++                    // real keystroke can arrive in the same read.
++                    if (hasPrivateMarker(csi)) continue;
+                     // kitty keyboard: CSI ... u or CSI ... ~
+                     // legacy modified keys: CSI 27 ; ... ~
+                     // arrow/function keys with modifiers: CSI 1 ; <mod> A-D
+-                    if (csi.final == 'u' or csi.final == '~') return true;
++                    // CSI ? flags u is the terminal's reply to a kitty keyboard status
++                    // query, not a key press; skip it and keep scanning the payload
++                    const status_reply = csi.final == 'u' and csi.intermediates.len > 0 and csi.intermediates[0] == '?';
++                    if (!status_reply and (csi.final == 'u' or csi.final == '~')) return true;
+                     // modified arrow keys (e.g., Ctrl+F sends CSI 1;5C in legacy mode)
+                     if (csi.final >= 'A' and csi.final <= 'D' and csi.params.len > 1) return true;
+                     // mouse events: CSI M (basic) or CSI < (SGR extended) - EXCLUDE these
+@@ -766,6 +787,18 @@ fn writeColorOverrides(writer: *std.Io.Writer, term: *const ghostty_vt.Terminal)
+     writeDynamicColor(writer, .cursor, colors.cursor);
+ }
+ 
++/// The VT formatter does not emit the cursor shape (DECSCUSR).
++fn writeCursorStyle(writer: *std.Io.Writer, term: *ghostty_vt.Terminal) !void {
++    if (term.cursor.is_default) return writer.writeAll("\x1b[0 q");
++    const blink = term.modes.get(.cursor_blinking);
++    const style: u8 = switch (term.screens.active.cursor.cursor_style) {
++        .block, .block_hollow => if (blink) 1 else 2,
++        .underline => if (blink) 3 else 4,
++        .bar => if (blink) 5 else 6,
++    };
++    try writer.print("\x1b[{d} q", .{style});
++}
++
+ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Terminal) ?[]const u8 {
+     var builder: std.Io.Writer.Allocating = .init(alloc);
+     defer builder.deinit();
+@@ -852,6 +885,10 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+         };
+     }
+ 
++    writeCursorStyle(&builder.writer, term) catch |err| {
++        std.log.warn("failed to restore cursor style err={s}", .{@errorName(err)});
++    };
++
+     const output = builder.writer.buffered();
+     if (output.len == 0) return null;
+ 
+@@ -1554,6 +1591,27 @@ test "serializeTerminalState excludes synchronized output replay" {
+     try testing.expect(std.mem.indexOf(u8, output, "\x1b[?2026h") == null);
+ }
+ 
++test "serializeTerminalState replays the cursor style" {
++    const alloc = testing.allocator;
++    const io = testing.io;
++    for ([_]struct { input: []const u8, expected: []const u8 }{
++        .{ .input = "", .expected = "\x1b[0 q" },
++        .{ .input = "\x1b[1 q", .expected = "\x1b[1 q" },
++        .{ .input = "\x1b[2 q", .expected = "\x1b[2 q" },
++        .{ .input = "\x1b[3 q", .expected = "\x1b[3 q" },
++        .{ .input = "\x1b[4 q", .expected = "\x1b[4 q" },
++        .{ .input = "\x1b[5 q", .expected = "\x1b[5 q" },
++        .{ .input = "\x1b[6 q", .expected = "\x1b[6 q" },
++        .{ .input = "\x1b[6 q\x1b[0 q", .expected = "\x1b[0 q" },
++    }) |case| {
++        var term = try testCreateTerminal(alloc, io, 20, 4, case.input);
++        defer term.deinit(alloc);
++        const output = serializeTerminalState(alloc, &term) orelse return error.TestUnexpectedNull;
++        defer alloc.free(output);
++        try testing.expect(std.mem.endsWith(u8, output, case.expected));
++    }
++}
++
+ test "serializeTerminalState replays the title" {
+     const alloc = testing.allocator;
+     const io = testing.io;
+@@ -2089,6 +2147,27 @@ test "isUserInput: focus events excluded" {
+     try testing.expect(!isUserInput("\x1b[O")); // focus out
+ }
+ 
++test "isUserInput: terminal query replies excluded" {
++    // Replies every attached terminal sends to queries the app broadcasts.
++    try testing.expect(!isUserInput("\x1b[?5u")); // kitty keyboard flags
++    try testing.expect(!isUserInput("\x1b[?0u"));
++    try testing.expect(!isUserInput("\x1b[?62;22;52c")); // DA1
++    try testing.expect(!isUserInput("\x1b[>1;10;0c")); // DA2
++    try testing.expect(!isUserInput("\x1b[?2026;2$y")); // DECRPM
++    try testing.expect(!isUserInput("\x1b[?997;1n")); // color scheme
++    try testing.expect(!isUserInput("\x1b[12;40R")); // cursor position
++    try testing.expect(!isUserInput("\x1b[6;32;14t")); // cell size
++    // XTVERSION + kitty flags + DA1 in one read, as a passive Ghostty
++    // client sent it in the wild (it made that viewer the leader).
++    try testing.expect(!isUserInput("\x1bP>|ghostty 1.3.2-main+64f5cc175\x1b\\\x1b[?5u\x1b[?62;22;52c"));
++}
++
++test "isUserInput: key after a reply in the same read still counts" {
++    try testing.expect(isUserInput("\x1b[?5ux"));
++    try testing.expect(isUserInput("\x1b[?62;22c\x1b[99;5u")); // reply then kitty ctrl+c
++    try testing.expect(isUserInput("\x1b[?5u\x1b[3~")); // reply then delete
++}
++
+ test "isUserInput: bracketed paste included" {
+     // Bracketed paste start/end are user-initiated paste operations
+     try testing.expect(isUserInput("\x1b[200~")); // paste start
+@@ -2272,3 +2351,15 @@ test "serializeTerminalState resets inherited text style before replay" {
+     try testing.expectEqual(@as(u16, 0), pages.getTopLeft(.screen).rowAndCell().cell.style_id);
+     try testing.expectEqual(@as(u16, 0), pages.getTopLeft(.active).rowAndCell().cell.style_id);
+ }
++
++test "isUserInput: kitty keyboard status reply is a terminal response" {
++    // CSI ? flags u answers the program's CSI ? u query; no key was pressed
++    try testing.expect(!isUserInput("\x1b[?1u"));
++    try testing.expect(!isUserInput("\x1b[?0u"));
++    try testing.expect(!isUserInput("\x1b[?31u"));
++    // a real key coalesced with the reply still counts
++    try testing.expect(isUserInput("\x1b[?1ua"));
++    try testing.expect(isUserInput("\x1b[?1u\r"));
++    try testing.expect(isUserInput("\x1b[?1u\x1b[97;1u"));
++    try testing.expect(!isUserInput("\x1b[?1u\x1b[97;1:3u"));
++}
