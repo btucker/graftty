@@ -210,7 +210,7 @@ printf '%s\n' "$VERSION" > "$INSTALL_STAGE/VERSION"
     printf '# Built with Zig %s.\n' "$EXPECTED_ZIG_VERSION"
     printf '# Graftty patch SHA256 %s — legacy wire framing + negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.\n' \
         "$patch_sha"
-    printf '# Paging patch SHA256 %s - current screen first and requested scrollback pages (ghostty-53e55147-paging-1).\n' \
+    printf '# Paging patch SHA256 %s - current screen first and requested scrollback pages (ghostty-8af6897c-paging-1).\n' \
         "$paging_patch_sha"
     printf '%s\n' "${checksums[@]}"
 } > "$INSTALL_STAGE/CHECKSUMS"

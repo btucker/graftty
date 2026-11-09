@@ -1,5 +1,5 @@
 diff --git a/build.zig b/build.zig
-index d4e8e95..e98b654 100644
+index d4e8e95..3c08548 100644
 --- a/build.zig
 +++ b/build.zig
 @@ -23,7 +23,10 @@ pub fn build(b: *std.Build) void {
@@ -14,6 +14,19 @@ index d4e8e95..e98b654 100644
      options.addOption([]const u8, "ghostty_version", ghostty_ver);
      options.addOption(bool, "has_daemon", enable_daemon);
  
+@@ -57,6 +60,12 @@ pub fn build(b: *std.Build) void {
+         // configure time and breaks builds without full Xcode.
+         .@"emit-xcframework" = false,
+         .@"emit-macos-app" = false,
++        // Graftty: snapshot decoders in running clients (Ghostty 8af6897c
++        // era and older iOS renderers) reject the optional Kitty image
++        // records newer encoders emit, so a session showing an image would
++        // replay as a blank screen. Clients render images from live bytes;
++        // the daemon's shadow terminal ignores them, as before.
++        .@"vt-features" = @as([]const u8, "-kitty-graphics"),
+     }) else null;
+     if (dep) |d| {
+         const vt_mod = d.module("ghostty-vt");
 diff --git a/src/cfg.zig b/src/cfg.zig
 index cb33595..707e427 100644
 --- a/src/cfg.zig

@@ -1,5 +1,5 @@
 diff --git a/src/ipc.zig b/src/ipc.zig
-index d59f3a5..09a64e7 100644
+index d59f3a5..5e6910a 100644
 --- a/src/ipc.zig
 +++ b/src/ipc.zig
 @@ -32,6 +32,13 @@ pub const Tag = enum(u8) {
@@ -16,15 +16,11 @@ index d59f3a5..09a64e7 100644
      /// Scoped history: the active screen plus a bounded number of
      /// preceding scrollback rows. Request payload is `Capture`. Upstream
      /// assigns 22, which running Graftty daemons use for `Snapshot`.
-@@ -93,6 +100,15 @@ pub const Capabilities = packed struct {
+@@ -93,6 +100,11 @@ pub const Capabilities = packed struct {
      pub const pixel_size: u64 = 1 << 0;
      pub const snapshot: u64 = 1 << 1;
      pub const raw_snapshot_stream: u64 = 1 << 2;
 +    pub const paged_snapshot: u64 = 1 << 3;
-+    /// The daemon encodes paged history with `PAGED_CODEC`. Daemons built on
-+    /// the Ghostty 8af6897c engine advertise `paged_snapshot` without this
-+    /// bit and ignore an unknown codec, so hosts check it before attaching.
-+    pub const paged_codec_ghostty_53e55147: u64 = 1 << 4;
 +
 +    pub fn supportsPaging(self: Capabilities) bool {
 +        return self.bits & paged_snapshot != 0;
@@ -32,7 +28,7 @@ index d59f3a5..09a64e7 100644
  
      pub fn supportsPixelSize(self: Capabilities) bool {
          return self.bits & pixel_size != 0;
-@@ -421,16 +437,18 @@ test "Info wire size is frozen" {
+@@ -421,16 +433,18 @@ test "Info wire size is frozen" {
  
  test "Tag wire values are frozen" {
      inline for (.{
@@ -61,18 +57,20 @@ index d59f3a5..09a64e7 100644
      }) |p| try std.testing.expectEqual(@as(u8, p[1]), @backingInt(p[0]));
  }
  
-@@ -486,3 +504,51 @@ test "legacy header sends zeroed padding after its 5 wire bytes" {
+@@ -486,3 +500,45 @@ test "legacy header sends zeroed padding after its 5 wire bytes" {
      try std.testing.expectEqual(@as(usize, 8), bytes.len);
      try std.testing.expectEqualSlices(u8, &.{ 1, 4, 3, 2, 1, 0, 0, 0 }, bytes);
  }
 +
 +// Paged frames use fixed little-endian fields. Existing tags stay unchanged.
-+pub const PAGED_CODEC = "ghostty-53e55147-paging-1";
++// The PAGE layout is unchanged from Ghostty 8af6897c through 53e55147, so the
++// codec keeps its original name and running daemons stay compatible.
++pub const PAGED_CODEC = "ghostty-8af6897c-paging-1";
 +
 +/// What a daemon advertises in its `Capabilities` frame on accept.
 +pub const daemon_capabilities = Capabilities{
 +    .bits = Capabilities.pixel_size | Capabilities.snapshot |
-+        Capabilities.paged_snapshot | Capabilities.paged_codec_ghostty_53e55147,
++        Capabilities.paged_snapshot,
 +};
 +pub const PAGED_READY_LIMIT = 512 * 1024;
 +pub const PAGED_PAGE_LIMIT = 256 * 1024;
@@ -104,14 +102,6 @@ index d59f3a5..09a64e7 100644
 +    try std.testing.expectEqual(@as(usize, 48), @sizeOf(PagedPage));
 +    try std.testing.expectEqual(@as(u8, 26), @backingInt(Tag.PagedAttach));
 +    try std.testing.expect(!(Capabilities{}).supportsPaging());
-+}
-+
-+test "daemon advertises the Ghostty 53e55147 paging codec" {
-+    try std.testing.expectEqualStrings("ghostty-53e55147-paging-1", PAGED_CODEC);
-+    try std.testing.expectEqual(@as(u64, 1 << 4), Capabilities.paged_codec_ghostty_53e55147);
-+    try std.testing.expect(daemon_capabilities.supportsPaging());
-+    // Hosts require both bits; an 8af6897c daemon advertised only paging.
-+    try std.testing.expect(daemon_capabilities.bits & Capabilities.paged_codec_ghostty_53e55147 != 0);
 +}
 diff --git a/src/loop.zig b/src/loop.zig
 index 5a0b28e..09102bb 100644

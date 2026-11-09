@@ -594,6 +594,34 @@ def new_daemon_old_client(
         )
 
 
+def new_daemon_kitty_image_replays_to_old_client(legacy: Path, candidate: Path) -> None:
+    """A session holding a Kitty image still replays to an older snapshot decoder."""
+    directory, env = make_scope()
+    session = "compat-kitty-image"
+    first: Attach | None = None
+    second: Attach | None = None
+    try:
+        first = Attach(candidate, env, session, rows=24, cols=80, xpixel=800, ypixel=480)
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        # Transmit and place a 1x1 RGB image, then print a marker after it.
+        first.write(
+            "printf '\\033_Ga=T,f=24,s=1,v=1;AAAA\\033\\\\'; "
+            "printf '__KITTY_%s__\\n' PLACED\n"
+        )
+        first.wait_for("__KITTY_PLACED__")
+        first.terminate_client()
+        first = None
+
+        second = Attach(legacy, env, session, rows=24, cols=80, xpixel=800, ypixel=480)
+        replay = second.wait_for("__KITTY_PLACED__")
+        if "__KITTY_PLACED__" not in replay:
+            raise AssertionError(f"old client lost the replay after a Kitty image: {replay!r}")
+        prepare_shell(second)
+    finally:
+        cleanup_case(directory, env, session, candidate, candidate, legacy, first, second)
+
+
 def new_client_new_daemon_pixels(legacy: Path, candidate: Path) -> None:
     directory, env = make_scope()
     session = "compat-pixels"
@@ -1238,8 +1266,8 @@ def replay_grid_precedes_vt(
 
 
 # Must match PagedTerminalLimits.codec and ipc.PAGED_CODEC.
-PAGED_CODEC = b"ghostty-53e55147-paging-1"
-PAGED_CODEC_CAPABILITY = 1 << 4
+PAGED_CODEC = b"ghostty-8af6897c-paging-1"
+PAGED_SNAPSHOT_CAPABILITY = 1 << 3
 TERMINAL_RESTORE = b"\x1bc\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\"
 CANONICAL_LFLAGS = termios.ECHO | termios.ICANON | termios.ISIG
 
@@ -1318,12 +1346,12 @@ def dense_history_pages_stay_bounded(candidate: Path) -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(str(directory / session))
             send_ipc(client, 23, struct.pack("<Q", 9))
-            # Check the codec before attaching: a daemon on another engine
-            # ignores an unknown codec, so waiting for READY only times out.
+            # Check paging support before attaching: a daemon without it ignores
+            # the request, so waiting for READY would only time out.
             frames = read_ipc_frames_until(client, lambda values: any(tag == 23 for tag, _ in values), "capabilities")
             advertised = next(data for tag, data in frames if tag == 23)
-            if struct.unpack("<Q", advertised)[0] & PAGED_CODEC_CAPABILITY == 0:
-                raise AssertionError("daemon did not advertise the paged snapshot codec")
+            if struct.unpack("<Q", advertised)[0] & PAGED_SNAPSHOT_CAPABILITY == 0:
+                raise AssertionError("daemon did not advertise paged snapshots")
             send_ipc(client, 26, PAGED_CODEC)
             frames = read_ipc_frames_until(client, lambda values: any(tag == 27 for tag, _ in values), "READY")
             ready = next(data for tag, data in frames if tag == 27)
@@ -1389,6 +1417,8 @@ def main() -> None:
     print("  ✓ old daemon → new client")
     new_daemon_old_client(legacy, candidate, args.expect_cross_version_pixels)
     print("  ✓ new daemon → old client")
+    new_daemon_kitty_image_replays_to_old_client(legacy, candidate)
+    print("  ✓ a session holding a Kitty image replays to an old client")
     new_client_new_daemon_pixels(legacy, candidate)
     print("  ✓ negotiated pixel-size resize")
     new_daemon_snapshots_first_regular_attach(legacy, candidate)

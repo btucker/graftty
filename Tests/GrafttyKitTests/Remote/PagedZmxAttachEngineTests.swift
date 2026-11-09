@@ -104,8 +104,7 @@ struct PagedZmxAttachEngineTests {
         let frame = PagedZmxWire.frame(tag: 26, payload: Data([42]))
         #expect(frame == Data([26, 1, 0, 0, 0, 0, 0, 0, 42]))
         #expect(!PagedZmxWire.supportsPaging(Data([3, 0, 0, 0, 0, 0, 0, 0])))
-        #expect(!PagedZmxWire.supportsPaging(Data([8, 0, 0, 0, 0, 0, 0, 0])))
-        #expect(PagedZmxWire.supportsPaging(Data([24, 0, 0, 0, 0, 0, 0, 0])))
+        #expect(PagedZmxWire.supportsPaging(Data([8, 0, 0, 0, 0, 0, 0, 0])))
         #expect(try PagedZmxWire.event(tag: 3, payload: Data()) == nil)
         #expect(try PagedZmxWire.event(tag: 32, payload: Data([7, 0, 0, 0])) == .ended(7))
         #expect(throws: PagedZmxAttachEngine.Error.self) { try PagedZmxWire.event(tag: 27, payload: Data()) }
@@ -185,7 +184,7 @@ private final class FakePagedDaemon: @unchecked Sendable {
         return data
     }
 
-    static func negotiate(_ fd: Int32, capabilities: UInt8 = 24) throws {
+    static func negotiate(_ fd: Int32, capabilities: UInt8 = 8) throws {
         try send(fd, tag: 23, payload: Data([capabilities, 0, 0, 0, 0, 0, 0, 0]))
         let advertised = try receive(fd)
         #expect(advertised.0 == 23)
@@ -282,7 +281,7 @@ extension PagedZmxAttachEngineTests {
         }
     }
 
-    @Test("@spec TERM-12.25: When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.", arguments: [UInt8(24), UInt8(25)])
+    @Test("@spec TERM-12.25: When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.", arguments: [UInt8(8), UInt8(9)])
     func windowResizePreservesNegotiatedPixelMetadata(capabilities: UInt8) async throws {
         let daemon = try FakePagedDaemon { fd in
             try FakePagedDaemon.negotiate(fd, capabilities: capabilities)
@@ -322,7 +321,7 @@ extension PagedZmxAttachEngineTests {
     @Test("@spec TERM-12.29: When a paged resize request carries zero pixel dimensions, the application shall treat the pixel size as unspecified and keep the last negotiated pixel metadata, so a grid-only follower repair never writes a zero pixel size into the session PTY or re-sends an unchanged grid.")
     func zeroPixelResizeKeepsLastPixelMetadata() async throws {
         let daemon = try FakePagedDaemon { fd in
-            try FakePagedDaemon.negotiate(fd, capabilities: 25)
+            try FakePagedDaemon.negotiate(fd, capabilities: 9)
             var expectedPixels = Data(); expectedPixels.appendLE(UInt16(960)); expectedPixels.appendLE(UInt16(576))
             var pixels = try FakePagedDaemon.receive(fd)
             #expect(pixels.0 == 24)
@@ -356,7 +355,7 @@ extension PagedZmxAttachEngineTests {
 
     @Test func gridOnlyResizeDoesNotInventPixelMetadata() async throws {
         let daemon = try FakePagedDaemon { fd in
-            try FakePagedDaemon.negotiate(fd, capabilities: 25)
+            try FakePagedDaemon.negotiate(fd, capabilities: 9)
             #expect(try FakePagedDaemon.receive(fd).0 == 2)
             try FakePagedDaemon.send(fd, tag: 2, payload: Data())
             #expect(try FakePagedDaemon.receive(fd).0 == 2)
@@ -490,30 +489,10 @@ extension PagedZmxAttachEngineTests {
         await engine.close()
     }
 
-    @Test("@spec TERM-12.70: If a zmx daemon advertises paging without the `ghostty-53e55147-paging-1` codec capability, then the application shall reject the paged attachment during capability negotiation, before requesting a paged attach, so the caller falls back to the legacy attach without waiting for a ready reply.", .timeLimit(.minutes(1)))
-    func previousEngineDaemonRejectedAtNegotiation() async throws {
-        let daemon = try FakePagedDaemon { fd in
-            // A Ghostty 8af6897c daemon: pixel size, snapshot, and paging only.
-            try FakePagedDaemon.send(fd, tag: 23, payload: Data([11, 0, 0, 0, 0, 0, 0, 0]))
-            #expect(try FakePagedDaemon.receive(fd).0 == 23)
-            var byte: UInt8 = 0
-            #expect(GrafttyPOSIX.read(fd, &byte, 1) == 0, "client sent a paged attach request to an old-engine daemon")
-        }
-        defer { daemon.finish() }
-        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"), zmxDir: daemon.directory, sessionName: "session"))
-        let started = Date()
-        do { try await engine.start(); Issue.record("Old-engine daemon unexpectedly accepted") }
-        catch PagedZmxAttachEngine.Error.unsupported { }
-        #expect(Date().timeIntervalSince(started) < 2, "rejection waited for a ready deadline")
-        await engine.close()
-        #expect(await daemon.waitUntilDone())
-        #expect(daemon.error == nil)
-    }
-
     @Test func socketEngineDeliversReadyLiveAndRequestedPage() async throws {
         let request = PagedTerminalHistoryRequest(incarnation: 9, checkpointID: 7, requestID: 1, ordinal: 0, screen: 0)
         let daemon = try FakePagedDaemon { fd in
-            try FakePagedDaemon.send(fd, tag: 23, payload: Data([24, 0, 0, 0, 0, 0, 0, 0]))
+            try FakePagedDaemon.send(fd, tag: 23, payload: Data([8, 0, 0, 0, 0, 0, 0, 0]))
             #expect(try FakePagedDaemon.receive(fd).0 == 23)
             let (tag, codec) = try FakePagedDaemon.receive(fd)
             #expect(tag == 26)

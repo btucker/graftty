@@ -4,7 +4,7 @@
 `ZIG_VERSION` pins the compiler that must build it. The pin is the upstream
 v1.0.1 release. Its `build.zig.zon` uses Ghostty
 `53e55147bbbb0157672dac0228aa7744e881f1fa`, the same engine as Graftty's
-libghostty-spm build, so both sides read the same paged snapshot codec.
+libghostty-spm build.
 `graftty.patch` applies to that exact source revision, followed by
 `paging.patch`. `graftty.patch` carries these downstream changes:
 
@@ -21,6 +21,12 @@ libghostty-spm build, so both sides read the same paged snapshot codec.
   never merged, forward-ported from commit `ccf8e9f`. That commit's
   outer-terminal probe (`probe.zig`) is left out because Graftty never runs it
   (see below);
+- build the daemon's ghostty-vt without Kitty graphics. The 53e55147 snapshot
+  encoder adds optional Kitty image records, and the decoders in running
+  clients (8af6897c-era zmx clients, older iOS renderers) reject unknown
+  records, so a session showing an image replayed as a blank screen. Clients
+  still render images from live bytes; reattach replay omits them, as every
+  earlier release did;
 - export the initial snapshot before the Init resize. Upstream 1.0 resizes to
   the leader's grid before serializing; Graftty keeps a single cut so the
   snapshot's grid is the source grid that `--replay-grid` reports;
@@ -137,13 +143,13 @@ Snapshot-capable attachments never replace the replay grid with the outer PTY
 size. Ongoing owner resize events come from Graftty's ownership protocol;
 legacy zmx daemons do not broadcast those dimensions to regular followers.
 
-`paging.patch` carries paged history. Its codec is
-`ghostty-53e55147-paging-1`, which must match `PagedTerminalLimits.codec` and
-the libghostty-spm paging recipe. A daemon advertises capability bit 4
-(`paged_codec_ghostty_53e55147`) beside bit 3 (`paged_snapshot`). Daemons
-built on the Ghostty 8af6897c engine advertise only bit 3 and ignore an
-unknown codec, so the host rejects them during negotiation (TERM-12.70) and
-falls back to the regular attach.
+`paging.patch` carries paged history. Its codec stays
+`ghostty-8af6897c-paging-1`, matching `PagedTerminalLimits.codec`: the PAGE
+layout is unchanged from Ghostty 8af6897c through 53e55147, so running
+graftty7+ daemons and this build serve the same paged clients. A codec change
+needs a new name here, in `PagedTerminalLimits.codec`, and in the
+libghostty-spm recipe, plus a negotiated capability so hosts can tell older
+daemons apart before they attach.
 
 Upstream fixes from zmx 0.8 through 1.0.1 are part of the base, including
 query replies that no longer take leadership, unread input on hangup, cursor
