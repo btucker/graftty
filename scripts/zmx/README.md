@@ -113,6 +113,41 @@ Snapshot-capable attachments never replace the replay grid with the outer PTY
 size. Ongoing owner resize events come from Graftty's ownership protocol;
 legacy zmx daemons do not broadcast those dimensions to regular followers.
 
+`UPSTREAM_COMMIT` is not on upstream's release line. It is the unmerged
+experimental snapshot commit `ccf8e9f` on top of `e586f62`. Upstream v1.0
+dropped that transport, so `snapshot.zig` no longer exists there and tag 22
+now means `Capture`. `upstream-fixes.patch` applies after `paging.patch` and
+backports these upstream 0.8–1.0.1 fixes, which do not change the wire
+protocol:
+
+- terminal query replies (kitty keyboard flags, DA1/DA2, DECRPM, color
+  scheme) no longer make a passive client the leader (`54b212d`, `1501f2a`);
+- the daemon reads a hung-up client's remaining input before closing it
+  (`0a18bee`);
+- `mkdirAll` fails on a dangling symlink instead of looping (`ad8be3f`,
+  `b8af7ac`);
+- `zmx write` bypasses the 256 KiB PTY input cap, so large files arrive whole
+  (`1a6ce3c`);
+- the attach client closes its signal pipe on exit. On SIGHUP, SIGTERM or
+  SIGINT it unwinds, restoring termios and writing the terminal reset, then
+  re-raises that signal, so callers still see a signal exit (`2626f17`,
+  `14a9e7d`). Graftty also restores the default handlers when the client
+  loop exits, so a signal sent while a restore write blocks still kills the
+  client. Graftty sends SIGTERM to attach clients (WEB-4.5), and they now
+  detach through the same path as a clean exit (ZMX-9.9);
+- attach resets SGR before clearing the screen. This includes the
+  `--replay-grid` preamble, which is Graftty's attach clear (`7f0ffdb`);
+- the reattach replay restores the cursor style (DECSCUSR). The snapshot
+  carries cursor style, so regular, replay-grid and legacy replays all
+  restore it (`770eb5f`, ZMX-9.10).
+
+Upstream `213390b` (a double free in `printEnv`) does not apply. The pinned
+`envGet` frees its payload with a single `defer`.
+
+These are client- or daemon-local fixes. A new client therefore gains the
+client fixes against a running old daemon, and an old daemon keeps its
+behavior until its session restarts. The fixes ship in `graftty10`.
+
 `LEGACY_GRAFTTY_COMMIT` and `LEGACY_ZMX_SHA256` identify the immutable 0.5
 binary that remains the rolling-upgrade compatibility floor. The bump script
 tests that fixture on every run and also tests the committed N-1 binary when it

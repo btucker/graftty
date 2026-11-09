@@ -1,7 +1,8 @@
-# zmx 0.7.0-gccf8e9f-graftty9 — built from https://github.com/neurosnap/zmx commit ccf8e9f43a946a86a1aac0c4e4944f4884a12d54
+# zmx 0.7.0-gccf8e9f-graftty10 — built from https://github.com/neurosnap/zmx commit ccf8e9f43a946a86a1aac0c4e4944f4884a12d54
 # Built with Zig 0.16.0.
 # Graftty patch SHA256 6abd0ff8c69689e6c84cc8f165133cb6dea5393155a04ecc8e0d17ef1875a1b5 — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.
 # Paging patch SHA256 820db478ef22605c5b23980954065678aabaafd14fe836c659378db753e174b1 - current screen first and requested scrollback pages.
-165bcab273e80d9158773dfcca2fb7e496ef7b52cd03452335538c4f311439b6  zmx-aarch64
-189bab24ab29ca2fc4d975dfb73b1a0f47baac3e3c4eeeb0bf3afcc958912d4d  zmx-x86_64
-63b183b4c05cc55c0c172311a91f7e3b8869840bb3590b3872848e07af20a2c4  zmx (universal)
+# Upstream fixes patch SHA256 05c51b0ce9be64c870ed1c0fc590a2910f712a94bd91c2b00979d0e5f6dce17d - zmx 0.8-1.0.1 fixes backported to the pin.
+f4a6d235860a1578bd2b70a1187fc73d670ac70170144dee4ac6e9285acae80c  zmx-aarch64
+e1cd6f5b389580be5729be7dd82c0d67b5ac9545a4e11c3edf0353ba81023c78  zmx-x86_64
+ce1faac5650bf6293e4037603ce6b6f6558ca910c5a1dfb84ab6de05d27683ad  zmx (universal)
