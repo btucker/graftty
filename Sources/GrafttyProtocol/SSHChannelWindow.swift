@@ -1,5 +1,3 @@
-import Foundation
-
 /// @spec REMOTE-9.26
 /// The application shall advertise a 256 KiB maximum SSH channel packet size on host and client connections, so each channel's receive window is the 16 MiB that terminal flow control is sized for.
 ///

@@ -840,8 +840,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.68** When an agent input request appears, changes, or clears on Mac or mobile, the application shall present a single-line banner below the pane controls with the full question available on selection, without changing the terminal's size or covering its recovery controls.
 
-**TERM-12.69** If a peer requests the paged-terminal subsystem of another snapshot codec, then the host shall reject the request so the peer selects the VT attach path.
-
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.

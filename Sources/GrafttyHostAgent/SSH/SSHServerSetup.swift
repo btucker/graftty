@@ -52,7 +52,7 @@ public enum SSHServerSetup {
         // REMOTE-8.5: transportProtectionSchemes is intentionally left at
         // swift-nio-ssh's bundled defaults (AES-256-GCM + AES-128-GCM)
         // because `AES256GCMOpenSSHTransportProtection` is internal in
-        // swift-nio-ssh 0.13 and cannot be referenced here directly.
+        // swift-nio-ssh and cannot be referenced here directly.
         return NIOSSHHandler(
             role: .server(config),
             allocator: allocator,
