@@ -22,6 +22,11 @@ struct MobileAskDeck: View {
     let onDismiss: (Entry) -> Void
 
     @State private var position: String?
+    @State private var heights: [String: CGFloat] = [:]
+
+    private var currentID: String? { position ?? entries.first?.id }
+
+    private var currentHeight: CGFloat? { currentID.flatMap { heights[$0] } }
 
     private var currentIndex: Int {
         position.flatMap { id in entries.firstIndex { $0.id == id } } ?? 0
@@ -30,24 +35,32 @@ struct MobileAskDeck: View {
     var body: some View {
         VStack(spacing: 8) {
             ScrollView(.horizontal) {
-                // Not lazy: every card is measured, so all of them take the
-                // tallest one's height and their buttons line up.
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(entries) { entry in
                         MobileAskCardView(entry: entry,
                                           onExplain: { onExplain(entry) },
                                           onOpen: { onOpen(entry) },
                                           onDismiss: { onDismiss(entry) })
-                            .containerRelativeFrame(.horizontal)
+                            // Narrower than the screen so the next card peeks in.
+                            .containerRelativeFrame(.horizontal) { width, _ in entries.count > 1 ? width - 28 : width }
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heights[entry.id] = $0 }
+                            // A taller neighbor is cut to the card in view, with rounded corners.
+                            .frame(height: entry.id == currentID ? nil : currentHeight, alignment: .top)
+                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     }
                 }
-                .fixedSize(horizontal: false, vertical: true)
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $position)
             .scrollIndicators(.hidden)
             .scrollClipDisabled()
+            // Size the deck to the card in view, not the tallest one. The mask
+            // clips only vertically, so neighbors still show in the side margins.
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(height: currentHeight, alignment: .top)
+            .mask { Rectangle().padding(.horizontal, -40) }
+            .animation(.snappy, value: currentHeight)
             .onChange(of: entries.map(\.id)) { old, new in
                 // The card in view was answered or dismissed: follow the card that
                 // took its place, or the dots keep pointing at the first card.
@@ -90,12 +103,12 @@ private struct MobileAskCardView: View {
             } else if let completed = card.lastCompleted {
                 context(label: "Last did", text: completed)
             }
-            Spacer(minLength: 0)
             HStack(spacing: 8) {
                 Button(action: onExplain) {
                     Text("Explain more").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                .tint(.primary)
                 Button(action: onOpen) {
                     // A primary tint is white in dark mode; keep the label legible on it.
                     Text("Open").frame(maxWidth: .infinity)
@@ -108,7 +121,7 @@ private struct MobileAskCardView: View {
             .fontWeight(.semibold)
         }
         .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color(uiColor: .secondarySystemGroupedBackground),
                     in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
