@@ -349,8 +349,7 @@ final class GhosttyApp {
                 // Clipboard payloads are length-based; preserve embedded NULs
                 // and ignore formats other than UTF-8 plain text.
                 guard String(cString: entry.mime) == "text/plain" else { continue }
-                let bytes = UnsafeRawPointer(entry.data).assumingMemoryBound(to: UInt8.self)
-                plainText = String(decoding: UnsafeBufferPointer(start: bytes, count: entry.len), as: UTF8.self)
+                plainText = String(decoding: UnsafeRawBufferPointer(start: entry.data, count: entry.len), as: UTF8.self)
                 break
             }
             guard let text = plainText else { return }
@@ -485,9 +484,16 @@ private final class ActionHandlerBox {
     }
 }
 
+/// An empty, NULL-terminated argv. libghostty keeps argv in its global state
+/// after `ghostty_init` returns, so the vector lives for the whole process.
+private let emptyGhosttyArgv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> = {
+    let argv = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 1)
+    argv.initialize(to: nil)
+    return argv
+}()
+
 /// Calls `ghostty_init` without command-line arguments. ghostty.h requires a
 /// valid argv array even when argc is zero.
 func ghosttyInitWithoutArguments() -> Int32 {
-    var argv: [UnsafeMutablePointer<CChar>?] = [nil]
-    return argv.withUnsafeMutableBufferPointer { ghostty_init(0, $0.baseAddress!) }
+    ghostty_init(0, emptyGhosttyArgv)
 }

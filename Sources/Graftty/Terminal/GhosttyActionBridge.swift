@@ -42,9 +42,7 @@ enum GhosttyOwnedAction {
             self = .mouseHidden(action.action.mouse_visibility == GHOSTTY_MOUSE_HIDDEN)
         case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
             let note = action.action.desktop_notification
-            // ghostty.h declares both strings non-null; an absent title is empty.
-            let title = String(cString: note.title)
-            self = .desktopNotification(title: title.isEmpty ? "Terminal" : title,
+            self = .desktopNotification(title: String(cString: note.title),
                                         body: String(cString: note.body))
         case GHOSTTY_ACTION_COMMAND_FINISHED:
             self = .commandFinished(action.action.command_finished)

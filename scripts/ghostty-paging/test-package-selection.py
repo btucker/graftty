@@ -34,7 +34,7 @@ class RendererSelectionTests(unittest.TestCase):
         header.parent.mkdir(parents=True)
         header.write_text("// renderer header\n")
         (self.local / "Paging").mkdir()
-        (self.local / "Paging/recipe.json").write_text('{"snapshotABI":"ghostty-8af6897c-paging-1"}')
+        (self.local / "Paging/recipe.json").write_text('{"snapshotABI":"ghostty-53e55147-paging-1"}')
         (self.local / 'Sources').mkdir()
         (self.local / 'Sources/Wrapper.swift').write_text('// wrapper\n')
         self.receipt()
@@ -44,7 +44,7 @@ class RendererSelectionTests(unittest.TestCase):
         def hashes(directory):
             return {str(path.relative_to(directory)): hashlib.sha256(path.read_bytes()).hexdigest()
                     for path in directory.rglob("*") if path.is_file()}
-        receipt = {"schemaVersion": 1, "snapshotABI": "ghostty-8af6897c-paging-1",
+        receipt = {"schemaVersion": 1, "snapshotABI": "ghostty-53e55147-paging-1",
                    "inputs": {"Paging/recipe.json": hashlib.sha256((self.local / "Paging/recipe.json").read_bytes()).hexdigest()},
                    "wrapperInputs": {"Sources/Wrapper.swift": hashlib.sha256((self.local / "Sources/Wrapper.swift").read_bytes()).hexdigest()},
                    "artifacts": hashes(self.local / "BinaryTarget/GhosttyKit.xcframework")}
