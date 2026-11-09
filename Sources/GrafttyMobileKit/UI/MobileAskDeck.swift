@@ -4,7 +4,7 @@ import GrafttyProtocol
 import SwiftUI
 
 /// The questions agents are waiting on, one card at a time (IOS-13.20).
-/// Swipe sideways between cards; answering happens in the agent's terminal.
+/// Stacked: swipe right to open the agent, left for later; answering happens in its terminal.
 struct MobileAskDeck: View {
     struct Entry: Identifiable {
         let row: MergedWorktreeRow
@@ -21,65 +21,115 @@ struct MobileAskDeck: View {
     let onOpen: (Entry) -> Void
     let onDismiss: (Entry) -> Void
 
-    @State private var position: String?
-    @State private var heights: [String: CGFloat] = [:]
+    @State private var frontID: String?
+    @State private var dragX: CGFloat = 0
 
-    private var currentID: String? { position ?? entries.first?.id }
+    /// How many cards show their edges beneath the front one.
+    private static let visibleBehind = 2
+    private static let behindStep: CGFloat = 7
 
-    private var currentHeight: CGFloat? { currentID.flatMap { heights[$0] } }
-
-    private var currentIndex: Int {
-        position.flatMap { id in entries.firstIndex { $0.id == id } } ?? 0
+    private var frontIndex: Int {
+        frontID.flatMap { id in entries.firstIndex { $0.id == id } } ?? 0
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 10) {
-                    ForEach(entries) { entry in
-                        MobileAskCardView(entry: entry,
-                                          onExplain: { onExplain(entry) },
-                                          onOpen: { onOpen(entry) },
-                                          onDismiss: { onDismiss(entry) })
-                            // Narrower than the screen so the next card peeks in.
-                            .containerRelativeFrame(.horizontal) { width, _ in entries.count > 1 ? width - 28 : width }
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heights[entry.id] = $0 }
-                            // A taller neighbor is cut to the card in view, with rounded corners.
-                            .frame(height: entry.id == currentID ? nil : currentHeight, alignment: .top)
-                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        let behind = min(entries.count - 1, Self.visibleBehind)
+        VStack(spacing: 10) {
+            ZStack {
+                if entries.indices.contains(frontIndex) {
+                    let front = entries[frontIndex]
+                    MobileAskCardView(entry: front,
+                                      onExplain: { onExplain(front) },
+                                      onOpen: { onOpen(front) },
+                                      onDismiss: { onDismiss(front) })
+                        .fixedSize(horizontal: false, vertical: true)
+                        .overlay(alignment: dragX > 0 ? .topLeading : .topTrailing) { swipeHint }
+                        .compositingGroup()
+                        .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                        .offset(x: dragX)
+                        .rotationEffect(.degrees(Double(dragX) / 40), anchor: .bottom)
+                        .simultaneousGesture(swipe(front))
+                        .accessibilityAction(named: "Later") { advance() }
+                        .id(front.id)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.94, anchor: .bottom).combined(with: .opacity),
+                            removal: .opacity))
+                }
+            }
+            // The rest of the stack: plain edges under the front card, so the
+            // deck's height only changes when the front card does.
+            .background(alignment: .top) {
+                ZStack {
+                    ForEach(Array(stride(from: behind, through: 1, by: -1)), id: \.self) { depth in
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                            .opacity(depth == 1 ? 0.7 : 0.45)
+                            .padding(.horizontal, CGFloat(depth) * 10)
+                            .offset(y: CGFloat(depth) * Self.behindStep)
                     }
                 }
-                .scrollTargetLayout()
             }
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $position)
-            .scrollIndicators(.hidden)
-            .scrollClipDisabled()
-            // Size the deck to the card in view, not the tallest one. The mask
-            // clips only vertically, so neighbors still show in the side margins.
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(height: currentHeight, alignment: .top)
-            .mask { Rectangle().padding(.horizontal, -40) }
-            .animation(.snappy, value: currentHeight)
+            .padding(.bottom, CGFloat(max(behind, 0)) * Self.behindStep)
             .onChange(of: entries.map(\.id)) { old, new in
-                // The card in view was answered or dismissed: follow the card that
-                // took its place, or the dots keep pointing at the first card.
-                guard let current = position, !new.contains(current) else { return }
+                // The front card was answered or dismissed: the card behind it
+                // comes forward.
+                guard let current = frontID, !new.contains(current) else { return }
                 let index = old.firstIndex(of: current) ?? 0
-                position = new.isEmpty ? nil : new[min(index, new.count - 1)]
+                frontID = new.isEmpty ? nil : new[min(index, new.count - 1)]
             }
             if entries.count > 1 {
                 HStack(spacing: 6) {
                     ForEach(entries.indices, id: \.self) { index in
                         Circle()
-                            .fill(index == currentIndex ? Color.primary.opacity(0.7) : Color.secondary.opacity(0.3))
+                            .fill(index == frontIndex ? Color.primary.opacity(0.7) : Color.secondary.opacity(0.3))
                             .frame(width: 6, height: 6)
                     }
                 }
                 .accessibilityElement()
-                .accessibilityLabel("Question \(currentIndex + 1) of \(entries.count)")
+                .accessibilityLabel("Question \(frontIndex + 1) of \(entries.count)")
             }
         }
+    }
+
+    /// Right opens the agent's pane; left puts the card at the back of the
+    /// stack. Simultaneous so the list still scrolls; only a sideways drag counts.
+    private func swipe(_ front: Entry) -> some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                // Nothing to go back to with a single card, so left barely moves.
+                dragX = entries.count > 1 || value.translation.width > 0 ? value.translation.width : value.translation.width / 4
+            }
+            .onEnded { value in
+                let far = abs(value.translation.width) > Self.swipeDistance
+                    || abs(value.predictedEndTranslation.width) > 2 * Self.swipeDistance
+                let direction = dragX
+                withAnimation(.snappy) {
+                    if far, direction < 0 { advance() }
+                    dragX = 0
+                }
+                if far, direction > 0 { onOpen(front) }
+            }
+    }
+
+    private static let swipeDistance: CGFloat = 90
+
+    /// Names what letting go will do, growing clearer as the drag nears the threshold.
+    @ViewBuilder private var swipeHint: some View {
+        if dragX != 0, dragX > 0 || entries.count > 1 {
+            Text(dragX > 0 ? "Open" : "Later")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(dragX > 0 ? Color(uiColor: .systemBackground) : .primary)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(dragX > 0 ? Color.primary : Color(uiColor: .tertiarySystemFill), in: Capsule())
+                .padding(12)
+                .opacity(min(abs(dragX) / Self.swipeDistance, 1))
+        }
+    }
+
+    private func advance() {
+        guard entries.count > 1 else { return }
+        frontID = entries[(frontIndex + 1) % entries.count].id
     }
 }
 
