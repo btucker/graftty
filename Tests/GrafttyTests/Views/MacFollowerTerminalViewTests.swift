@@ -334,7 +334,7 @@ struct MacFollowerTerminalViewTests {
         let windowSize = columns == 200 ? CGSize(width: 600, height: 400) : CGSize(width: 1000, height: 700)
         let lastHistoryRow = String(format: "mac-row-%03d", 99 - Int(rows))
         _ = NSApplication.shared
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let config = GhosttyConfig()
         let app = GhosttyApp(config: config) { _, _ in true }
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: windowSize),

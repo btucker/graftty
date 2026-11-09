@@ -375,7 +375,13 @@ final class SurfaceHandle {
         } else {
             envPairs = []
         }
-        let envCStrings = envPairs.map { (strdup($0.key), strdup($0.value)) }
+        // ghostty_env_var_s holds non-null strings; strdup fails only when out of memory.
+        let envCStrings = envPairs.map { pair -> (UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>) in
+            guard let key = strdup(pair.key), let value = strdup(pair.value) else {
+                fatalError("strdup failed: out of memory")
+            }
+            return (key, value)
+        }
         let envCount = envCStrings.count
 
         // env_vars needs a stable pointer during ghostty_surface_new; libghostty
