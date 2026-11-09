@@ -1237,6 +1237,9 @@ def replay_grid_precedes_vt(
         cleanup_case(directory, env, session, daemon_binary, candidate, daemon_binary, leader, follower)
 
 
+# Must match PagedTerminalLimits.codec and ipc.PAGED_CODEC.
+PAGED_CODEC = b"ghostty-53e55147-paging-1"
+PAGED_CODEC_CAPABILITY = 1 << 4
 TERMINAL_RESTORE = b"\x1bc\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\"
 CANONICAL_LFLAGS = termios.ECHO | termios.ICANON | termios.ISIG
 
@@ -1315,7 +1318,13 @@ def dense_history_pages_stay_bounded(candidate: Path) -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(str(directory / session))
             send_ipc(client, 23, struct.pack("<Q", 9))
-            send_ipc(client, 26, b"ghostty-8af6897c-paging-1")
+            # Check the codec before attaching: a daemon on another engine
+            # ignores an unknown codec, so waiting for READY only times out.
+            frames = read_ipc_frames_until(client, lambda values: any(tag == 23 for tag, _ in values), "capabilities")
+            advertised = next(data for tag, data in frames if tag == 23)
+            if struct.unpack("<Q", advertised)[0] & PAGED_CODEC_CAPABILITY == 0:
+                raise AssertionError("daemon did not advertise the paged snapshot codec")
+            send_ipc(client, 26, PAGED_CODEC)
             frames = read_ipc_frames_until(client, lambda values: any(tag == 27 for tag, _ in values), "READY")
             ready = next(data for tag, data in frames if tag == 27)
             incarnation, checkpoint = struct.unpack_from("<QQ", ready)

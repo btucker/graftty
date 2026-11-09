@@ -842,6 +842,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.69** If a peer requests the paged-terminal subsystem of another snapshot codec, then the host shall reject the request so the peer selects the VT attach path.
 
+**TERM-12.70** If a zmx daemon advertises paging without the `ghostty-53e55147-paging-1` codec capability, then the application shall reject the paged attachment during capability negotiation, before requesting a paged attach, so the caller falls back to the legacy attach without waiting for a ready reply.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.

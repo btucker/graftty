@@ -146,8 +146,7 @@ class ZmxBuildTests(unittest.TestCase):
         shutil.copy(ROOT / "build-zmx.sh", scripts / "build-zmx.sh")
         pins = self.repo / "scripts/zmx"
         pins.mkdir()
-        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "graftty.patch", "paging.patch",
-                     "upstream-fixes.patch", "always-run-tests.patch"):
+        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "graftty.patch", "paging.patch", "always-run-tests.patch"):
             shutil.copy(ROOT.parent / "zmx" / name, pins / name)
         self.tools = self.repo / "tools"
         self.tools.mkdir()

@@ -379,7 +379,13 @@ enum PagedZmxWire {
         result.append(contentsOf: [0, 0, 0]); result.append(payload)
         return result
     }
-    static func supportsPaging(_ payload: Data) -> Bool { payload.count == 8 && payload.le(0, 8) & 8 != 0 }
+    /// Paging (bit 3) plus the `ghostty-53e55147-paging-1` codec (bit 4). A
+    /// Ghostty 8af6897c daemon advertises only bit 3 and ignores an unknown
+    /// codec, so requiring both rejects it before the ready deadline (TERM-12.70).
+    static let requiredPagingBits: UInt64 = 0x18
+    static func supportsPaging(_ payload: Data) -> Bool {
+        payload.count == 8 && payload.le(0, 8) & requiredPagingBits == requiredPagingBits
+    }
     static func history(_ request: PagedTerminalHistoryRequest) -> Data {
         var result = Data()
         result.appendLE(request.incarnation); result.appendLE(request.checkpointID)
