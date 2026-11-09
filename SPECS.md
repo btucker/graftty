@@ -1760,6 +1760,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-9.8** When the legacy attach client decodes a snapshot, the application shall report its source grid before delivering replay bytes, preserve those bytes, and never substitute the outer PTY's requested grid.
 
+**ZMX-9.9** When a bundled `zmx attach` client receives SIGTERM, SIGHUP, or SIGINT, it shall restore the outer terminal's termios and reset its modes, then terminate by that same signal, leaving the session running.
+
+**ZMX-9.10** When a bundled `zmx attach` client reattaches to a session, it shall reset text attributes before clearing the screen and the replay shall restore the session's cursor style.
+
 ## DIST — Distribution
 
 ### DIST-1.x — Build Bundle
