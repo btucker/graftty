@@ -1,8 +1,11 @@
 import Foundation
 
-/// The codec is pinned independently of the SSH subsystem version.
+/// The codec names the Ghostty engine whose page layout the zmx daemon encodes
+/// and the renderer decodes. Change it with `SSHChannelTypeNames.terminalPaged`:
+/// a released client validates the codec only after its paged channel opens,
+/// so the subsystem name is what refuses a peer with another codec (TERM-12.69).
 public enum PagedTerminalLimits {
-    public static let codec = "ghostty-8af6897c-paging-1"
+    public static let codec = "ghostty-53e55147-paging-1"
     public static let readyBytes = 512 * 1024
     public static let pageBytes = 256 * 1024
 }

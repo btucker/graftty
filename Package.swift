@@ -47,7 +47,7 @@ func compatibleRenderer(at path: String) -> Bool {
           let data = try? Data(contentsOf: root.appendingPathComponent("PAGING-BUILD.json")),
           let build = try? JSONDecoder().decode(PagingBuild.self, from: data),
           build.schemaVersion == 1,
-          build.snapshotABI == "ghostty-8af6897c-paging-1",
+          build.snapshotABI == "ghostty-53e55147-paging-1",
           build.inputs["Paging/recipe.json"] != nil,
           !build.artifacts.isEmpty else { return false }
     func matches(_ hashes: [String: String], under directory: URL) -> Bool {
