@@ -1,7 +1,7 @@
 import Foundation
 
 /// REMOTE-9.19: receiver-driven pacing for terminal output on the SSH session
-/// channel. NIOSSH fixes each channel's window at 16 MiB and `.stdErr` control
+/// channel. Each SSH channel's window is 16 MiB (REMOTE-9.26) and `.stdErr` control
 /// frames share it, so SSH flow control alone leaves control behind that whole
 /// backlog. A smaller output window keeps the SSH window open for control.
 ///
@@ -14,7 +14,7 @@ public enum TerminalOutputCredit {
     /// control frame well under a second at the slowest measured parser rate.
     public static let clientWindowBytes = 1024 * 1024
     /// Must exceed the host's largest output slice so a write can always fit.
-    private static let windowBytesRange = (64 * 1024)...(1 << 24)
+    private static let windowBytesRange = (64 * 1024)...SSHChannelWindow.receiveWindowBytes
     private static let consumedType = "outputConsumed"
     /// Longer than any total, so larger control frames skip a JSON parse.
     private static let maxConsumedFrameBytes = 64

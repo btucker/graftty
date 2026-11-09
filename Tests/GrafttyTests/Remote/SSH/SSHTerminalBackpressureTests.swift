@@ -359,9 +359,12 @@ struct SSHTerminalBackpressureTests {
         await fixture.close()
     }
 
-    @Test func exitAfterAResumedPauseDrainsEveryHeldWindow() async throws {
+    @Test("@spec REMOTE-9.26: The application shall advertise a 256 KiB maximum SSH channel packet size on host and client connections, so each channel's receive window is the 16 MiB that terminal flow control is sized for.")
+    func exitAfterAResumedPauseDrainsEveryHeldWindow() async throws {
         // Resuming hands over the window NIOSSH held and re-grants it, so the
         // host can fill a second window behind the first before it closes.
+        // With swift-nio-ssh 0.15's default 128 KiB packets the window halves
+        // to 8 MiB and this host stalls with output still pending.
         let total = 32 * 1024 * 1024
         let fixture = try await SSHBackpressureFixture.make(negotiatesOutputWindow: false)
         do {

@@ -35,7 +35,7 @@ public enum SSHServerSetup {
         onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)? = nil,
         inboundChildChannelInitializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
     ) -> NIOSSHHandler {
-        let config = SSHServerConfiguration(
+        var config = SSHServerConfiguration(
             hostKeys: [NIOSSHPrivateKey(ed25519Key: hostKey)],
             userAuthDelegate: SSHUserAuthDelegate(
                 store: trustedPeerStore,
@@ -48,6 +48,7 @@ public enum SSHServerSetup {
                 onAuthenticatedPeer: onAuthenticatedPeer
             )
         )
+        config.maximumPacketSize = SSHChannelWindow.maximumPacketSize  // REMOTE-9.26
         // REMOTE-8.5: transportProtectionSchemes is intentionally left at
         // swift-nio-ssh's bundled defaults (AES-256-GCM + AES-128-GCM)
         // because `AES256GCMOpenSSHTransportProtection` is internal in
