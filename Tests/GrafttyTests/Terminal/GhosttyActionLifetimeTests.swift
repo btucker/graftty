@@ -254,7 +254,8 @@ struct GhosttyActionLifetimeTests {
         }
         action.tag = GHOSTTY_ACTION_MOUSE_OVER_LINK
         // Unhandled borrowed payloads must never be decoded or retained.
-        action.action.mouse_over_link.url = UnsafePointer<CChar>(bitPattern: 1)
+        // A deliberately invalid address: it must never be dereferenced.
+        action.action.mouse_over_link.url = UnsafePointer<CChar>(bitPattern: 1)!
         #expect(GhosttyOwnedAction(action) == nil)
     }
 

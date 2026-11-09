@@ -25,16 +25,15 @@ enum GhosttyOwnedAction {
         case GHOSTTY_ACTION_SCROLLBAR:
             self = .scrollbar(action.action.scrollbar)
         case GHOSTTY_ACTION_SET_TITLE:
-            self = .setTitle(action.action.set_title.title.map { String(cString: $0) } ?? "")
+            self = .setTitle(String(cString: action.action.set_title.title))
         case GHOSTTY_ACTION_PWD:
-            guard let pwd = action.action.pwd.pwd else { return nil }
-            self = .pwd(String(cString: pwd))
+            self = .pwd(String(cString: action.action.pwd.pwd))
         case GHOSTTY_ACTION_RING_BELL:
             self = .ringBell
         case GHOSTTY_ACTION_OPEN_URL:
             let url = action.action.open_url
-            guard let pointer = url.url, let count = Int(exactly: url.len),
-                  let value = String(bytes: UnsafeRawBufferPointer(start: pointer, count: count), encoding: .utf8)
+            guard let count = Int(exactly: url.len),
+                  let value = String(bytes: UnsafeRawBufferPointer(start: url.url, count: count), encoding: .utf8)
             else { return nil }
             self = .openURL(value)
         case GHOSTTY_ACTION_MOUSE_SHAPE:
@@ -43,8 +42,10 @@ enum GhosttyOwnedAction {
             self = .mouseHidden(action.action.mouse_visibility == GHOSTTY_MOUSE_HIDDEN)
         case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
             let note = action.action.desktop_notification
-            self = .desktopNotification(title: note.title.map { String(cString: $0) } ?? "Terminal",
-                                        body: note.body.map { String(cString: $0) } ?? "")
+            // ghostty.h declares both strings non-null; an absent title is empty.
+            let title = String(cString: note.title)
+            self = .desktopNotification(title: title.isEmpty ? "Terminal" : title,
+                                        body: String(cString: note.body))
         case GHOSTTY_ACTION_COMMAND_FINISHED:
             self = .commandFinished(action.action.command_finished)
         case GHOSTTY_ACTION_NEW_SPLIT:

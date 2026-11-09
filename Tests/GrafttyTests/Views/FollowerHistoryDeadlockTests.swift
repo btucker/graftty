@@ -48,7 +48,7 @@ final class FollowerHistoryDeadlockChild: XCTestCase {
             throw XCTSkip("Isolated native mailbox probe")
         }
         _ = NSApplication.shared
-        XCTAssertEqual(ghostty_init(0, nil), 0)
+        XCTAssertEqual(ghosttyInitWithoutArguments(), 0)
         let app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
         let observer = GhosttyWakeupBridge.observe { app.tick() }
         defer { NotificationCenter.default.removeObserver(observer) }
