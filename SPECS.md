@@ -840,6 +840,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.68** When an agent input request appears, changes, or clears on Mac or mobile, the application shall present a single-line banner below the pane controls with the full question available on selection, without changing the terminal's size or covering its recovery controls.
 
+**TERM-12.69** If a peer requests the paged-terminal subsystem of another snapshot codec, then the host shall reject the request so the peer selects the VT attach path.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
@@ -3613,6 +3615,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-9.24** While adaptive terminal output pacing measures consumer speed, the client shall exclude time spent awaiting network output and restore available credit when the consumer speeds up.
 
 **REMOTE-9.25** When an adaptive terminal consumer speeds up with no buffered output, the client shall send newly available credit without waiting for another inbound frame.
+
+**REMOTE-9.26** The application shall advertise a 256 KiB maximum SSH channel packet size on host and client connections, so each channel's receive window is the 16 MiB that terminal flow control is sized for.
 
 ### REMOTE-10.x
 
