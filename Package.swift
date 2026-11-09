@@ -22,8 +22,8 @@ let package = Package(
 // package reference. Local packages are opt-in: manifest evaluation is cached,
 // so filesystem auto-discovery cannot reliably follow dependency changes.
 let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-// libghostty-spm 3.0.2026102902, built from Ghostty 1.4.0.
-let publishedGhosttyRevision = "ac9cb906df805388ec9c8fd6cf9cacd4e623719b"
+// libghostty-spm 3.0.2026110901, built from Ghostty 53e55147 (the engine zmx v1.0.1 pins).
+let publishedGhosttyRevision = "3b6d597b649819531b79b89900cef44854ac845d"
 #if os(macOS)
 import CryptoKit
 
