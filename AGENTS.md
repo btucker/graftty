@@ -116,6 +116,10 @@ keep index records because SwiftPM requires them for XCTest discovery. This avoi
 `.build` directory in every agent worktree while ensuring that another
 worktree cannot replace test or run artifacts while a command is executing.
 
+- When `Package.resolved` differs from the previous wrapper command's, the
+  wrapper drops the shared precompiled-module cache, so a binary dependency
+  whose headers changed (such as Sparkle) cannot fail with "has been modified
+  since the module file ... was built".
 - Do not pass `--skip-build`; artifacts in the shared directory may currently
   belong to another worktree. The wrapper rejects it.
 - Waiting for another `scripts/swiftpm` command is expected. The global lock

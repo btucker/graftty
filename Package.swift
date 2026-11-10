@@ -22,8 +22,9 @@ let package = Package(
 // package reference. Local packages are opt-in: manifest evaluation is cached,
 // so filesystem auto-discovery cannot reliably follow dependency changes.
 let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-// libghostty-spm 3.0.2026102902, built from Ghostty 1.4.0.
-let publishedGhosttyRevision = "ac9cb906df805388ec9c8fd6cf9cacd4e623719b"
+// libghostty-spm 3.0.2026110901, built from Ghostty 53e55147. It decodes pages from
+// the bundled zmx under PagedTerminalLimits.codec; snapshot fixtures are unchanged.
+let publishedGhosttyRevision = "3b6d597b649819531b79b89900cef44854ac845d"
 #if os(macOS)
 import CryptoKit
 
@@ -47,7 +48,8 @@ func compatibleRenderer(at path: String) -> Bool {
           let data = try? Data(contentsOf: root.appendingPathComponent("PAGING-BUILD.json")),
           let build = try? JSONDecoder().decode(PagingBuild.self, from: data),
           build.schemaVersion == 1,
-          build.snapshotABI == "ghostty-8af6897c-paging-1",
+          // The label 3.0.2026110901's recipe records; the wire codec is unchanged.
+          build.snapshotABI == "ghostty-53e55147-paging-1",
           build.inputs["Paging/recipe.json"] != nil,
           !build.artifacts.isEmpty else { return false }
     func matches(_ hashes: [String: String], under directory: URL) -> Bool {
@@ -212,12 +214,13 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.13.0"),
+        // REMOTE-9.26: SSHChannelWindow mirrors this release line's 64-packet window.
+        .package(url: "https://github.com/apple/swift-nio-ssh.git", .upToNextMinor(from: "0.15.1")),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.22.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
-        .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.0"),
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "72a09adb79e0b7112df92949612533c013c6c664"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.2"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "b9778b054bbdbf2e81deef0494ffecb8683c1e4a"),
     ] + appleDependencies,
     targets: ([
         .target(name: "CGrafttyConPTY"),

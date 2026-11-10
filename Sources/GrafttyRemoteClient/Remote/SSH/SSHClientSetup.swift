@@ -23,10 +23,11 @@ public enum SSHClientSetup {
         allocator: ByteBufferAllocator,
         onAuthenticationRejected: (@Sendable () -> Void)? = nil
     ) -> NIOSSHHandler {
-        let config = SSHClientConfiguration(
+        var config = SSHClientConfiguration(
             userAuthDelegate: SingleKeyUserAuthDelegate(key: clientKey, onRejected: onAuthenticationRejected),
             serverAuthDelegate: PinnedHostKeyAuthDelegate(expectedFingerprint: expectedHostFingerprint)
         )
+        config.maximumPacketSize = SSHChannelWindow.maximumPacketSize  // REMOTE-9.26
         return NIOSSHHandler(
             role: .client(config),
             allocator: allocator,

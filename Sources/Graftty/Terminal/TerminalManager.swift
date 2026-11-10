@@ -473,8 +473,8 @@ final class TerminalManager: ObservableObject {
         Self.pointAtGhosttyResources()
 
         // ghostty_init must run before ghostty_config_new / ghostty_app_new.
-        // It takes argc/argv; we pass 0/null since we don't forward CLI args.
-        let rc = ghostty_init(0, nil)
+        // We forward no CLI args.
+        let rc = ghosttyInitWithoutArguments()
         if rc != 0 {
             fatalError("ghostty_init failed with code \(rc)")
         }

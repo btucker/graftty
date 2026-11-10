@@ -54,7 +54,7 @@ struct MacPagedTerminalTests {
         let fixture = try await HistoryDaemon.make(lineCount: lineCount, redrawPrompt: legacy)
         defer { fixture.close() }
         _ = NSApplication.shared
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         weak var mountedView: MacFollowerTerminalView?
         let app = GhosttyApp(config: GhosttyConfig()) { _, action in
             if action.tag == GHOSTTY_ACTION_SCROLLBAR {
@@ -589,7 +589,7 @@ struct MacPagedTerminalTests {
 
         init() throws {
             _ = NSApplication.shared
-            #expect(ghostty_init(0, nil) == 0)
+            #expect(ghosttyInitWithoutArguments() == 0)
             app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
             window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400),
                 styleMask: [.borderless], backing: .buffered, defer: false)

@@ -3,6 +3,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -136,6 +137,21 @@ sys.exit(subprocess.call([{native_install!r}] + sys.argv[1:]))
         self.assertIn("absolute", result.stderr)
         self.assertFalse((self.repo / "relative-cache").exists())
 
+class ZmxRevisionPinTests(unittest.TestCase):
+    def test_build_scripts_do_not_hardcode_the_revision(self):
+        for script in (ROOT / "build-zmx.sh", ROOT.parent / "bump-zmx.sh"):
+            self.assertIsNone(re.search(r"graftty[0-9]", script.read_text()), script)
+
+    def test_vendored_macos_version_matches_the_pins(self):
+        # Linux builds zmx from the pins in CI; macOS ships the binary that
+        # scripts/bump-zmx.sh committed. Rerun the bump after changing a pin.
+        pins = ROOT.parent / "zmx"
+        commit = (pins / "UPSTREAM_COMMIT").read_text().strip()
+        revision = (pins / "GRAFTTY_REVISION").read_text().strip()
+        vendored = (ROOT.parent.parent / "Resources/zmx-binary/VERSION").read_text().strip()
+        self.assertTrue(vendored.endswith(f"-g{commit[:7]}-{revision}"),
+                        f"Resources/zmx-binary/VERSION is {vendored}; rerun scripts/bump-zmx.sh")
+
 class ZmxBuildTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="graftty-zmx-build-")
@@ -146,7 +162,8 @@ class ZmxBuildTests(unittest.TestCase):
         shutil.copy(ROOT / "build-zmx.sh", scripts / "build-zmx.sh")
         pins = self.repo / "scripts/zmx"
         pins.mkdir()
-        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "graftty.patch", "paging.patch", "always-run-tests.patch"):
+        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "GRAFTTY_REVISION", "graftty.patch", "paging.patch",
+                     "always-run-tests.patch"):
             shutil.copy(ROOT.parent / "zmx" / name, pins / name)
         self.tools = self.repo / "tools"
         self.tools.mkdir()
@@ -192,6 +209,8 @@ elif args[0] == 'build':
         print('build.zig.zon:14:20: error: HTTP response read failure: ConnectionResetByPeer', file=sys.stderr)
         sys.exit(43)
     if step == 'release':
+        version = next(arg for arg in args if arg.startswith('-Dversion='))
+        Path(os.environ['GRAFTTY_TEST_ZMX_CALLS'] + '.version').write_text(version.split('=', 1)[1])
         output = Path(args[args.index('--prefix') + 1]) / 'bin/zmx'
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text('#!/bin/sh\nexit 0\n')
@@ -205,6 +224,29 @@ elif args[0] == 'build':
     def run_build(self, mode):
         return subprocess.run(["bash", str(self.repo / "scripts/linux/build-zmx.sh"), "aarch64", str(self.output)],
                               env={**self.env, "GRAFTTY_TEST_ZMX_FAILURE": mode}, capture_output=True, text=True, timeout=15)
+
+    def test_version_suffix_comes_from_the_revision_pin(self):
+        (self.repo / "scripts/zmx/GRAFTTY_REVISION").write_text("graftty99\n")
+        result = self.run_build("success")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commit = (self.repo / "scripts/zmx/UPSTREAM_COMMIT").read_text().strip()
+        version = Path(str(self.calls) + ".version").read_text()
+        self.assertEqual(version, f"0.7.0-g{commit[:7]}-graftty99")
+
+    def test_malformed_revision_is_rejected_before_building(self):
+        (self.repo / "scripts/zmx/GRAFTTY_REVISION").write_text("grafty12\n")
+        result = self.run_build("success")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Invalid Graftty zmx revision", result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertFalse(self.output.exists())
+
+    def test_changed_revision_gets_a_new_source_tree(self):
+        self.env["GRAFTTY_ZMX_CACHE_DIR"] = str(self.repo / "cache")
+        self.assertEqual(self.run_build("success").returncode, 0)
+        (self.repo / "scripts/zmx/GRAFTTY_REVISION").write_text("graftty99\n")
+        self.assertEqual(self.run_build("success").returncode, 0)
+        self.assertEqual(len(list((self.repo / "cache").glob("*/source/.graftty-prepared"))), 2)
 
     def test_tests_use_the_shipped_safety_mode(self):
         result = self.run_build("safe-tests")

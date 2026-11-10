@@ -89,7 +89,7 @@ Terminal output is paced from the receiver back to the host in three steps:
    they reach the client behind at most one window.
 3. If the host ignores that request, `TerminalSessionClient` stops reading above
    4 MiB, which closes the standard SSH window. Nothing disconnects, but control
-   frames share that fixed 16 MiB window and wait behind whatever it holds.
+   frames share that 16 MiB SSH window and wait behind whatever it holds.
 
 The relay on a Mac stops taking upstream output while its bounded queue is full,
 so these limits apply across a one-hop attachment.

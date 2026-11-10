@@ -260,7 +260,7 @@ struct TerminalAttachmentRecoveryTests {
     @Test("Typing k after an attachment failure does not close the native surface", arguments: [FailureMode.start, .queryUnavailable, .missingDaemon])
     func typingAfterFailureKeepsPane(mode: FailureMode) async throws {
         _ = NSApplication.shared
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
         let manager = TerminalManager(socketPath: "/tmp/graftty-attachment-test.sock")
         let id = PaneSlotID()
@@ -369,7 +369,7 @@ struct TerminalAttachmentRecoveryTests {
     @Test("Normal legacy completion preserves elapsed runtime and closes the surface")
     func normalLegacyExitClosesPane() async throws {
         _ = NSApplication.shared
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
         let manager = TerminalManager(socketPath: "/tmp/graftty-attachment-test.sock")
         let fixture = try makeFakeZmx(attachCommand: "sleep 0.4; exit 0")

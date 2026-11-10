@@ -61,14 +61,14 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private var historySetupTask: Task<Void, Never>?
     internal var hasHistoryChannelForTesting: Bool { lock.withLock { historyChannel != nil } }
     // REMOTE-9.17: reads stop above the high mark, which closes the SSH window
-    // and pauses the host. NIOSSH grants a fixed 16 MiB window. A read hands
+    // and pauses the host. Each channel grants a 16 MiB window (REMOTE-9.26). A read hands
     // over everything it holds and re-grants that window, and a close hands
     // over whatever filled it next, so a conforming peer stays below two
     // windows plus these marks. A control frame costs over 32 bytes of window,
     // so only a peer ignoring flow control overflows either budget.
     private static let readHighWater = 4 * 1024 * 1024
     private static let readLowWater = 1024 * 1024
-    static let receiveByteLimit = 2 * (1 << 24) + 2 * readHighWater
+    static let receiveByteLimit = 2 * SSHChannelWindow.receiveWindowBytes + 2 * readHighWater
     private var receiveBuffer = TerminalReceiveBuffer(byteLimit: receiveByteLimit, frameLimit: receiveByteLimit / 32)
     private var parkedReads: [Channel] = []
     /// Nil keeps this client on SSH flow control alone.
