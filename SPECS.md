@@ -388,7 +388,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.210** While a project has worktrees waiting for the user, pinned or not, with a question, a notification, or a finished turn the user has not opened, the application shall show how many as a count in the attention color rather than a hand.
 
-**LAYOUT-2.211** While a worktree row shows its emoji, the application shall draw it at full strength while the worktree asks for input or works, and fade it otherwise.
+**LAYOUT-2.211** While a worktree row shows its identity, the application shall draw it at full strength while the worktree waits for the user, including a finished turn the user has not opened, or works, and fade it otherwise.
 
 **LAYOUT-2.212** While the Mac sidebar shows a project, the application shall keep its pinned tiles above the list and show Needs you, Working, and Recent in the list below them.
 
@@ -416,7 +416,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.224** When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.
 
-**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall mark it as waiting when it asks a question, carries a notification, or finished a turn the user has not opened, as working while an agent works, as asleep while its host sleeps, and as idle otherwise.
+**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall mark it with a thick orange border while it asks a question or carries a notification, a thin orange border while it has a finished turn the user has not opened, a moving ring while an agent works, faded while its host sleeps, and as idle otherwise.
 
 **LAYOUT-2.226** While a pinned agent is shown as a tile, the application shall caption it with the first part of its worktree name, split at hyphens, underscores, slashes, and spaces, or with the branch name for the default checkout.
 
@@ -500,7 +500,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **STATE-2.3** While a worktree has notification text, the sidebar shall show it in the status line of that worktree, ahead of a working agent, regardless of the worktree running state.
 
-**STATE-2.4** When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention until the agent resumes or the request is explicitly dismissed.
+**STATE-2.4** When the user views a worktree or pane, the application shall clear its notification overlays and a finished turn that asks nothing, while preserving stopped-agent requests and questions until the agent resumes or the request is explicitly dismissed.
 
 **STATE-2.5** When the CLI sends a clear message for a worktree, the application shall clear the worktree-scoped attention overlay. Pane-scoped overlays are not affected by CLI clear messages; they auto-clear on their own timers.
 

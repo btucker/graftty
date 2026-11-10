@@ -317,6 +317,8 @@ struct RemoteMacsSection: View {
         let isCached: Bool
         /// Draws the pinned agent as a tile in the grid instead of a row.
         var isTile = false
+        /// The tile's word, chosen with its neighbours so no two clash.
+        var tileWord: String? = nil
         let onOpen: () -> Void
         /// Clicking a status line that names a pane.
         let onOpenPane: (SidebarWorktreeContext) -> Void
@@ -638,7 +640,7 @@ struct RemoteMacsSection: View {
         let host = tile.hostLabel.flatMap { $0.isEmpty ? nil : $0 } ?? tile.remoteMac.label
         let face = PinnedTileFace(identity: worktree.iconIdentity, project: project,
                                   imageData: worktree.isMainCheckout ? projectIcons[projectID] : nil,
-                                  word: PinnedTile.word(name: tile.displayName, isMainCheckout: worktree.isMainCheckout, branch: worktree.displayBranch),
+                                  word: tile.tileWord ?? PinnedTile.word(name: tile.displayName, isMainCheckout: worktree.isMainCheckout, branch: worktree.displayBranch),
                                   hostBadge: host, state: state, isSelected: isActive,
                                   fill: theme.foreground.opacity(0.07), selectedFill: theme.highlightedWorktreeBackground)
         return Button(action: tile.onOpen) { face }

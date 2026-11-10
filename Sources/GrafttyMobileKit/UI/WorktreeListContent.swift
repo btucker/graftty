@@ -970,9 +970,12 @@ public struct WorktreeListContent: View {
     /// Pinned agents as tiles that light up in place (LAYOUT-2.225): tap opens,
     /// a long press offers the row's menu, and dragging one onto another reorders.
     private func pinnedTiles(_ rows: [MergedWorktreeRow], projectID: String) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: PinnedTile.minimumWidth), spacing: 8)], spacing: 8) {
+        let words = Dictionary(zip(rows.map(\.id), PinnedTile.words(for: rows.map {
+            PinnedTile.Name(name: $0.relativeName, isMainCheckout: $0.row.isMainCheckout, branch: $0.row.displayBranch)
+        })), uniquingKeysWith: { first, _ in first })
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: PinnedTile.minimumWidth), spacing: 8)], spacing: 8) {
             ForEach(rows) { row in
-                pinnedTile(row)
+                pinnedTile(row, word: words[row.id] ?? row.relativeName)
                     .draggable(row.id)
                     .dropDestination(for: String.self) { ids, _ in
                         guard let source = ids.first, source != row.id, !orderMutationInFlight,
@@ -990,7 +993,7 @@ public struct WorktreeListContent: View {
         .moveDisabled(true)
     }
 
-    private func pinnedTile(_ row: MergedWorktreeRow) -> some View {
+    private func pinnedTile(_ row: MergedWorktreeRow, word: String) -> some View {
         let wt = row.row
         let context = navigation.worktreeContext(wt)
         let isCached = row.availability == .wakeable
@@ -1002,7 +1005,7 @@ public struct WorktreeListContent: View {
         let host = row.showsHostLabel ? row.hostLabel : nil
         return PinnedTileFace(identity: wt.iconIdentity, project: project,
                               imageData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
-                              word: PinnedTile.word(name: row.relativeName, isMainCheckout: wt.isMainCheckout, branch: wt.displayBranch),
+                              word: word,
                               hostBadge: host, state: state, isSelected: isSelected(wt),
                               fill: theme?.foreground.opacity(0.07) ?? Color.primary.opacity(0.06),
                               selectedFill: theme?.foreground.opacity(0.16) ?? Color.primary.opacity(0.12))

@@ -85,8 +85,8 @@ public struct PinnedTileFace: View {
 
     @ViewBuilder private var border: some View {
         switch state {
-        case .waiting:
-            shape.strokeBorder(SidebarAttentionStyle.text(isDark: isDark), lineWidth: 2)
+        case .waiting, .finished:
+            shape.strokeBorder(SidebarAttentionStyle.text(isDark: isDark), lineWidth: state.borderWidth)
         case .working where reduceMotion:
             shape.strokeBorder(Self.working, lineWidth: 2)
         case .working:

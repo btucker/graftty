@@ -766,8 +766,11 @@ struct SidebarView: View {
     @ViewBuilder
     private func pinnedTiles(_ rows: [MergedWorktreeRow], project: MergedProject,
                              remoteContexts: [String: SidebarWorktreeContext]) -> some View {
+        let words = Dictionary(zip(rows.map(\.id), PinnedTile.words(for: rows.map {
+            PinnedTile.Name(name: $0.relativeName, isMainCheckout: $0.row.isMainCheckout, branch: $0.row.displayBranch)
+        })), uniquingKeysWith: { first, _ in first })
         let grid = PinnedTileGrid(rows: rows) { row in
-            pinnedTile(row, remoteContexts: remoteContexts)
+            pinnedTile(row, word: words[row.id] ?? row.relativeName, remoteContexts: remoteContexts)
         }
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -782,23 +785,39 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private func pinnedTile(_ row: MergedWorktreeRow, remoteContexts: [String: SidebarWorktreeContext]) -> some View {
+    private func pinnedTile(_ row: MergedWorktreeRow, word: String, remoteContexts: [String: SidebarWorktreeContext]) -> some View {
         if row.hostID == owner.deviceID,
            let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == row.row.path } }),
            let worktree = displayedWorktrees(in: repo).first(where: { $0.path == row.row.path }) {
-            localPinnedTile(worktree, repo: repo, row: row)
+            localPinnedTile(worktree, repo: repo, row: row, word: word)
         } else if let mac = remoteMacsModel.remoteMac(delivering: row.row) {
             remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.relativeName,
-                          hostLabel: row.hostLabel, isCached: row.availability == .wakeable, isTile: true,
+                          hostLabel: row.hostLabel, isCached: row.availability == .wakeable, isTile: true, tileWord: word,
                           onOpen: { openMergedRow(row) },
                           onOpenPane: { context in Task { _ = await openReport(context) } },
                           onDrop: { drop, after in
                               handleRowDrop(drop, target: row.row.path, targetHost: mac.id, after: after)
                           }))
+        } else {
+            unreachablePinnedTile(row, word: word)
         }
     }
 
-    private func localPinnedTile(_ worktree: WorktreeEntry, repo: RepoEntry, row: MergedWorktreeRow) -> some View {
+    /// A pinned agent this Mac can't route to right now keeps its place in the
+    /// grid, drawn like a sleeping host's tile, instead of leaving an empty cell.
+    private func unreachablePinnedTile(_ row: MergedWorktreeRow, word: String) -> some View {
+        let projectID = SidebarProjection.projectID(row.row)
+        let project = projects.first { $0.id == projectID }
+            ?? SidebarProject(id: projectID, repositoryID: row.row.repositoryID ?? projectID, name: row.row.repoDisplayName)
+        let host = row.hostLabel.isEmpty ? nil : row.hostLabel
+        return PinnedTileFace(identity: row.row.iconIdentity, project: project, imageData: nil, word: word,
+                              hostBadge: host, state: .asleep, isSelected: false,
+                              fill: theme.foreground.opacity(0.07), selectedFill: theme.highlightedWorktreeBackground)
+            .help(PinnedTile.hoverText(name: row.relativeName, host: host, status: .none) + "\nCan't be opened from this Mac right now")
+            .pinnedTileAccessibility(name: row.relativeName, host: host, state: .asleep, isSelected: false) {}
+    }
+
+    private func localPinnedTile(_ worktree: WorktreeEntry, repo: RepoEntry, row: MergedWorktreeRow, word: String) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: row.relativeName)
         let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isCached: false)
@@ -810,7 +829,7 @@ struct SidebarView: View {
         let select = { onSelect(worktree.path) }
         return PinnedTileFace(identity: context.worktree.iconIdentity, project: project,
                               imageData: isMain ? iconStore.iconData(for: repo) : iconStore.drawingData(for: worktree),
-                              word: PinnedTile.word(name: row.relativeName, isMainCheckout: isMain, branch: worktree.branch),
+                              word: word,
                               hostBadge: nil, state: state, isSelected: isActive,
                               fill: theme.foreground.opacity(0.07), selectedFill: theme.highlightedWorktreeBackground)
             .rightClickMenu(anchored: { anchor in buildWorktreeMenu(worktree, repo: repo, context: context, window: anchor.window) })
