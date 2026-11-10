@@ -22,22 +22,22 @@ struct SurfaceTextInputTests {
 struct NativeDictationDeliveryTests {
     private let noReplacement = NSRange(location: NSNotFound, length: 0)
 
-    @Test("@spec TEAM-15.13: When a Mac terminal dismisses percent completion for a cursor key or paste, the application shall flush the literal token through the ordered host input path before forwarding the external edit.")
-    func completionFlushPrecedesCursorAndPaste() throws {
+    @Test("@spec TEAM-15.13: When a Mac terminal dismisses worktree search for a cursor key or paste, the application shall discard the search query before forwarding the external edit.")
+    func completionDismissalPrecedesCursorAndPaste() throws {
         let fixture = TextInputFixture()
         var delivered: [String] = []
         fixture.view.hostManagedInputWriter = { delivered.append(String(decoding: $0, as: UTF8.self)) }
         fixture.view.surfaceOperations.bindingAction = { _, action in delivered.append(action); return true }
         fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f"))
         fixture.view.keyDown(with: try fixture.keyEvent(123, text: ""))
-        #expect(delivered == ["%f", "\u{1B}[D"])
+        #expect(delivered == ["\u{1B}[D"])
         #expect(fixture.writes.isEmpty)
         fixture.view.agentCompletion.cancel(preserveLiteral: false)
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         fixture.view.pasteToTerminal(nil)
-        #expect(delivered.suffix(2) == ["%", "paste_from_clipboard"])
+        #expect(delivered == ["\u{1B}[D", "paste_from_clipboard"])
         #expect(!fixture.view.agentCompletion.isActive)
     }
 
@@ -47,7 +47,7 @@ struct NativeDictationDeliveryTests {
         fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: {
             [.init(address: "/repo#codex", projectPath: "/repo", projectName: "repo", worktreePath: "/repo", worktreeName: "main", hostName: "Mac", runtime: "codex")]
         })
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         await fixture.view.agentCompletion.waitForLoad()
         fixture.view.keyDown(with: try fixture.keyEvent(125, text: ""))
         fixture.view.agentCompletion.accept("/repo#codex")
@@ -60,68 +60,170 @@ struct NativeDictationDeliveryTests {
         #expect(fixture.keyCodes == [125, 125])
     }
 
-    @Test("Literal completion cancellation cannot initiate host-managed takeover")
+    @Test("Search cancellation does not write input or initiate host-managed takeover")
     func completionWriterDistinguishesSelectionFromCancellation() async throws {
         let fixture = TextInputFixture()
-        var claims: [Bool] = []
-        fixture.view.hostManagedCompletionWriter = { _, claim in claims.append(claim) }
+        var delivered: [String] = []
+        var takeovers = 0
+        fixture.view.hostManagedInputWriter = { delivered.append(String(decoding: $0, as: UTF8.self)) }
+        fixture.view.canTakeDisplayControlNotifier = { takeovers == 0 }
+        fixture.view.takeDisplayControlNotifier = { takeovers += 1; return true }
         fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: {
             [.init(address: "/repo#codex", projectPath: "/repo", projectName: "repo", worktreePath: "/repo", worktreeName: "main", hostName: "Mac", runtime: "codex")]
         })
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         fixture.view.keyDown(with: try fixture.keyEvent(53, text: ""))
-        #expect(claims == [false])
-        fixture.view.keyDown(with: try fixture.keyEvent(49, text: " "))
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(delivered.isEmpty)
+        #expect(takeovers == 0)
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         await fixture.view.agentCompletion.waitForLoad()
         fixture.view.agentCompletion.accept("/repo#codex")
-        #expect(claims == [false, true])
+        #expect(delivered == ["/repo#codex"])
+        #expect(takeovers == 1)
     }
 
-    @Test("@spec TEAM-15.7: When a Mac terminal accepts percent completion by keyboard, the application shall consume the prefix, query, acceptance press and their releases, and deliver the selected agent address once through the terminal text path.")
+    @Test("@spec TEAM-15.19: When a user invokes Complete Worktree with the native Mac Cmd+Shift+K menu shortcut in an input-eligible terminal, the application shall open fuzzy search independently of the cursor boundary, retain terminal focus through modifier release, favor the current project while offering other projects, and leave ordinary percent input unchanged.")
+    func nativeWorktreeSearchCommand() async throws {
+        let fixture = TextInputFixture()
+        let current = AgentCompletionCandidate(address: "/repo/fix#codex", projectPath: "/repo", projectName: "Repo", worktreePath: "/repo/fix", worktreeName: "fix", hostName: "Mac", runtime: "codex")
+        let other = AgentCompletionCandidate(address: "/other/fix#codex", projectPath: "/other", projectName: "Other", worktreePath: "/other/fix", worktreeName: "fix", hostName: "Mac", runtime: "codex")
+        fixture.view.configureAgentCompletion(currentWorktreePath: current.worktreePath, loader: { [other, current] })
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(!fixture.view.agentCompletion.isActive)
+        #expect(fixture.keyCodes == [23])
+        fixture.view.agentCompletion.invalidateBoundary()
+        let menu = NSMenu()
+        let item = menu.addItem(withTitle: "Complete Worktree…", action: #selector(SurfaceNSView.completeWorktree(_:)), keyEquivalent: "K")
+        item.keyEquivalentModifierMask = .command
+        item.target = fixture.view
+        #expect(menu.performKeyEquivalent(with: try fixture.keyEvent(40, text: "K", modifiers: [.command, .shift])))
+        fixture.view.flagsChanged(with: try fixture.keyEvent(56, text: "", type: .flagsChanged, modifiers: .command))
+        fixture.view.flagsChanged(with: try fixture.keyEvent(55, text: "", type: .flagsChanged))
+        #expect(fixture.view.agentCompletion.isActive)
+        #expect(fixture.window.firstResponder === fixture.view)
+        await fixture.view.agentCompletion.waitForLoad()
+        #expect(fixture.view.agentCompletion.candidates == [current, other])
+        fixture.view.keyDown(with: try fixture.keyEvent(31, text: "oth"))
+        fixture.view.keyDown(with: try fixture.keyEvent(49, text: " "))
+        fixture.view.keyDown(with: try fixture.keyEvent(3, text: "fx"))
+        #expect(fixture.view.agentCompletion.candidates == [other])
+        fixture.view.keyDown(with: try fixture.keyEvent(36, text: "\r"))
+        #expect(fixture.writes == [other.address])
+    }
+
+    @Test("Native worktree search ignores unavailable, unfocused and composing terminals")
+    func searchRequiresEligibleTerminal() {
+        let fixture = TextInputFixture()
+        fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
+        func invoke() { _ = fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil) }
+        fixture.window.makeFirstResponder(nil)
+        invoke()
+        #expect(!fixture.view.agentCompletion.isActive)
+        fixture.window.makeFirstResponder(fixture.view)
+        fixture.view.isReadonly = true
+        invoke()
+        #expect(!fixture.view.agentCompletion.isActive)
+        fixture.view.isReadonly = false
+        fixture.view.setMarkedText("pending", selectedRange: .init(location: 7, length: 0), replacementRange: noReplacement)
+        invoke()
+        #expect(!fixture.view.agentCompletion.isActive)
+        #expect(fixture.view.hasMarkedText())
+        fixture.view.cancelTextComposition()
+        fixture.view.surface = nil
+        invoke()
+        #expect(!fixture.view.agentCompletion.isActive)
+    }
+
+    @Test("A held completion shortcut stays consumed after its modifiers are released")
+    func heldShortcutDoesNotEnterSearchQuery() throws {
+        let fixture = TextInputFixture()
+        fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
+        // AppKit already consumed the opening key press as a menu equivalent.
+        fixture.view.agentCompletionShortcutKeyCode = 40
+        fixture.view.keyDown(with: try fixture.keyEvent(40, text: "k", repeatKey: true))
+        fixture.view.keyUp(with: try fixture.keyEvent(40, text: "k", type: .keyUp))
+        #expect(fixture.view.agentCompletion.query.isEmpty)
+        #expect(fixture.keyCodes.isEmpty)
+        fixture.view.keyDown(with: try fixture.keyEvent(40, text: "k"))
+        #expect(fixture.view.agentCompletion.query == "k")
+    }
+
+    @Test("@spec TEAM-15.20: While native Mac worktree search is open, the application shall support multiword queries, keep an empty query open on Backspace, preserve the query on repeated invocation, consume Enter when no candidate matches, and discard the query on Escape without inserting terminal text.")
+    func nativeSearchCancellation() throws {
+        let fixture = TextInputFixture()
+        fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
+        fixture.view.keyDown(with: try fixture.keyEvent(51, text: ""))
+        #expect(fixture.view.agentCompletion.isActive)
+        fixture.view.keyDown(with: try fixture.keyEvent(3, text: "foo bar"))
+        fixture.view.flagsChanged(with: try fixture.keyEvent(55, text: "", type: .flagsChanged, modifiers: .command))
+        fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f", modifiers: .command, repeatKey: true))
+        #expect(fixture.view.agentCompletion.query == "foo bar")
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
+        fixture.view.flagsChanged(with: try fixture.keyEvent(55, text: "", type: .flagsChanged))
+        #expect(fixture.view.agentCompletion.query == "foo bar")
+        fixture.view.keyDown(with: try fixture.keyEvent(36, text: "\r"))
+        fixture.view.keyUp(with: try fixture.keyEvent(36, text: "\r", type: .keyUp))
+        #expect(fixture.view.agentCompletion.isActive)
+        fixture.view.keyDown(with: try fixture.keyEvent(53, text: ""))
+        fixture.view.keyUp(with: try fixture.keyEvent(53, text: "", type: .keyUp))
+        #expect(!fixture.view.agentCompletion.isActive)
+        #expect(fixture.writes.isEmpty)
+        #expect(fixture.keyCodes == [55, 55])
+    }
+
+    @Test("@spec TEAM-15.7: When a Mac terminal accepts worktree search by keyboard, the application shall consume the query and acceptance presses, suppress their remaining repeats and releases, and deliver the selected agent address once through the terminal text path.")
     func macAgentCompletion() async throws {
         let fixture = TextInputFixture()
         fixture.view.configureAgentCompletion(currentWorktreePath: "/repo/fix", loader: {
             [.init(address: "/repo/fix#codex", projectPath: "/repo", projectName: "Repo", worktreePath: "/repo/fix", worktreeName: "fix", hostName: "This Mac", runtime: "codex")]
         })
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
-        fixture.view.keyUp(with: try fixture.keyEvent(23, text: "%", type: .keyUp, modifiers: .shift))
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f"))
-        fixture.view.keyUp(with: try fixture.keyEvent(3, text: "f", type: .keyUp))
         await fixture.view.agentCompletion.waitForLoad()
         fixture.view.keyDown(with: try fixture.keyEvent(36, text: "\r"))
         fixture.view.keyUp(with: try fixture.keyEvent(36, text: "\r", type: .keyUp))
+        fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f", repeatKey: true))
+        fixture.view.keyUp(with: try fixture.keyEvent(3, text: "f", type: .keyUp))
         #expect(fixture.keyCodes.isEmpty)
         #expect(fixture.writes == ["/repo/fix#codex"])
     }
 
-    @Test("@spec TEAM-15.8: If an input-eligible Mac terminal percent picker loses focus or begins composition or modified input, then the application shall flush its buffered literal token before continuing the existing input path and shall not retain a hidden picker.")
+    @Test("@spec TEAM-15.8: If an input-eligible Mac worktree search loses focus or begins composition or modified input, then the application shall discard its query before continuing the existing input path and shall not retain a hidden picker.")
     func macCompletionInterruption() throws {
         let fixture = TextInputFixture()
         fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f"))
         fixture.view.setMarkedText("compose", selectedRange: .init(location: 7, length: 0), replacementRange: noReplacement)
-        #expect(fixture.writes == ["%f"])
+        #expect(fixture.writes.isEmpty)
         #expect(!fixture.view.agentCompletion.isActive)
         #expect(fixture.view.hasMarkedText())
         fixture.view.cancelTextComposition()
         fixture.view.agentCompletion.cancel(preserveLiteral: false)
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         _ = fixture.view.resignFirstResponder()
-        #expect(fixture.writes == ["%f", "%"])
+        #expect(fixture.writes.isEmpty)
         #expect(!fixture.view.agentCompletion.isActive)
     }
 
-    @Test("@spec TEAM-15.16: If another display client owns a Mac pane before its percent picker is dismissed, then the application shall discard the buffered token without taking display control back or sending stale input.")
-    func completionDismissalDoesNotReclaimOwnership() throws {
+    @Test("@spec TEAM-15.16: While another display client owns a Mac pane, the application shall keep worktree search query edits and dismissal local without taking display control or sending terminal input.", arguments: [false, true])
+    func completionDismissalDoesNotReclaimOwnership(dismissByEscape: Bool) throws {
         let fixture = TextInputFixture()
         fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
-        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        #expect(fixture.view.tryToPerform(#selector(SurfaceNSView.completeWorktree(_:)), with: nil))
         var takeovers = 0
         fixture.view.canTakeDisplayControlNotifier = { true }
         fixture.view.takeDisplayControlNotifier = { takeovers += 1; return true }
-        _ = fixture.view.resignFirstResponder()
+        fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f"))
+        fixture.view.insertText("ix", replacementRange: noReplacement)
+        #expect(fixture.view.agentCompletion.query == "fix")
+        if dismissByEscape {
+            fixture.view.keyDown(with: try fixture.keyEvent(53, text: ""))
+        } else {
+            _ = fixture.view.resignFirstResponder()
+        }
         #expect(takeovers == 0)
         #expect(fixture.writes.isEmpty)
         #expect(!fixture.view.agentCompletion.isActive)

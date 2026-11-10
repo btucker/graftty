@@ -8,20 +8,27 @@ extension SurfaceNSView {
     func configureAgentCompletion(currentWorktreePath: String?,
                                   updates: ((@escaping AgentCompletionModel.CatalogUpdate) async throws -> [AgentCompletionCandidate])? = nil,
                                   loader: @escaping () async throws -> [AgentCompletionCandidate]) {
+        agentCompletion.opensOnPercent = false
         agentCompletion.currentWorktreePath = currentWorktreePath
         agentCompletion.loadCandidates = loader
         agentCompletion.loadCandidatesWithUpdates = updates
-        agentCompletion.onInsertText = { [weak self] text in self?.insertAgentCompletionText(text, claimEngagement: true) }
-        agentCompletion.onInsertLiteral = { [weak self] text in self?.insertAgentCompletionText(text, claimEngagement: false) }
+        agentCompletion.onInsertText = { [weak self] text in self?.insertAgentCompletionText(text) }
         agentCompletionPresentation = MacAgentCompletionPresentation(view: self)
+    }
+
+    @objc func completeWorktree(_ sender: Any?) {
+        guard canReceiveNativeText, !hasMarkedText() else { return }
+        let keyDown = NSApp.currentEvent.flatMap { $0.type == .keyDown ? $0 : nil }
+        guard keyDown?.isARepeat != true, agentCompletion.openSearch() else { return }
+        // The menu consumes the shortcut press. Keep its repeats and release local.
+        if let keyDown { agentCompletionShortcutKeyCode = keyDown.keyCode }
     }
 
     func handleAgentCompletionKey(_ event: NSEvent) -> Bool {
         guard !isReadonly, !hasMarkedText() else { return false }
-        if event.isARepeat, agentCompletionKeyCodes.contains(event.keyCode),
-           [36, 76, 48].contains(event.keyCode)
-            || (!agentCompletion.isActive && [51, 53, 125, 126].contains(event.keyCode)) { return true }
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
+            // A modifier change does not turn a held search key into terminal input.
+            if event.isARepeat, agentCompletionKeyCodes.contains(event.keyCode) { return true }
             agentCompletion.invalidateBoundary()
             return false
         }
@@ -53,19 +60,10 @@ extension SurfaceNSView {
         return consumed
     }
 
-    private func insertAgentCompletionText(_ text: String, claimEngagement: Bool) {
+    private func insertAgentCompletionText(_ text: String) {
         guard let surface, !isReadonly, acceptsCompositionCallbacks else { return }
-        // A focus-loss flush must not take ownership back from another client.
-        // Real key/native-text input reclaims control before reaching this path.
-        if canTakeDisplayControlNotifier?() == true {
-            guard claimEngagement, takeDisplayControlNotifier?() == true else { return }
-        }
-        // Cursor keys use this synchronous host-managed writer too. Queueing
-        // text through Ghostty's IO thread would let a following key overtake it.
-        if let hostManagedCompletionWriter {
-            hostManagedCompletionWriter(Data(text.utf8), claimEngagement)
-            return
-        }
+        if canTakeDisplayControlNotifier?() == true, takeDisplayControlNotifier?() != true { return }
+        // Write synchronously so a following terminal key cannot overtake the address.
         if let hostManagedInputWriter {
             hostManagedInputWriter(Data(text.utf8))
             return

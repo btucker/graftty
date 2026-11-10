@@ -18,34 +18,55 @@ public final class AgentCompletionModel: ObservableObject {
     public var onInsertText: ((String) -> Void)?
     public var onInsertLiteral: ((String) -> Void)?
     public var currentWorktreePath: String?
+    public var opensOnPercent = true
+    public var isSearch: Bool { literalPrefix == nil }
+    private var literalPrefix: String? = "%"
     private var catalog: [AgentCompletionCandidate] = []
     private var atWordBoundary = true
+    private var hasManualSelection = false
     private var loadTask: Task<Void, Never>?
     private var generation: UInt64 = 0
 
     public init() {}
 
+    /// Explicit search does not infer cursor position or buffer terminal text.
+    @discardableResult
+    public func openSearch() -> Bool {
+        open(literalPrefix: nil)
+    }
+
+    @discardableResult
+    private func open(literalPrefix: String?) -> Bool {
+        guard loadCandidates != nil || loadCandidatesWithUpdates != nil,
+              onInsertText != nil else { return false }
+        guard !isActive else { return true }
+        self.literalPrefix = literalPrefix
+        isActive = true
+        query = ""
+        catalog = []
+        hasManualSelection = false
+        filter()
+        startLoad()
+        return true
+    }
+
     public func handleText(_ text: String) -> Bool {
         guard loadCandidates != nil || loadCandidatesWithUpdates != nil,
               onInsertText != nil, !text.isEmpty else { return false }
         if isActive {
-            if text.contains(where: { $0.isWhitespace || $0 == "%" })
+            if (!isSearch && text.contains(where: { $0.isWhitespace || $0 == "%" }))
                 || text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
                 cancel(preserveLiteral: true)
                 atWordBoundary = text.last?.isWhitespace == true
                 return false
             }
             query += text
+            hasManualSelection = false
             filter()
             return true
         }
-        if text == "%", atWordBoundary {
-            isActive = true
-            query = ""
-            catalog = []
-            filter()
-            startLoad()
-            return true
+        if opensOnPercent, text == "%", atWordBoundary {
+            return open(literalPrefix: "%")
         }
         atWordBoundary = text.last?.isWhitespace == true
         return false
@@ -54,10 +75,12 @@ public final class AgentCompletionModel: ObservableObject {
     public func handleBackspace() -> Bool {
         guard isActive else { atWordBoundary = false; return false }
         if query.isEmpty {
+            if isSearch { return true }
             cancel(preserveLiteral: false)
             atWordBoundary = true
         } else {
             query.removeLast()
+            hasManualSelection = false
             filter()
         }
         return true
@@ -74,6 +97,7 @@ public final class AgentCompletionModel: ObservableObject {
             let current = candidates.firstIndex { $0.id == selectedID } ?? 0
             let delta = key == .up ? -1 : 1
             selectedID = candidates[(current + delta + candidates.count) % candidates.count].id
+            hasManualSelection = isSearch
         }
         return true
     }
@@ -87,7 +111,7 @@ public final class AgentCompletionModel: ObservableObject {
     }
 
     public func cancel(preserveLiteral: Bool) {
-        let literal = isActive && preserveLiteral ? "%" + query : nil
+        let literal = isActive && preserveLiteral ? literalPrefix.map { $0 + query } : nil
         generation &+= 1
         loadTask?.cancel()
         loadTask = nil
@@ -144,6 +168,9 @@ public final class AgentCompletionModel: ObservableObject {
 
     private func filter() {
         candidates = AgentCompletionCandidate.matching(catalog, query: query, currentWorktreePath: currentWorktreePath)
-        if !candidates.contains(where: { $0.id == selectedID }) { selectedID = candidates.first?.id }
+        if (isSearch && !hasManualSelection) || !candidates.contains(where: { $0.id == selectedID }) {
+            selectedID = candidates.first?.id
+            hasManualSelection = false
+        }
     }
 }

@@ -311,10 +311,6 @@ final class SurfaceHandle {
                 guard wake() else { return }
                 try? backend?.write(data)
             }
-            surfaceView.hostManagedCompletionWriter = { [weak backend] data, claimEngagement in
-                guard wake() else { return }
-                try? backend?.write(data, claimEngagement: claimEngagement)
-            }
             backend.bindOwnershipLoss { [weak surfaceView] in
                 Task { @MainActor in surfaceView?.agentCompletion.cancel(preserveLiteral: false) }
             }
@@ -1017,6 +1013,7 @@ final class SurfaceNSView: NSView {
     let agentCompletion = AgentCompletionModel()
     var agentCompletionPresentation: MacAgentCompletionPresentation?
     var agentCompletionKeyCodes = Set<UInt16>()
+    var agentCompletionShortcutKeyCode: UInt16?
     var voiceInputInterrupted: (() -> Void)?
     private var voicePreview: VoiceDictationPreview?
 
@@ -1079,7 +1076,6 @@ final class SurfaceNSView: NSView {
     /// sequences directly to the session; zmx-backed native panes need the
     /// same path.
     var hostManagedInputWriter: ((Data) -> Void)?
-    var hostManagedCompletionWriter: ((Data, Bool) -> Void)?
 
     /// Wraps real key-event dispatch so the zmx backend can flag the
     /// emitted bytes as engaging user input (TERM-11.8). Nil for
@@ -1438,7 +1434,13 @@ final class SurfaceNSView: NSView {
 
     override func keyDown(with event: NSEvent) {
         userInteractionNotifier?()
+        if agentCompletionShortcutKeyCode == event.keyCode {
+            if event.isARepeat { return }
+            agentCompletionShortcutKeyCode = nil
+        }
         if event.isARepeat {
+            if agentCompletionKeyCodes.contains(event.keyCode),
+               !agentCompletion.isActive || [36, 76, 48].contains(event.keyCode) { return }
             // A key that committed composition stays consumed until release,
             // even though the marked text has already disappeared.
             if !hasMarkedText(), compositionKeyCodes.contains(event.keyCode) { return }
@@ -1460,8 +1462,8 @@ final class SurfaceNSView: NSView {
             surfaceOperations.interpretComposition(self, event)
             return
         }
-        reclaimDisplayControlForUserInputIfNeeded(event)
         if handleAgentCompletionKey(event) { return }
+        reclaimDisplayControlForUserInputIfNeeded(event)
         if let directInput = Self.hostManagedDirectInput(
             forKeyCode: event.keyCode,
             modifierFlags: event.modifierFlags
@@ -1525,6 +1527,10 @@ final class SurfaceNSView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
+        if agentCompletionShortcutKeyCode == event.keyCode {
+            agentCompletionShortcutKeyCode = nil
+            return
+        }
         if agentCompletionKeyCodes.remove(event.keyCode) != nil { return }
         if compositionKeyCodes.remove(event.keyCode) != nil { return }
         guard surface != nil else {
@@ -1548,9 +1554,6 @@ final class SurfaceNSView: NSView {
     /// nothing unless the mouse crosses a cell boundary with ⌘ held.
     /// Ported from Ghostty upstream `SurfaceView_AppKit.flagsChanged`.
     override func flagsChanged(with event: NSEvent) {
-        if !event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
-            agentCompletion.invalidateBoundary()
-        }
         guard surface != nil,
               let action = Self.modifierKeyAction(
                   keyCode: event.keyCode,

@@ -6,6 +6,23 @@ import Testing
 
 @Suite("Navigation command shortcut policy")
 struct NavigationCommandShortcutTests {
+    @Test("Native worktree completion reserves Cmd+Shift+K over host keybindings")
+    func worktreeCompletionWinsHostCollision() {
+        let command = GhosttyCommandRegistry[.nextTab]!
+        let bridge = GhosttyKeybindBridge(chords: [.nextTab: ShortcutChord(key: "k", modifiers: [.command, .shift])])
+        #expect(WorktreeCompletionCommandButton.shortcut == KeyboardShortcut("k", modifiers: [.command, .shift]))
+        #expect(NavigationCommandShortcutPolicy.hostShortcutWinners(commands: [command], bridge: bridge)[.nextTab] == nil)
+    }
+
+    @Test("Worktree completion leaves Cmd+` available for window cycling")
+    func completionDoesNotReserveWindowCycling() {
+        let command = GhosttyCommandRegistry[.nextTab]!
+        let chord = ShortcutChord(key: "backquote", modifiers: [.command])
+        let bridge = GhosttyKeybindBridge(chords: [.nextTab: chord])
+        #expect(NavigationCommandShortcutPolicy.hostShortcutWinners(commands: [command], bridge: bridge)[.nextTab]
+            == KeyboardShortcutFromChord.shortcut(from: chord))
+    }
+
     @Test("fixed pane and worktree commands use app chords")
     func fixedCommands() {
         #expect(NavigationCommandShortcutPolicy.fixedPaneCommands.map(\.chord) == [
