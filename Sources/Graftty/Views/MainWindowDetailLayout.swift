@@ -18,6 +18,7 @@ struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: Vie
             HStack(spacing: 0) {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay { WorktreeHeaderWashSpill() }
                 inspector
             }
             .contentShape(Rectangle())
