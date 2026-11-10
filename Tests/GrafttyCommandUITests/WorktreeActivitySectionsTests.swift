@@ -125,18 +125,18 @@ struct WorktreeActivitySectionsTests {
         #expect(names(held.recent) == ["a"])
     }
 
-    @Test("@spec IOS-13.8: While a mobile worktree row has a known time, the application shall state how long ago it asked or was last active in one compact unit, and otherwise shall show no time.", arguments: [
+    @Test("@spec IOS-13.8: While a mobile ask card has a known time, the application shall state how long ago it asked or was last active in one compact unit, and otherwise shall show no time.", arguments: [
         (0.0, "now"), (59.0, "now"), (60.0, "1m"), (3599.0, "59m"), (3600.0, "1h"), (86399.0, "23h"),
         (86400.0, "1d"), (604799.0, "6d"), (604800.0, "1w"), (-500.0, "now"),
     ] as [(Double, String)])
-    func rowTime(age: Double, expected: String) {
+    func askCardTime(age: Double, expected: String) {
         let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
         #expect(WorktreeActivitySections.ageText(since: now.addingTimeInterval(-age), now: now) == expected)
     }
 
-    /// A row's time comes off the wire, and a trap here would take the whole list down.
+    /// An ask card's time comes off the wire, and a trap here would take the whole list down.
     @Test(arguments: [1e300, -1e300])
-    func rowTimeSurvivesAnOutOfRangeTimestamp(timestamp: Double) {
+    func askCardTimeSurvivesAnOutOfRangeTimestamp(timestamp: Double) {
         let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
         let text = WorktreeActivitySections.ageText(since: Date(timeIntervalSinceReferenceDate: timestamp), now: now)
         #expect(!text.isEmpty)

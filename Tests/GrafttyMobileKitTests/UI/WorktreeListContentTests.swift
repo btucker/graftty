@@ -219,7 +219,7 @@ struct WorktreeListContentTests {
     }
 
     @Test("""
-@spec IPAD-1.19: While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so a row's time sits near the sidebar edge.
+@spec IPAD-1.19: While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so a row's trailing content sits near the sidebar edge.
 """)
     func tightTrailingInset() {
         #expect(WorktreeListContent.iPadRowTrailingInset <= 4)

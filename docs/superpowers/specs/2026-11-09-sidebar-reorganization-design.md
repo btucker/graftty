@@ -236,10 +236,11 @@ The builder should grep `@spec` for "Pinned" and "Add Worktree" for any others.
   line, and Needs you / Working / Recent. These scroll with the list; only the
   rail mode keeps the grid fixed above the list. (A fixed stack of every
   project's grid could fill the window.)
-- **Mobile rows:** keep IOS-13.11 (no divergence on mobile rows) and keep the
-  trailing time (IOS-13.8, IOS-13.12) where the PR badge would sit; the PR number
-  stays after the name as IOS-13.12 says. Mobile rows change only in naming a
-  remote host always. The "PR right / divergence beneath" row layout is Mac only.
+- **Mobile rows:** keep IOS-13.11 (no divergence on mobile rows). Rows show no
+  time, matching the Mac sidebar (IOS-13.12); only ask cards show one (IOS-13.8).
+  The PR number stays after the name as IOS-13.12 says. Mobile rows otherwise
+  change only in naming a remote host always. The "PR right / divergence beneath"
+  row layout is Mac only.
   (The phone mockup's ↑/↓ is wrong on this point.)
 
 ## Left to the builder

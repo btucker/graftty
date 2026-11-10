@@ -50,7 +50,7 @@ struct MobileAttentionPaneTests {
         #expect(height(WorktreeWireStats(ahead: 0, behind: 0, hasUncommittedChanges: false, baseRef: nil)) == height(nil))
     }
 
-    @Test("@spec IOS-9.14: While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and its time.", arguments: [320.0, 393.0, 540.0])
+    @Test("@spec IOS-9.14: While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button.", arguments: [320.0, 393.0, 540.0])
     func longNamesDoNotInflateRows(width: Double) {
         func size(name: String) -> CGSize {
             let row = WorktreePanes(path: "/repo/feature", displayName: name, repoDisplayName: "graftty",
@@ -58,8 +58,7 @@ struct MobileAttentionPaneTests {
                 prBadge: .init(number: 405, state: .open, checks: .success,
                     url: URL(string: "https://github.com/btucker/graftty/pull/405")!),
                 stats: .init(ahead: 12, behind: 25, hasUncommittedChanges: true, baseRef: "main"),
-                attentionText: nil, layout: nil,
-                sidebar: .init(id: "feature", projectID: "graftty", activityTime: Date().addingTimeInterval(-3600).timeIntervalSinceReferenceDate))
+                attentionText: nil, layout: nil)
             let hosted = UIHostingController(rootView: WorktreeBlock(worktree: row,
                 theme: nil, isActive: false, isOpening: false,
                 projectColumn: true, context: SidebarWorktreeContext(worktree: row),
@@ -134,43 +133,68 @@ struct MobileAttentionPaneTests {
         #expect(eyebrow.width > 40)
     }
 
-    @Test("@spec IOS-13.12: While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one and its time at the trailing edge.")
-    func rowShowsItsNameThenItsPRThenItsTime() async throws {
+    @Test("@spec IOS-13.12: While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one, and shall show no time, matching the Mac sidebar.")
+    func rowShowsItsNameThenItsPRAndNoTime() async throws {
+        let time = Date().addingTimeInterval(-300)
         let row = WorktreePanes(path: "/repo/Fix-Row", displayName: "Fix-Row", repoDisplayName: "graftty",
             displayBranch: "Fix-Row", state: .running, isMainCheckout: false,
             prBadge: .init(number: 405, state: .open, checks: .success,
                 url: URL(string: "https://github.com/btucker/graftty/pull/405")!),
-            stats: nil, attentionText: nil, layout: nil)
-        let time = Date().addingTimeInterval(-300)
-        func labelled(_ time: Date?) async throws -> [String: CGRect] {
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 100))
-            window.rootViewController = UIHostingController(rootView: WorktreeRowContent(worktree: row, theme: nil,
-                isActive: false, isOpening: false, time: time)
-                .frame(width: 360).accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
+            stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "Fix-Row", projectID: "graftty", activityTime: time.timeIntervalSinceReferenceDate))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 100))
+        window.rootViewController = UIHostingController(rootView: WorktreeBlock(worktree: row, theme: nil,
+            isActive: false, isOpening: false, context: SidebarWorktreeContext(worktree: row), onSelect: {}, onReport: {})
+            .frame(width: 360).accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        var labels: [String: CGRect] = [:]
+        for _ in 0..<100 {
+            window.rootViewController?.view.layoutIfNeeded()
+            labels = [:]
+            for object in accessibilityObjects(in: window.rootViewController!.view) {
+                if let label = object.accessibilityLabel { labels[label] = object.accessibilityFrame }
+            }
+            if labels["Fix-Row"] != nil, labels.keys.contains(where: { $0.contains("405") }) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let name = try #require(labels["Fix-Row"])
+        let badge = try #require(labels.first { $0.key.contains("405") }?.value)
+        #expect(name.maxX <= badge.minX)
+        #expect(!labels.keys.contains(time.formatted(.relative(presentation: .named))))
+        #expect(!labels.keys.contains("5m"))
+    }
+
+    /// IOS-13.8: an ask card states its time, and with no known time shows none.
+    @Test func askCardShowsItsTimeOnlyWhenKnown() async throws {
+        let asked = worktree()
+        let context = SidebarNavigationState(prefix: "mobile-ask-time.\(UUID())").worktreeContext(asked)
+        let card = try #require(AttentionAskCard(context: context))
+        let row = try #require(MergedWorktreeList.build(rows: [asked], availability: { _ in .reachable },
+                                                        projectIsOnSeveralHosts: false).temporary.first)
+        func labels(time: Date?) async throws -> [String] {
+            let deck = MobileAskDeck(entries: [.init(row: row, context: context, card: card, source: "graftty · push", time: time)],
+                                     onExplain: { _ in }, onOpen: { _ in }, onDismiss: { _ in })
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+            window.rootViewController = UIHostingController(rootView: deck.frame(width: 390)
+                .accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
             window.makeKeyAndVisible()
             defer { window.isHidden = true; window.rootViewController = nil }
-            var labels: [String: CGRect] = [:]
+            var labels: [String] = []
             for _ in 0..<100 {
                 window.rootViewController?.view.layoutIfNeeded()
-                labels = [:]
-                for object in accessibilityObjects(in: window.rootViewController!.view) {
-                    if let label = object.accessibilityLabel { labels[label] = object.accessibilityFrame }
-                }
-                if labels["Fix-Row"] != nil, time == nil || labels.count > 2 { break }
+                labels = accessibilityObjects(in: window.rootViewController!.view).compactMap(\.accessibilityLabel)
+                if labels.contains(where: { $0.contains(card.question) }) { break }
                 try await Task.sleep(for: .milliseconds(20))
             }
             return labels
         }
-        let labels = try await labelled(time)
-        let name = try #require(labels["Fix-Row"])
-        let badge = try #require(labels.first { $0.key.contains("405") }?.value)
-        let shown = try #require(labels[time.formatted(.relative(presentation: .named))])
-        #expect(name.maxX <= badge.minX)
-        #expect(badge.maxX <= shown.minX)
-        #expect(shown.maxX > 300)
-        // IOS-13.8: a row with no known time shows none.
-        let timeless = try await labelled(nil)
-        #expect(!timeless.keys.contains(time.formatted(.relative(presentation: .named))))
+        let timed = try await labels(time: Date().addingTimeInterval(-300))
+        #expect(timed.contains { $0.contains(card.question) })
+        #expect(timed.contains { $0.contains("5m") })
+        let timeless = try await labels(time: nil)
+        #expect(timeless.contains { $0.contains(card.question) })
+        #expect(!timeless.contains { $0.contains("5m") })
     }
 
     @Test("@spec IOS-9.13: When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.")
