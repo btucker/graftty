@@ -44,7 +44,7 @@
 
 The Graftty *app* target has no test target today (`ls Tests/` shows only `GrafttyKitTests/`). The spec's "end-to-end survival via TerminalManager" test is therefore implemented as `ZmxSurvivalIntegrationTests` inside `GrafttyKitTests`, which exercises `ZmxLauncher` end-to-end (spawn → write marker → close PTY → re-spawn → read marker). The libghostty-mediated path is verified by the manual smoke tests at the end of this plan.
 
-Integration tests skip themselves with `try #require(launcher.isAvailable, "zmx binary not vendored — run scripts/bump-zmx.sh")` so a fresh contributor who hasn't run the bump script gets a clear skip message rather than a confusing failure.
+Integration tests skip themselves with `try #require(launcher.isAvailable, "zmx is not prepared — run scripts/deps prepare zmx")` so a fresh contributor who hasn't run the bump script gets a clear skip message rather than a confusing failure.
 
 ---
 
@@ -720,7 +720,7 @@ struct ZmxSurvivalIntegrationTests {
     static func withScopedZmxDir<T>(_ body: (ZmxLauncher) throws -> T) throws -> T {
         let zmx = try #require(
             vendoredZmx(),
-            "zmx binary not vendored — run scripts/bump-zmx.sh"
+            "zmx is not prepared — run scripts/deps prepare zmx"
         )
         let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("zmx-test-\(UUID().uuidString)", isDirectory: true)

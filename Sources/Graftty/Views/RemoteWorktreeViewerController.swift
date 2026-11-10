@@ -102,11 +102,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 workspaceDefaults.removeObject(forKey: legacyKey)
             }
         }
-        layout.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
-            agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []),
-            retained: Set(worktree.agents?.compactMap(\.presentationSessionName) ?? []),
-            completed: Set(worktree.agents?.filter(\.isCompleted).compactMap(\.presentationSessionName) ?? []),
-            preservingSelection: true)
+        layout.reconcile(with: worktree, preservingSelection: true)
         workspaceLayouts[key] = layout
         return layout
     }

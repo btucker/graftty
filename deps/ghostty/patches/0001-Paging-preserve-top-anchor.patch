@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ben Tucker <ben@btucker.net>
+Date: Tue, 10 Nov 2026 12:33:53 -0600
+Subject: Paging: preserve top anchor
+
+
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+index af50372dbbb49970bcd1d5f76527c2ec849c08f1..f0b00ccf23fd95031beb40c960db350221497c93 100644
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -5018,6 +5018,14 @@ pub const PageAllocation = struct {
+         // No fallible work remains. Publish the page and update every cached
+         // quantity affected by inserting rows above the existing first page.
+         errdefer comptime unreachable;
++        // The top marker follows the list's first node. Convert it to a
++        // content pin before adding older history so the reader does not jump
++        // to the new oldest page. Leave a live-bottom viewport following live.
++        if (destination.viewport == .top) {
++            destination.viewport_pin.* = destination.getTopLeft(.viewport);
++            destination.viewport = .pin;
++            destination.viewport_pin_row_offset = 0;
++        }
+         destination.pages.prepend(node);
+         destination.page_size = page_size;
+         destination.total_rows = total_rows;
+@@ -8523,9 +8531,9 @@ test "PageList PageAllocation compresses prepended pages unless visible" {
+         // the new page.
+         .{ .viewport = .pin, .compressed = true },
+ 
+-        // The viewport follows the top of the scrollback, so the new page
+-        // becomes the first visible page.
+-        .{ .viewport = .top, .compressed = false },
++        // The viewport follows the top of the scrollback. Prepending pins it
++        // to the content it showed, so the new page is above the viewport.
++        .{ .viewport = .top, .compressed = true },
+     };
+ 
+     for (cases) |case| {
+@@ -8571,6 +8579,33 @@ test "PageList PageAllocation compresses prepended pages unless visible" {
+     }
+ }
+ 
++test "PageList PageAllocation preserves top viewport content on prepend" {
++    const testing = std.testing;
++    var builder = try Builder.init(testing.allocator, .{
++        .cols = 4,
++        .rows = 2,
++        .max_size = null,
++        .max_lines = null,
++    });
++    defer builder.deinit();
++    const page = try builder.allocatePage(.{ .cols = 4, .rows = 4 });
++    page.size.rows = 4;
++    var result = try builder.finish();
++    defer result.deinit();
++    result.scroll(.top);
++    const visible = result.getTopLeft(.viewport);
++
++    for (0..2) |i| {
++        var allocation = try result.allocatePage(.{ .cols = 4, .rows = 2 });
++        defer allocation.deinit();
++        allocation.page().size.rows = 2;
++        try allocation.finalize(.prepend, .{});
++        try testing.expect(visible.eql(result.getTopLeft(.viewport)));
++        try testing.expectEqual(@as(usize, (i + 1) * 2), result.scrollbar().offset);
++        result.assertIntegrity();
++    }
++}
++
+ test "PageList PageAllocation stays detached until finalize" {
+     const testing = std.testing;
+ 

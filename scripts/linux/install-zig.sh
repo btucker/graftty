@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
+# Install the pinned Zig into PREFIX, verified against deps/zig/checksums.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
-version=$(tr -d '[:space:]' < "$repo/scripts/zmx/ZIG_VERSION")
+version=$(tr -d '[:space:]' < "$repo/deps/zig/VERSION")
 arch=$(uname -m)
 case "$arch" in x86_64|aarch64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 64 ;; esac
 prefix=${1:?Usage: install-zig.sh PREFIX}
+# read fails on a missing host line; report that below instead of exiting silently.
+read -r sha url < <(awk -v host="$arch-linux" '$1 == host { print $2, $3 }' "$repo/deps/zig/checksums") || true
+[[ $url == "https://ziglang.org/download/$version/"* && $sha =~ ^[0-9a-f]{64}$ ]] || { echo "No pinned Zig $version checksum for $arch-linux" >&2; exit 1; }
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
-curl --retry 3 -fsSL https://ziglang.org/download/index.json -o "$stage/index.json"
-read -r url sha < <(python3 - "$stage/index.json" "$version" "$arch" <<'PY'
-import json, sys
-with open(sys.argv[1]) as source:
-    release = json.load(source)[sys.argv[2]][f"{sys.argv[3]}-linux"]
-print(release["tarball"], release["shasum"])
-PY
-)
-[[ $url == "https://ziglang.org/download/$version/"* && $sha =~ ^[0-9a-f]{64}$ ]] || { echo 'Unexpected Zig download metadata' >&2; exit 1; }
 curl --retry 3 -fsSL "$url" -o "$stage/zig.tar.xz"
 printf '%s  %s\n' "$sha" "$stage/zig.tar.xz" | sha256sum -c -
 mkdir -p "$prefix"

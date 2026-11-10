@@ -23,11 +23,7 @@ final class MobileWorkspaceStore {
     /// Sidebar reads must not erase the prior sessions needed by detail cleanup.
     func sidebarLayout(hostID: UUID, worktree: WorktreePanes) -> WorkspaceLayout<String> {
         var layout = layout(hostID: hostID, worktree: worktree)
-        layout.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
-            agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []),
-            retained: Set(worktree.agents?.compactMap(\.presentationSessionName) ?? []),
-            completed: Set(worktree.agents?.filter(\.isCompleted).compactMap(\.presentationSessionName) ?? []),
-            preservingSelection: true)
+        layout.reconcile(with: worktree, preservingSelection: true)
         return layout
     }
 
@@ -36,11 +32,7 @@ final class MobileWorkspaceStore {
         var next = layouts[key] ?? defaults.data(forKey: key).flatMap {
             try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0)
         } ?? .initial(for: worktree)
-        next.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
-            agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []),
-            retained: Set(worktree.agents?.compactMap(\.presentationSessionName) ?? []),
-            completed: Set(worktree.agents?.filter(\.isCompleted).compactMap(\.presentationSessionName) ?? []),
-            preservingSelection: !revealFocused && layouts[key] != nil)
+        next.reconcile(with: worktree, preservingSelection: !revealFocused && layouts[key] != nil)
         let restoringCompleted = layouts[key] == nil && next.focusedSession.map { selected in
             worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true
         } == true

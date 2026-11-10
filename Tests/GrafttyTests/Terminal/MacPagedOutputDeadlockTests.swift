@@ -584,7 +584,7 @@ private enum PagedOutputProbePaths {
     static var executable: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/zmx-binary/zmx")
+            .appendingPathComponent(".deps/zmx/zmx")
     }
 }
 

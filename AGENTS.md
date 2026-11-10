@@ -132,6 +132,32 @@ worktree cannot replace test or run artifacts while a command is executing.
 - Existing worktree-local `.build` directories are not migrated or removed
   automatically. Remove them only after confirming no local build is running.
 
+## Updating dependencies
+
+Dependency updates are routine: about every two weeks, an agent updates
+everything in one PR. The layout and cache are described in `deps/README.md`.
+
+1. **Swift packages:** `swift package update`, then read each changed
+   package's release notes for behavior changes.
+2. **Ghostty:** `scripts/deps checkout ghostty /tmp/ghostty`; fetch the new
+   upstream commit there and rebase the patch commits onto it, resolving
+   conflicts as ordinary git commits; write the new SHA to
+   `deps/ghostty/UPSTREAM_COMMIT`; run
+   `scripts/deps export ghostty /tmp/ghostty`. Review the patch diffs.
+3. **zmx:** move `scripts/zmx/UPSTREAM_COMMIT`, refresh `scripts/zmx/*.patch`,
+   bump `scripts/zmx/GRAFTTY_REVISION` when daemon or client behavior changes,
+   and run `scripts/zmx/verify.sh` (upstream tests, the 0.5 floor, and the
+   previous release's zmx).
+4. **Zig:** when Ghostty or zmx requires a new Zig, update `deps/zig/VERSION`
+   and every host in `deps/zig/checksums` from
+   `https://ziglang.org/download/index.json`, and port
+   `deps/zig/patches/` if the iOS std patch still applies.
+5. **Gate:** `scripts/deps prepare --platforms macos,ios`,
+   `scripts/deps test ghostty`, and `scripts/swiftpm test`. Adapt Swift to
+   C API changes in `ghostty.h` in the same PR.
+6. Open one PR listing each upstream range (old..new), every changed patch,
+   and the gate results.
+
 ## Linux test membership
 
 `GrafttyKitTests` compiles every file on Linux except those under

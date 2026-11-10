@@ -432,6 +432,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.224** When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.
 
+**LAYOUT-2.240** When a host identifies a launched agent after its pane already appeared as a terminal, the application shall move that session from the terminal drawer into the agent tabs, leaving agents the user started by hand in a shell in place.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -1624,7 +1626,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TECH-2.x
 
-**TECH-2** The application shall use libghostty (via the libghostty-spm Swift Package) as its terminal engine.
+**TECH-2** The application shall use libghostty, built from the pinned Ghostty commit and patch series in `deps/ghostty`, as its terminal engine.
 
 ### TECH-3.x
 
@@ -1662,9 +1664,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-1.1** The application shall include a `zmx` binary in the app bundle at `Graftty.app/Contents/Helpers/zmx`, mirroring the placement of the `graftty` CLI.
 
-**ZMX-1.2** The bundled `zmx` binary shall be a universal Mach-O containing both `arm64` and `x86_64` slices, produced by `scripts/bump-zmx.sh`.
+**ZMX-1.2** The bundled `zmx` binary shall be a universal Mach-O containing both `arm64` and `x86_64` slices, built from the pins in `scripts/zmx` by `scripts/zmx/build.sh`.
 
-**ZMX-1.3** The application shall pin the vendored `zmx` version in `Resources/zmx-binary/VERSION` and record its SHA256 in `Resources/zmx-binary/CHECKSUMS`.
+**ZMX-1.3** When `scripts/deps prepare` builds `zmx`, it shall record the built version in `.deps/zmx/VERSION` and its SHA256 values in `.deps/zmx/CHECKSUMS`.
 
 ### ZMX-2.x — Session Naming
 
@@ -1778,7 +1780,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.5** When a terminal child requests microphone access, the packaged macOS application shall declare why it uses the microphone and carry the audio-input entitlement so macOS can authorize the request for Graftty.
 
-**DIST-1.6** When Graftty selects its terminal dependency, development, CI, and release builds shall enable paging from the same published revision, diagnose ignored local packages, and reject explicit overrides whose package-owned build provenance does not match their sources and binaries.
+**DIST-1.6** When Graftty builds its terminal dependency, development, CI, and release builds shall build libghostty from the pinned Ghostty commit and the patch series in deps/ghostty, reuse a cached build only when every input matches its key, and report the first patch that no longer applies.
 
 **DIST-1.7** When the shared wrapper, bundle script, or CI builds with a changed renderer or headers, the build shall apply a distinct Clang module signature to application and dependency targets.
 
@@ -1788,11 +1790,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### DIST-2.x — Release Automation
 
-**DIST-2.1** When a git tag containing valid SemVer after its leading `v` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and, for stable versions, ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
+**DIST-2.1** When a git tag containing valid SemVer after its leading `v` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, rebuild libghostty and zmx from the tag's pins and patches rather than a cached build, ensure a GitHub release tagged `v<version>` has the zip and the native dependency build record `native-deps-record.json` attached, and, for stable versions, ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
 
 **DIST-2.2** If a pushed release tag does not contain valid SemVer after its leading `v`, then the release workflow shall fail before building.
 
-**DIST-2.3** If a release for the pushed tag already exists, then the workflow shall re-upload the zip with `--clobber` and continue to the cask update step for stable versions rather than failing.
+**DIST-2.3** If a release for the pushed tag already exists, then the workflow shall re-upload the zip and build record with `--clobber` and continue to the cask update step for stable versions rather than failing.
 
 **DIST-2.4** The release zip shall be produced with `ditto -c -k --keepParent` (not `zip`) so that codesign-relevant extended attributes survive — `zip` strips them and installs fail with opaque "damaged" errors after reboot.
 

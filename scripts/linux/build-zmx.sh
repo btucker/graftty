@@ -4,7 +4,7 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 arch=${1:-$(uname -m)}
 output=${2:?Usage: build-zmx.sh ARCH OUTPUT}
 case "$arch" in x86_64|aarch64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 64 ;; esac
-expected_zig=$(tr -d '[:space:]' < "$repo/scripts/zmx/ZIG_VERSION")
+expected_zig=$(tr -d '[:space:]' < "$repo/deps/zig/VERSION")
 [[ $(zig version) == "$expected_zig" ]] || { echo "Zig $expected_zig is required" >&2; exit 1; }
 commit=$(tr -d '[:space:]' < "$repo/scripts/zmx/UPSTREAM_COMMIT")
 [[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid zmx upstream commit' >&2; exit 1; }
@@ -24,7 +24,7 @@ if [[ -n ${GRAFTTY_ZMX_CACHE_DIR:-} ]]; then
 import hashlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 digest = hashlib.sha256(sys.argv[2].encode())
-for name in ('linux/build-zmx.sh', 'zmx/ZIG_VERSION', 'zmx/UPSTREAM_COMMIT', 'zmx/GRAFTTY_REVISION',
+for name in ('linux/build-zmx.sh', '../deps/zig/VERSION', 'zmx/UPSTREAM_COMMIT', 'zmx/GRAFTTY_REVISION',
              'zmx/graftty.patch', 'zmx/paging.patch', 'zmx/always-run-tests.patch'):
     digest.update((root / 'scripts' / name).read_bytes())
 print(digest.hexdigest())

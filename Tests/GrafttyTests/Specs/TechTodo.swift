@@ -14,7 +14,7 @@ struct TechTodo {
     func tech_1() async throws { }
 
     @Test("""
-@spec TECH-2: The application shall use libghostty (via the libghostty-spm Swift Package) as its terminal engine.
+@spec TECH-2: The application shall use libghostty, built from the pinned Ghostty commit and patch series in `deps/ghostty`, as its terminal engine.
 """, .disabled("not yet implemented"))
     func tech_2() async throws { }
 

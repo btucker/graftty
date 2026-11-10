@@ -68,7 +68,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: ./.github/actions/paging-renderer
+      - uses: ./.github/actions/native-deps
       - name: Install pinned provider CLIs
         run: |
           npm install --prefix "$RUNNER_TEMP/agent-clients" \
@@ -83,18 +83,18 @@ jobs:
         run: |
           mkdir -p /private/tmp/graftty-history-validation
           candidate="$RUNNER_TEMP/history-candidate-zmx"
-          cp Resources/zmx-binary/zmx "$candidate"
-          trap 'cp "$candidate" Resources/zmx-binary/zmx' EXIT
+          cp .deps/zmx/zmx "$candidate"
+          trap 'cp "$candidate" .deps/zmx/zmx' EXIT
           git fetch --depth=1 origin 16287dce6ae591201092efa52c8f98bf6628cf8e
-          git show 16287dce6ae591201092efa52c8f98bf6628cf8e:Resources/zmx-binary/zmx > Resources/zmx-binary/zmx
+          git show 16287dce6ae591201092efa52c8f98bf6628cf8e:Resources/zmx-binary/zmx > .deps/zmx/zmx
           if scripts/swiftpm test --build-system native --filter denseWideHistoryPagesStayBoundedAndRecover > /private/tmp/graftty-history-validation/red.log 2>&1; then
             echo 'History regression unexpectedly passed against graftty6'
             exit 1
           fi
           grep -q 'Dense history must arrive as a bounded page, not a host limit refusal' /private/tmp/graftty-history-validation/red.log
           export GRAFTTY_HISTORY_LEGACY_ZMX="$RUNNER_TEMP/history-legacy-zmx"
-          cp Resources/zmx-binary/zmx "$GRAFTTY_HISTORY_LEGACY_ZMX"
-          cp "$candidate" Resources/zmx-binary/zmx
+          cp .deps/zmx/zmx "$GRAFTTY_HISTORY_LEGACY_ZMX"
+          cp "$candidate" .deps/zmx/zmx
           scripts/swiftpm test --build-system native --filter 'MacPagedTerminalTests|PagedTerminalCoordinatorTests|AgentIntegrationProtocolTests' 2>&1 | tee /private/tmp/graftty-history-validation/green.log
           python3 -B scripts/agent-integration/verify_history_results.py --swift /private/tmp/graftty-history-validation
       - name: Prove headless worktree prompt staging RED and GREEN
@@ -176,12 +176,12 @@ jobs:
             scenario=(--preview --rows 150)
           fi
           git rev-parse HEAD > "$RUNNER_TEMP/native-tested-commit.txt"
-          shasum -a 256 "$cli" Resources/zmx-binary/zmx > "$RUNNER_TEMP/native-binaries.txt"
+          shasum -a 256 "$cli" .deps/zmx/zmx > "$RUNNER_TEMP/native-binaries.txt"
           xcrun simctl list devices --json > "$RUNNER_TEMP/native-simulators.json"
           runner=(python3 -B scripts/agent-integration/run.py \
             --codex "$RUNNER_TEMP/agent-clients/node_modules/.bin/codex" \
             --claude "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" \
-            --cli "$cli" --zmx "$PWD/Resources/zmx-binary/zmx" \
+            --cli "$cli" --zmx "$PWD/.deps/zmx/zmx" \
             --seed "$TEST_SEED" --actions "$TEST_ACTIONS")
           status=0
           "${runner[@]}" "${scenario[@]}" || status=$?

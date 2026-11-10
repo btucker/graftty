@@ -86,7 +86,7 @@ struct WebServerIntegrationTests {
         if skipInCI() { return }
         let zmx = try #require(
             ZmxSurvivalIntegrationTests.vendoredZmx(),
-            "zmx binary not vendored — run scripts/bump-zmx.sh"
+            "zmx is not prepared — run scripts/deps prepare zmx"
         )
         let zmxDir = try Self.scopedZmxDir()
         defer { try? FileManager.default.removeItem(at: zmxDir) }
@@ -202,7 +202,7 @@ struct WebServerIntegrationTests {
         if skipInCI() { return }
         let zmx = try #require(
             ZmxSurvivalIntegrationTests.vendoredZmx(),
-            "zmx binary not vendored — run scripts/bump-zmx.sh"
+            "zmx is not prepared — run scripts/deps prepare zmx"
         )
         let zmxDir = try Self.scopedZmxDir()
         defer { try? FileManager.default.removeItem(at: zmxDir) }

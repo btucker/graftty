@@ -66,10 +66,60 @@ jobs:
           python3 -B -m unittest discover -s scripts/agent-integration -p 'test_*.py'
           python3 -B scripts/ci/test_test_plan.py
 
+  native-deps:
+    # Builds libghostty and zmx once per input key (scripts/deps key) on the
+    # self-hosted Mac, whose cache persists between runs, and hands them to
+    # the hosted Mac and iOS jobs. Pull requests from forks cannot use the
+    # self-hosted runner and build cold on a hosted one.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test the dependency driver
+        timeout-minutes: 2
+        run: scripts/test-deps.sh
+
+      - name: Build or reuse libghostty and zmx
+        run: scripts/deps prepare all --platforms macos,ios
+
+      - name: Run the Ghostty gate for new inputs
+        # Once per key: the marker is written only after the gate passes.
+        timeout-minutes: 45
+        run: scripts/deps test ghostty --once
+
+      - name: Run the zmx compatibility checks for new inputs
+        # Upstream tests, the 0.5 floor, and the latest release's zmx; once
+        # per zmx key, like the Ghostty gate.
+        timeout-minutes: 30
+        run: scripts/zmx/verify.sh --once
+
+      - name: Package .deps
+        # Dereference the cache links; artifacts drop file modes, tar keeps them.
+        run: tar -chf "$RUNNER_TEMP/native-deps.tar" -C .deps .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-deps
+          path: ${{ runner.temp }}/native-deps.tar
+          retention-days: 3
+
   macos-build-and-test:
     # Hosted Xcode 27 avoids the single-capacity self-hosted runner queue.
+    needs: native-deps
+    # A job skipped because native-deps failed reports as passing to branch
+    # protection, so run anyway and fail this required check explicitly.
+    if: ${{ !cancelled() }}
     runs-on: xcode-27
     steps:
+      - name: Require native dependencies
+        if: needs.native-deps.result != 'success'
+        env:
+          RESULT: ${{ needs.native-deps.result }}
+        run: |
+          echo "::error::native-deps did not succeed ($RESULT); libghostty or zmx could not be built or failed the Ghostty gate."
+          exit 1
+
       - uses: actions/checkout@v4
 
       - name: Show tool versions
@@ -86,7 +136,9 @@ jobs:
         timeout-minutes: 2
         run: scripts/test-swiftpm-shared.sh
 
-      - uses: ./.github/actions/paging-renderer
+      - uses: ./.github/actions/native-deps
+        with:
+          download: 'true'
       - name: Cache SwiftPM dependencies
         uses: actions/cache@v4
         with:
@@ -110,9 +162,9 @@ jobs:
             .build/*-apple-macosx
             .build/build.db
             .build/debug.yaml
-          key: macos-build-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: macos-build-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', '.deps/*.key') }}-${{ github.sha }}
           restore-keys: |
-            macos-build-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
+            macos-build-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', '.deps/*.key') }}-
 
       - name: Resolve Swift dependencies
         timeout-minutes: 5
@@ -176,6 +228,7 @@ jobs:
   ios-test-shards:
     name: ios-test (${{ matrix.shard }})
     # Standard hosted arm64 runner, so iOS does not queue behind Mac on mini-m1.
+    needs: native-deps
     runs-on: xcode-27
     timeout-minutes: 50
     strategy:
@@ -197,7 +250,10 @@ jobs:
           # self-hosted, or two runner installs) must not be restored here.
           echo "id=$( { swift --version; xcodebuild -version; echo "$GITHUB_WORKSPACE"; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
-      - uses: ./.github/actions/paging-renderer
+      - uses: ./.github/actions/native-deps
+        with:
+          download: 'true'
+          platforms: macos,ios
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -218,9 +274,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .derivedData
-          key: ios-build-v5-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: ios-build-v5-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', '.deps/*.key') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v5-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-
+            ios-build-v5-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', '.deps/*.key') }}-
 
       - name: Build GrafttyMobile for testing (iOS Simulator SDK)
         timeout-minutes: 10

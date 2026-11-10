@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 
 import PackageDescription
 import Foundation
@@ -15,117 +15,45 @@ let package = Package(
         .target(name: "CGrafttyConPTY", linkerSettings: [.linkedLibrary("kernel32")]),
         .target(name: "GrafttyWindowsTerminal", dependencies: ["CGrafttyConPTY"]),
         .testTarget(name: "GrafttyWindowsTerminalTests", dependencies: ["GrafttyWindowsTerminal"]),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )
 #else
-// The same selection policy applies to SwiftPM, bundle.sh, and Xcode's local
-// package reference. Local packages are opt-in: manifest evaluation is cached,
-// so filesystem auto-discovery cannot reliably follow dependency changes.
 let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-// libghostty-spm 3.0.2026110901, built from Ghostty 53e55147. It decodes pages from
-// the bundled zmx under PagedTerminalLimits.codec; snapshot fixtures are unchanged.
-let publishedGhosttyRevision = "3b6d597b649819531b79b89900cef44854ac845d"
 #if os(macOS)
-import CryptoKit
-
-struct PagingBuild: Decodable {
-    let schemaVersion: Int
-    let snapshotABI: String
-    let inputs: [String: String]
-    let wrapperInputs: [String: String]
-    let artifacts: [String: String]
-}
-
-func digest(_ data: Data) -> String {
-    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-}
-
-func compatibleRenderer(at path: String) -> Bool {
-    let root = URL(fileURLWithPath: path).resolvingSymlinksInPath()
-    let framework = root.appendingPathComponent("BinaryTarget/GhosttyKit.xcframework")
-    guard let manifest = try? String(contentsOf: root.appendingPathComponent("Package.swift"), encoding: .utf8),
-          manifest.contains("path: \"BinaryTarget/GhosttyKit.xcframework\""),
-          let data = try? Data(contentsOf: root.appendingPathComponent("PAGING-BUILD.json")),
-          let build = try? JSONDecoder().decode(PagingBuild.self, from: data),
-          build.schemaVersion == 1,
-          // The label 3.0.2026110901's recipe records; the wire codec is unchanged.
-          build.snapshotABI == "ghostty-53e55147-paging-1",
-          build.inputs["Paging/recipe.json"] != nil,
-          !build.artifacts.isEmpty else { return false }
-    func matches(_ hashes: [String: String], under directory: URL) -> Bool {
-        hashes.allSatisfy { relative, expected in
-            guard !relative.hasPrefix("/"), !relative.split(separator: "/").contains(".."),
-                  let bytes = try? Data(contentsOf: directory.appendingPathComponent(relative)) else { return false }
-            return digest(bytes) == expected
-        }
+// libghostty is built from the pinned Ghostty commit and the patch series in
+// deps/ghostty by `scripts/deps prepare`, which links it into .deps/ and
+// records its input key (see deps/README.md). scripts/swiftpm and bundle.sh
+// prepare it automatically; Xcode users run `scripts/deps prepare --platforms
+// macos,ios` once. The key plus the header's modification time also form a
+// compiler definition that changes Clang's module context hash, so a rebuilt
+// header never meets a stale libghostty.pcm.
+let rendererIdentity: String = {
+    let deps = repositoryRoot.appendingPathComponent(".deps")
+    guard let line = try? String(contentsOf: deps.appendingPathComponent("ghostty.key"), encoding: .utf8),
+          let key = line.split(separator: " ").first, key.count == 64 else {
+        fatalError("libghostty is not prepared. Run scripts/deps prepare (add --platforms macos,ios for Xcode).")
     }
-    guard matches(build.inputs, under: root), matches(build.wrapperInputs, under: root),
-          matches(build.artifacts, under: framework) else { return false }
-    func regularFiles(under directory: URL) -> [URL] {
-        let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey])
-        return (files?.allObjects as? [URL] ?? []).filter {
-            (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
-        }
-    }
-    let sources = root.appendingPathComponent("Sources")
-    let enumerator = FileManager.default.enumerator(atPath: sources.path)
-    let wrapperFiles = Set((enumerator?.allObjects as? [String] ?? []).filter { relative in
-        let file = sources.appendingPathComponent(relative)
-        return file.pathExtension == "swift"
-            && (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
-    }.map { "Sources/" + $0 })
-    return !wrapperFiles.isEmpty && wrapperFiles == Set(build.wrapperInputs.keys)
-        && regularFiles(under: framework).count == build.artifacts.count
-}
-
-let localGhosttyPath: String? = {
-    guard let override = ProcessInfo.processInfo.environment["GRAFTTY_GHOSTTY_PACKAGE_PATH"],
-          !override.isEmpty else {
-        let discovered = repositoryRoot.appendingPathComponent(".dependencies/libghostty-spm").path
-        if FileManager.default.fileExists(atPath: discovered) {
-            fputs("Ignoring auto-discovered paging renderer at \(discovered); using the committed published paging dependency. Set GRAFTTY_GHOSTTY_PACKAGE_PATH explicitly for dependency development.\n", stderr)
-        }
-        return nil
-    }
-    let path = URL(fileURLWithPath: override, relativeTo: repositoryRoot).standardizedFileURL.path
-    guard compatibleRenderer(at: path) else {
-        fatalError("Incompatible paging renderer at \(path). Rebuild it with libghostty-spm/build.sh, select Package.local.swift, and verify PAGING-BUILD.json, or unset GRAFTTY_GHOSTTY_PACKAGE_PATH to use the published paging dependency.")
-    }
-    return path
-}()
-// Clang's explicit module cache can otherwise reuse libghostty.pcm after
-// Swift Build replaces the staged header at the same include path. A compiler
-// definition changes the module context hash for every Graftty consumer.
-let rendererIdentity: String = try {
-    guard let path = localGhosttyPath else { return "published_" + publishedGhosttyRevision }
-    var inputs = Data(path.utf8)
-    inputs.append(try Data(contentsOf: URL(fileURLWithPath: path + "/PAGING-BUILD.json")))
-    let framework = URL(fileURLWithPath: path + "/BinaryTarget/GhosttyKit.xcframework")
-    let files = FileManager.default.enumerator(at: framework, includingPropertiesForKeys: [.contentModificationDateKey])
-    let headers = (files?.allObjects as? [URL] ?? []).filter { $0.pathExtension == "h" || $0.pathExtension == "modulemap" }
-    for header in headers.sorted(by: { $0.path < $1.path }) {
-        inputs.append(Data(header.path.utf8))
-        inputs.append(try Data(contentsOf: header))
-        // A rebuilt identical header also invalidates PCM file metadata.
-        let modified = try header.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-        inputs.append(Data(String(modified?.timeIntervalSince1970 ?? 0).utf8))
-    }
-    return digest(inputs)
+    let header = deps.appendingPathComponent("GhosttyKit.xcframework/macos-arm64_x86_64/Headers/libghostty/ghostty.h")
+    let modified = (try? header.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    return key.prefix(32) + "_" + String(Int(modified?.timeIntervalSince1970 ?? 0))
 }()
 let rendererSettings: [SwiftSetting] = [
     .unsafeFlags(["-Xcc", "-DGRAFTTY_RENDERER_" + rendererIdentity]),
     .define("GRAFTTY_PAGED_HISTORY"),
 ]
 #else
-let localGhosttyPath: String? = nil
 let rendererSettings: [SwiftSetting] = []
 #endif
-let ghosttyDependency: Package.Dependency = {
-    if let path = localGhosttyPath {
-        return .package(name: "libghostty-spm", path: path)
-    }
-    return .package(url: "https://github.com/btucker/libghostty-spm.git", revision: publishedGhosttyRevision)
-}()
+// GhosttyKit and GhosttyTerminal came from Lakr233/libghostty-spm (MIT; see
+// deps/ghostty/LICENSE-libghostty-spm). They keep its Swift 6 settings.
+let ghosttySwiftSettings: [SwiftSetting] = [
+    .swiftLanguageMode(.v6),
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("ExistentialAny"),
+] + rendererSettings
 
 // CI runs `swift build` / `swift test` which default to the debug
 // configuration; matching that here means warnings fail the local
@@ -146,7 +74,7 @@ let webRTCDependencies: [Target.Dependency] = []
 let isLinux = false
 let containerProcessDependencies: [Target.Dependency] = []
 let appleDependencies: [Package.Dependency] = [
-    ghosttyDependency,
+    .package(url: "https://github.com/Lakr233/DisplayLink.git", from: "3.0.1"),
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     .package(url: "https://github.com/stasel/WebRTC.git", from: "137.0.0"),
 ]
@@ -181,12 +109,13 @@ let linuxPendingKitTests = [
     "Zmx/ZmxResizePropagationTests.swift", // runs the bundled macOS zmx
     "Zmx/ZmxSurvivalIntegrationTests.swift", // runs the bundled macOS zmx
 ]
-let appleTargets: Set<String> = ["AppcastUpdater", "appcast-updater", "AppcastUpdaterTests", "Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
+let appleTargets: Set<String> = ["GhosttyKit", "GhosttyTerminal", "GhosttyTerminalTests", "libghostty", "AppcastUpdater", "appcast-updater", "AppcastUpdaterTests", "Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
                                "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests",
                                "GrafttyRemoteTestSupport"]
 
 let package = Package(
     name: "Graftty",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: ([
         .executable(name: "Graftty", targets: ["Graftty"]),
@@ -328,7 +257,7 @@ let package = Package(
                 "GrafttyRemoteClient",
                 "GrafttyProtocol",
                 "GrafttyCommandUI",
-                .product(name: "GhosttyKit", package: "libghostty-spm"),
+                "GhosttyKit",
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Stencil", package: "Stencil"),
             ],
@@ -420,6 +349,31 @@ let package = Package(
             ],
             swiftSettings: strictWarnings
         ),
+        .binaryTarget(name: "libghostty", path: ".deps/GhosttyKit.xcframework"),
+        .target(
+            name: "GhosttyKit",
+            dependencies: ["libghostty"],
+            swiftSettings: ghosttySwiftSettings,
+            linkerSettings: [
+                .linkedLibrary("c++"),
+                .linkedFramework("Carbon", .when(platforms: [.macOS])),
+            ]
+        ),
+        .target(
+            name: "GhosttyTerminal",
+            dependencies: ["GhosttyKit", .product(name: "DisplayLink", package: "DisplayLink")],
+            resources: [
+                .copy("Resources/Ghostty"),
+                .copy("Resources/terminfo"),
+                .process("Resources/Localizable.xcstrings"),
+            ],
+            swiftSettings: ghosttySwiftSettings
+        ),
+        .testTarget(
+            name: "GhosttyTerminalTests",
+            dependencies: ["GhosttyKit", "GhosttyTerminal"],
+            swiftSettings: ghosttySwiftSettings
+        ),
         .target(
             name: "GrafttyMobileKit",
             dependencies: [
@@ -427,7 +381,7 @@ let package = Package(
                 "GrafttyProtocol",
                 "GrafttyCommandUI",
                 .product(name: "NIO", package: "swift-nio"),
-                .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                "GhosttyTerminal",
             ],
             swiftSettings: strictWarnings
         ),
@@ -470,6 +424,7 @@ let package = Package(
             sources: ["DirectSSHLoopbackTests.swift", "AWSLiveHostTests.swift", "AWSLiveMCPTests.swift", "AWSLiveMCPContainerTests.swift"],
             swiftSettings: strictWarnings
         ),
-    ] : [])
+    ] : []),
+    swiftLanguageModes: [.v5]
 )
 #endif

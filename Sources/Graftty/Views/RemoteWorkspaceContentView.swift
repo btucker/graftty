@@ -354,10 +354,7 @@ struct RemoteWorkspaceContentView: View {
     }
 
     private func reconcile() {
-        workspace?.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
-            agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []),
-            retained: Set(worktree.agents?.compactMap(\.presentationSessionName) ?? []),
-            completed: Set(worktree.agents?.filter(\.isCompleted).compactMap(\.presentationSessionName) ?? []), preservingSelection: true)
+        workspace?.reconcile(with: worktree, preservingSelection: true)
         reconcileZoom()
         if let selected = layout.focusedSession, worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true { terminalManager.clearFocus() }
     }
