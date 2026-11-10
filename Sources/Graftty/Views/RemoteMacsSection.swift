@@ -41,9 +41,7 @@ enum RemoteWorktreeReorderPolicy {
     }
 
     static func areSiblings(_ source: WorktreePanes, _ target: WorktreePanes) -> Bool {
-        source.repositoryID == target.repositoryID
-            && isPinned(source) == isPinned(target)
-            && (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (target.sidebar?.folderIDs ?? target.sidebar?.folders)
+        source.repositoryID == target.repositoryID && isPinned(source) == isPinned(target)
     }
 
     private static func isPinned(_ worktree: WorktreePanes) -> Bool {
@@ -317,6 +315,8 @@ struct RemoteMacsSection: View {
         let displayName: String
         let hostLabel: String?
         let isCached: Bool
+        /// Draws the pinned agent as a tile in the grid instead of a row.
+        var isTile = false
         let onOpen: () -> Void
         /// Clicking a status line that names a pane.
         let onOpenPane: (SidebarWorktreeContext) -> Void
@@ -330,7 +330,9 @@ struct RemoteMacsSection: View {
 
     @ViewBuilder
     var body: some View {
-        if let singleRow {
+        if let singleRow, singleRow.isTile {
+            remoteTile(singleRow)
+        } else if let singleRow {
             remoteWorktreeBlock(singleRow.worktree, remoteMac: singleRow.remoteMac, displayName: singleRow.displayName, hostLabel: singleRow.hostLabel)
         } else if section != .pinned || !displayedRemoteMacs.isEmpty {
             if showsMacHierarchy {
@@ -522,7 +524,7 @@ struct RemoteMacsSection: View {
         let projectID = SidebarProjection.projectID(worktree)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)
-        let heading = WorktreeRow(
+        let row = WorktreeRow(
             entry: sidebarEntry(for: worktree),
             isActive: isActive,
             displayName: displayName ?? worktree.displayName,
@@ -533,11 +535,21 @@ struct RemoteMacsSection: View {
             prBadge: worktree.prBadge,
             hostLabel: hostLabel,
             brief: context.brief,
-            onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) }
+            onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) },
+            showsDivergence: false
         )
+        let hasDivergence = WorktreeRow.trailingItems(canRemove: row.canRemove).statusLine.contains(.divergence)
+            && !(sidebarStats(for: worktree)?.isEmpty ?? true)
+        let divergence = hasDivergence ? row.divergence : nil
+        let heading = row
         .frame(minHeight: 24)
         .contentShape(Rectangle())
-        let statusLine = SidebarStatusLine(status: status, secondary: theme.sidebarSecondaryText)
+        // DIVERGE-1.1: the status line truncates before the divergence.
+        let statusLine = HStack(alignment: .firstTextBaseline, spacing: 6) {
+            SidebarStatusLine(status: status, secondary: theme.sidebarSecondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            divergence
+        }
             .padding(.top, SidebarStatusLine.macTopInset)
             .padding(.trailing, 8).padding(.bottom, SidebarStatusLine.macBottomInset(status))
         let identityView = WorktreeRowIdentitySlot(entry: sidebarEntry(for: worktree), displayName: displayName ?? worktree.displayName,
@@ -590,7 +602,7 @@ struct RemoteMacsSection: View {
                 return true
             }
 
-            if status != .none {
+            if status != .none || divergence != nil {
                 Button {
                     if let singleRow {
                         if status.opensPane { singleRow.onOpenPane(context) } else { singleRow.onOpen() }
@@ -613,6 +625,37 @@ struct RemoteMacsSection: View {
                 .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
         )
         .padding(.vertical, SidebarWorktreeListStyle.macRowOuterInset)
+    }
+
+    /// A pinned agent on another host, as a tile with that host's badge.
+    private func remoteTile(_ tile: SingleRow) -> some View {
+        let worktree = tile.worktree
+        let identity = RemoteMacIdentity(tile.remoteMac)
+        let isActive = selectedRemoteIdentity == identity && selectedRemoteWorktreePath == worktree.path
+        let context = contextForWorktree(worktree)
+        let status = SidebarRowStatus.resolve(context: context, worktree: worktree, isCached: tile.isCached)
+        let state = PinnedTileState.resolve(status: status, isCached: tile.isCached)
+        let projectID = SidebarProjection.projectID(worktree)
+        let project = projects.first { $0.id == projectID }
+            ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)
+        let host = tile.hostLabel.flatMap { $0.isEmpty ? nil : $0 } ?? tile.remoteMac.label
+        let face = PinnedTileFace(identity: worktree.iconIdentity, project: project,
+                                  imageData: worktree.isMainCheckout ? projectIcons[projectID] : nil,
+                                  word: PinnedTile.word(name: tile.displayName, isMainCheckout: worktree.isMainCheckout, branch: worktree.displayBranch),
+                                  hostBadge: host, state: state, isSelected: isActive,
+                                  fill: theme.foreground.opacity(0.07), selectedFill: theme.highlightedWorktreeBackground)
+        return Button(action: tile.onOpen) { face }
+            .buttonStyle(.plain)
+            .rightClickMenu { remoteWorktreeMenu(worktree, context: context, remoteMac: tile.remoteMac) }
+            .modifier(RemoteWorktreeDragSource(payload: .init(identity: identity, path: worktree.path),
+                                               isEnabled: canReorder(worktree, on: tile.remoteMac), preview: AnyView(face.frame(width: 60))))
+            .modifier(PinnedTileDropTarget(isEnabled: query.isEmpty && !worktree.state.isInFlight, onDrop: tile.onDrop))
+            .modifier(PinnedTileHoverCard(name: tile.displayName, host: host, status: status, secondary: theme.sidebarSecondaryText))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(PinnedTile.accessibilityLabel(name: tile.displayName, host: host, state: state))
+            .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { tile.onOpen() }
+            .id(worktree.path)
     }
 
     private func groupedRepositories(

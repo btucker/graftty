@@ -23,60 +23,57 @@ struct WorktreeActivitySectionsTests {
 
     private func row(_ worktree: WorktreePanes, availability: HostAvailability = .reachable) -> MergedWorktreeRow {
         let built = MergedWorktreeList.build(rows: [worktree], availability: { _ in availability }, projectIsOnSeveralHosts: false)
-        if case .row(let row)? = built.pinned.first { return row }
-        return built.temporary[0]
+        return built.pinned.first ?? built.temporary[0]
     }
 
-    private func make(pinned: [MergedWorktreeNode] = [], temporary: [WorktreePanes] = [],
-                      holding hold: WorktreeActivitySections.Hold? = nil) -> WorktreeActivitySections {
+    private func make(pinned: [MergedWorktreeRow] = [], temporary: [WorktreePanes] = [],
+                      holding hold: WorktreeActivitySections.Hold? = nil, pullsWaitingPins: Bool = true) -> WorktreeActivitySections {
         WorktreeActivitySections.make(pinned: pinned, temporary: temporary.map { row($0) },
-                                      context: { SidebarWorktreeContext(worktree: $0) }, holding: hold)
+                                      context: { SidebarWorktreeContext(worktree: $0) }, holding: hold,
+                                      pullsWaitingPins: pullsWaitingPins)
     }
 
     private func names(_ rows: [MergedWorktreeRow]) -> [String] { rows.map(\.row.displayName) }
 
-    private func names(_ nodes: [MergedWorktreeNode]) -> [String] { names(nodes.flattenedRows) }
-
-    @Test("@spec IOS-13.1: While a mobile worktree list shows a project, the application shall group its rows into Needs you, Pinned, Working, and Recent, in that order, with Needs you holding rows that ask a question or carry a notification, newest first.")
+    @Test("@spec IOS-13.1: While a worktree list shows a project, the application shall show its pinned agents as tiles, then group its temporary worktrees into Needs you, Working, and Recent, in that order, with Needs you holding rows that ask a question, carry a notification, or finished a turn the user has not opened, newest first.")
     func groupsRowsByWhatTheyWant() {
         let sections = make(temporary: [
             worktree("older-question", asked: 10, activity: 90), worktree("newer-question", asked: 20, activity: 80),
             worktree("running", busy: true, activity: 70), worktree("quiet", activity: 60),
-        ])
+        ], pullsWaitingPins: false)
         #expect(names(sections.needsYou) == ["newer-question", "older-question"])
         #expect(names(sections.working) == ["running"])
         #expect(names(sections.recent) == ["quiet"])
         #expect(sections.pinned.isEmpty)
     }
 
-    @Test("@spec IOS-13.2: While a pinned worktree asks a question, the application shall show it under Needs you instead of Pinned, and return it to its pinned place once answered.")
-    func askingPinnedRowLeavesPinned() {
-        let asking = make(pinned: [.row(row(worktree("a", pinned: true))), .row(row(worktree("b", pinned: true, asked: 5)))])
-        #expect(names(asking.needsYou) == ["b"])
-        #expect(names(asking.pinned) == ["a"])
-        let answered = make(pinned: [.row(row(worktree("a", pinned: true))), .row(row(worktree("b", pinned: true)))])
-        #expect(names(answered.pinned) == ["a", "b"])
+    @Test("@spec IOS-13.2: While a pinned worktree waits for the user, the application shall keep its tile in its pinned place in that project's list rather than also listing it under Needs you.")
+    func waitingPinnedRowStaysInPlace() {
+        let pins = [row(worktree("a", pinned: true)), row(worktree("b", pinned: true, asked: 5)), row(worktree("c", pinned: true, unreadStop: true))]
+        let sections = make(pinned: pins, pullsWaitingPins: false)
+        #expect(sections.needsYou.isEmpty)
+        #expect(names(sections.pinned) == ["a", "b", "c"])
     }
 
-    @Test func folderEmptiedByAQuestionDisappears() {
-        let folder = MergedWorktreeNode.folder(id: "f", name: "f", children: [.row(row(worktree("a", pinned: true, asked: 5)))])
-        let sections = make(pinned: [folder])
-        #expect(sections.pinned.isEmpty)
-        #expect(names(sections.needsYou) == ["a"])
+    /// The Projects screen lists everything waiting across projects and has no tiles.
+    @Test func listsAcrossProjectsStillPullWaitingPins() {
+        let sections = make(pinned: [row(worktree("a", pinned: true)), row(worktree("b", pinned: true, asked: 5))])
+        #expect(names(sections.needsYou) == ["b"])
+        #expect(names(sections.pinned) == ["a"])
     }
 
     @Test("@spec IOS-13.3: While a pinned worktree has a working agent, the application shall keep it in Pinned, so Working holds only temporary worktrees.")
     func workingPinnedRowStaysPinned() {
-        let sections = make(pinned: [.row(row(worktree("a", pinned: true, busy: true)))])
+        let sections = make(pinned: [row(worktree("a", pinned: true, busy: true))], pullsWaitingPins: false)
         #expect(names(sections.pinned) == ["a"])
         #expect(sections.working.isEmpty)
     }
 
-    @Test("@spec IOS-13.4: While a worktree has an unread stop that asks nothing, the application shall leave it in its usual section rather than under Needs you.")
-    func unreadStopWithoutQuestionStaysPut() {
-        let sections = make(temporary: [worktree("a", unreadStop: true, activity: 5)])
-        #expect(sections.needsYou.isEmpty)
-        #expect(names(sections.recent) == ["a"])
+    @Test("@spec IOS-13.4: While a temporary worktree has a finished turn the user has not opened, the application shall list it under Needs you, and list a finished turn that asks a question there once.")
+    func unreadStopGoesToNeedsYou() {
+        let sections = make(temporary: [worktree("a", unreadStop: true, activity: 5), worktree("b", asked: 9, activity: 4)])
+        #expect(names(sections.needsYou) == ["b", "a"])
+        #expect(sections.recent.isEmpty)
     }
 
     @Test("@spec IOS-13.5: While a worktree is being created, the application shall list it under Working so it stays near the top of the list.")
@@ -109,9 +106,9 @@ struct WorktreeActivitySectionsTests {
     }
 
     @Test func holdDropsRowsThatLeftAndIgnoresAPinChange() {
-        let before = make(pinned: [.row(row(worktree("a", pinned: true)))], temporary: [worktree("b", activity: 1), worktree("c")])
+        let before = make(pinned: [row(worktree("a", pinned: true))], temporary: [worktree("b", activity: 1), worktree("c")])
         // a was unpinned elsewhere, b was pinned elsewhere, and c is gone.
-        let held = make(pinned: [.row(row(worktree("b", pinned: true)))], temporary: [worktree("a", activity: 1)], holding: before.hold)
+        let held = make(pinned: [row(worktree("b", pinned: true))], temporary: [worktree("a", activity: 1)], holding: before.hold)
         #expect(names(held.pinned) == ["b"])
         #expect(names(held.recent) == ["a"])
     }
@@ -160,19 +157,19 @@ struct WorktreeActivitySectionPlacementTests {
             availability: { _ in .reachable }, projectIsOnSeveralHosts: false).temporary[0]
     }
 
-    @Test("@spec LAYOUT-2.212: While the Mac sidebar shows a project, the application shall keep Needs you and Pinned in its resizable top pane and Working and Recent in the list below it.")
-    func topPaneHoldsWhatNeedsYouAndWhatIsPinned() {
+    @Test("@spec LAYOUT-2.212: While the Mac sidebar shows a project, the application shall keep its pinned tiles above the list and show Needs you, Working, and Recent in the list below them.")
+    func tilesAboveTheListOfTemporaryWorktrees() {
         var sections = WorktreeActivitySections()
         sections.needsYou = [row("asking")]
-        sections.pinned = [.row(row("pinned"))]
+        sections.pinned = [row("pinned")]
         sections.working = [row("working")]
         sections.recent = [row("recent")]
         let top = sections.placed(in: .pinned)
-        #expect(top.needsYou.map(\.row.displayName) == ["asking"])
-        #expect(top.pinned.flattenedRows.map(\.row.displayName) == ["pinned"])
-        #expect(top.working.isEmpty && top.recent.isEmpty)
+        #expect(top.pinned.map(\.row.displayName) == ["pinned"])
+        #expect(top.needsYou.isEmpty && top.working.isEmpty && top.recent.isEmpty)
         let below = sections.placed(in: .tasks)
-        #expect(below.needsYou.isEmpty && below.pinned.isEmpty)
+        #expect(below.pinned.isEmpty)
+        #expect(below.needsYou.map(\.row.displayName) == ["asking"])
         #expect(below.working.map(\.row.displayName) == ["working"])
         #expect(below.recent.map(\.row.displayName) == ["recent"])
         #expect(sections.placed(in: .all) == sections)

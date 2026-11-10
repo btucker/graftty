@@ -18,6 +18,16 @@ public enum SidebarRowStatus: Equatable, Sendable {
         }
     }
 
+    /// Everything waiting for the person: a request, or a finished turn they
+    /// haven't opened. This is what Needs you, tile borders, and counts show.
+    public var waitsForUser: Bool {
+        switch self {
+        case .question, .notification: return true
+        case .whereWeAre(_, let isUnread): return isUnread
+        case .working, .none: return false
+        }
+    }
+
     /// @spec LAYOUT-2.211
     /// How strongly to draw the row's identity. Emoji wash out faster against
     /// a light background, so light schemes fade a little less.
@@ -43,7 +53,7 @@ public enum SidebarRowStatus: Equatable, Sendable {
         let completed = context.brief?.completed.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         // A stop stays unread until viewed, whether or not it asked anything.
         // It outranks pane liveness, which lags behind it, unless the agent resumed.
-        let hasUnreadStop = worktree.sidebar?.unseenAgentStop != nil && !context.isRunning
+        let hasUnreadStop = context.hasUnseenStop
         func whereWeAre(isUnread: Bool) -> SidebarRowStatus {
             completed.isEmpty ? .none : .whereWeAre(completed, isUnread: isUnread)
         }

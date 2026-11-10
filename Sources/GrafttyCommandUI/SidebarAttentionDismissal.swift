@@ -8,7 +8,13 @@ public enum SidebarAttentionDismissal {
     public static let title = "Dismiss Request"
 
     public static func isAvailable(_ context: SidebarWorktreeContext) -> Bool {
-        !context.pending.isEmpty
+        !context.pending.isEmpty || unseenStop(in: context) != nil
+    }
+
+    /// A finished turn nobody has opened waits in Needs you too, so Dismiss
+    /// clears it like a request.
+    static func unseenStop(in context: SidebarWorktreeContext) -> SidebarAgentStop? {
+        context.hasUnseenStop ? context.worktree.sidebar?.unseenAgentStop : nil
     }
 
     /// LAYOUT-2.218: what retires each request on its owning host, so every
@@ -16,9 +22,15 @@ public enum SidebarAttentionDismissal {
     /// because the legacy form can clear a request the user hasn't seen.
     public static func requests(for context: SidebarWorktreeContext,
                                 supportsExactAcknowledgement: Bool) -> [WorktreeManagementRequest] {
-        context.pending.compactMap {
+        var requests = context.pending.compactMap {
             SidebarInteractionPolicy.acknowledgement(for: $0, supportsExactAcknowledgement: supportsExactAcknowledgement)
         }
+        if supportsExactAcknowledgement, let stop = unseenStop(in: context) {
+            let request = WorktreeManagementRequest.acknowledgeOccurrence(worktreeID: context.worktree.path, paneID: nil,
+                                                                          occurrence: stop.occurrence)
+            if !requests.contains(request) { requests.append(request) }
+        }
+        return requests
     }
 
     /// Sends each request in turn and stops at the first failure. A request that

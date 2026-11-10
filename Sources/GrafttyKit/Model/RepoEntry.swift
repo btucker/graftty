@@ -26,7 +26,6 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     public var iconOverride: ProjectIconOverride? = nil
     /// How the sidebar orders this repository's linked worktrees.
     public var worktreeOrderMode: WorktreeOrderMode = .manual
-    public var isPinnedCollapsed: Bool = false
     /// Normalized git origin; equal keys on different hosts are one project.
     public var originKey: String? = nil
     /// Fractional project order shared across devices.
@@ -60,7 +59,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     // nil, and existing users keep their state across the upgrade.
     private enum CodingKeys: String, CodingKey {
         case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked, defaultBranchHint, iconOverride,
-             worktreeOrderMode, isPinnedCollapsed, originKey, projectRank, projectRankChangedAt
+             worktreeOrderMode, originKey, projectRank, projectRankChangedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -75,7 +74,6 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.defaultBranchHint = try container.decodeIfPresent(String.self, forKey: .defaultBranchHint)
         self.iconOverride = try container.decodeIfPresent(ProjectIconOverride.self, forKey: .iconOverride)
         self.worktreeOrderMode = try container.decodeIfPresent(WorktreeOrderMode.self, forKey: .worktreeOrderMode) ?? .manual
-        self.isPinnedCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isPinnedCollapsed) ?? false
         self.originKey = try container.decodeIfPresent(String.self, forKey: .originKey)
         self.projectRank = try container.decodeIfPresent(String.self, forKey: .projectRank)
         self.projectRankChangedAt = try container.decodeIfPresent(Double.self, forKey: .projectRankChangedAt)

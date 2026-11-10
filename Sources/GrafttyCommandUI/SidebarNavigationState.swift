@@ -192,6 +192,7 @@ public final class SidebarNavigationState {
         for item in context.pending {
             next.dismissOccurrence(item)
         }
+        if context.hasUnseenStop { next.dismissFinishedTurn(context.item) }
         storeWorkspace(next)
     }
     private func persistHistory() { defaults.set(try? JSONEncoder().encode(history), forKey: prefix + ".recent") }

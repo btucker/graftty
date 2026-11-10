@@ -1,7 +1,7 @@
 import Testing
 @testable import GrafttyProtocol
 
-@Suite("@spec LAYOUT-2.221: While a project is on several hosts, the application shall show its temporary worktrees as one flat list by recent activity across hosts and its pinned agents by shared rank, naming the host on pinned rows always and on temporary rows only when names clash.")
+@Suite("@spec LAYOUT-2.221: While a project is on several hosts, the application shall show its temporary worktrees as one flat list by recent activity across hosts and its pinned agents as one flat grid by shared rank, naming the host on every pinned agent and on every temporary row that is on another host.")
 struct MergedWorktreeListTests {
     private let mac = WorktreeOrigin(deviceID: RemoteDeviceID(value: "mac"), deviceLabel: "MacBook", relayDepth: 0)
     private let box = WorktreeOrigin(deviceID: RemoteDeviceID(value: "box"), deviceLabel: "build-box", relayDepth: 0)
@@ -14,17 +14,11 @@ struct MergedWorktreeListTests {
             state: state, isMainCheckout: main, prBadge: nil, stats: nil, attentionText: nil, layout: nil, origin: owner,
             sidebar: metadata ? .init(id: "\(project):\(name)", projectID: project, folders: folders, folderIDs: folderIDs, isPinned: pinned, activityTime: activity, pinnedRank: rank) : nil)
     }
-    private func build(_ rows: [WorktreePanes], several: Bool = true) -> (pinned: [MergedWorktreeNode], temporary: [MergedWorktreeRow]) {
-        MergedWorktreeList.build(rows: rows, availability: { _ in .reachable }, projectIsOnSeveralHosts: several)
+    private func build(_ rows: [WorktreePanes], several: Bool = true,
+                       local: RemoteDeviceID? = RemoteDeviceID(value: "mac")) -> (pinned: [MergedWorktreeRow], temporary: [MergedWorktreeRow]) {
+        MergedWorktreeList.build(rows: rows, availability: { _ in .reachable }, projectIsOnSeveralHosts: several, localDeviceID: local)
     }
-    private func names(_ nodes: [MergedWorktreeNode]) -> [String] {
-        nodes.map {
-            switch $0 {
-            case .row(let row): return row.leafName
-            case .folder(_, let name, let children): return "\(name)[\(names(children).joined(separator: ","))]"
-            }
-        }
-    }
+    private func names(_ rows: [MergedWorktreeRow]) -> [String] { rows.map(\.leafName) }
 
     @Test func temporaryRowsMixAcrossHostsByActivity() {
         let result = build([row("a", mac, activity: 5), row("b", box, activity: 9), row("c", mac, activity: 7)])
@@ -39,19 +33,19 @@ struct MergedWorktreeListTests {
         #expect(result.temporary.map(\.relativeName) == ["spikes/one", "spikes/two"])
         #expect(result.pinned.isEmpty)
     }
-    @Test func hostLabelOnlyOnClashForTemporary() {
-        let result = build([row("fix", mac, activity: 3), row("fix", box, activity: 2), row("solo", box, activity: 1)])
-        #expect(result.temporary.map(\.showsHostLabel) == [true, true, false])
+    @Test func hostLabelOnTemporaryRowsElsewhereOrClashing() {
+        let result = build([row("fix", mac, activity: 4), row("fix", box, activity: 3), row("solo", box, activity: 2), row("mine", mac, activity: 1)])
+        #expect(result.temporary.map(\.showsHostLabel) == [true, true, true, false])
     }
     @Test func hostLabelAlwaysOnPinnedWhenMultiHost() {
         let result = build([row("agent", mac, pinned: true, rank: "a")])
-        guard case .row(let pinned) = result.pinned[0] else { Issue.record("expected row"); return }
+        let pinned = result.pinned[0]
         #expect(pinned.showsHostLabel)
         #expect(pinned.hostLabel == "MacBook")
     }
     @Test func noLabelsOnSingleHost() {
         let result = build([row("agent", mac, pinned: true, rank: "a"), row("fix", mac, activity: 1), row("fix", mac, activity: 2)], several: false)
-        guard case .row(let pinned) = result.pinned[0] else { Issue.record("expected row"); return }
+        let pinned = result.pinned[0]
         #expect(!pinned.showsHostLabel)
         #expect(result.temporary.allSatisfy { !$0.showsHostLabel })
     }
@@ -65,27 +59,13 @@ struct MergedWorktreeListTests {
     }
     @Test func defaultCheckoutsFirstByHostName() {
         let result = build([row("agent", mac, pinned: true, rank: "a"), row("main", mac, pinned: nil, main: true), row("main", box, pinned: nil, main: true)])
-        guard case .row(let first) = result.pinned[0], case .row(let second) = result.pinned[1] else { Issue.record("expected rows"); return }
-        #expect([first.hostLabel, second.hostLabel] == ["build-box", "MacBook"])
+        #expect(result.pinned.prefix(2).map(\.hostLabel) == ["build-box", "MacBook"])
     }
-    @Test func foldersMergeAcrossHosts() {
-        let result = build([row("agents/one", mac, pinned: true, rank: "b"), row("agents/two", box, pinned: true, rank: "a"), row("solo", mac, pinned: true, rank: "c")])
-        #expect(names(result.pinned) == ["agents[two,one]", "solo"])
-    }
-    @Test func folderSitsAtHighestRankedMember() {
-        let result = build([row("first", mac, pinned: true, rank: "b"), row("agents/one", box, pinned: true, rank: "a"), row("agents/two", mac, pinned: true, rank: "c")])
-        #expect(names(result.pinned) == ["agents[one,two]", "first"])
-    }
-    @Test func twoMemberMinimumCountsAcrossHosts() {
-        let result = build([row("agents/one", mac, pinned: true, rank: "a"), row("tools/two", box, pinned: true, rank: "b")])
-        #expect(names(result.pinned) == ["agents/one", "tools/two"])
-    }
-    @Test func inferredFoldersStayPerHost() {
-        let result = build([row("one", mac, pinned: true, rank: "a", folders: ["work"], folderIDs: ["/Users/me/work"]),
-                            row("two", mac, pinned: true, rank: "b", folders: ["work"], folderIDs: ["/Users/me/work"]),
-                            row("three", box, pinned: true, rank: "c", folders: ["work"], folderIDs: ["/srv/work"]),
-                            row("four", box, pinned: true, rank: "d", folders: ["work"], folderIDs: ["/srv/work"])])
-        #expect(names(result.pinned) == ["work · MacBook[one,two]", "work · build-box[three,four]"])
+    /// Names that look like folders, or folders a host published, don't group tiles.
+    @Test func pinnedAgentsAreFlat() {
+        let result = build([row("agents/one", mac, pinned: true, rank: "b"), row("agents/two", box, pinned: true, rank: "a"),
+                            row("solo", mac, pinned: true, rank: "c", folders: ["work"], folderIDs: ["/Users/me/work"])])
+        #expect(names(result.pinned) == ["agents/two", "agents/one", "solo"])
     }
     @Test func olderHostRowsKeptWithoutActivityOrRank() {
         let result = build([row("old-pin", box, pinned: true), row("agent", mac, pinned: true, rank: "a"),

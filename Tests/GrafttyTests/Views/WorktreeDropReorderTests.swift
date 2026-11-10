@@ -72,51 +72,23 @@ struct WorktreeDropReorderTests {
         #expect(state.repos[0].worktrees.map(\.branch) == ["main", "b", "a"])
     }
 
-    @Test("@spec LAYOUT-2.34: If a user drops a worktree row onto a worktree with a different virtual-folder parent, then the application shall reject the reorder so persisted flat order cannot disagree with the displayed hierarchy.")
-    func dropsAcrossHierarchyParentsAreRejected() {
-        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
-            WorktreeEntry(path: "/repo/.worktrees/research/lead", branch: "research/lead"),
-            WorktreeEntry(path: "/repo/.worktrees/research/notes", branch: "research/notes"),
-            WorktreeEntry(path: "/repo/.worktrees/solo", branch: "solo"),
-        ])
-        var state = AppState(repos: [repo])
-
-        let changed = WorktreeDropReorder.apply(
-            TransferableWorktreeMove(repoID: repo.id, worktreeID: repo.worktrees[0].id),
-            targetWorktreeID: repo.worktrees[2].id,
-            placement: .before,
-            to: &state
-        )
-
-        #expect(!changed)
-        #expect(state.repos[0].worktrees.map(\.branch) == ["research/lead", "research/notes", "solo"])
-    }
-
-    @Test("@spec LAYOUT-2.35: When worktree rows sharing a virtual-folder parent occupy noncontiguous persisted positions, the application shall reorder only those sibling rows within their existing positions so unrelated rows do not move.")
-    func sameFolderDropPreservesUnrelatedRawPositions() {
+    @Test("@spec LAYOUT-2.34: When a user drops a pinned agent onto any other pinned agent in its repository, the application shall reorder the one flat list of pinned agents, whatever their names.")
+    func pinnedDropsIgnoreFolderLikeNames() {
         let lead = pinnedRow("/repo/.worktrees/research/lead", "research/lead")
-        let solo = pinnedRow("/repo/.worktrees/solo", "solo")
         let notes = pinnedRow("/repo/.worktrees/research/notes", "research/notes")
-        let repo = RepoEntry(
-            path: "/repo",
-            displayName: "repo",
-            worktrees: [lead, solo, notes]
-        )
+        let solo = pinnedRow("/repo/.worktrees/solo", "solo")
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [lead, notes, solo])
         var state = AppState(repos: [repo])
 
         let changed = WorktreeDropReorder.apply(
             TransferableWorktreeMove(repoID: repo.id, worktreeID: lead.id),
-            targetWorktreeID: notes.id,
+            targetWorktreeID: solo.id,
             placement: .after,
             to: &state
         )
 
         #expect(changed)
-        #expect(state.repos[0].worktrees.map(\.branch) == [
-            "research/notes",
-            "solo",
-            "research/lead",
-        ])
+        #expect(state.repos[0].worktrees.map(\.branch) == ["research/notes", "solo", "research/lead"])
     }
 
     @Test("Drops from another repo are ignored")

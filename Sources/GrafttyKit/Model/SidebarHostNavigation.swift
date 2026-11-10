@@ -240,12 +240,11 @@ public enum SidebarHostNavigation {
         let pinned = candidate.repos[ri].worktrees.remove(at: si)
         candidate.repos[ri].worktrees.append(pinned)
         if let relativeTo {
-            // If folder ancestry or a pending neighbor prevents placement,
+            // If a pending neighbor prevents placement,
             // retain the appended role without moving any existing peers.
             moveWorktree(in: &candidate, repositoryID: repositoryID, worktreeID: worktreeID,
                 relativeTo: relativeTo, after: relativeTo == repo.path || after)
         }
-        candidate.repos[ri].isPinnedCollapsed = false
         state = candidate
         return true
     }
@@ -314,13 +313,8 @@ public enum SidebarHostNavigation {
               isPinned(rows[source], in: repo) == isPinned(rows[target], in: repo),
               isPinned(rows[source], in: repo),
               rows[target].path != repo.path || after else { return false }
-        let sectionRows = rows.filter { isPinned($0, in: repo) == isPinned(rows[source], in: repo) }
-        let nodes = SidebarWorktreeHierarchy.nodes(for: sectionRows, inRepoAtPath: repo.path, defaultBranch: nil)
-        let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: nodes)
-        guard parents[rows[source].id] == parents[rows[target].id] else { return false }
-        let indices = rows.indices.filter {
-            isPinned(rows[$0], in: repo) == isPinned(rows[source], in: repo) && parents[rows[$0].id] == parents[rows[source].id]
-        }
+        // Pinned agents are one flat grid, so every pinned row is a sibling.
+        let indices = rows.indices.filter { isPinned(rows[$0], in: repo) }
         // A newly pinned row can precede the home checkout in saved state.
         // Interpret the drop against the section's displayed canonical order.
         let siblingIDs = Set(indices.map { rows[$0].id })

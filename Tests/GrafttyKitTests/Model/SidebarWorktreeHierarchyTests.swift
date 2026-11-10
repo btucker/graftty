@@ -4,7 +4,7 @@ import Foundation
 
 @Suite("SidebarWorktreeHierarchy")
 struct SidebarWorktreeHierarchyTests {
-    @Test("@spec LAYOUT-2.32: When at least two pinned linked worktrees beneath `<repo>/.worktrees` share a directory component in their relative names, the sidebar shall collect them beneath a recursively expandable folder row for that component and label each worktree relative to that folder. If fewer than two worktrees share a component, the sidebar shall render the worktree ungrouped with its full relative name.")
+    @Test("@spec LAYOUT-2.32: When at least two pinned linked worktrees beneath `<repo>/.worktrees` share a directory component in their relative names, the host shall publish that component as a virtual folder in their worktree metadata for older clients, labeling each worktree relative to it. If fewer than two worktrees share a component, the host shall publish the worktree ungrouped with its full relative name.")
     func groupsSharedManagedPrefixesButPreservesSingletonContext() {
         let main = WorktreeEntry(path: "/repo", branch: "main")
         let lead = WorktreeEntry(path: "/repo/.worktrees/research/lead", branch: "research/lead")
@@ -29,87 +29,6 @@ struct SidebarWorktreeHierarchyTests {
             ),
             .worktree(solo, displayName: "design/prototype"),
         ])
-        #expect(SidebarWorktreeHierarchy.parentFolderPaths(in: nodes) == [
-            lead.id: "research",
-            notes.id: "research",
-        ])
-    }
-
-    @Test("@spec LAYOUT-2.36: When a virtual folder among pinned agents first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.")
-    func foldersDefaultExpandedAndAggregateDescendantStatsWhenCollapsed() {
-        let repositoryID = UUID()
-        let folderID = SidebarWorktreeFolderID(
-            repositoryID: repositoryID,
-            path: "research"
-        )
-        var expansion = SidebarWorktreeFolderExpansion()
-
-        #expect(expansion.isExpanded(folderID))
-        expansion.setExpanded(false, for: folderID)
-        #expect(!expansion.isExpanded(folderID))
-        expansion.setExpanded(true, for: folderID)
-        #expect(expansion.isExpanded(folderID))
-
-        let lead = WorktreeEntry(
-            path: "/repo/.worktrees/research/lead",
-            branch: "research/lead"
-        )
-        let maps = WorktreeEntry(
-            path: "/repo/.worktrees/research/maps",
-            branch: "research/maps"
-        )
-        let node = SidebarWorktreeNode.folder(
-            path: "research",
-            name: "research",
-            children: [
-                .worktree(lead, displayName: "lead"),
-                .worktree(maps, displayName: "maps"),
-            ]
-        )
-
-        let aggregate = SidebarWorktreeHierarchy.aggregateStats(
-            in: node,
-            statsByWorktreePath: [
-                lead.path: WorktreeStats(
-                    ahead: 2,
-                    behind: 3,
-                    insertions: 20,
-                    deletions: 4
-                ),
-                maps.path: WorktreeStats(
-                    ahead: 5,
-                    behind: 7,
-                    insertions: 11,
-                    deletions: 9,
-                    hasUncommittedChanges: true
-                ),
-            ]
-        )
-
-        #expect(aggregate == WorktreeStats(
-            ahead: 7,
-            behind: 10,
-            insertions: 31,
-            deletions: 13,
-            hasUncommittedChanges: true
-        ))
-    }
-
-    @Test("@spec LAYOUT-2.37: When virtual folders coexist with ungrouped pinned agents, the sidebar shall apply the established compact worktree-row inset to both top-level and nested worktrees while reserving native disclosure indentation for folder rows.")
-    func worktreesAtEveryDepthUseTheEstablishedOutdent() {
-        let worktree = SidebarWorktreeNode.worktree(
-            WorktreeEntry(path: "/repo", branch: "main"),
-            displayName: "main"
-        )
-        let folder = SidebarWorktreeNode.folder(
-            path: "research",
-            name: "research",
-            children: [worktree]
-        )
-
-        #expect(SidebarWorktreeRowIndentation.shouldOutdent(worktree, depth: 0))
-        #expect(!SidebarWorktreeRowIndentation.shouldOutdent(folder, depth: 0))
-        #expect(SidebarWorktreeRowIndentation.shouldOutdent(worktree, depth: 1))
     }
 
     @Test("nested shared prefixes become nested folders")
@@ -147,7 +66,7 @@ struct SidebarWorktreeHierarchyTests {
         ])
     }
 
-    @Test("@spec LAYOUT-2.33: When at least two pinned linked worktrees outside `<repo>/.worktrees` diverge beneath the same directory that is at least two components below the filesystem root and is neither the user's home nor an ancestor of the main checkout, the sidebar shall infer that directory as an additional expandable folder root. Worktrees without such a shared root shall remain ungrouped.")
+    @Test("@spec LAYOUT-2.33: When at least two pinned linked worktrees outside `<repo>/.worktrees` diverge beneath the same directory that is at least two components below the filesystem root and is neither the user's home nor an ancestor of the main checkout, the host shall infer that directory as an additional folder root in the metadata it publishes for older clients. Worktrees without such a shared root shall remain ungrouped.")
     func groupsExternalWorktreesUnderAnInferredSharedRoot() {
         let first = WorktreeEntry(path: "/tmp/shared/one", branch: "one")
         let second = WorktreeEntry(path: "/tmp/shared/two", branch: "two")
