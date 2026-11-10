@@ -32,56 +32,8 @@ public indirect enum SidebarWorktreeNode: Equatable, Identifiable, Sendable {
     }
 }
 
-/// Keeps the sidebar's established compact row position for worktrees at
-/// every hierarchy depth without applying that outdent to disclosure rows.
-public enum SidebarWorktreeRowIndentation {
-    public static func shouldOutdent(
-        _ node: SidebarWorktreeNode,
-        depth: Int
-    ) -> Bool {
-        if case .worktree = node { return true }
-        return false
-    }
-}
-
-/// Repository-scoped identity for a virtual sidebar folder. Folder paths are
-/// only unique within one repository (`research` can exist in many repos), so
-/// expansion state must carry both pieces.
-public struct SidebarWorktreeFolderID: Hashable, Sendable {
-    public let repositoryID: UUID
-    public let path: String
-
-    public init(repositoryID: UUID, path: String) {
-        self.repositoryID = repositoryID
-        self.path = path
-    }
-}
-
-/// Session-local disclosure state for virtual worktree folders. Storing only
-/// collapsed IDs makes newly discovered folders expanded by default without a
-/// synchronization pass when the hierarchy changes.
-public struct SidebarWorktreeFolderExpansion: Equatable, Sendable {
-    private var collapsedFolderIDs: Set<SidebarWorktreeFolderID> = []
-
-    public init() {}
-
-    public func isExpanded(_ folderID: SidebarWorktreeFolderID) -> Bool {
-        !collapsedFolderIDs.contains(folderID)
-    }
-
-    public mutating func setExpanded(
-        _ isExpanded: Bool,
-        for folderID: SidebarWorktreeFolderID
-    ) {
-        if isExpanded {
-            collapsedFolderIDs.remove(folderID)
-        } else {
-            collapsedFolderIDs.insert(folderID)
-        }
-    }
-}
-
-/// Builds the virtual folder structure used by the macOS sidebar.
+/// Infers the virtual folders a host publishes in worktree metadata, so
+/// clients that still group pinned agents into folders keep working.
 ///
 /// Graftty-created worktrees have an explicit namespace root at
 /// `<repo>/.worktrees`. Worktrees created by other tools can live elsewhere;
@@ -136,72 +88,6 @@ public enum SidebarWorktreeHierarchy {
             )
         }
         return build(items)
-    }
-
-    /// Returns the virtual folder containing each nested worktree. Root-level
-    /// worktrees are omitted, so a missing value consistently means the
-    /// hierarchy root. The sidebar uses this to prevent a flat-array reorder
-    /// from crossing a folder boundary that path-based grouping would
-    /// immediately restore.
-    public static func parentFolderPaths(
-        in nodes: [SidebarWorktreeNode]
-    ) -> [WorktreeEntry.ID: String] {
-        var result: [WorktreeEntry.ID: String] = [:]
-        collectParentFolderPaths(in: nodes, parentPath: nil, into: &result)
-        return result
-    }
-
-    /// Sums the already-computed Git statistics for every descendant
-    /// worktree. Missing entries are omitted just as their individual rows
-    /// omit the gutter while stats are unresolved; the aggregate converges as
-    /// `WorktreeStatsStore` publishes each result.
-    public static func aggregateStats(
-        in node: SidebarWorktreeNode,
-        statsByWorktreePath: [String: WorktreeStats]
-    ) -> WorktreeStats? {
-        let stats = descendantWorktreePaths(in: node).compactMap {
-            statsByWorktreePath[$0]
-        }
-        guard !stats.isEmpty else { return nil }
-        return WorktreeStats(
-            ahead: stats.reduce(0) { $0 + $1.ahead },
-            behind: stats.reduce(0) { $0 + $1.behind },
-            insertions: stats.reduce(0) { $0 + $1.insertions },
-            deletions: stats.reduce(0) { $0 + $1.deletions },
-            hasUncommittedChanges: stats.contains(where: \.hasUncommittedChanges)
-        )
-    }
-
-    private static func descendantWorktreePaths(
-        in node: SidebarWorktreeNode
-    ) -> [String] {
-        switch node {
-        case .worktree(let worktree, _):
-            return [worktree.path]
-        case .folder(_, _, let children):
-            return children.flatMap { descendantWorktreePaths(in: $0) }
-        }
-    }
-
-    private static func collectParentFolderPaths(
-        in nodes: [SidebarWorktreeNode],
-        parentPath: String?,
-        into result: inout [WorktreeEntry.ID: String]
-    ) {
-        for node in nodes {
-            switch node {
-            case .worktree(let worktree, _):
-                if let parentPath {
-                    result[worktree.id] = parentPath
-                }
-            case .folder(let path, _, let children):
-                collectParentFolderPaths(
-                    in: children,
-                    parentPath: path,
-                    into: &result
-                )
-            }
-        }
     }
 
     private struct HierarchyComponent {

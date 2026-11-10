@@ -27,21 +27,7 @@ struct SidebarPinnedTests {
         #expect(taskJSON["isPinned"] as? Bool == false)
     }
 
-    @Test("@spec LAYOUT-2.106: When the user collapses a repository's Pinned Agents section, the application shall preserve that disclosure state across relaunches and initially expand Pinned Agents for older state.")
-    func pinnedDisclosurePersists() throws {
-        let repo = RepoEntry(path: "/repo", displayName: "repo")
-        var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(repo)) as? [String: Any])
-        json["isPinnedCollapsed"] = true
-        let restored = try JSONDecoder().decode(RepoEntry.self, from: JSONSerialization.data(withJSONObject: json))
-        let saved = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(restored)) as? [String: Any])
-        #expect(saved["isPinnedCollapsed"] as? Bool == true)
-        json.removeValue(forKey: "isPinnedCollapsed")
-        let legacy = try JSONDecoder().decode(RepoEntry.self, from: JSONSerialization.data(withJSONObject: json))
-        let migrated = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
-        #expect(migrated["isPinnedCollapsed"] as? Bool == false)
-    }
-
-    @Test("@spec LAYOUT-2.103: While the sidebar displays a repository, the application shall show temporary worktrees without a heading below a collapsible Pinned Agents section, put the default-branch checkout first in that section, and preserve manual pinned order even when temporary worktrees use recent activity order.")
+    @Test("@spec LAYOUT-2.103: While the sidebar displays a repository, the application shall show its pinned agents as tiles above its temporary worktrees, put the default-branch checkout first among the tiles, and preserve manual pinned order even when temporary worktrees use recent activity order.")
     func pinnedPrecedesTemporaryWorktreesInStableOrder() throws {
         let main = WorktreeEntry(path: "/repo", branch: "main")
         var architect = try member("architect")

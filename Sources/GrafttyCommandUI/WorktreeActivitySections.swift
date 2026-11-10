@@ -5,15 +5,15 @@ import GrafttyProtocol
 /// `Hold` keeps rows where they are while the person is reaching for one.
 public struct WorktreeActivitySections: Sendable, Equatable {
     public var needsYou: [MergedWorktreeRow] = []
-    public var pinned: [MergedWorktreeNode] = []
+    public var pinned: [MergedWorktreeRow] = []
     public var working: [MergedWorktreeRow] = []
     public var recent: [MergedWorktreeRow] = []
 
     /// The part of these sections a pane of the sidebar shows.
     public func placed(in section: SidebarWorktreeSection) -> WorktreeActivitySections {
         var result = self
-        if section == .pinned { result.working = []; result.recent = [] }
-        if section == .tasks { result.needsYou = []; result.pinned = [] }
+        if section == .pinned { result.needsYou = []; result.working = []; result.recent = [] }
+        if section == .tasks { result.pinned = [] }
         return result
     }
 
@@ -33,7 +33,7 @@ public struct WorktreeActivitySections: Sendable, Equatable {
             }
         }
         record(needsYou.map(\.id), as: .needsYou)
-        record(pinned.flattenedRows.map(\.id), as: .pinned)
+        record(pinned.map(\.id), as: .pinned)
         record(working.map(\.id), as: .working)
         record(recent.map(\.id), as: .recent)
         return hold
@@ -41,8 +41,13 @@ public struct WorktreeActivitySections: Sendable, Equatable {
 
     /// `temporary` arrives newest first. A pin change made while held still applies:
     /// a row can only sit in Pinned if it's pinned.
-    public static func make(pinned: [MergedWorktreeNode], temporary: [MergedWorktreeRow],
-                            context: (WorktreePanes) -> SidebarWorktreeContext, holding hold: Hold?) -> WorktreeActivitySections {
+    ///
+    /// A project's own list shows pinned agents as tiles that light up in place,
+    /// so it passes `pullsWaitingPins: false`. A list across projects has no
+    /// tiles, so waiting pinned agents join Needs you there.
+    public static func make(pinned: [MergedWorktreeRow], temporary: [MergedWorktreeRow],
+                            context: (WorktreePanes) -> SidebarWorktreeContext, holding hold: Hold?,
+                            pullsWaitingPins: Bool = true) -> WorktreeActivitySections {
         var result = WorktreeActivitySections()
         var pulled: Set<String> = []
         var asked: [String: Double] = [:]
@@ -50,22 +55,24 @@ public struct WorktreeActivitySections: Sendable, Equatable {
         func livePlacement(_ row: MergedWorktreeRow) -> Placement {
             let rowContext = context(row.row)
             let isCached = row.availability == .wakeable
-            switch SidebarRowStatus.resolve(context: rowContext, worktree: row.row, isCached: isCached) {
-            case .question, .notification:
+            let status = SidebarRowStatus.resolve(context: rowContext, worktree: row.row, isCached: isCached)
+            if status.waitsForUser {
                 asked[row.id] = rowDate(row.row, context: rowContext)?.timeIntervalSinceReferenceDate ?? -.infinity
                 return .needsYou
-            case .working: return .working
-            case .whereWeAre, .none: return row.row.state == .creating && !isCached ? .working : .recent
+            }
+            if case .working = status { return .working }
+            return row.row.state == .creating && !isCached ? .working : .recent
+        }
+        if pullsWaitingPins {
+            for row in pinned {
+                let held = hold?.placements[row.id]
+                if held == .needsYou || (held != .pinned && livePlacement(row) == .needsYou) {
+                    result.needsYou.append(row)
+                    pulled.insert(row.id)
+                }
             }
         }
-        for row in pinned.flattenedRows {
-            let held = hold?.placements[row.id]
-            if held == .needsYou || (held != .pinned && livePlacement(row) == .needsYou) {
-                result.needsYou.append(row)
-                pulled.insert(row.id)
-            }
-        }
-        result.pinned = pruned(pinned, removing: pulled)
+        result.pinned = pinned.filter { !pulled.contains($0.id) }
         for row in temporary {
             // A pin change applies even while held: see above.
             let held = hold?.placements[row.id].flatMap { $0 == .pinned ? nil : $0 }
@@ -98,17 +105,6 @@ public struct WorktreeActivitySections: Sendable, Equatable {
     /// A long Needs you list mustn't push the project list off the first screen.
     public static func preview(_ rows: [MergedWorktreeRow], showsAll: Bool, limit: Int = 2) -> (rows: [MergedWorktreeRow], hidden: Int) {
         showsAll ? (rows, 0) : (Array(rows.prefix(limit)), max(0, rows.count - limit))
-    }
-
-    private static func pruned(_ nodes: [MergedWorktreeNode], removing ids: Set<String>) -> [MergedWorktreeNode] {
-        nodes.compactMap { node in
-            switch node {
-            case .row(let row): return ids.contains(row.id) ? nil : node
-            case .folder(let id, let name, let children):
-                let kept = pruned(children, removing: ids)
-                return kept.isEmpty ? nil : .folder(id: id, name: name, children: kept)
-            }
-        }
     }
 
     /// What a row's time means: when it asked, or else when it was last active.

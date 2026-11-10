@@ -78,11 +78,14 @@ public enum SidebarHostNavigation {
             guard worktreePath != repos[repoIndex].path,
                   let index = repos[repoIndex].worktrees.firstIndex(where: { $0.path == worktreePath }) else { continue }
             let current = repos[repoIndex].worktrees[index]
-            guard current.drawing == nil || recap.purposeChanged == true else { return }
+            // AGENT-3.43: a square drawing from before takes one wide redraw.
+            let widens = current.drawing?.canvas == .square && WorktreeDrawingSVG.canvas(of: svg) == .wide
+            guard current.drawing == nil || recap.purposeChanged == true || widens else { return }
             let hue = current.drawingHue ?? WorktreeColorAssignment.hue(
                 avoiding: repos[repoIndex].worktrees.compactMap(\.drawingHue) + [projectHue].compactMap { $0 })
             repos[repoIndex].worktrees[index].drawingHue = hue
-            repos[repoIndex].worktrees[index].drawing = WorktreeDrawing(svg: svg, hue: hue)
+            repos[repoIndex].worktrees[index].drawing = WorktreeDrawing(
+                svg: svg, hue: hue, description: recap.iconDescription, adoptedAt: Date())
             return
         }
     }
@@ -220,8 +223,8 @@ public enum SidebarHostNavigation {
     }
 
     /// A pin drop crosses section membership rather than reordering temporary
-    /// rows. Existing peers keep their order; a matching folder may also place
-    /// the new role beside the row where it was dropped.
+    /// rows. Existing peers keep their order, and the new role lands beside the
+    /// row where it was dropped.
     @discardableResult
     public static func pinWorktree(in state: inout AppState, repositoryID: String,
                                    worktreeID: String, relativeTo: String? = nil, after: Bool = true) -> Bool {
@@ -240,12 +243,11 @@ public enum SidebarHostNavigation {
         let pinned = candidate.repos[ri].worktrees.remove(at: si)
         candidate.repos[ri].worktrees.append(pinned)
         if let relativeTo {
-            // If folder ancestry or a pending neighbor prevents placement,
+            // If a pending neighbor prevents placement,
             // retain the appended role without moving any existing peers.
             moveWorktree(in: &candidate, repositoryID: repositoryID, worktreeID: worktreeID,
                 relativeTo: relativeTo, after: relativeTo == repo.path || after)
         }
-        candidate.repos[ri].isPinnedCollapsed = false
         state = candidate
         return true
     }
@@ -314,13 +316,8 @@ public enum SidebarHostNavigation {
               isPinned(rows[source], in: repo) == isPinned(rows[target], in: repo),
               isPinned(rows[source], in: repo),
               rows[target].path != repo.path || after else { return false }
-        let sectionRows = rows.filter { isPinned($0, in: repo) == isPinned(rows[source], in: repo) }
-        let nodes = SidebarWorktreeHierarchy.nodes(for: sectionRows, inRepoAtPath: repo.path, defaultBranch: nil)
-        let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: nodes)
-        guard parents[rows[source].id] == parents[rows[target].id] else { return false }
-        let indices = rows.indices.filter {
-            isPinned(rows[$0], in: repo) == isPinned(rows[source], in: repo) && parents[rows[$0].id] == parents[rows[source].id]
-        }
+        // Pinned agents are one flat grid, so every pinned row is a sibling.
+        let indices = rows.indices.filter { isPinned(rows[$0], in: repo) }
         // A newly pinned row can precede the home checkout in saved state.
         // Interpret the drop against the section's displayed canonical order.
         let siblingIDs = Set(indices.map { rows[$0].id })

@@ -35,7 +35,7 @@ struct SidebarAttentionDismissalMenuTests {
         #expect(empty.items.isEmpty)
     }
 
-    @Test("@spec LAYOUT-2.218: When the user dismisses a worktree's request on any client, the application shall retire it on the owning host, so no client keeps showing it under Needs You.")
+    @Test("@spec LAYOUT-2.218: When the user dismisses a worktree's request or unopened finished turn on any client, the application shall retire it on the owning host, so no client keeps showing it under Needs You.")
     func dismissalRetiresRequestsOnTheHost() throws {
         var worktree = WorktreeEntry(path: "/repo/wt", branch: "wt")
         worktree.recordAgentStop(.init(agentName: "Codex", stoppedAt: Date(),
@@ -58,5 +58,15 @@ struct SidebarAttentionDismissalMenuTests {
         SidebarAttentionDismissalMenu.acknowledge(requests, in: &state)
         // Another client, which never dismissed anything, sees nothing pending.
         #expect(SidebarWorktreeContext(worktree: try row()).pending.isEmpty)
+
+        // A finished turn that asked nothing is retired the same way.
+        let index = try #require(state.repos[0].worktrees.firstIndex { $0.path == "/repo/wt" })
+        state.repos[0].worktrees[index].recordAgentStop(.init(agentName: "Codex", stoppedAt: Date().addingTimeInterval(1),
+            recap: .init(title: "Deploy", completed: "Shipped", next: "Watch")))
+        let finished = SidebarWorktreeContext(worktree: try row())
+        #expect(finished.hasUnseenStop)
+        SidebarAttentionDismissalMenu.acknowledge(
+            SidebarAttentionDismissal.requests(for: finished, supportsExactAcknowledgement: true), in: &state)
+        #expect(!SidebarWorktreeContext(worktree: try row()).hasUnseenStop)
     }
 }

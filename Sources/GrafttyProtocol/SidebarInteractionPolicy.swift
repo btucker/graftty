@@ -21,6 +21,16 @@ public enum SidebarInteractionPolicy {
         return acknowledgement(for: item, supportsExactAcknowledgement: supportsExactAcknowledgement)
     }
 
+    /// STATE-2.13: leaving a worktree retires its finished turn that asked
+    /// nothing. The host records that turn per worktree, not per pane.
+    public static func acknowledgementOnLeave(for item: SidebarActivityItem,
+                                              supportsExactAcknowledgement: Bool) -> WorktreeManagementRequest? {
+        guard item.agentStop != nil, !item.needsAttention else { return nil }
+        var worktreeScoped = item
+        worktreeScoped.paneID = nil
+        return acknowledgement(for: worktreeScoped, supportsExactAcknowledgement: supportsExactAcknowledgement)
+    }
+
     public static func matches(_ worktree: WorktreePanes, query: String) -> Bool {
         matches(query: query, projectName: worktree.repoDisplayName,
                 worktreeName: worktree.displayName, branch: worktree.displayBranch)

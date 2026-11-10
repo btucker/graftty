@@ -8,6 +8,7 @@ public struct SidebarMergedRows: Sendable {
     private let rowsByProject: [String: [WorktreePanes]]
     private let availabilityByRow: [String: HostAvailability]
     private let availabilityByMember: [String: HostAvailability]
+    private var localDeviceID: RemoteDeviceID? = nil
 
     /// Prefer direct deliveries when a host is also reachable through a Mac.
     /// A peer may report this Mac's own rows back to it; those are excluded.
@@ -32,11 +33,12 @@ public struct SidebarMergedRows: Sendable {
             rowAvailability[MergedWorktreeList.identity(row)] = byID[member].map(availability) ?? .reachable
         }
         return SidebarMergedRows(projects: merged, memberToMerged: memberToMerged, rowsByProject: grouped,
-                                 availabilityByRow: rowAvailability, availabilityByMember: byID.mapValues(availability))
+                                 availabilityByRow: rowAvailability, availabilityByMember: byID.mapValues(availability),
+                                 localDeviceID: localDeviceID)
     }
 
-    /// What a row says after its name. Cached temporary rows don't name the
-    /// host, in keeping with hosts not mattering while scanning the list.
+    /// What a row says after its name: its host when that matters
+    /// (`showsHostLabel`), and whether a sleeping host's row is connected.
     public static func hostText(_ row: MergedWorktreeRow, isLocal: Bool) -> String? {
         let host = isLocal ? "This Mac" : row.hostLabel
         if row.availability == .wakeable {
@@ -92,11 +94,11 @@ public struct SidebarMergedRows: Sendable {
 
     /// `frozenOrder` holds rows still while a report is open, so a row doesn't
     /// move out from under its popover when activity arrives.
-    public func sections(for projectID: String, frozenOrder: [String]? = nil) -> (pinned: [MergedWorktreeNode], temporary: [MergedWorktreeRow]) {
+    public func sections(for projectID: String, frozenOrder: [String]? = nil) -> (pinned: [MergedWorktreeRow], temporary: [MergedWorktreeRow]) {
         let isOnSeveralHosts = project(id: projectID)?.isOnSeveralHosts ?? false
         var result = MergedWorktreeList.build(rows: rowsByProject[projectID] ?? [],
             availability: { availabilityByRow[MergedWorktreeList.identity($0)] ?? .reachable },
-            projectIsOnSeveralHosts: isOnSeveralHosts)
+            projectIsOnSeveralHosts: isOnSeveralHosts, localDeviceID: localDeviceID)
         if let frozenOrder {
             let positions = Dictionary(frozenOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
             result.temporary = result.temporary.enumerated().sorted {
@@ -119,10 +121,10 @@ public struct SidebarMergedRows: Sendable {
         Dictionary(uniqueKeysWithValues: projects.map { ($0.id, sections(for: $0.id).temporary.map(\.id)) })
     }
 
-    /// Displayed order, with folders flattened.
+    /// Displayed order: pinned agents, then temporary worktrees.
     public func flattenedRows(for projectID: String) -> [MergedWorktreeRow] {
         let section = sections(for: projectID)
-        return section.pinned.flattenedRows + section.temporary
+        return section.pinned + section.temporary
     }
 
     public enum PinnedMove: Equatable, Sendable {
@@ -137,13 +139,14 @@ public struct SidebarMergedRows: Sendable {
         public let rank: String
     }
 
-    /// Drags stay among one folder's rows, as they always have (`LAYOUT-2.34`).
+    /// Pinned agents are one flat grid, so any tile can move next to any other,
+    /// except one being created or deleted.
     public func pinnedMove(source: String, target: String, after: Bool, projectID: String,
                     isWritable: (MergedWorktreeRow) -> Bool) -> PinnedMove? {
+        let rows = sections(for: projectID).pinned
         guard source != target,
-              let rows = Self.siblings(of: source, in: sections(for: projectID).pinned),
-              let moving = rows.first(where: { $0.id == source }), !moving.row.isMainCheckout,
-              let destination = rows.first(where: { $0.id == target }) else { return nil }
+              let moving = rows.first(where: { $0.id == source }), !moving.row.isMainCheckout, !moving.row.state.isInFlight,
+              let destination = rows.first(where: { $0.id == target }), !destination.row.state.isInFlight else { return nil }
         if moving.row.sidebar?.pinnedRank == nil {
             guard moving.hostID == destination.hostID, destination.row.sidebar?.pinnedRank == nil else { return nil }
             return .legacy(source: moving, target: destination, after: after)
@@ -157,18 +160,6 @@ public struct SidebarMergedRows: Sendable {
         })
         let byID = Dictionary(uniqueKeysWithValues: ranked.map { ($0.id, $0) })
         return .ranks(writes.compactMap { write in byID[write.id].map { PinnedRankWrite(row: $0, rank: write.rank) } })
-    }
-
-    private static func siblings(of id: String, in nodes: [MergedWorktreeNode]) -> [MergedWorktreeRow]? {
-        let rows = nodes.compactMap { node -> MergedWorktreeRow? in
-            if case .row(let row) = node { return row }
-            return nil
-        }
-        if rows.contains(where: { $0.id == id }) { return rows }
-        for node in nodes {
-            if case .folder(_, _, let children) = node, let found = siblings(of: id, in: children) { return found }
-        }
-        return nil
     }
 
     /// The same rank and time go to every member it can reach. Empty when the

@@ -18,6 +18,8 @@ public struct SidebarWorktreeContext: Equatable {
     /// The session of the pane whose agent last stopped, where its transcript scrolls.
     public let agentPaneID: String?
     public let isRunning: Bool
+    /// A finished turn the person hasn't opened or dismissed, while nothing runs.
+    public let hasUnseenStop: Bool
     public let brief: WorktreeBrief?
 
     public init(worktree: WorktreePanes, retained: [SidebarActivityItem] = [],
@@ -59,6 +61,7 @@ public struct SidebarWorktreeContext: Equatable {
         target.isBusy = busy
         self.item = target
         self.isRunning = busy
+        self.hasUnseenStop = worktree.sidebar?.unseenAgentStop != nil && !busy && !(hasCurrentStop && isViewed(target))
         self.pending = live.filter { candidate in
             candidate.needsAttention && !candidate.isBusy && !isViewed(candidate)
                 && !(candidate.agentStop != nil && (resumed || busy))

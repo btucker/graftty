@@ -5,7 +5,11 @@ import SwiftUI
 /// and status line, so both lines start at the same edge. Each platform supplies
 /// the interactive parts.
 public struct SidebarWorktreeRowLayout<Identity: View, Content: View>: View {
-    public static var identitySize: CGFloat { 26 }
+    /// @spec LAYOUT-2.230
+    /// A row's identity slot is wide so a worktree's drawing (drawn 3:2) can
+    /// fill it; text starts after the slot and never runs over the drawing.
+    public static var identityWidth: CGFloat { 60 }
+    public static var identityHeight: CGFloat { 40 }
 
     private let identity: Identity
     private let content: Content
@@ -17,7 +21,7 @@ public struct SidebarWorktreeRowLayout<Identity: View, Content: View>: View {
 
     public var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            identity.frame(width: Self.identitySize, height: Self.identitySize + 6)
+            identity.frame(width: Self.identityWidth, height: Self.identityHeight)
             VStack(alignment: .leading, spacing: 1) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -41,7 +45,8 @@ public struct SidebarWorktreeRowIdentity: View {
 
     public var body: some View {
         WorktreeIdentityView(identity: identity, project: project, imageData: imageData,
-                             size: SidebarWorktreeRowLayout<EmptyView, EmptyView>.identitySize)
+                             size: SidebarWorktreeRowLayout<EmptyView, EmptyView>.identityHeight,
+                             maxWidth: SidebarWorktreeRowLayout<EmptyView, EmptyView>.identityWidth)
             .opacity(status.identityOpacity(isDark: colorScheme == .dark))
     }
 }

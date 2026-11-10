@@ -90,14 +90,9 @@ public struct WorktreeHeaderWashView: View {
                         // its color reaches the header's leading edge.
                         .offset(x: wash.glyph.hasSideBearing ? -110 : -40)
                 }
-                watermarkLayer
-                    .rotationEffect(.degrees(-12))
+                Self.watermark(wash)
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .trailing)
-                    #if os(macOS)
-                    .offset(x: 14)
-                    #else
-                    .offset(x: 34)
-                    #endif
+                    .offset(x: -WorktreeHeaderWash.watermarkTrailingInset)
                 LinearGradient(colors: [wash.background.opacity(0.18), wash.background.opacity(fadesToBackground ? 1 : 0.34)],
                                startPoint: .top, endPoint: .bottom)
             }
@@ -109,11 +104,12 @@ public struct WorktreeHeaderWashView: View {
 
     /// A crisp mark reads as intentional; a light blur reads as a low-resolution
     /// image. It dissolves leftward into the smear instead.
-    private var watermarkLayer: some View {
+    static func watermark(_ wash: WorktreeHeaderWash) -> some View {
         WorktreeHeaderWashGlyph(glyph: wash.glyph, size: 114)
             .opacity(wash.isDark ? 0.62 : 0.52)
             .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.65)],
                                  startPoint: .leading, endPoint: .trailing))
+            .rotationEffect(.degrees(-12))
     }
 }
 
@@ -157,6 +153,19 @@ enum PlatformImage {
 }
 
 extension WorktreeHeaderWash {
+    /// How far the watermark sits in from the band's trailing edge. On Mac it
+    /// clears the header's trailing controls; on mobile it bleeds off the edge.
+    #if os(macOS)
+    public static let watermarkTrailingInset: CGFloat = 150
+    #else
+    public static let watermarkTrailingInset: CGFloat = -34
+    #endif
+
+    /// How strongly the part of the watermark below the band shows over
+    /// terminal content: enough to read as the same mark, faint enough to
+    /// leave the text readable.
+    public static let spillOpacity: Double = 0.14
+
     /// Header surfaces draw slices of one band in this coordinate space, so
     /// the header and every top-row tab header line up seamlessly.
     public static let coordinateSpace = "worktreeHeaderWash"
@@ -193,6 +202,39 @@ extension View {
     /// band, such as tab headers of lower split panes, draw nothing.
     public func worktreeHeaderWash() -> some View {
         overlay { WorktreeHeaderWashSlice() }
+    }
+}
+
+/// @spec LAYOUT-2.229
+/// The part of the watermark that reaches below the header band, drawn
+/// faintly over the content beneath it instead of being cut off. It never
+/// takes clicks.
+public struct WorktreeHeaderWashSpill: View {
+    @Environment(\.worktreeHeaderWashBand) private var band
+
+    public init() {}
+
+    public var body: some View {
+        if let band {
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .named(WorktreeHeaderWash.coordinateSpace)).origin
+                let bandBottom = band.size.height - band.topExtension - origin.y
+                WorktreeHeaderWashView.watermark(band.wash)
+                    .frame(width: band.size.width, height: band.size.height, alignment: .trailing)
+                    .offset(x: -WorktreeHeaderWash.watermarkTrailingInset)
+                    .offset(x: -origin.x, y: -origin.y - band.topExtension)
+                    .opacity(WorktreeHeaderWash.spillOpacity)
+                    // Within the band the wash already draws the mark.
+                    .mask(alignment: .top) {
+                        VStack(spacing: 0) {
+                            Color.clear.frame(height: max(0, bandBottom))
+                            Color.black
+                        }
+                    }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 }
 

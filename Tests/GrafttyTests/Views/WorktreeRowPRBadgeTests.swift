@@ -14,13 +14,21 @@ struct WorktreeRowPRBadgeTests {
                 == [.projectIcon, .label])
     }
 
-    @Test("@spec LAYOUT-2.81: While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then the worktree name, then any PR/MR badge; otherwise, the row shall use its type or progress icon in the same position.")
+    @Test("@spec LAYOUT-2.81: While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then the worktree name, then any PR/MR badge right-aligned on the name line; otherwise, the row shall use its type or progress icon in the same position.")
     func leadingIdentityPrecedesPRAndName() {
         #expect(WorktreeRow.leadingSequence(hasEmoji: true, hasPR: true) == [.emoji, .label, .prBadge])
         #expect(WorktreeRow.leadingSequence(hasEmoji: true, hasPR: false) == [.emoji, .label])
         #expect(WorktreeRow.leadingSequence(hasEmoji: false, hasPR: true) == [.typeIcon, .label, .prBadge])
         #expect(WorktreeRow.leadingSequence(hasEmoji: false, hasPR: false) == [.typeIcon, .label])
         #expect(WorktreeRow.leadingSequence(hasEmoji: true, hasPR: true, isInFlight: true) == [.typeIcon, .label, .prBadge])
+    }
+
+    @Test("@spec DIVERGE-1.1: Each worktree row in the Mac sidebar shall display its divergence indicator right-aligned on its status line, beneath any PR/MR badge, so the status text truncates before it; while the row offers to remove a merged worktree, that button shall take the indicator's place on the name line.")
+    func divergenceSitsBeneathThePRBadge() {
+        #expect(WorktreeRow.trailingItems(canRemove: false).nameLine.isEmpty)
+        #expect(WorktreeRow.trailingItems(canRemove: false).statusLine == [.divergence])
+        #expect(WorktreeRow.trailingItems(canRemove: true).nameLine == [.removeButton])
+        #expect(WorktreeRow.trailingItems(canRemove: true).statusLine.isEmpty)
     }
 
     @Test("""

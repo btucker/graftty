@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// @spec LAYOUT-2.123: While a macOS pinned section has no preceding rows, the application shall give its disclosure header a 20-point click target without extra top padding.
+/// A section's disclosure header: a 20-point click target, with no extra top
+/// padding when nothing precedes it.
 public struct SidebarWorktreeSectionHeader: View {
     private let title: String
     private let color: Color

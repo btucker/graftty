@@ -40,8 +40,10 @@ public struct WorktreeListContent: View {
     @State private var worktreeCreation = MobileWorktreeCreation()
 
     @Bindable private var navigation: SidebarNavigationState
-    @State private var collapsedPinned: [String: Bool] = [:]
-    @State private var collapsedFolders: Set<String> = []
+    /// The project New worktree was tapped in, so the sheet starts there.
+    @State private var newWorktreeProjectID: String?
+    /// The worktree opened last, whose finished turn clears once another opens.
+    @State private var lastOpenedWorktree: WorktreePanes?
     /// Shared with the screens pushed above the list, so their headers draw
     /// the same images; a local cache stands in when none is provided.
     @Environment(\.projectIconCache) private var sharedProjectIconCache
@@ -357,17 +359,22 @@ public struct WorktreeListContent: View {
         // The caller owns the title: the compact path sets one for its push,
         // and the iPad sidebar shows none.
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    isAddSheetPresented = true
-                } label: {
-                    Label("Add Worktree", systemImage: "plus")
+            // A project's own list has New worktree under its tiles (LAYOUT-2.227).
+            if !isSidebar && destinationProjectID(in: merged) == nil {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        newWorktreeProjectID = nil
+                        isAddSheetPresented = true
+                    } label: {
+                        Label("Add Worktree", systemImage: "plus")
+                    }
+                    .accessibilityLabel("Add Worktree")
                 }
-                .accessibilityLabel("Add Worktree")
             }
         }
         .sheet(isPresented: $isAddSheetPresented) {
-            AddWorktreeSheetView(targets: addWorktreeTargets, initialProjectID: destinationProjectID(in: merged) ?? (isSidebar ? selectedMergedID : nil)) { submission in
+            AddWorktreeSheetView(targets: addWorktreeTargets,
+                                 initialProjectID: newWorktreeProjectID ?? destinationProjectID(in: merged) ?? (isSidebar ? selectedMergedID : nil)) { submission in
                 beginCreatingWorktree(submission)
             }
         }
@@ -493,7 +500,7 @@ public struct WorktreeListContent: View {
         let projects = merged.projects.map(\.representative)
         let activityCounts = SidebarActivityCounts(items: SidebarProjection.activity(live))
         let working = merged.rekeyed(activityCounts.workingByProject)
-        let counts = merged.rekeyed(SidebarActivityCounts(items: live.flatMap { navigation.worktreeContext($0).pending }).attentionByProject)
+        let counts = merged.rekeyed(SidebarWaitingCounts.byProject(live) { navigation.worktreeContext($0) })
         let icons = mergedIcons(merged)
         if !isSidebar, let projectID = destinationProjectID(in: merged) {
             projectDetail(merged: merged, projectID: projectID)
@@ -584,9 +591,8 @@ public struct WorktreeListContent: View {
         }
     }
 
-    private func sectionTitle(_ title: String, count: Int? = nil, tone: WorktreeListSectionTitle.Tone,
-                              isCollapsed: Binding<Bool>? = nil) -> some View {
-        WorktreeListSectionTitle(title, count: count, tone: tone, isCollapsed: isCollapsed)
+    private func sectionTitle(_ title: String, count: Int? = nil, tone: WorktreeListSectionTitle.Tone) -> some View {
+        WorktreeListSectionTitle(title, count: count, tone: tone)
             .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
@@ -612,11 +618,14 @@ public struct WorktreeListContent: View {
 
     /// Row identity is unique across projects, so one set of sections covers a
     /// project screen, the Projects screen, and a hold shared between them.
+    /// The Projects screen has no tiles, so waiting pinned agents join its Needs you;
+    /// a project's own list keeps them on their tiles.
     private func activitySections(_ merged: SidebarMergedRows, projectIDs: [String]? = nil,
                                   holding hold: WorktreeActivitySections.Hold?) -> WorktreeActivitySections {
         let parts = (projectIDs ?? merged.projects.map(\.id)).map { merged.sections(for: $0) }
         return WorktreeActivitySections.make(pinned: parts.flatMap(\.pinned), temporary: parts.flatMap(\.temporary),
-                                             context: { navigation.worktreeContext($0) }, holding: hold)
+                                             context: { navigation.worktreeContext($0) }, holding: hold,
+                                             pullsWaitingPins: projectIDs == nil)
     }
 
     private func mergedIcons(_ merged: SidebarMergedRows) -> [String: Data] {
@@ -871,15 +880,15 @@ public struct WorktreeListContent: View {
                             ForEach(projectIDs, id: \.self) { projectID in
                                 let sections = activitySections(merged, projectIDs: [projectID], holding: rowHold)
                                 Section {
+                                    if !sections.pinned.isEmpty {
+                                        pinnedTiles(sections.pinned, projectID: projectID)
+                                    }
+                                    if merged.project(id: projectID)?.representative.isAvailable == true {
+                                        newWorktreeRow(projectID: projectID, merged: merged)
+                                    }
                                     if !sections.needsYou.isEmpty {
                                         sectionTitle("Needs you", count: sections.needsYou.count, tone: .attention)
                                         ForEach(sections.needsYou) { row in worktreeRow(row, merged: merged).moveDisabled(true) }
-                                    }
-                                    if !sections.pinned.isEmpty {
-                                        sectionTitle("Pinned", tone: .standard(sectionTitleColor), isCollapsed: pinnedCollapsed(projectID))
-                                        if !pinnedCollapsed(projectID).wrappedValue {
-                                            pinnedNodes(sections.pinned, projectID: projectID, merged: merged)
-                                        }
                                     }
                                     if !sections.working.isEmpty {
                                         sectionTitle("Working", count: sections.working.count, tone: .standard(sectionTitleColor))
@@ -951,48 +960,130 @@ public struct WorktreeListContent: View {
     }
 
     private func recordViewedStop(_ worktree: WorktreePanes) {
+        // STATE-2.13: moving on from the last opened worktree means its
+        // finished turn was seen; its owning host retires it.
+        if let previous = lastOpenedWorktree, MergedWorktreeList.identity(previous) != MergedWorktreeList.identity(worktree) {
+            retireFinishedTurn(previous)
+        }
+        lastOpenedWorktree = worktree
         if let stop = SidebarProjection.activity([worktree]).first(where: { $0.agentStop != nil }) {
             navigation.opened(stop)
         }
     }
 
-    private func pinnedCollapsed(_ projectID: String) -> Binding<Bool> {
-        let key = "sidebar.pinned.collapsed.\(projectID)"
-        return Binding(
-            get: { collapsedPinned[key] ?? UserDefaults.standard.bool(forKey: key) },
-            set: { collapsedPinned[key] = $0; UserDefaults.standard.set($0, forKey: key) })
+    private func retireFinishedTurn(_ worktree: WorktreePanes) {
+        let current = feed.state.rows.first { MergedWorktreeList.identity($0) == MergedWorktreeList.identity(worktree) } ?? worktree
+        guard let stop = SidebarProjection.activity([current]).first(where: { $0.agentStop != nil }) else { return }
+        let supportsExact = feed.state.projects.first { $0.id == stop.projectID }?.supportsWorktreeEditing == true
+        guard let request = SidebarInteractionPolicy.acknowledgementOnLeave(for: stop, supportsExactAcknowledgement: supportsExact),
+              let provider = route(for: current)?.provider else { return }
+        Task { _ = try? await RelayedWorktreeManagementClient.send(request, using: provider) }
     }
 
-    /// Rows and folders at one level. Only sibling rows can be reordered.
-    private func pinnedNodes(_ nodes: [MergedWorktreeNode], projectID: String, merged: SidebarMergedRows) -> AnyView {
-        AnyView(ForEach(nodes) { node in
-            switch node {
-            case .row(let row):
-                worktreeRow(row, merged: merged)
-                    .moveDisabled(!listEditMode.isEditing || row.row.isMainCheckout || row.row.state.isInFlight || orderMutationInFlight)
-            case .folder(let id, let name, let children):
-                DisclosureGroup(isExpanded: Binding(
-                    get: { !collapsedFolders.contains(projectID + id) },
-                    set: { if $0 { collapsedFolders.remove(projectID + id) } else { collapsedFolders.insert(projectID + id) } }
-                )) {
-                    pinnedNodes(children, projectID: projectID, merged: merged)
-                } label: { Label(name, systemImage: "folder").font(.callout) }
-                .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
-                .moveDisabled(true)
+    /// Pinned agents as tiles that light up in place (LAYOUT-2.225): tap opens,
+    /// a long press offers the row's menu, and dragging one onto another reorders.
+    private func pinnedTiles(_ rows: [MergedWorktreeRow], projectID: String) -> some View {
+        let words = Dictionary(zip(rows.map(\.id), PinnedTile.words(for: rows.map {
+            PinnedTile.Name(name: $0.relativeName, isMainCheckout: $0.row.isMainCheckout, branch: $0.row.displayBranch)
+        })), uniquingKeysWith: { first, _ in first })
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: PinnedTile.minimumWidth), spacing: 8)], spacing: 8) {
+            ForEach(rows) { row in
+                pinnedTile(row, word: words[row.id] ?? row.relativeName)
+                    .draggable(row.id)
+                    .dropDestination(for: String.self) { ids, _ in
+                        guard let source = ids.first, source != row.id, !orderMutationInFlight,
+                              let from = rows.firstIndex(where: { $0.id == source }),
+                              let to = rows.firstIndex(where: { $0.id == row.id }) else { return false }
+                        movePinned(source: source, target: row.id, after: from < to, projectID: projectID)
+                        return true
+                    }
             }
-        }.onMove { offsets, destination in
-            guard let source = offsets.first, source != destination, source + 1 != destination else { return }
-            let target = destination > source ? destination - 1 : destination
-            guard nodes.indices.contains(target), case .row(let moving) = nodes[source], case .row(let relativeTo) = nodes[target] else { return }
-            movePinned(source: moving.id, target: relativeTo.id, after: destination > source, projectID: projectID)
-        })
+        }
+        .padding(.vertical, 6)
+        .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .moveDisabled(true)
+    }
+
+    private func pinnedTile(_ row: MergedWorktreeRow, word: String) -> some View {
+        let wt = row.row
+        let context = navigation.worktreeContext(wt)
+        let isCached = row.availability == .wakeable
+        let state = PinnedTileState.resolve(status: SidebarRowStatus.resolve(context: context, worktree: wt, isCached: isCached),
+                                            isCached: isCached)
+        let memberID = SidebarProjection.projectID(wt)
+        let project = feed.state.projects.first { $0.id == memberID }
+            ?? SidebarProject(id: memberID, repositoryID: wt.repositoryID ?? memberID, name: wt.repoDisplayName)
+        let host = row.showsHostLabel ? row.hostLabel : nil
+        return PinnedTileFace(identity: wt.iconIdentity, project: project,
+                              imageData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
+                              word: word,
+                              hostBadge: host, state: state, isSelected: isSelected(wt),
+                              fill: theme?.foreground.opacity(0.07) ?? Color.primary.opacity(0.06),
+                              selectedFill: theme?.foreground.opacity(0.16) ?? Color.primary.opacity(0.12))
+            .onTapGesture { beginSelectingWorktree(wt) }
+            .contextMenu {
+                if !wt.state.isInFlight {
+                    MobileWorktreeRowMenu(context: context, onReport: { showReport(wt) }, onDismiss: { dismissRequest(wt) })
+                }
+                // A tile has no swipe, so the row's swipe action lives here.
+                if let action = WorktreePickerGrouping.swipeAction(for: wt) {
+                    Button(role: .destructive) {
+                        pendingDelete = PendingDelete(worktree: wt, action: action)
+                    } label: {
+                        Label(action.buttonLabel, systemImage: action == .dismiss ? "eye.slash" : "trash")
+                    }
+                }
+            }
+            .modifier(reportPopover(wt))
+            .pinnedTileAccessibility(name: row.relativeName, host: host, state: state, isSelected: isSelected(wt)) {
+                beginSelectingWorktree(wt)
+            }
+            .id(row.id)
+    }
+
+    /// LAYOUT-2.227: where a new worktree starts, directly under the tiles.
+    private func newWorktreeRow(projectID: String, merged: SidebarMergedRows) -> some View {
+        Button {
+            newWorktreeProjectID = projectID
+            isAddSheetPresented = true
+        } label: {
+            Label("New worktree", systemImage: "plus")
+                .font(.subheadline)
+                .foregroundStyle(sectionTitleColor)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("New worktree in \(merged.project(id: projectID)?.name ?? "this project")")
+        .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .moveDisabled(true)
+    }
+
+    private func reportPopover(_ wt: WorktreePanes) -> ReportPopover {
+        let reportID = MergedWorktreeList.identity(wt)
+        return ReportPopover(isPresented: Binding(
+            get: { reportWorktreeID == reportID },
+            set: { if !$0, reportWorktreeID == reportID { closeReport() } }
+        )) {
+            MobileWorktreeReportContent(context: navigation.worktreeContext(wt), onOpen: {
+                await openReportTarget(MobilePaneAttention.openTarget(for: navigation.worktreeContext(wt)), worktrees: feed.state.rows)
+            }, onDismiss: {
+                dismissRequest(wt)
+                closeReport()
+            },
+            onClose: { if reportWorktreeID == reportID { closeReport() } },
+            host: feed.host(for: wt), remoteConnectionProvider: feed.host(for: wt).map { feed.provider(for: $0) })
+        }
     }
 
     @ViewBuilder
     private func worktreeRow(_ row: MergedWorktreeRow, merged: SidebarMergedRows, namesProject: Bool = false) -> some View {
         let wt = row.row
         let memberID = SidebarProjection.projectID(wt)
-        let reportID = MergedWorktreeList.identity(wt)
         let member = feed.state.projects.first { $0.id == memberID }
         WorktreeBlock(
             worktree: wt,
@@ -1014,20 +1105,7 @@ public struct WorktreeListContent: View {
             onRemove: { pendingDelete = PendingDelete(worktree: wt, action: .delete) },
             onDismissRequest: { dismissRequest(wt) }
         )
-        .popover(isPresented: Binding(
-            get: { reportWorktreeID == reportID },
-            set: { if !$0, reportWorktreeID == reportID { closeReport() } }
-        ), arrowEdge: .leading) {
-            MobileWorktreeReportContent(context: navigation.worktreeContext(wt), onOpen: {
-                await openReportTarget(MobilePaneAttention.openTarget(for: navigation.worktreeContext(wt)), worktrees: feed.state.rows)
-            }, onDismiss: {
-                dismissRequest(wt)
-                closeReport()
-            },
-            onClose: { if reportWorktreeID == reportID { closeReport() } },
-            host: feed.host(for: wt), remoteConnectionProvider: feed.host(for: wt).map { feed.provider(for: $0) })
-            .presentationCompactAdaptation(.sheet)
-        }
+        .modifier(reportPopover(wt))
         .id(wt.sidebar?.id ?? wt.path)
         .background(GeometryReader { geometry in
             let frame = geometry.frame(in: .named(worktreeScrollSpace))
@@ -1324,4 +1402,15 @@ public struct WorktreeListContent: View {
 
 }
 
+/// A row's or tile's report, a popover that becomes a sheet on iPhone.
+private struct ReportPopover: ViewModifier {
+    @Binding var isPresented: Bool
+    @ViewBuilder let content: () -> MobileWorktreeReportContent
+
+    func body(content view: Content) -> some View {
+        view.popover(isPresented: $isPresented, arrowEdge: .leading) {
+            content().presentationCompactAdaptation(.sheet)
+        }
+    }
+}
 #endif

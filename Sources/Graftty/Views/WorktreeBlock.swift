@@ -44,6 +44,9 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
     let onSelect: () -> Void
     let menu: (NSView) -> NSMenu
     var onDrop: ((WorktreeRowDrop, WorktreeDropPlacement) -> Bool)? = nil
+    /// The row's view identity. LAYOUT-2.233: in the merged list it names the
+    /// host too, because two hosts can have worktrees at the same path.
+    var scrollID: String? = nil
     @ViewBuilder var identity: () -> Identity
     @ViewBuilder let heading: () -> Heading
     @ViewBuilder let status: () -> Status
@@ -58,7 +61,7 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
         } content: {
             Button(action: onSelect) { heading() }
                 .buttonStyle(.plain)
-                .id(worktree.path)
+                .id(scrollID ?? worktree.path)
                 .rightClickMenu(anchored: menu)
             status().rightClickMenu(anchored: menu)
         }

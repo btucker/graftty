@@ -58,6 +58,21 @@ struct WorktreeRow: View {
         return items
     }
 
+    enum TrailingItem: Hashable { case removeButton, divergence }
+
+    /// @spec DIVERGE-1.1
+    /// The name line ends with the PR/MR badge, and the divergence sits
+    /// right-aligned on the status line beneath it. A merged worktree's
+    /// remove button takes the divergence's place, on the name line.
+    static func trailingItems(canRemove: Bool) -> (nameLine: [TrailingItem], statusLine: [TrailingItem]) {
+        canRemove ? ([.removeButton], []) : ([], [.divergence])
+    }
+
+    var canRemove: Bool {
+        onRemove != nil && SidebarMergedWorktreeRemoval.isAvailable(
+            prState: prBadge?.state, isMainCheckout: isMainCheckout, state: entry.state.wireState)
+    }
+
     var body: some View {
         HStack(spacing: WorktreeRowGeometry.spacing) {
             ForEach(Self.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil, hasPR: prBadge != nil,
@@ -91,17 +106,10 @@ struct WorktreeRow: View {
 
                 }
             }
-            if let onRemove, SidebarMergedWorktreeRemoval.isAvailable(
-                prState: prBadge?.state, isMainCheckout: isMainCheckout, state: entry.state.wireState) {
+            if let onRemove, Self.trailingItems(canRemove: canRemove).nameLine.contains(.removeButton) {
                 SidebarRemoveWorktreeButton(name: displayName, color: theme.sidebarSecondaryText, onRemove: onRemove)
                     .frame(width: 24, height: 20)
                     .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.removeWorktree: $0] }
-            } else {
-                WorktreeRowGutter(
-                    stats: entry.state.hasOnDiskWorktree ? stats : nil,
-                    baseRef: baseRef,
-                    theme: theme
-                ).fixedSize()
             }
         }
         .font(.system(size: 11))
@@ -109,6 +117,14 @@ struct WorktreeRow: View {
         .padding(.trailing, WorktreeRowGeometry.horizontalInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    /// The divergence summary for the status line (DIVERGE-1.1), or nil when
+    /// the remove button takes its place or there is nothing to show.
+    var statusLineDivergence: (some View)? {
+        let shows = Self.trailingItems(canRemove: canRemove).statusLine.contains(.divergence)
+            && entry.state.hasOnDiskWorktree && !(stats?.isEmpty ?? true)
+        return shows ? WorktreeRowGutter(stats: stats, baseRef: baseRef, theme: theme).fixedSize() : nil
     }
 
     /// @spec LAYOUT-2.26

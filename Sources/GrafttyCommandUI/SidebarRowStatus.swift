@@ -18,13 +18,25 @@ public enum SidebarRowStatus: Equatable, Sendable {
         }
     }
 
+    /// Everything waiting for the person: a request, or a finished turn they
+    /// haven't opened. This is what Needs you, tile borders, and counts show.
+    public var waitsForUser: Bool {
+        switch self {
+        case .question, .notification: return true
+        case .whereWeAre(_, let isUnread): return isUnread
+        case .working, .none: return false
+        }
+    }
+
     /// @spec LAYOUT-2.211
     /// How strongly to draw the row's identity. Emoji wash out faster against
     /// a light background, so light schemes fade a little less.
     public func identityOpacity(isDark: Bool) -> Double {
         switch self {
         case .question, .notification, .working: return 1
-        case .whereWeAre, .none: return isDark ? 0.55 : 0.6
+        // Everything in Needs you is at full strength.
+        case .whereWeAre(_, let isUnread): return isUnread ? 1 : (isDark ? 0.55 : 0.6)
+        case .none: return isDark ? 0.55 : 0.6
         }
     }
 
@@ -43,9 +55,11 @@ public enum SidebarRowStatus: Equatable, Sendable {
         let completed = context.brief?.completed.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         // A stop stays unread until viewed, whether or not it asked anything.
         // It outranks pane liveness, which lags behind it, unless the agent resumed.
-        let hasUnreadStop = worktree.sidebar?.unseenAgentStop != nil && !context.isRunning
+        let hasUnreadStop = context.hasUnseenStop
         func whereWeAre(isUnread: Bool) -> SidebarRowStatus {
-            completed.isEmpty ? .none : .whereWeAre(completed, isUnread: isUnread)
+            // A stop without a recap still waits for the user, so it says who stopped.
+            if completed.isEmpty, isUnread, let stop = worktree.sidebar?.unseenAgentStop { return .whereWeAre(stop.title, isUnread: true) }
+            return completed.isEmpty ? .none : .whereWeAre(completed, isUnread: isUnread)
         }
         if isCached { return whereWeAre(isUnread: false) }
         if let question = context.question { return .question(question, paneID: context.questionPaneID) }

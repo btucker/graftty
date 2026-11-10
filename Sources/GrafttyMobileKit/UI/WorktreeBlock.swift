@@ -156,17 +156,19 @@ struct WorktreeBlockIdentity: View {
     let theme: GhosttyThemeColors?
     let status: SidebarRowStatus
     let isOpening: Bool
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         if worktree.state.isInFlight || isOpening {
             // A blank line of the title's font, padded like the title, centres
             // the spinner on the name's line.
             Text(" ")
-                .font(.system(size: WorktreeRowContent.titleSize, weight: .semibold))
+                .font(.system(size: WorktreeRowContent.titleSize(for: sizeClass), weight: .semibold))
                 .hidden()
                 .frame(maxWidth: .infinity)
                 .overlay { ProgressView().controlSize(.mini) }
-                .padding(.vertical, WorktreeRowContent.verticalPadding)
+                .padding(.top, WorktreeRowContent.verticalPadding)
+                .padding(.bottom, WorktreeRowContent.bottomPadding)
                 .frame(maxHeight: .infinity, alignment: .top)
         } else if worktree.iconIdentity != .none {
             SidebarWorktreeRowIdentity(identity: worktree.iconIdentity,
@@ -204,15 +206,25 @@ struct WorktreeRowContent: View {
     /// When it asked or was last active.
     var time: Date? = nil
 
-    static let titleSize: CGFloat = 15
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// IPAD-1.35: the iPad sidebar is narrow beside the terminal, so names
+    /// are smaller there than on a phone's full-width list.
+    static func titleSize(for sizeClass: UserInterfaceSizeClass?) -> CGFloat {
+        sizeClass == .regular ? 13 : 15
+    }
+    /// Above the name, so it lines up with the identity beside it.
     static let verticalPadding: CGFloat = 4
+    /// IOS-13.22: below the name. The status line follows directly, so the
+    /// two read as one block rather than as separate lines.
+    static let bottomPadding: CGFloat = 0
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     primaryText
-                        .font(.system(size: Self.titleSize, weight: .semibold))
+                        .font(.system(size: Self.titleSize(for: sizeClass), weight: .semibold))
                         .lineLimit(1).truncationMode(.tail)
                     if let hostText {
                         Text(hostText)
@@ -239,7 +251,8 @@ struct WorktreeRowContent: View {
                 .fixedSize()
             }
         }
-        .padding(.vertical, Self.verticalPadding)
+        .padding(.top, Self.verticalPadding)
+        .padding(.bottom, Self.bottomPadding)
         .contentShape(Rectangle())
     }
 

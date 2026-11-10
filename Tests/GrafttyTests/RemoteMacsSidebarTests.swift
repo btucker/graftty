@@ -20,8 +20,8 @@ struct RemoteMacsSidebarTests {
         let path = "/repo/feature"
         var selections: [RemoteMacSidebarSelection?] = []
         func content(_ identity: RemoteMacIdentity?) -> some View {
-            Color.clear.onRemoteWorktreeSelectionChange(identity: identity, path: path) {
-                selections.append($0)
+            Color.clear.onRemoteWorktreeSelectionChange(identity: identity, path: path) { _, current in
+                selections.append(current)
             }
         }
         let hosting = NSHostingView(rootView: content(first))

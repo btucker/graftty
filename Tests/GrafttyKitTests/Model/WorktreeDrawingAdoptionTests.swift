@@ -142,3 +142,73 @@ struct WorktreeDrawingRecapStrippingTests {
         #expect(state.repos[0].worktrees[1].drawing?.svg == firstDrawing)
     }
 }
+
+private let wideDrawing = WorktreeDrawingSVGTests.svg("<rect x=\"8\" y=\"8\" width=\"80\" height=\"48\" fill=\"accent\"/>", viewBox: "0 0 96 64")
+private let otherWideDrawing = WorktreeDrawingSVGTests.svg("<circle cx=\"48\" cy=\"32\" r=\"20\" fill=\"primary\"/>", viewBox: "0 0 96 64")
+
+@Suite("@spec AGENT-3.43: When a worktree's adopted drawing uses the older square canvas, the application shall replace it with the first wide drawing a valid recap carries, even without purposeChanged, and keep its hue.")
+struct WorktreeWideRedrawTests {
+    @Test func squareDrawingTakesOneWideRedraw() {
+        var repos = repos()
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: firstDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        let hue = repos[0].worktrees[1].drawingHue
+        // Another square drawing still needs a purpose change.
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: secondDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.svg == firstDrawing)
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: wideDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.svg == wideDrawing)
+        #expect(repos[0].worktrees[1].drawingHue == hue)
+        // Once wide, the usual rule applies again.
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: otherWideDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.svg == wideDrawing)
+    }
+}
+
+
+@Suite("@spec AGENT-3.45: When the application adopts a recap's drawing, it shall store the recap's iconDescription of at most 120 characters with that drawing, keep the description of a drawing it does not adopt out of the worktree, keep saved drawings without a description decodable, and reject a recap whose iconDescription is longer.")
+struct WorktreeDrawingDescriptionTests {
+    private func described(_ icon: String, _ description: String?, purposeChanged: Bool? = nil) -> AttentionRecap {
+        var described = recap(icon: icon, purposeChanged: purposeChanged)
+        described.iconDescription = description
+        return described
+    }
+
+    @Test func adoptedDrawingKeepsItsDescription() {
+        var repos = repos()
+        SidebarHostNavigation.adoptReportedDrawing(described(wideDrawing, "a clock beside a git branch"),
+                                                   worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.description == "a clock beside a git branch")
+    }
+
+    @Test func ignoredDrawingLeavesDescriptionAlone() {
+        var repos = repos()
+        SidebarHostNavigation.adoptReportedDrawing(described(wideDrawing, "a clock beside a git branch"),
+                                                   worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        SidebarHostNavigation.adoptReportedDrawing(described(otherWideDrawing, "a ship in a bottle"),
+                                                   worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.description == "a clock beside a git branch")
+        SidebarHostNavigation.adoptReportedDrawing(described(otherWideDrawing, nil, purposeChanged: true),
+                                                   worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.svg == otherWideDrawing)
+        #expect(repos[0].worktrees[1].drawing?.description == nil)
+    }
+
+    @Test func longDescriptionInvalidatesRecap() {
+        #expect(described(wideDrawing, String(repeating: "a", count: 120)).isValid)
+        #expect(!described(wideDrawing, String(repeating: "a", count: 121)).isValid)
+        #expect(!described(wideDrawing, "  ").isValid)
+    }
+
+    @Test func savedDrawingWithoutDescriptionDecodes() throws {
+        let json = #"{"svg":"<svg viewBox='0 0 96 64'></svg>","revision":"abc:25"}"#
+        let drawing = try JSONDecoder().decode(WorktreeDrawing.self, from: Data(json.utf8))
+        #expect(drawing.description == nil)
+        #expect(drawing.revision == "abc:25")
+    }
+
+    @Test func recapDecodesDescription() throws {
+        let json = #"{"title":"t","completed":"c","next":"n","iconDescription":"a clock beside a git branch"}"#
+        let decoded = try JSONDecoder().decode(AttentionRecap.self, from: Data(json.utf8))
+        #expect(decoded.iconDescription == "a clock beside a git branch")
+    }
+}

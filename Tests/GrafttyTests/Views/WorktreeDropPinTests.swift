@@ -14,11 +14,10 @@ struct WorktreeDropPinTests {
         #expect(!WorktreeReorderTarget.canDrag(fixture.home, in: fixture.repo, isEnabled: true))
     }
 
-    @Test("@spec LAYOUT-2.113: When a user drops an eligible temporary local worktree on the Pinned Agents header or a pinned row in its repository, the application shall pin it, reveal the section, preserve its workspace and existing peer order, and keep the default checkout first, including when temporary worktrees use recent activity order.")
-    func headerDropPinsAndRevealsRoleWithoutChangingWorkspace() throws {
+    @Test("@spec LAYOUT-2.113: When a user drops an eligible temporary local worktree on the pinned tile grid or a pinned tile in its repository, the application shall pin it, preserve its workspace and existing peer order, and keep the default checkout first, including when temporary worktrees use recent activity order.")
+    func gridDropPinsWithoutChangingWorkspace() throws {
         for mode in [WorktreeOrderMode.manual, .recentActivity] {
-            var fixture = makeFixture(mode: mode)
-            fixture.repo.isPinnedCollapsed = true
+            let fixture = makeFixture(mode: mode)
             var state = AppState(repos: [fixture.repo])
             let payload = TransferableWorktreeMove(repoID: fixture.repo.id, worktreeID: fixture.task.id)
             #expect(WorktreeDropReorder.pin(payload, repoID: fixture.repo.id, to: &state))
@@ -27,7 +26,6 @@ struct WorktreeDropPinTests {
             #expect(state.worktree(forPath: fixture.task.path) == expected)
             #expect(state.repos[0].worktrees.filter { $0.id != fixture.task.id }
                 == fixture.repo.worktrees.filter { $0.id != fixture.task.id })
-            #expect(!state.repos[0].isPinnedCollapsed)
             #expect(SidebarHostNavigation.displayedWorktrees(in: state.repos[0]).map(\.id)
                 == [fixture.home.id, fixture.role.id, fixture.task.id, fixture.other.id])
             let restored = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(state))
@@ -91,24 +89,21 @@ struct WorktreeDropPinTests {
         #expect(state.worktree(forPath: fixture.task.path)?.isPinned == true)
     }
 
-    @Test func folderAndPendingNeighborBoundariesKeepTheNewRoleAppended() {
-        for pendingNeighbor in [false, true] {
-            let home = WorktreeEntry(path: "/repo", branch: "trunk")
-            let task = WorktreeEntry(path: pendingNeighbor ? "/repo/.worktrees/task" : "/repo/.worktrees/research/task", branch: "task")
-            var neighbor = WorktreeEntry(path: pendingNeighbor ? "/repo/.worktrees/neighbor" : "/repo/.worktrees/research/lead", branch: "neighbor",
-                state: pendingNeighbor ? .creating : .closed)
-            neighbor.isPinned = true
-            var target = WorktreeEntry(path: "/repo/.worktrees/target", branch: "target")
-            target.isPinned = true
-            let repo = RepoEntry(path: home.path, displayName: "Repo", worktrees: [home, task, neighbor, target])
-            var state = AppState(repos: [repo])
-            #expect(WorktreeRowDrop.worktree(.init(repoID: repo.id, worktreeID: task.id))
-                .apply(repoID: repo.id, targetWorktreeID: target.id, placement: .before,
-                       allowsReordering: true, to: &state) == .pinned)
-            #expect(state.repos[0].worktrees.last?.id == task.id)
-            #expect(state.repos[0].worktrees.last?.isPinned == true)
-            #expect(state.repos[0].worktrees.filter { $0.id != task.id } == [home, neighbor, target])
-        }
+    @Test func pendingNeighborKeepsTheNewRoleAppended() {
+        let home = WorktreeEntry(path: "/repo", branch: "trunk")
+        let task = WorktreeEntry(path: "/repo/.worktrees/task", branch: "task")
+        var neighbor = WorktreeEntry(path: "/repo/.worktrees/neighbor", branch: "neighbor", state: .creating)
+        neighbor.isPinned = true
+        var target = WorktreeEntry(path: "/repo/.worktrees/target", branch: "target")
+        target.isPinned = true
+        let repo = RepoEntry(path: home.path, displayName: "Repo", worktrees: [home, task, neighbor, target])
+        var state = AppState(repos: [repo])
+        #expect(WorktreeRowDrop.worktree(.init(repoID: repo.id, worktreeID: task.id))
+            .apply(repoID: repo.id, targetWorktreeID: target.id, placement: .before,
+                   allowsReordering: true, to: &state) == .pinned)
+        #expect(state.repos[0].worktrees.last?.id == task.id)
+        #expect(state.repos[0].worktrees.last?.isPinned == true)
+        #expect(state.repos[0].worktrees.filter { $0.id != task.id } == [home, neighbor, target])
     }
 
     @Test func droppingBackOnTemporaryRowsDoesNotUnpin() {

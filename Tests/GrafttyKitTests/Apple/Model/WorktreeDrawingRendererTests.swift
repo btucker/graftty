@@ -22,7 +22,7 @@ private func pixel(_ image: (width: Int, bytes: [UInt8]), x: Int, y: Int) -> [UI
 
 private let square = WorktreeDrawingSVGTests.svg("<rect x=\"16\" y=\"16\" width=\"32\" height=\"32\" fill=\"primary\"/>")
 
-@Suite("@spec LAYOUT-2.201: When a host serves a worktree drawing, the application shall fill its palette tokens from the worktree's hue, render it to a 256-pixel PNG with a white outline, and answer only requests whose revision matches the current drawing.")
+@Suite("@spec LAYOUT-2.201: When a host serves a worktree drawing, the application shall fill its palette tokens from the worktree's hue, render it to a PNG 256 pixels tall that keeps the drawing's width-to-height ratio, with a white outline, and answer only requests whose revision matches the current drawing.")
 struct WorktreeDrawingRendererTests {
     @Test func rendersOpaquePixelsForTokenDrawing() throws {
         let png = try #require(WorktreeDrawingRenderer.png(svg: square, hue: 25))
@@ -30,6 +30,15 @@ struct WorktreeDrawingRendererTests {
         #expect(image.width == 256)
         #expect(pixel(image, x: 128, y: 128)[3] == 255)
         #expect(pixel(image, x: 4, y: 4)[3] == 0)
+    }
+
+    @Test func wideDrawingKeepsItsShape() throws {
+        let wide = WorktreeDrawingSVGTests.svg("<rect x=\"8\" y=\"16\" width=\"32\" height=\"32\" fill=\"primary\"/>", viewBox: "0 0 96 64")
+        let image = try pixels(#require(WorktreeDrawingRenderer.png(svg: wide, hue: 25)))
+        #expect(image.width == 384)
+        // A square stays square: 32 units at 4 pixels each, starting 8 units in.
+        #expect(pixel(image, x: 32 + 64, y: 128)[3] == 255)
+        #expect(pixel(image, x: 200, y: 128)[3] == 0)
     }
 
     @Test func primaryTokenUsesHue() throws {

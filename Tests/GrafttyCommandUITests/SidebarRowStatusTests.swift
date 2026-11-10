@@ -38,13 +38,14 @@ struct SidebarRowStatusTests {
         #expect(!SidebarRowStatus.none.needsAttention)
     }
 
-    @Test("@spec LAYOUT-2.211: While a worktree row shows its emoji, the application shall draw it at full strength while the worktree asks for input or works, and fade it otherwise.")
+    @Test("@spec LAYOUT-2.211: While a worktree row shows its identity, the application shall draw it at full strength while the worktree waits for the user, including a finished turn the user has not opened, or works, and fade it otherwise.")
     func identityFadesWhenNothingIsHappening() {
-        for live in [SidebarRowStatus.question("q", paneID: nil), .notification("n", paneID: nil), .working("w")] {
+        for live in [SidebarRowStatus.question("q", paneID: nil), .notification("n", paneID: nil), .working("w"),
+                     .whereWeAre("w", isUnread: true)] {
             #expect(live.identityOpacity(isDark: true) == 1)
             #expect(live.identityOpacity(isDark: false) == 1)
         }
-        for idle in [SidebarRowStatus.whereWeAre("w", isUnread: true), .whereWeAre("w", isUnread: false), .none] {
+        for idle in [SidebarRowStatus.whereWeAre("w", isUnread: false), .none] {
             #expect(idle.identityOpacity(isDark: true) < 1)
             #expect(idle.identityOpacity(isDark: false) < 1)
         }

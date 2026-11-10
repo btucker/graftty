@@ -9,11 +9,6 @@ import Testing
 @Suite("DIVERGE — pending specs")
 struct DivergeTodo {
     @Test("""
-@spec DIVERGE-1.1: Each worktree entry in the sidebar shall display a trailing-aligned divergence indicator, placed to the left of the attention badge (or at the trailing edge when no attention badge is present).
-""", .disabled("not yet implemented"))
-    func diverge_1_1() async throws { }
-
-    @Test("""
 @spec DIVERGE-1.2: The indicator shall display zero, one, or both of the following on a single line, separated by a single space when both are present:
 """, .disabled("not yet implemented"))
     func diverge_1_2() async throws { }

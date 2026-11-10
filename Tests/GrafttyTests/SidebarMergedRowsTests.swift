@@ -100,8 +100,8 @@ struct SidebarMergedMoveTests {
     private let local = WorktreeOrigin(deviceID: .init(value: "mac"), deviceLabel: "MacBook", relayDepth: 0)
     private let box = WorktreeOrigin(deviceID: .init(value: "box"), deviceLabel: "build-box", relayDepth: 0)
 
-    private func pin(_ name: String, _ owner: WorktreeOrigin, rank: String?) -> WorktreePanes {
-        WorktreePanes(path: "/\(owner.deviceID.value)/\(name)", displayName: name, repoDisplayName: "app", repositoryID: "/\(owner.deviceID.value)", displayBranch: name, state: .running,
+    private func pin(_ name: String, _ owner: WorktreeOrigin, rank: String?, state: WorktreeWireState = .running) -> WorktreePanes {
+        WorktreePanes(path: "/\(owner.deviceID.value)/\(name)", displayName: name, repoDisplayName: "app", repositoryID: "/\(owner.deviceID.value)", displayBranch: name, state: state,
             isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, origin: owner,
             sidebar: .init(id: "\(owner.deviceID.value):repo:\(name)", projectID: "\(owner.deviceID.value):repo", isPinned: true, pinnedRank: rank))
     }
@@ -119,10 +119,19 @@ struct SidebarMergedMoveTests {
         #expect(writes.map(\.row.row.displayName) == ["c"])
         #expect(writes[0].rank > "a" && writes[0].rank < "b")
     }
-    @Test func pinnedDragStaysAmongSiblings() {
+    /// Tiles are one flat grid, so names that look like folders don't fence a drag.
+    @Test func pinnedDragCrossesFolderLikeNames() {
         let a = pin("agents/a", local, rank: "a"), b = pin("agents/b", box, rank: "b"), c = pin("solo", local, rank: "c")
-        #expect(merged([a, b, c]).pinnedMove(source: id(c), target: id(a), after: true, projectID: "origin:k/app", isWritable: { _ in true }) == nil)
-        #expect(merged([a, b, c]).pinnedMove(source: id(a), target: id(b), after: true, projectID: "origin:k/app", isWritable: { _ in true }) != nil)
+        let plan = merged([a, b, c]).pinnedMove(source: id(c), target: id(a), after: true, projectID: "origin:k/app", isWritable: { _ in true })
+        guard case .ranks(let writes)? = plan else { Issue.record("\(String(describing: plan))"); return }
+        #expect(writes.map(\.row.row.displayName) == ["solo"])
+        #expect(writes[0].rank > "a" && writes[0].rank < "b")
+    }
+    /// Mobile tiles have no drag gate of their own, so the plan refuses rows being created or deleted.
+    @Test func inFlightTilesDontMove() {
+        let a = pin("a", local, rank: "a"), b = pin("b", box, rank: "b"), creating = pin("new", local, rank: "c", state: .creating)
+        #expect(merged([a, b, creating]).pinnedMove(source: id(creating), target: id(a), after: false, projectID: "origin:k/app", isWritable: { _ in true }) == nil)
+        #expect(merged([a, b, creating]).pinnedMove(source: id(b), target: id(creating), after: true, projectID: "origin:k/app", isWritable: { _ in true }) == nil)
     }
     @Test func droppingARowOnItselfMovesNothing() {
         let a = pin("a", local, rank: "a"), b = pin("b", box, rank: "b"), c = pin("c", local, rank: "c")
@@ -188,13 +197,13 @@ struct SidebarSleepingRowsTests {
         SidebarProject(id: "\(owner.deviceID.value):repo", repositoryID: "/r", name: "app", owner: owner, isAvailable: available, originKey: "k/app")
     }
 
-    @Test func hostTextNamesDisconnectedWithoutHostOnTemporaryRows() {
+    @Test func hostTextNamesHostAndDisconnectedOnTemporaryRowsElsewhere() {
         let merged = SidebarMergedRows.make(projects: [project(local), project(mini, available: false)], localRows: [row("here", local)], remoteRows: [row("sat", mini)],
             localDeviceID: local.deviceID, availability: { $0.owner?.deviceID == self.mini.deviceID ? .wakeable : .reachable })
         let temporary = merged.sections(for: "origin:k/app").temporary
         let sleeping = try! #require(temporary.first { $0.row.displayName == "sat" })
         #expect(sleeping.availability == .wakeable)
-        #expect(SidebarMergedRows.hostText(sleeping, isLocal: false) == "not connected")
+        #expect(SidebarMergedRows.hostText(sleeping, isLocal: false) == "\(sleeping.hostLabel) · not connected")
         #expect(SidebarMergedRows.hostText(temporary.first { $0.row.displayName == "here" }!, isLocal: true) == nil)
     }
     @Test func hostTextIncludesHostOnPinnedRows() throws {

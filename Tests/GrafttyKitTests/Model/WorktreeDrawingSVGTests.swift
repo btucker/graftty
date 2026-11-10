@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec AGENT-3.33: When an agent submits a worktree drawing, the application shall accept only a 64-unit SVG of at most 16384 bytes built from allowlisted shapes, gradients and text whose paints are palette tokens or local gradient references, and reject scripts, event handlers, external references, embedded images and foreign content.")
+@Suite("@spec AGENT-3.33: When an agent submits a worktree drawing, the application shall accept only a 96-by-64 or 64-unit SVG of at most 16384 bytes built from allowlisted shapes, gradients and text whose paints are palette tokens or local gradient references, and reject scripts, event handlers, external references, embedded images and foreign content.")
 struct WorktreeDrawingSVGTests {
     static func svg(_ body: String, viewBox: String = "0 0 64 64") -> String {
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"\(viewBox)\">\(body)</svg>"
@@ -79,5 +79,22 @@ struct WorktreeDrawingSVGTests {
     @Test func rejectionsExplainThemselves() {
         #expect(WorktreeDrawingSVG.Rejection.element("script").description.contains("script"))
         #expect(WorktreeDrawingSVG.Rejection.malformed.description.contains("comments"))
+    }
+}
+
+@Suite("@spec AGENT-3.42: When an agent submits a worktree drawing, the application shall accept a wide 96-by-64 canvas as well as the older 64-unit square, reject any other canvas, and know which canvas a stored drawing uses.")
+struct WorktreeDrawingCanvasTests {
+    @Test func acceptsWideAndSquareOnly() throws {
+        let wide = WorktreeDrawingSVGTests.svg("<rect width=\"90\" height=\"60\" fill=\"primary\"/>", viewBox: "0 0 96 64")
+        #expect(try WorktreeDrawingSVG.validate(wide) == wide)
+        #expect(throws: WorktreeDrawingSVG.Rejection.malformed) {
+            try WorktreeDrawingSVG.validate(WorktreeDrawingSVGTests.svg("<rect width=\"9\" height=\"9\" fill=\"ink\"/>", viewBox: "0 0 128 64"))
+        }
+    }
+
+    @Test func readsTheCanvas() {
+        #expect(WorktreeDrawing(svg: "<svg viewBox='0 0 96 64'><rect width='9' height='9' fill='ink'/></svg>", hue: 10).canvas == .wide)
+        #expect(WorktreeDrawing(svg: WorktreeDrawingSVGTests.sample, hue: 10).canvas == .square)
+        #expect(WorktreeDrawingSVG.Canvas.wide.aspect == 1.5)
     }
 }

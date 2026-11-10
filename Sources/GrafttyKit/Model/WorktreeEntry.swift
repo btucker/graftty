@@ -361,10 +361,19 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     }
 
     /// Viewing a worktree clears notifications. Stopped agents still need
-    /// attention until provider progress or explicit occurrence dismissal.
+    /// attention until the user leaves (`leaveAttention`), provider progress,
+    /// or explicit occurrence dismissal.
     public mutating func viewAttention() {
         if attention?.source != .agentStop { attention = nil }
         paneAttention = paneAttention.filter { $0.value.source == .agentStop }
+    }
+
+    /// STATE-2.13: leaving a worktree for another means its finished turn was
+    /// seen. A turn that asks something stays until answered or dismissed.
+    public mutating func leaveAttention() {
+        if unseenAgentStop?.recap?.need?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+            unseenAgentStop = nil
+        }
     }
 
     /// Viewing a pane clears its notification while preserving agent requests.

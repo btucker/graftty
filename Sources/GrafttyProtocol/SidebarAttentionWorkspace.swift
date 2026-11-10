@@ -150,6 +150,13 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
         items.removeAll { $0.worktreeIdentity == target.worktreeIdentity }
     }
 
+    /// A finished turn that asks nothing never joins `items`, but dismissing it
+    /// still has to hide it until a later turn finishes.
+    public mutating func dismissFinishedTurn(_ item: SidebarActivityItem) {
+        guard item.agentStop != nil, let occurrence = item.occurrence else { return }
+        dismissed[item.id] = occurrence
+    }
+
     /// A report action may finish after another request reaches this worktree.
     public mutating func dismissOccurrence(_ item: SidebarActivityItem) {
         guard let occurrence = item.occurrence,

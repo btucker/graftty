@@ -1,0 +1,73 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sidebar reorganization</title><style>
+:root{--bg:#1d1f24;--panel:#2a2d34;--fg:#e8e8ea;--dim:#9a9ca3;--faint:#6b6e75;--line:#34373e;--attn:#f0a04b;--attnTint:rgba(240,160,75,.16);--work:#7aa8ff;--sel:rgba(255,255,255,.10)}
+*{box-sizing:border-box}
+body{margin:0;background:#15161a;color:var(--fg);font:13px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;padding:20px 16px}
+h1{font-size:18px;margin:0 0 4px}.lede{color:var(--dim);margin:0 0 18px;max-width:940px}
+.wrap{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
+.opt h2{font-size:14px;margin:0 0 8px}
+.win{display:flex;width:340px;background:var(--bg);border:1px solid var(--line);border-radius:10px;height:660px}
+.rail{width:46px;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0}
+.rail i{width:28px;height:28px;border-radius:7px;background:var(--panel);display:flex;align-items:center;justify-content:center;font-style:normal;font-size:11px;font-weight:700;color:var(--dim);position:relative}
+.rail i.on{background:#3a3d44;color:var(--fg)}
+.rail i b{position:absolute;right:-5px;top:-5px;background:var(--attn);color:#111;font-size:9px;border-radius:7px;padding:1px 4px}
+.col{flex:1;min-width:0;display:flex;flex-direction:column}
+.search{margin:10px;padding:5px 8px;border-radius:6px;background:var(--panel);color:var(--faint);font-size:12px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 10px 8px}
+.tile{position:relative;aspect-ratio:1.1;border-radius:10px;background:var(--panel);display:flex;align-items:center;justify-content:center;border:2px solid transparent}
+.tile svg{width:30px;height:30px;margin-bottom:10px}
+.tile.idle svg{opacity:.6}
+.tile.attn{border-color:var(--attn)}
+.tile.work{background:linear-gradient(var(--panel),var(--panel)) padding-box,conic-gradient(from var(--a,0deg),var(--work),transparent 40%,var(--work)) border-box;animation:spin 2.4s linear infinite}
+@property --a{syntax:"<angle>";inherits:false;initial-value:0deg}@keyframes spin{to{--a:360deg}}
+.tile.sleep{opacity:.45}.tile.sel{background:#40434b}
+.band{position:absolute;left:0;right:0;bottom:0;padding:3px 2px;border-radius:0 0 8px 8px;font:600 10px/1 -apple-system,sans-serif;text-align:center;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.78) 45%);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hb{position:absolute;top:3px;left:3px;font:700 8.5px/1 -apple-system,sans-serif;padding:2px 3px;border-radius:4px;background:rgba(0,0,0,.6);color:#d6d7dc}
+.moon{position:absolute;top:3px;right:4px;font-size:10px}
+.pop{position:absolute;z-index:5;top:calc(100% + 6px);left:-30px;width:220px;background:#f3f3f5;color:#111;border-radius:8px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.5);font-size:12px}
+.pop b{display:block}.pop .m{color:#555;font-size:11px;margin:2px 0 4px}.pop .q{background:#fde6c9;border-radius:4px;padding:2px 5px;color:#5a3300;display:inline-block}
+.divider{height:1px;background:var(--line);margin:2px 0 4px}
+.newline{color:var(--dim);padding:5px 18px;font-size:13px}
+.sec{font-size:11px;font-weight:600;color:var(--dim);padding:8px 14px 3px;display:flex;justify-content:space-between}.sec .n{color:var(--attn)}
+.r{display:grid;grid-template-columns:20px 1fr auto;column-gap:6px;row-gap:2px;padding:5px 10px 8px;margin:0 6px;border-radius:6px;align-items:center}
+.r.sel{background:var(--sel)}
+.r svg{width:18px;height:18px;grid-row:1}
+.r.faded svg{opacity:.55}
+.r .nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r .nm span{color:var(--faint);font-weight:400;font-size:12px;margin-left:5px}
+.prb{font:600 11.5px/1 -apple-system,sans-serif}.prb.fail{color:#ff7a7a}.prb.open{color:#8fd08f}.prb.merged{color:#c99bff}
+.r .dv{grid-column:3;grid-row:2;justify-self:end;font:600 10.5px/1 ui-monospace,SFMono-Regular,monospace;color:var(--dim);white-space:nowrap}.dv .b{color:#9fb4ff}
+.r .st{grid-column:2;grid-row:2;min-width:0;font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r .st.q{background:var(--attnTint);color:#ffd2a0;border-radius:4px;padding:1px 5px;justify-self:start;max-width:100%}
+.r .st.u{color:var(--fg)}.r .st.w{font-style:italic}
+.phone{width:320px;height:660px;background:#000;border:8px solid #2a2a2e;border-radius:40px;overflow:hidden;display:flex;flex-direction:column}
+.ps{height:32px;display:flex;justify-content:space-between;padding:10px 24px 0;font-size:13px;font-weight:600}
+.pn{padding:4px 16px;color:#0a84ff;font-size:16px}.pt{font-size:28px;font-weight:700;padding:2px 16px 10px}
+.phone .tiles{padding:0 14px 10px;gap:8px}.phone .tile{border-radius:14px;background:#1c1c1e}.phone .band{border-radius:0 0 12px 12px;font-size:10.5px}
+.phone .tile.work{background:linear-gradient(#1c1c1e,#1c1c1e) padding-box,conic-gradient(from var(--a,0deg),var(--work),transparent 40%,var(--work)) border-box}
+.grp{margin:0 14px 12px;background:#1c1c1e;border-radius:12px;overflow:hidden}
+.ph{font-size:13px;font-weight:600;color:#8e8e93;padding:4px 30px}
+.phone .r{margin:0;border-radius:0;border-bottom:1px solid #38383a;padding:8px 12px;font-size:15px}.phone .r:last-child{border-bottom:0}
+.phone .newline{color:#0a84ff;padding:10px 14px;font-size:15px}
+.legend{margin-top:20px;max-width:940px;color:var(--dim);font-size:12.5px}.legend li{margin:4px 0}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute">
+ <defs>
+  <symbol id="house" viewBox="0 0 64 64"><path d="M10 30L32 12l22 18v22H10z" fill="#6aa0ff" stroke="#16171b" stroke-width="3" stroke-linejoin="round"/><rect x="27" y="36" width="10" height="16" fill="#fff" stroke="#16171b" stroke-width="2.5"/></symbol>
+  <symbol id="crash" viewBox="0 0 64 64"><rect x="10" y="12" width="44" height="40" rx="6" fill="#ff7a7a" stroke="#16171b" stroke-width="3"/><path d="M34 16l-8 16h8l-4 16 12-20h-8l4-12z" fill="#ffe08a" stroke="#16171b" stroke-width="2.5" stroke-linejoin="round"/></symbol>
+  <symbol id="loop" viewBox="0 0 64 64"><circle cx="32" cy="32" r="18" fill="none" stroke="#16171b" stroke-width="10"/><circle cx="32" cy="32" r="18" fill="none" stroke="#7fe0a8" stroke-width="5"/><path d="M44 10l6 10-11 2z" fill="#7fe0a8" stroke="#16171b" stroke-width="2.5" stroke-linejoin="round"/></symbol>
+  <symbol id="eye" viewBox="0 0 64 64"><path d="M6 32c8-12 18-18 26-18s18 6 26 18c-8 12-18 18-26 18S14 44 6 32z" fill="#c9a2ff" stroke="#16171b" stroke-width="3"/><circle cx="32" cy="32" r="9" fill="#fff" stroke="#16171b" stroke-width="2.5"/><circle cx="32" cy="32" r="4" fill="#16171b"/></symbol>
+  <symbol id="paper" viewBox="0 0 64 64"><rect x="12" y="10" width="40" height="44" rx="4" fill="#ffd27a" stroke="#16171b" stroke-width="3"/><path d="M19 22h26M19 30h26M19 38h16" stroke="#16171b" stroke-width="3" stroke-linecap="round"/></symbol>
+  <symbol id="bug" viewBox="0 0 64 64"><ellipse cx="32" cy="36" rx="14" ry="17" fill="#8fd3ff" stroke="#16171b" stroke-width="3"/><path d="M32 20v32M18 30H8M18 42H8M46 30h10M46 42h10M26 18l-5-7M38 18l5-7" stroke="#16171b" stroke-width="3" stroke-linecap="round"/></symbol>
+ </defs>
+</svg>
+<h1>Sidebar reorganization: agreed design</h1>
+<p class="lede">Mac sidebar (rail mode) and a project's worktree list on iPhone, showing the same moment. Pointer is over the crash tile on Mac. The phone Projects screen follows design-mobile (PR #851) and is not shown.</p>
+<div class="wrap"><div class="opt"><h2>Mac</h2><div class="win"><div class="rail"><i class="on">G<b>4</b></i><i>Mi</i><i>Sa</i></div><div class="col"><div class="search">Search</div><div class="tiles"><div class="tile idle"><svg><use href="#house"/></svg><span class="band">main</span></div><div class="tile attn"><svg><use href="#crash"/></svg><span class="band">crash</span><div class="pop"><b>crash-report</b><div class="m">This Mac</div><span class="q">New crash in RemoteHost: retry?</span></div></div><div class="tile work"><svg><use href="#loop"/></svg><span class="band">release</span><span class=hb>mini</span></div><div class="tile attn"><svg><use href="#eye"/></svg><span class="band">ci-watch</span><span class=hb>mini</span></div><div class="tile idle"><svg><use href="#paper"/></svg><span class="band">appcast</span></div><div class="tile idle sleep"><svg><use href="#bug"/></svg><span class="band">triage</span><span class=hb>studio</span><span class=moon>☾</span></div></div><div class="divider"></div><div class="newline">+ New worktree</div>
+<div class="sec">Needs you <span class="n">2</span></div><div class="r "><svg><use href="#bug"/></svg><div class="nm">webrtc-teardown<span>mini-m1</span></div><span class="prb fail">#847</span><div class="dv">↑3 <span class="b">↓1</span></div><div class="st q">Merge now or wait for CI?</div></div><div class="r "><svg><use href="#paper"/></svg><div class="nm">chrome-fixtures</div><span class="prb open">#850</span><div class="dv">↑1+</div><div class="st u">Fixture waits for first navigation</div></div><div class="sec">Working</div><div class="r sel"><svg><use href="#eye"/></svg><div class="nm">mac-sidebar-reorg</div><span></span><div class="dv">↑0+</div><div class="st w">Writing the design doc…</div></div><div class="r "><svg><use href="#loop"/></svg><div class="nm">codex-working-fix<span>studio</span></div><span></span><div class="dv"><span class="b">↓2</span></div><div class="st w">Writing failing test…</div></div><div class="sec">Recent</div><div class="r faded"><svg><use href="#house"/></svg><div class="nm">old-bundle-fix</div><span class="prb merged">#182</span><div class="dv"></div><div class="st ">Merged in #182</div></div></div></div></div><div class="opt"><h2>iPhone project list</h2><div class="phone"><div class="ps"><span>9:41</span><span>●●●</span></div><div class="pn">‹ Projects</div><div class="pt">graftty</div><div class="tiles"><div class="tile idle"><svg><use href="#house"/></svg><span class="band">main</span></div><div class="tile attn"><svg><use href="#crash"/></svg><span class="band">crash</span></div><div class="tile work"><svg><use href="#loop"/></svg><span class="band">release</span><span class=hb>mini</span></div><div class="tile attn"><svg><use href="#eye"/></svg><span class="band">ci-watch</span><span class=hb>mini</span></div><div class="tile idle"><svg><use href="#paper"/></svg><span class="band">appcast</span></div><div class="tile idle sleep"><svg><use href="#bug"/></svg><span class="band">triage</span><span class=hb>studio</span><span class=moon>☾</span></div></div>
+<div class="grp"><div class="newline">+ New worktree</div></div><div class="ph">Needs you</div><div class="grp"><div class="r "><svg><use href="#bug"/></svg><div class="nm">webrtc-teardown<span>mini-m1</span></div><span style="color:#8e8e93;font-size:13px">4m</span><div class="dv"></div><div class="st q">Merge now or wait for CI?</div></div><div class="r "><svg><use href="#paper"/></svg><div class="nm">chrome-fixtures</div><span style="color:#8e8e93;font-size:13px">12m</span><div class="dv"></div><div class="st u">Fixture waits for first navigation</div></div></div><div class="ph">Working</div><div class="grp"><div class="r"><svg><use href="#eye"/></svg><div class="nm">mac-sidebar-reorg</div><span style="color:#8e8e93;font-size:13px">now</span><div class="dv"></div><div class="st w">Writing the design doc…</div></div><div class="r "><svg><use href="#loop"/></svg><div class="nm">codex-working-fix<span>studio</span></div><span style="color:#8e8e93;font-size:13px">2m</span><div class="dv"></div><div class="st w">Writing failing test…</div></div></div></div></div></div>
+<ul class="legend">
+<li><b>Tiles</b>: pinned agents in shared rank order, default checkout first. Drawn icon (or emoji), word band, host badge top-left when on another host.</li>
+<li><b>Tile states</b>: orange border = waiting for you (question or unseen finished turn) · moving blue ring = working · faded with moon = host asleep · faded = idle and seen.</li>
+<li><b>Mac rows</b>: name, host when on another host, PR badge right-aligned; status line beneath with ↑/↓ divergence right-aligned. <b>Phone rows</b> keep today’s layout (time trailing, no divergence) and always name a remote host.</li>
+<li><b>Needs you</b> (temporary only): questions and unseen finished turns, newest first.</li>
+</ul></body></html>

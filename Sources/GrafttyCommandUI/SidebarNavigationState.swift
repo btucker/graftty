@@ -25,6 +25,7 @@ public final class SidebarNavigationState {
     }
     private var workspace: SidebarAttentionWorkspace
     private var retainedReports: [SidebarActivityItem] = []
+    private var retainedReportIndex = SidebarRetainedReportIndex()
     private var opening: [UUID: Opening] = [:]
     private var selectionOpeningID: UUID?
     private let defaults: UserDefaults
@@ -44,6 +45,7 @@ public final class SidebarNavigationState {
         retainedReports = defaults.data(forKey: prefix + ".worktreeReports").flatMap {
             try? JSONDecoder().decode([SidebarActivityItem].self, from: $0)
         } ?? workspace.items.filter { $0.agentStop != nil }
+        rebuildRetainedReportIndex()
     }
     public func opened(_ item: SidebarActivityItem) {
         updateAttentionItems([item])
@@ -74,7 +76,7 @@ public final class SidebarNavigationState {
         }
     }
     public func worktreeContext(_ worktree: WorktreePanes) -> SidebarWorktreeContext {
-        SidebarWorktreeContext(worktree: worktree, retained: workspace.items + retainedReports, isViewed: { item in
+        SidebarWorktreeContext(worktree: worktree, retained: retainedReportIndex.reports(for: worktree), isViewed: { item in
             item.occurrence?.source == .agentStop ? self.workspace.isDismissed(item) : self.hasViewed(item)
         })
     }
@@ -136,7 +138,12 @@ public final class SidebarNavigationState {
     private func storeWorkspace(_ next: SidebarAttentionWorkspace) {
         guard next != workspace else { return }
         workspace = next
+        rebuildRetainedReportIndex()
         defaults.set(try? JSONEncoder().encode(next), forKey: prefix + ".attentionWorkspace")
+    }
+
+    private func rebuildRetainedReportIndex() {
+        retainedReportIndex = SidebarRetainedReportIndex(sources: [workspace.items, retainedReports])
     }
 
     private func retainReports(_ items: [SidebarActivityItem], worktrees: [WorktreePanes]? = nil,
@@ -156,6 +163,7 @@ public final class SidebarNavigationState {
         }
         guard next != retainedReports else { return }
         retainedReports = next
+        rebuildRetainedReportIndex()
         defaults.set(try? JSONEncoder().encode(next), forKey: prefix + ".worktreeReports")
     }
 
@@ -192,6 +200,7 @@ public final class SidebarNavigationState {
         for item in context.pending {
             next.dismissOccurrence(item)
         }
+        if context.hasUnseenStop { next.dismissFinishedTurn(context.item) }
         storeWorkspace(next)
     }
     private func persistHistory() { defaults.set(try? JSONEncoder().encode(history), forKey: prefix + ".recent") }
