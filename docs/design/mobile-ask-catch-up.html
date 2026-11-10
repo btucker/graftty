@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask Catch-Up</title>
+<style>
+:root{--page:#f4f3ef;--ink:#1d1d1f;--dim:#6e6e73;--faint:#a1a1a6;--line:#e6e4dc;--att:#b34700;--blue:#007aff;--green:#2f9e57}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 16px 70px}
+h1{font-size:30px;letter-spacing:-.02em;margin:0 0 8px}
+.lede{max-width:820px;color:#3a3a3c;margin:0 0 8px;font-size:16px}
+h2{font-size:20px;margin:46px 0 6px}
+.sub{color:var(--dim);margin:0 0 18px;max-width:860px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.grid div{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px}
+.grid b{display:block;font-size:15px;margin-bottom:3px}
+.row{display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start}
+.col{flex:0 1 330px;min-width:0}
+.step{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:5px;background:#1d1d1f;color:#fff;margin-bottom:7px}
+.notes{font-size:13.5px;color:#3a3a3c;margin-top:12px}
+.notes ul{margin:6px 0 0;padding-left:18px}.notes li{margin:3px 0}
+
+.phone{width:100%;max-width:330px;border-radius:40px;border:9px solid #1c1c1e;overflow:hidden;box-shadow:0 20px 44px -20px rgba(0,0,0,.4);background:#1c1c1e;color:#fff}
+.status{display:flex;justify-content:space-between;padding:12px 24px 2px;font-weight:600;font-size:14px}
+.screen{min-height:610px;position:relative}
+.top{display:flex;justify-content:space-between;padding:6px 18px;font-size:13px;color:#aaa}
+.prog{display:flex;gap:4px;padding:0 18px 12px}.prog b{flex:1;height:3px;border-radius:2px;background:#444}.prog b.on{background:#fff}
+.card{background:#fff;color:var(--ink);margin:0 14px;border-radius:22px;padding:15px 16px 14px;position:relative;z-index:2}
+.peek{background:#3a3a3c;margin:-10px 26px 0;height:24px;border-radius:0 0 18px 18px}
+.from{display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--dim)}
+.from .sp{margin-left:auto}
+.av{width:16px;height:16px;border-radius:5px;display:inline-grid;place-items:center;font-size:9px;font-weight:800;color:#fff}
+.claude{background:#d97757}.codex{background:#111}
+.ask{font-size:19px;font-weight:700;line-height:1.25;margin:8px 0 10px;letter-spacing:-.01em}
+.catch{font-size:14px;line-height:1.45;color:#2c2c2e;border-left:3px solid #e9a77a;padding:1px 0 1px 10px}
+.catch .lbl{display:block;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--att);margin-bottom:3px}
+.rec{margin-top:8px;font-size:13.5px;color:#3a3a3c}
+.rec b{font-weight:600}
+.btns{display:flex;gap:8px;margin-top:14px}
+.b{flex:1;text-align:center;border-radius:14px;padding:10px 6px;font-size:14.5px;font-weight:600;background:#f0f0f3}
+.b.pri{background:var(--ink);color:#fff}
+.hint{display:flex;justify-content:space-between;padding:14px 26px 0;font-size:12.5px;color:#999}
+.hint b{color:#fff;font-weight:600}
+.code{font:12.5px ui-monospace,Menlo,monospace;background:#f2f2f5;padding:1px 4px;border-radius:4px}
+
+.state{display:flex;gap:8px;align-items:center;font-size:13.5px;color:var(--dim);margin-top:12px}
+.spin{width:12px;height:12px;border-radius:50%;border:2px solid #d0d0d4;border-top-color:#555;flex:none}
+.term{background:#0f0f10;color:#d8d8d8;border-radius:10px;padding:9px 11px;font:11px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;margin-top:10px}
+.term .d{color:#777}.term .u{color:#7cb7ff}.term .c{color:#e9a77a}
+
+/* full terminal */
+.tbar{display:flex;justify-content:space-between;align-items:center;padding:6px 14px 8px;font-size:13px;color:#ccc;border-bottom:.5px solid #333}
+.tbar b{color:#fff}
+.full{padding:10px 12px;font:11.5px/1.55 ui-monospace,Menlo,monospace;color:#ddd;white-space:pre-wrap}
+.full .u{color:#7cb7ff}.full .d{color:#777}.full .c{color:#e9a77a}.full .box{border:1px solid #555;border-radius:6px;padding:6px 8px;margin-top:6px;color:#eee}
+.kb{position:absolute;left:0;right:0;bottom:0;background:#2c2c2e;padding:8px 10px 18px;display:flex;gap:6px;flex-wrap:wrap}
+.kb span{background:#48484a;border-radius:6px;padding:5px 9px;font-size:12px;color:#ddd}
+
+pre.prompt{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font:13px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;margin:0}
+table{border-collapse:collapse;width:100%;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13.5px}
+th,td{text-align:left;padding:9px 11px;border-top:1px solid var(--line);vertical-align:top}
+th{background:#faf9f6;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--dim);border-top:none}
+.tw{overflow-x:auto}
+.ok{color:#1f7a41;font-weight:600}.new{color:var(--att);font-weight:600}.drop{color:var(--dim);text-decoration:line-through}
+@media (prefers-color-scheme: dark){
+ :root{--page:#151514;--ink:#f2f2f2;--dim:#9a9aa0;--line:#2e2e2e}
+ .lede,.notes{color:#d0d0d0}.grid div,table,pre.prompt{background:#1f1f1f;color:#ddd}th{background:#262626}
+ .card{--ink:#1d1d1f;--dim:#6e6e73}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Let the agent catch you up</h1>
+<p class="lede">The deck stays. The per-kind answer widgets (Allow, option buttons, Approve) are dropped. When you come back to an ask, the first thing you usually do is ask the agent to explain it again, so Graftty does that step for you. Answering then happens in the agent's own terminal, where the harness already handles it well.</p>
+<p class="lede" style="color:var(--dim);font-size:14px">Graftty never draws a harness's answer UI. It shows plain text the agent wrote and sends plain text to the agent, so it works the same for Claude, Codex, and any later harness.</p>
+
+<h2>Two layers of catch-up</h2>
+<div class="grid">
+ <div><b>1 · Written when it asks (instant)</b>When an agent reports a <code class="code">need</code>, the skill also asks for a short catch-up written for someone who has forgotten the worktree: what's going on, the choices, and what the agent recommends. It's written while the context is fresh, and it's on the card with no wait.</div>
+ <div><b>2 · Explain more, always available</b>Every card has <b>Explain more</b>. It sends a standard catch-up prompt into the agent's input and opens its terminal. The terminal opens straight away and the agent explains in it, then asks again. You answer right there, or keep the conversation going.</div>
+ <div><b>Answers stay in the terminal</b>Every card offers Explain more, Open terminal, Later, and Dismiss. Graftty never sends an answer on your behalf, so it can't send a wrong one.</div>
+</div>
+
+<h2>The flow</h2>
+<p class="sub">These are the same asks as before. Most are cleared at step 1 (the catch-up was enough, so open the terminal and type the answer) or at step 3.</p>
+<div class="row">
+
+<div class="col">
+<span class="step">1 · The card</span>
+<div class="phone"><div class="status"><span>3:31</span><span>63</span></div>
+<div class="screen">
+ <div class="top"><span>⚙</span><span>3 waiting</span><span>▦</span></div>
+ <div class="prog"><b class="on"></b><b></b><b></b></div>
+ <div class="card">
+  <div class="from"><span class="av claude">C</span>tuck-and-roll · Claude<span class="sp">6d</span></div>
+  <div class="ask">Build and run the long-context compliance test, or stop and rethink?</div>
+  <div class="catch"><span class="lbl">Catch-up</span>The 2.0 release is blocked on the compliance suite. The 128k case was failing because system prompts got reordered past 100k, not because of length. I patched the ordering but haven't confirmed the fix: a full run takes about 25 min on the M2.</div>
+  <div class="rec"><b>I'd build and run:</b> the patch is small, and the run is the only way to know.</div>
+  <div class="btns"><span class="b">Explain more</span><span class="b pri">Open terminal</span></div>
+ </div>
+ <div class="peek"></div>
+ <div class="hint"><span>← <b>Later</b></span><span><b>Dismiss</b> →</span></div>
+</div></div>
+<div class="notes"><ul>
+<li>The catch-up and the recommendation come from the agent's own report, written at the moment it asked.</li>
+<li>Explain more is on every card, whatever the harness or kind of ask. Two buttons and two swipes. There are no special cases per harness or per kind of ask.</li>
+<li>When the catch-up is enough: Open terminal → type "build and run" → done.</li>
+</ul></div>
+</div>
+
+<div class="col">
+<span class="step">2 · Explain more → terminal</span>
+<div class="phone"><div class="status"><span>3:31</span><span>63</span></div>
+<div class="screen">
+ <div class="tbar"><span>‹ For you</span><b>tuck-and-roll</b><span>2 left ›</span></div>
+ <div class="full"><span class="d">…earlier output…</span>
+<span class="c">⏺</span> Build and run the long-context compliance
+  test, or stop and rethink?
+
+<span class="u">› Catch me up before I answer. I've lost the
+  context for this worktree…</span>
+
+<span class="c">⏺</span> Sure. Where things stand:
+  1. The suite gates 2.0. Only the 128k case
+     fails: <span class="d">test_order_preserved</span>
+  2. Root cause: <span class="d">segment()</span> sorts by token
+     count, which moves the system prompt▍</div>
+ <div class="kb"><span>esc</span><span>tab</span><span>ctrl</span><span>↑</span><span>↓</span><span style="margin-left:auto">⌨︎</span></div>
+</div></div>
+<div class="notes"><ul>
+<li>Tapping Explain more delivers the prompt and opens the agent's terminal right away, so you watch the explanation being written.</li>
+<li>The delivery path waits for the agent to be idle, so the prompt arrives when the agent can take it, not halfway through output.</li>
+<li>The top bar keeps your place in the deck. ‹ For you goes back, and the card stays until you answer.</li>
+</ul></div>
+</div>
+
+<div class="col">
+<span class="step">3 · Answer in the terminal</span>
+<div class="phone"><div class="status"><span>3:32</span><span>63</span></div>
+<div class="screen">
+ <div class="tbar"><span>‹ For you</span><b>tuck-and-roll</b><span>2 left ›</span></div>
+ <div class="full"><span class="c">⏺</span> …so the fix is to sort by position
+  first and token count second. It's 6 lines.
+
+  <b style="color:#fff">Options</b>
+  • <b style="color:#fff">Build and run</b>: ~25 min. If it
+    passes, 2.0 is unblocked.
+  • <b style="color:#fff">Stop and rethink</b>: worth it only if
+    you doubt the ordering diagnosis.
+
+  I recommend build and run.
+  <b style="color:#fff">Build and run, or stop and rethink?</b>
+
+<div class="box"><span class="u">›</span> build and run▍</div></div>
+ <div class="kb"><span>esc</span><span>tab</span><span>ctrl</span><span>↑</span><span>↓</span><span style="margin-left:auto;background:#0a84ff;color:#fff">send</span></div>
+</div></div>
+<div class="notes"><ul>
+<li>This is the normal agent terminal, so the harness's own question UI, permission prompts, and plan review all work as they already do.</li>
+<li>The top bar keeps your place in the deck: <b>2 left ›</b> goes to the next card once you've sent your answer.</li>
+<li>Answering resumes the agent, which clears its card the way it does today.</li>
+</ul></div>
+</div>
+</div>
+
+<h2>The prompt Explain more sends</h2>
+<p class="sub">It's short, and the same for every harness. Ending with the question again means the terminal finishes where you answer. Users could edit it in Settings.</p>
+<pre class="prompt">Catch me up before I answer. I've lost the context for this worktree.
+In under 150 words: what you're working on and why, what you've found,
+the choices in front of me and what each costs, and what you recommend.
+Then ask your question again.</pre>
+
+<h2>When the agent is in a modal prompt</h2>
+<p class="sub">While a harness shows an option or permission dialog, typed text doesn't reach the agent as a message. So "Explain more" also goes into the harness's own dialog:</p>
+<div class="grid">
+ <div><b>The agent always offers it</b>The graftty skill tells agents that every question with options includes <b>Explain more</b> as one of its options. Claude's <code class="code">AskUserQuestion</code> dialog then has it built in, and choosing it in the terminal gets the same explanation. Graftty never has to type into a dialog.</div>
+ <div><b>The card button opens the dialog</b>When the hooks report a dialog is open, the card's Explain more becomes "Explain more in terminal" and opens the pane, where that option is waiting.</div>
+ <div><b>Permission dialogs</b>Their options are fixed, so the card's catch-up has to cover them. Declining with an instruction ("explain why first") still works in the terminal.</div>
+</div>
+
+<h2>What it takes</h2>
+<div class="tw"><table>
+<tr><th>Piece</th><th>Status</th><th>Notes</th></tr>
+<tr><td>Deck with the question, worktree, agent, and age</td><td class="ok">Data on the wire</td><td>Only the UI is new: <code class="code">context.question</code>, <code class="code">rowDate</code></td></tr>
+<tr><td>Catch-up written when the agent asks</td><td class="new">Small addition</td><td>An optional catch-up text field on the recap (next to <code class="code">need</code>), plus a line in the graftty skill asking for it when <code class="code">need</code> is set. It's plain text, so any harness can write it.</td></tr>
+<tr><td>Explain → send the prompt</td><td class="ok">Path exists</td><td>The phone asks the host to deliver the standard prompt to that agent through the same path as <code class="code">graftty team send</code>.</td></tr>
+<tr><td>Live tail on the card, then open the terminal</td><td class="ok">Exists</td><td>The pane preview pool and the existing open-pane path</td></tr>
+<tr><td>Later and Dismiss</td><td class="ok">Dismiss exists</td><td>Later is a per-item "hide until" time</td></tr>
+<tr><td>"Waiting at a dialog" flag</td><td class="new">Small addition</td><td>The existing hooks set it; no content is sent</td></tr>
+<tr><td>Explain more as an option in every agent question</td><td class="new">Skill text only</td><td>One line in the graftty skill for Claude and Codex; no code</td></tr>
+<tr><td><span class="drop">Allow / options / Approve on the card</span></td><td>Dropped</td><td>The harness owns these. Revisit only if a harness offers an answer API.</td></tr>
+<tr><td><span class="drop">Answer buttons in notifications</span></td><td>Dropped</td><td>A notification shows the question and catch-up and opens the card</td></tr>
+</table></div>
+
+</div>
+</body>
+</html>

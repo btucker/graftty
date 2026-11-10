@@ -25,7 +25,7 @@ struct AttentionReport: ParsableCommand {
         abstract: "Publish an agent recap before finishing its turn"
     )
 
-    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, icon (an SVG worktree drawing), purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, catchUp (what the user needs to answer need), emojiAlternatives, icon (an SVG worktree drawing), purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
     var stdin = false
 
     func run() throws {
@@ -46,7 +46,7 @@ struct AttentionReport: ParsableCommand {
         do {
             recap = try JSONDecoder().decode(AttentionRecap.self, from: data)
         } catch {
-            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, icon, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, catchUp, emojiAlternatives, icon, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
         }
         // Checked first so an oversized drawing reports its own reason, not the brief-text error.
         if let icon = recap.icon {
