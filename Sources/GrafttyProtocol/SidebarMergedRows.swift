@@ -139,13 +139,14 @@ public struct SidebarMergedRows: Sendable {
         public let rank: String
     }
 
-    /// Pinned agents are one flat grid, so any tile can move next to any other.
+    /// Pinned agents are one flat grid, so any tile can move next to any other,
+    /// except one being created or deleted.
     public func pinnedMove(source: String, target: String, after: Bool, projectID: String,
                     isWritable: (MergedWorktreeRow) -> Bool) -> PinnedMove? {
         let rows = sections(for: projectID).pinned
         guard source != target,
-              let moving = rows.first(where: { $0.id == source }), !moving.row.isMainCheckout,
-              let destination = rows.first(where: { $0.id == target }) else { return nil }
+              let moving = rows.first(where: { $0.id == source }), !moving.row.isMainCheckout, !moving.row.state.isInFlight,
+              let destination = rows.first(where: { $0.id == target }), !destination.row.state.isInFlight else { return nil }
         if moving.row.sidebar?.pinnedRank == nil {
             guard moving.hostID == destination.hostID, destination.row.sidebar?.pinnedRank == nil else { return nil }
             return .legacy(source: moving, target: destination, after: after)

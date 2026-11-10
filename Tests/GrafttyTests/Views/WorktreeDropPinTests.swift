@@ -90,23 +90,20 @@ struct WorktreeDropPinTests {
     }
 
     @Test func pendingNeighborKeepsTheNewRoleAppended() {
-        for pendingNeighbor in [true] {
-            let home = WorktreeEntry(path: "/repo", branch: "trunk")
-            let task = WorktreeEntry(path: pendingNeighbor ? "/repo/.worktrees/task" : "/repo/.worktrees/research/task", branch: "task")
-            var neighbor = WorktreeEntry(path: pendingNeighbor ? "/repo/.worktrees/neighbor" : "/repo/.worktrees/research/lead", branch: "neighbor",
-                state: pendingNeighbor ? .creating : .closed)
-            neighbor.isPinned = true
-            var target = WorktreeEntry(path: "/repo/.worktrees/target", branch: "target")
-            target.isPinned = true
-            let repo = RepoEntry(path: home.path, displayName: "Repo", worktrees: [home, task, neighbor, target])
-            var state = AppState(repos: [repo])
-            #expect(WorktreeRowDrop.worktree(.init(repoID: repo.id, worktreeID: task.id))
-                .apply(repoID: repo.id, targetWorktreeID: target.id, placement: .before,
-                       allowsReordering: true, to: &state) == .pinned)
-            #expect(state.repos[0].worktrees.last?.id == task.id)
-            #expect(state.repos[0].worktrees.last?.isPinned == true)
-            #expect(state.repos[0].worktrees.filter { $0.id != task.id } == [home, neighbor, target])
-        }
+        let home = WorktreeEntry(path: "/repo", branch: "trunk")
+        let task = WorktreeEntry(path: "/repo/.worktrees/task", branch: "task")
+        var neighbor = WorktreeEntry(path: "/repo/.worktrees/neighbor", branch: "neighbor", state: .creating)
+        neighbor.isPinned = true
+        var target = WorktreeEntry(path: "/repo/.worktrees/target", branch: "target")
+        target.isPinned = true
+        let repo = RepoEntry(path: home.path, displayName: "Repo", worktrees: [home, task, neighbor, target])
+        var state = AppState(repos: [repo])
+        #expect(WorktreeRowDrop.worktree(.init(repoID: repo.id, worktreeID: task.id))
+            .apply(repoID: repo.id, targetWorktreeID: target.id, placement: .before,
+                   allowsReordering: true, to: &state) == .pinned)
+        #expect(state.repos[0].worktrees.last?.id == task.id)
+        #expect(state.repos[0].worktrees.last?.isPinned == true)
+        #expect(state.repos[0].worktrees.filter { $0.id != task.id } == [home, neighbor, target])
     }
 
     @Test func droppingBackOnTemporaryRowsDoesNotUnpin() {

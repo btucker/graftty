@@ -113,14 +113,13 @@ struct SidebarView: View {
             liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
             defaultBranch: { remoteBranchStore.resolvedDefaultBranch(forRepoAt: $0.path, hint: $0.defaultBranchHint) })
     }
+    /// Working agents per project. Waiting counts come from `SidebarWaitingCounts`.
     private func activityCounts(_ rows: [WorktreePanes]) -> SidebarActivityCounts {
-        let pending = rows.flatMap { navigation.worktreeContext($0).pending }
-        let working = SidebarProjection.activity(rows).filter(\.isBusy).map { item in
+        SidebarActivityCounts(items: SidebarProjection.activity(rows).filter(\.isBusy).map { item in
             var item = item
             item.occurrence = nil
             return item
-        }
-        return SidebarActivityCounts(items: pending + working)
+        })
     }
 
     private func contextForLocalWorktree(_ worktree: WorktreeEntry, repo: RepoEntry, displayName: String) -> SidebarWorktreeContext {
@@ -786,7 +785,7 @@ struct SidebarView: View {
            let worktree = displayedWorktrees(in: repo).first(where: { $0.path == row.row.path }) {
             localPinnedTile(worktree, repo: repo, row: row)
         } else if let mac = remoteMacsModel.remoteMac(delivering: row.row) {
-            remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.leafName,
+            remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.relativeName,
                           hostLabel: row.hostLabel, isCached: row.availability == .wakeable, isTile: true,
                           onOpen: { openMergedRow(row) },
                           onOpenPane: { context in Task { _ = await openReport(context) } },
@@ -798,7 +797,7 @@ struct SidebarView: View {
 
     private func localPinnedTile(_ worktree: WorktreeEntry, repo: RepoEntry, row: MergedWorktreeRow) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
-        let context = contextForLocalWorktree(worktree, repo: repo, displayName: row.leafName)
+        let context = contextForLocalWorktree(worktree, repo: repo, displayName: row.relativeName)
         let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isCached: false)
         let state = PinnedTileState.resolve(status: status, isCached: false)
         let isMain = worktree.path == repo.path
@@ -808,7 +807,7 @@ struct SidebarView: View {
         let select = { onSelect(worktree.path) }
         return PinnedTileFace(identity: context.worktree.iconIdentity, project: project,
                               imageData: isMain ? iconStore.iconData(for: repo) : iconStore.drawingData(for: worktree),
-                              word: PinnedTile.word(name: row.leafName, isMainCheckout: isMain, branch: worktree.branch),
+                              word: PinnedTile.word(name: row.relativeName, isMainCheckout: isMain, branch: worktree.branch),
                               hostBadge: nil, state: state, isSelected: isActive,
                               fill: theme.foreground.opacity(0.07), selectedFill: theme.highlightedWorktreeBackground)
             .rightClickMenu(anchored: { anchor in buildWorktreeMenu(worktree, repo: repo, context: context, window: anchor.window) })
@@ -823,11 +822,8 @@ struct SidebarView: View {
                 return drop.apply(repoID: repo.id, targetWorktreeID: worktree.id, placement: after ? .after : .before,
                                   allowsReordering: true, to: &appState) != .rejected
             })
-            .modifier(PinnedTileHoverCard(name: row.leafName, host: nil, status: status, secondary: theme.sidebarSecondaryText))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(PinnedTile.accessibilityLabel(name: row.leafName, host: nil, state: state))
-            .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
-            .accessibilityAction { select() }
+            .modifier(PinnedTileHoverCard(name: row.relativeName, host: nil, status: status, secondary: theme.sidebarSecondaryText))
+            .pinnedTileAccessibility(name: row.relativeName, host: nil, state: state, isSelected: isActive, open: select)
             .id(worktree.path)
     }
 
@@ -856,11 +852,11 @@ struct SidebarView: View {
         if row.hostID == owner.deviceID,
            let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == row.row.path } }),
            let worktree = displayedWorktrees(in: repo).first(where: { $0.path == row.row.path }) {
-            worktreeBlock(worktree, repo: repo, displayName: row.leafName, activityCounts: counts,
+            worktreeBlock(worktree, repo: repo, displayName: row.relativeName, activityCounts: counts,
                           hostLabel: SidebarMergedRows.hostText(row, isLocal: true))
                 .modifier(MergedRowInsets(projectColumn: showsProjectRail))
         } else if let mac = remoteMacsModel.remoteMac(delivering: row.row) {
-            remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.leafName,
+            remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.relativeName,
                           hostLabel: SidebarMergedRows.hostText(row, isLocal: false), isCached: row.availability == .wakeable,
                           onOpen: { openMergedRow(row) },
                           onOpenPane: { context in Task { _ = await openReport(context) } },
@@ -1093,12 +1089,8 @@ struct SidebarView: View {
             ),
             prBadge: prBadge,
             hostLabel: hostLabel,
-            onRemove: { window in onDeleteWorktree(worktree.path, window) },
-            showsDivergence: false
+            onRemove: { window in onDeleteWorktree(worktree.path, window) }
         )
-        let hasDivergence = WorktreeRow.trailingItems(canRemove: heading.canRemove).statusLine.contains(.divergence)
-            && worktree.state.hasOnDiskWorktree && !(statsStore.stats[worktree.path]?.isEmpty ?? true)
-        let divergence = hasDivergence ? heading.divergence : nil
         let headingView = heading
         .frame(minHeight: 24)
         .overlay(alignment: .trailing) {
@@ -1126,13 +1118,19 @@ struct SidebarView: View {
         } heading: {
             headingView
         } status: {
-            // DIVERGE-1.1: the status line truncates before the divergence.
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                SidebarWorktreeStatusTarget(status: status, secondary: theme.sidebarSecondaryText) {
-                    Task { _ = await openReport(context) }
+            let target = SidebarWorktreeStatusTarget(status: status, secondary: theme.sidebarSecondaryText) {
+                Task { _ = await openReport(context) }
+            }
+            // An empty stack would still occupy a slot in the block, so only a
+            // divergence brings one.
+            if let divergence = heading.statusLineDivergence {
+                // DIVERGE-1.1: the status line truncates before the divergence.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    target.frame(maxWidth: .infinity, alignment: .leading)
+                    divergence.padding(.trailing, 8)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                divergence.padding(.trailing, 8)
+            } else {
+                target
             }
         }
     }

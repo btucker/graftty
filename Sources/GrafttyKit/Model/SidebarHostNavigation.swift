@@ -220,8 +220,8 @@ public enum SidebarHostNavigation {
     }
 
     /// A pin drop crosses section membership rather than reordering temporary
-    /// rows. Existing peers keep their order; a matching folder may also place
-    /// the new role beside the row where it was dropped.
+    /// rows. Existing peers keep their order, and the new role lands beside the
+    /// row where it was dropped.
     @discardableResult
     public static func pinWorktree(in state: inout AppState, repositoryID: String,
                                    worktreeID: String, relativeTo: String? = nil, after: Bool = true) -> Bool {

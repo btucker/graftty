@@ -45,8 +45,6 @@ struct WorktreeRow: View {
     var hostLabel: String? = nil
     var brief: WorktreeBrief? = nil
     var onRemove: ((NSWindow) -> Void)? = nil
-    /// False when the divergence goes on the status line instead (DIVERGE-1.1).
-    var showsDivergence = true
 
     enum LeadingItem: Hashable {
         case projectIcon, emoji, typeIcon, prBadge, label
@@ -112,8 +110,6 @@ struct WorktreeRow: View {
                 SidebarRemoveWorktreeButton(name: displayName, color: theme.sidebarSecondaryText, onRemove: onRemove)
                     .frame(width: 24, height: 20)
                     .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.removeWorktree: $0] }
-            } else if showsDivergence {
-                divergence
             }
         }
         .font(.system(size: 11))
@@ -123,9 +119,12 @@ struct WorktreeRow: View {
         .contentShape(Rectangle())
     }
 
-    /// The divergence summary, for the status line when `showsDivergence` is false.
-    var divergence: some View {
-        WorktreeRowGutter(stats: entry.state.hasOnDiskWorktree ? stats : nil, baseRef: baseRef, theme: theme).fixedSize()
+    /// The divergence summary for the status line (DIVERGE-1.1), or nil when
+    /// the remove button takes its place or there is nothing to show.
+    var statusLineDivergence: (some View)? {
+        let shows = Self.trailingItems(canRemove: canRemove).statusLine.contains(.divergence)
+            && entry.state.hasOnDiskWorktree && !(stats?.isEmpty ?? true)
+        return shows ? WorktreeRowGutter(stats: stats, baseRef: baseRef, theme: theme).fixedSize() : nil
     }
 
     /// @spec LAYOUT-2.26

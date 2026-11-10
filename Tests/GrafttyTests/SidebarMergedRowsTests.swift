@@ -100,8 +100,8 @@ struct SidebarMergedMoveTests {
     private let local = WorktreeOrigin(deviceID: .init(value: "mac"), deviceLabel: "MacBook", relayDepth: 0)
     private let box = WorktreeOrigin(deviceID: .init(value: "box"), deviceLabel: "build-box", relayDepth: 0)
 
-    private func pin(_ name: String, _ owner: WorktreeOrigin, rank: String?) -> WorktreePanes {
-        WorktreePanes(path: "/\(owner.deviceID.value)/\(name)", displayName: name, repoDisplayName: "app", repositoryID: "/\(owner.deviceID.value)", displayBranch: name, state: .running,
+    private func pin(_ name: String, _ owner: WorktreeOrigin, rank: String?, state: WorktreeWireState = .running) -> WorktreePanes {
+        WorktreePanes(path: "/\(owner.deviceID.value)/\(name)", displayName: name, repoDisplayName: "app", repositoryID: "/\(owner.deviceID.value)", displayBranch: name, state: state,
             isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, origin: owner,
             sidebar: .init(id: "\(owner.deviceID.value):repo:\(name)", projectID: "\(owner.deviceID.value):repo", isPinned: true, pinnedRank: rank))
     }
@@ -126,6 +126,12 @@ struct SidebarMergedMoveTests {
         guard case .ranks(let writes)? = plan else { Issue.record("\(String(describing: plan))"); return }
         #expect(writes.map(\.row.row.displayName) == ["solo"])
         #expect(writes[0].rank > "a" && writes[0].rank < "b")
+    }
+    /// Mobile tiles have no drag gate of their own, so the plan refuses rows being created or deleted.
+    @Test func inFlightTilesDontMove() {
+        let a = pin("a", local, rank: "a"), b = pin("b", box, rank: "b"), creating = pin("new", local, rank: "c", state: .creating)
+        #expect(merged([a, b, creating]).pinnedMove(source: id(creating), target: id(a), after: false, projectID: "origin:k/app", isWritable: { _ in true }) == nil)
+        #expect(merged([a, b, creating]).pinnedMove(source: id(b), target: id(creating), after: true, projectID: "origin:k/app", isWritable: { _ in true }) == nil)
     }
     @Test func droppingARowOnItselfMovesNothing() {
         let a = pin("a", local, rank: "a"), b = pin("b", box, rank: "b"), c = pin("c", local, rank: "c")

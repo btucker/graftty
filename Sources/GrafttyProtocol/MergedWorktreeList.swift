@@ -8,9 +8,6 @@ public struct MergedWorktreeRow: Sendable, Equatable, Identifiable {
     public let availability: HostAvailability
     /// The full name, such as `spikes/old-relay`.
     public var relativeName: String { row.displayName }
-    /// What the row is called in a list. Pinned agents are a flat grid, so
-    /// this is always the full name.
-    public var leafName: String { relativeName }
     public var id: String { MergedWorktreeList.identity(row) }
 }
 

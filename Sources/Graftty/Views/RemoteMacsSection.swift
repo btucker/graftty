@@ -535,12 +535,9 @@ struct RemoteMacsSection: View {
             prBadge: worktree.prBadge,
             hostLabel: hostLabel,
             brief: context.brief,
-            onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) },
-            showsDivergence: false
+            onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) }
         )
-        let hasDivergence = WorktreeRow.trailingItems(canRemove: row.canRemove).statusLine.contains(.divergence)
-            && !(sidebarStats(for: worktree)?.isEmpty ?? true)
-        let divergence = hasDivergence ? row.divergence : nil
+        let divergence = row.statusLineDivergence
         let heading = row
         .frame(minHeight: 24)
         .contentShape(Rectangle())
@@ -651,10 +648,7 @@ struct RemoteMacsSection: View {
                                                isEnabled: canReorder(worktree, on: tile.remoteMac), preview: AnyView(face.frame(width: 60))))
             .modifier(PinnedTileDropTarget(isEnabled: query.isEmpty && !worktree.state.isInFlight, onDrop: tile.onDrop))
             .modifier(PinnedTileHoverCard(name: tile.displayName, host: host, status: status, secondary: theme.sidebarSecondaryText))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(PinnedTile.accessibilityLabel(name: tile.displayName, host: host, state: state))
-            .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
-            .accessibilityAction { tile.onOpen() }
+            .pinnedTileAccessibility(name: tile.displayName, host: host, state: state, isSelected: isActive, open: tile.onOpen)
             .id(worktree.path)
     }
 

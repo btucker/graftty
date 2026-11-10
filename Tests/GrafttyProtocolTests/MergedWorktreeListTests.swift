@@ -18,7 +18,7 @@ struct MergedWorktreeListTests {
                        local: RemoteDeviceID? = RemoteDeviceID(value: "mac")) -> (pinned: [MergedWorktreeRow], temporary: [MergedWorktreeRow]) {
         MergedWorktreeList.build(rows: rows, availability: { _ in .reachable }, projectIsOnSeveralHosts: several, localDeviceID: local)
     }
-    private func names(_ rows: [MergedWorktreeRow]) -> [String] { rows.map(\.leafName) }
+    private func names(_ rows: [MergedWorktreeRow]) -> [String] { rows.map(\.relativeName) }
 
     @Test func temporaryRowsMixAcrossHostsByActivity() {
         let result = build([row("a", mac, activity: 5), row("b", box, activity: 9), row("c", mac, activity: 7)])

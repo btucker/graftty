@@ -533,9 +533,8 @@ public struct WorktreeListContent: View {
         }
     }
 
-    private func sectionTitle(_ title: String, count: Int? = nil, tone: WorktreeListSectionTitle.Tone,
-                              isCollapsed: Binding<Bool>? = nil) -> some View {
-        WorktreeListSectionTitle(title, count: count, tone: tone, isCollapsed: isCollapsed)
+    private func sectionTitle(_ title: String, count: Int? = nil, tone: WorktreeListSectionTitle.Tone) -> some View {
+        WorktreeListSectionTitle(title, count: count, tone: tone)
             .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
@@ -824,10 +823,10 @@ public struct WorktreeListContent: View {
                                 let sections = activitySections(merged, projectIDs: [projectID], holding: rowHold)
                                 Section {
                                     if !sections.pinned.isEmpty {
-                                        pinnedTiles(sections.pinned, projectID: projectID, merged: merged)
+                                        pinnedTiles(sections.pinned, projectID: projectID)
                                     }
                                     if merged.project(id: projectID)?.representative.isAvailable == true {
-                                        newWorktreeRow(projectID: projectID)
+                                        newWorktreeRow(projectID: projectID, merged: merged)
                                     }
                                     if !sections.needsYou.isEmpty {
                                         sectionTitle("Needs you", count: sections.needsYou.count, tone: .attention)
@@ -910,10 +909,10 @@ public struct WorktreeListContent: View {
 
     /// Pinned agents as tiles that light up in place (LAYOUT-2.225): tap opens,
     /// a long press offers the row's menu, and dragging one onto another reorders.
-    private func pinnedTiles(_ rows: [MergedWorktreeRow], projectID: String, merged: SidebarMergedRows) -> some View {
+    private func pinnedTiles(_ rows: [MergedWorktreeRow], projectID: String) -> some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: PinnedTile.minimumWidth), spacing: 8)], spacing: 8) {
             ForEach(rows) { row in
-                pinnedTile(row, merged: merged)
+                pinnedTile(row)
                     .draggable(row.id)
                     .dropDestination(for: String.self) { ids, _ in
                         guard let source = ids.first, source != row.id, !orderMutationInFlight,
@@ -931,7 +930,7 @@ public struct WorktreeListContent: View {
         .moveDisabled(true)
     }
 
-    private func pinnedTile(_ row: MergedWorktreeRow, merged: SidebarMergedRows) -> some View {
+    private func pinnedTile(_ row: MergedWorktreeRow) -> some View {
         let wt = row.row
         let context = navigation.worktreeContext(wt)
         let isCached = row.availability == .wakeable
@@ -943,7 +942,7 @@ public struct WorktreeListContent: View {
         let host = row.showsHostLabel ? row.hostLabel : nil
         return PinnedTileFace(identity: wt.iconIdentity, project: project,
                               imageData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
-                              word: PinnedTile.word(name: row.leafName, isMainCheckout: wt.isMainCheckout, branch: wt.displayBranch),
+                              word: PinnedTile.word(name: row.relativeName, isMainCheckout: wt.isMainCheckout, branch: wt.displayBranch),
                               hostBadge: host, state: state, isSelected: isSelected(wt),
                               fill: theme?.foreground.opacity(0.07) ?? Color.primary.opacity(0.06),
                               selectedFill: theme?.foreground.opacity(0.16) ?? Color.primary.opacity(0.12))
@@ -954,15 +953,14 @@ public struct WorktreeListContent: View {
                 }
             }
             .modifier(reportPopover(wt))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(PinnedTile.accessibilityLabel(name: row.leafName, host: host, state: state))
-            .accessibilityAddTraits(isSelected(wt) ? [.isButton, .isSelected] : .isButton)
-            .accessibilityAction { beginSelectingWorktree(wt) }
+            .pinnedTileAccessibility(name: row.relativeName, host: host, state: state, isSelected: isSelected(wt)) {
+                beginSelectingWorktree(wt)
+            }
             .id(wt.sidebar?.id ?? wt.path)
     }
 
     /// LAYOUT-2.227: where a new worktree starts, directly under the tiles.
-    private func newWorktreeRow(projectID: String) -> some View {
+    private func newWorktreeRow(projectID: String, merged: SidebarMergedRows) -> some View {
         Button {
             newWorktreeProjectID = projectID
             isAddSheetPresented = true

@@ -90,7 +90,8 @@ public struct PinnedTileFace: View {
         case .working where reduceMotion:
             shape.strokeBorder(Self.working, lineWidth: 2)
         case .working:
-            TimelineView(.animation) { timeline in
+            // A slow ring needs no more than 30 frames a second, and agents work for hours.
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
                 let turn = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
                 shape.strokeBorder(AngularGradient(colors: [Self.working, Self.working.opacity(0), Self.working],
                                                    center: .center, angle: .degrees(turn * 360)), lineWidth: 2)
@@ -98,5 +99,16 @@ public struct PinnedTileFace: View {
         case .asleep, .idle:
             EmptyView()
         }
+    }
+}
+
+extension View {
+    /// A tile reads as one button, named for its agent, host, and state.
+    public func pinnedTileAccessibility(name: String, host: String?, state: PinnedTileState, isSelected: Bool,
+                                        open: @escaping () -> Void) -> some View {
+        accessibilityElement(children: .ignore)
+            .accessibilityLabel(PinnedTile.accessibilityLabel(name: name, host: host, state: state))
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { open() }
     }
 }

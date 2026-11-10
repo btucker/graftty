@@ -236,8 +236,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.122** While the macOS sidebar is displayed below native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.
 
-**LAYOUT-2.123** While a macOS pinned section has no preceding rows, the application shall give its disclosure header a 20-point click target without extra top padding.
-
 **LAYOUT-2.124** While a repository's home checkout identity is displayed or serialized, the application shall use its current project icon and project fallback instead of any stored worktree emoji, including after restoration, while retaining linked worktree identities.
 
 **LAYOUT-2.125** When a worktree has a pending agent question, the application shall keep a two-line question preview inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.
