@@ -9,6 +9,13 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct WorktreeRowAlignmentTests {
+    @Test("@spec IPAD-1.35: While the iPad sidebar displays a worktree, the application shall draw its name at 13 points, smaller than the 15 points used on iPhone, so the sidebar fits more.")
+    func iPadNamesAreSmallerThanPhoneNames() {
+        #expect(WorktreeRowContent.titleSize(for: .regular) == 13)
+        #expect(WorktreeRowContent.titleSize(for: .compact) == 15)
+        #expect(WorktreeRowContent.titleSize(for: nil) == 15)
+    }
+
     @Test("@spec IPAD-1.15: While the iPad sidebar displays a worktree, the application shall keep its heading on one line without repeating a differing branch or a retained report beneath it.")
     func headingOmitsSecondaryBranchAndReport() async throws {
         let row = WorktreePanes(path: "/repo/work", displayName: "work", repoDisplayName: "Repo",

@@ -2834,6 +2834,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.34** While a different host's worktree is selected, the application shall leave shared worktree state alone when other hosts push frames.
 
+**IPAD-1.35** While the iPad sidebar displays a worktree, the application shall draw its name at 13 points, smaller than the 15 points used on iPhone, so the sidebar fits more.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render device-local tabs, splits, and a terminal drawer over the worktree's complete host session inventory.

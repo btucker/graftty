@@ -156,13 +156,14 @@ struct WorktreeBlockIdentity: View {
     let theme: GhosttyThemeColors?
     let status: SidebarRowStatus
     let isOpening: Bool
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         if worktree.state.isInFlight || isOpening {
             // A blank line of the title's font, padded like the title, centres
             // the spinner on the name's line.
             Text(" ")
-                .font(.system(size: WorktreeRowContent.titleSize, weight: .semibold))
+                .font(.system(size: WorktreeRowContent.titleSize(for: sizeClass), weight: .semibold))
                 .hidden()
                 .frame(maxWidth: .infinity)
                 .overlay { ProgressView().controlSize(.mini) }
@@ -204,7 +205,13 @@ struct WorktreeRowContent: View {
     /// When it asked or was last active.
     var time: Date? = nil
 
-    static let titleSize: CGFloat = 15
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// IPAD-1.35: the iPad sidebar is narrow beside the terminal, so names
+    /// are smaller there than on a phone's full-width list.
+    static func titleSize(for sizeClass: UserInterfaceSizeClass?) -> CGFloat {
+        sizeClass == .regular ? 13 : 15
+    }
     static let verticalPadding: CGFloat = 4
 
     var body: some View {
@@ -212,7 +219,7 @@ struct WorktreeRowContent: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     primaryText
-                        .font(.system(size: Self.titleSize, weight: .semibold))
+                        .font(.system(size: Self.titleSize(for: sizeClass), weight: .semibold))
                         .lineLimit(1).truncationMode(.tail)
                     if let hostText {
                         Text(hostText)
