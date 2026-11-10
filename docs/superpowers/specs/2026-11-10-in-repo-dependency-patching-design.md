@@ -114,7 +114,7 @@ These were decided in conversation and are not open to the builder:
   `scripts/linux/install-zig.sh`) and does not link libghostty. Linux keeps
   working.
 - **Release workflow** (`release.yml`) runs only `swift build` and
-  `bundle.sh`; it must build or restore the native dependencies itself.
+  `bundle.sh`; it must build the native dependencies itself (decision 7).
   `bundle.sh` currently copies `Resources/zmx-binary/zmx`.
 - **Compatibility gate.** The checks that caught this round's problems must run
   in the update PR: snapshot golden fixtures, paged-terminal suites, the
