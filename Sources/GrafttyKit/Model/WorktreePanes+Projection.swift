@@ -85,7 +85,8 @@ extension WorktreePanes {
                 retainedSessionName: agent.paneSessionID.map(ZmxLauncher.sessionName(for:)),
                 retainedSlotID: agent.presentationSlotID?.id.uuidString,
                 canResume: agent.providerSessionID?.isEmpty == false && agent.completion != nil && agent.status != .closing,
-                transcriptRevision: agent.transcriptArchive?.id)
+                transcriptRevision: agent.transcriptArchive?.id,
+                launched: agent.launchOperationID != nil)
         }
         self.init(
             path: entry.path,

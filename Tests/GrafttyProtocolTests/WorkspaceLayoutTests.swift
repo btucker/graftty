@@ -178,4 +178,49 @@ struct WorkspaceLayoutTests {
         #expect(WorkspaceLayout<String>.initial(for: legacy).groups.count == 1)
     }
 
+    @Test("@spec LAYOUT-2.240: When a host identifies a launched agent after its pane already appeared as a terminal, the application shall move that session from the terminal drawer into the agent tabs, leaving observed agents and sessions the user moved to the drawer in place.")
+    func lateIdentifiedLaunchedAgentLeavesDrawer() throws {
+        func snapshot(_ sessions: [String], agents: [AgentSessionInfo]) -> WorktreePanes {
+            let leaves = sessions.map { PaneLayoutNode.leaf(sessionName: $0, title: "", attentionText: nil, isBusy: false, attentionSource: nil) }
+            let inventory = leaves.dropFirst().reduce(leaves[0]) { .split(direction: .horizontal, ratio: 0.5, left: $0, right: $1) }
+            return WorktreePanes(path: "/repo", displayName: "Main", repoDisplayName: "Repo", displayBranch: "main", state: .running,
+                isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: inventory, agents: agents)
+        }
+        func agent(_ id: String, session: String?, launched: Bool?) -> AgentSessionInfo {
+            AgentSessionInfo(id: id, name: id, provider: "claude", status: "running", sessionName: session, launched: launched)
+        }
+        // The launch's pane reaches the viewer before the host binds the agent to it.
+        var layout = WorkspaceLayout<String>.initial(for: snapshot(["shell", "claude"],
+            agents: [agent("a", session: nil, launched: true)]))
+        layout.select("claude")
+        #expect(layout.terminals == ["shell", "claude"])
+
+        layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: "claude", launched: true)]),
+            preservingSelection: true)
+        #expect(layout.groups.map(\.sessions) == [["claude"]])
+        #expect(layout.terminals == ["shell"])
+        #expect(layout.focusedSession == "claude")
+
+        // A provider started by hand in a drawer shell keeps its place.
+        layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: "claude", launched: true),
+            agent("o", session: "shell", launched: nil)]), preservingSelection: true)
+        #expect(layout.terminals == ["shell"])
+
+        // The user's explicit move to the drawer survives later snapshots and a restore.
+        layout.moveToDrawer("claude")
+        layout = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONEncoder().encode(layout))
+        layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: "claude", launched: true)]),
+            preservingSelection: true)
+        #expect(layout.terminals == ["shell", "claude"])
+        #expect(layout.groups.isEmpty)
+
+        // Closing that view ends the exemption.
+        layout.remove("claude")
+        layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: nil, launched: true)]),
+            preservingSelection: true)
+        layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: "claude", launched: true)]),
+            preservingSelection: true)
+        #expect(layout.groups.map(\.sessions) == [["claude"]])
+    }
+
 }

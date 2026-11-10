@@ -24,6 +24,17 @@ public extension WorkspaceLayout where Session == String {
         return layout
     }
 
+    /// Applies a host snapshot's pane and agent inventory.
+    mutating func reconcile(with worktree: WorktreePanes, preservingSelection: Bool) {
+        let agents = worktree.agents ?? []
+        reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
+            agents: Set(agents.compactMap(\.sessionName)),
+            retained: Set(agents.compactMap(\.presentationSessionName)),
+            completed: Set(agents.filter(\.isCompleted).compactMap(\.presentationSessionName)),
+            launched: Set(agents.filter { $0.launched == true }.compactMap(\.sessionName)),
+            preservingSelection: preservingSelection)
+    }
+
     func visiblePaneLayout(in inventory: PaneLayoutNode?, retainedAgents: [AgentSessionInfo] = []) -> PaneLayoutNode? {
         let leaves = inventory?.leaves ?? []
         func render(_ node: Node) -> PaneLayoutNode? {

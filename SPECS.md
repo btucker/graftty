@@ -432,6 +432,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.224** When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.
 
+**LAYOUT-2.240** When a host identifies a launched agent after its pane already appeared as a terminal, the application shall move that session from the terminal drawer into the agent tabs, leaving observed agents and sessions the user moved to the drawer in place.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

@@ -43,6 +43,9 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     /// The active presentation may be retained content with no live terminal.
     public private(set) var focusedSession: Session?
     public var drawerVisible: Bool
+    /// Agents the user moved to the drawer; reconcile leaves them there.
+    /// Optional so layouts saved before this field still decode.
+    public private(set) var userDrawerSessions: Set<Session>?
     public var drawerHeight: Double
     public var sessions: [Session] { groups.flatMap(\.sessions) + terminals }
     /// Visible canvas groups in spatial order, with each group's tab order.
@@ -128,6 +131,8 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     }
 
     public mutating func remove(_ session: Session) {
+        userDrawerSessions?.remove(session)
+        if userDrawerSessions?.isEmpty == true { userDrawerSessions = nil }
         terminals.removeAll { $0 == session }
         if selectedTerminal == session { selectedTerminal = terminals.first }
         for i in groups.indices {
@@ -168,6 +173,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         guard sessions.contains(session) else { return }
         remove(session)
         addTerminal(session)
+        userDrawerSessions = (userDrawerSessions ?? []).union([session])
     }
 
     public mutating func split(_ session: Session, beside target: UUID, edge: Edge) {
@@ -187,13 +193,24 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         for session in sourceGroup.sessions { move(session, to: target) }
     }
 
-    public mutating func reconcile(live: [Session], agents: Set<Session>, retained: Set<Session> = [], completed: Set<Session> = [], preservingSelection: Bool = false) {
+    /// `launched` names agents the host started itself. A host can publish a
+    /// launched agent's pane before binding the agent to it, so the pane first
+    /// lands in the drawer; once it is identified it moves to the agent tabs.
+    public mutating func reconcile(live: [Session], agents: Set<Session>, retained: Set<Session> = [], completed: Set<Session> = [],
+                                   launched: Set<Session> = [], preservingSelection: Bool = false) {
         let previous = self
         let liveSet = Set(live).union(retained)
         for session in sessions where !liveSet.contains(session) { remove(session) }
         for session in live where !sessions.contains(session) && !completed.contains(session) {
             if agents.contains(session) { addAgent(session) }
             else { addTerminal(session) }
+        }
+        let misfiled = terminals.filter { launched.contains($0) && userDrawerSessions?.contains($0) != true }
+        for session in misfiled {
+            let wasFocused = focusedSession == session
+            remove(session)
+            addAgent(session)
+            if wasFocused { select(session) }
         }
         if preservingSelection {
             for group in previous.groups { select(group.selected) }
@@ -202,5 +219,6 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
             focusedSession = previous.focusedSession.flatMap { sessions.contains($0) ? $0 : nil }
             drawerVisible = previous.drawerVisible
         }
+        if !misfiled.isEmpty && terminals.isEmpty { drawerVisible = false }
     }
 }

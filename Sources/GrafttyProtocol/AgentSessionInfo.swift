@@ -22,12 +22,16 @@ public struct AgentSessionInfo: Codable, Sendable, Hashable, Identifiable {
     public var outcome: String?
     public var resultCount: Int?
     public var resultsAreSummaries: Bool?
+    /// Graftty launched this agent, as opposed to observing a provider the
+    /// user started in an existing shell. Absent from older hosts.
+    public var launched: Bool?
 
     public init(id: String, name: String, provider: String, status: String, sessionName: String?,
                 assignmentID: String? = nil, completionID: String? = nil, result: String? = nil, previousResults: [String]? = nil,
                 failure: String? = nil, processObservation: AgentProcessObservation? = nil,
                 outcome: String? = nil, resultCount: Int? = nil, resultsAreSummaries: Bool? = nil, retainedSessionName: String? = nil, retainedSlotID: String? = nil,
-                canResume: Bool? = nil, transcriptRevision: String? = nil) {
+                canResume: Bool? = nil, transcriptRevision: String? = nil, launched: Bool? = nil) {
+        self.launched = launched
         self.retainedSessionName = retainedSessionName; self.retainedSlotID = retainedSlotID
         self.canResume = canResume; self.transcriptRevision = transcriptRevision
         self.failure = failure; self.processObservation = processObservation; self.outcome = outcome
