@@ -502,7 +502,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **STATE-2.3** While a worktree has notification text, the sidebar shall show it in the status line of that worktree, ahead of a working agent, regardless of the worktree running state.
 
-**STATE-2.4** When the user views a worktree or pane, the application shall clear its notification overlays and a finished turn that asks nothing, while preserving stopped-agent requests and questions until the agent resumes or the request is explicitly dismissed.
+**STATE-2.4** When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention, including a finished turn, until the user leaves the worktree, the agent resumes, or the request is explicitly dismissed.
 
 **STATE-2.5** When the CLI sends a clear message for a worktree, the application shall clear the worktree-scoped attention overlay. Pane-scoped overlays are not affected by CLI clear messages; they auto-clear on their own timers.
 
@@ -519,6 +519,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **STATE-2.11** When the user triggers Stop on a running worktree (`TERM-1.2`'s companion — tears down all panes at once while preserving the split tree for re-open), the application shall drop every pane-scoped attention entry on that worktree. Extends `STATE-2.7`'s per-pane rule to the all-panes-at-once case. Without this, a stale pane attention badge from before the Stop would reappear on the fresh pane's sidebar row when the user re-opens the worktree — same-`PaneSlotID` leaves are reused on re-open to preserve layout, so the attention dictionary must be cleared explicitly. The worktree-level `attention` slot (CLI-notify) is left untouched — it's a worktree-wide concern independent of which panes are alive.
 
 **STATE-2.12** When the application launches and loads persisted `Attention` entries (worktree-level `wt.attention` or pane-level `wt.paneAttention[terminalID]`), for each one that carries a non-nil `clearAfter`, the application shall reschedule the auto-clear timer against the remaining time derived from `attention.timestamp + clearAfter` relative to the current clock. If the deadline has already passed, the timer shall fire on the next main-queue turn (zero-delay `asyncAfter`) and clear the stale entry immediately. Without this resume, a force-quit during a `--clear-after` window leaves the attention stuck in state.json forever because the original `DispatchQueue.main.asyncAfter` is in-memory only. For defensive handling of a persisted timestamp in the future (clock skew, hand-edit), the remaining window shall be clamped to the full `clearAfter` duration measured from now rather than a negative elapsed value.
+
+**STATE-2.13** When the user leaves a worktree for another one, the application shall clear that worktree's finished turn that asks nothing, while a turn that asks a question stays until it is answered or dismissed.
 
 ## TERM — Terminal Lifecycle
 

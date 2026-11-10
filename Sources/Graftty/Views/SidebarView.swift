@@ -526,13 +526,19 @@ struct SidebarView: View {
         .onDisappear { reportController.close() }
         .onChange(of: appState.selectedWorktreePath) { old, new in
             rememberSelection(old)
+            // STATE-2.13: leaving a worktree means its finished turn was seen.
+            if let old, old != new { _ = appState.mutateWorktrees(atPath: old) { $0.leaveAttention() } }
             if let new,
                let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == new } }) {
                 navigation.selectedProjectID = mergedSidebar.mergedID(forMember: localProjectID(repo))
                 rememberSelection(new)
             }
         }
-        .onRemoteWorktreeSelectionChange(identity: selectedRemoteIdentity, path: selectedRemoteWorktreePath) { _ in
+        .onRemoteWorktreeSelectionChange(identity: selectedRemoteIdentity, path: selectedRemoteWorktreePath) { previous, current in
+            if let previous, let path = previous.worktreePath, previous != current,
+               let mac = remoteMacsModel.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == previous.identity }) {
+                Task { await remoteMacsModel.acknowledgeLeftFinishedTurn(on: mac, worktreePath: path) }
+            }
             rememberRemoteSelection()
             if let identity = selectedRemoteIdentity, let path = selectedRemoteWorktreePath,
                let row = remoteMacsModel.worktreePanesByRemote[identity]?.first(where: { $0.path == path }) {
@@ -1327,12 +1333,12 @@ extension View {
     func onRemoteWorktreeSelectionChange(
         identity: RemoteMacIdentity?,
         path: String?,
-        perform action: @escaping (RemoteMacSidebarSelection?) -> Void
+        perform action: @escaping (_ previous: RemoteMacSidebarSelection?, _ current: RemoteMacSidebarSelection?) -> Void
     ) -> some View {
         let selection = identity.map {
             RemoteMacSidebarSelection(identity: $0, worktreePath: path)
         }
-        return onChange(of: selection) { _, current in action(current) }
+        return onChange(of: selection) { previous, current in action(previous, current) }
     }
 }
 

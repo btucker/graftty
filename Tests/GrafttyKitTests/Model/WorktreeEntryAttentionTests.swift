@@ -82,26 +82,34 @@ struct WorktreeEntryAttentionTests {
         #expect(e.attention != nil)                 // worktree-scoped untouched
     }
 
-    @Test("@spec STATE-2.4: When the user views a worktree or pane, the application shall clear its notification overlays and a finished turn that asks nothing, while preserving stopped-agent requests and questions until the agent resumes or the request is explicitly dismissed.")
-    func viewingWorktreeClearsFinishedTurnsButKeepsQuestions() {
+    @Test("@spec STATE-2.4: When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention, including a finished turn, until the user leaves the worktree, the agent resumes, or the request is explicitly dismissed.")
+    func viewingWorktreePreservesStoppedAgents() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let slot = PaneSlotID(id: UUID())
         e.attention = att("w", .userNotify)
         e.paneAttention[slot] = att("p", .agentStop)
         let notification = PaneSlotID(id: UUID())
         e.paneAttention[notification] = att("done", .commandFinished)
-        e.recordAgentStop(SidebarAgentStop(agentName: "Codex", stoppedAt: Date()))
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date())
+        e.recordAgentStop(stop)
         e.viewAttention()
         #expect(e.attention == nil)
         #expect(e.paneAttention[slot] != nil)
         #expect(e.paneAttention[notification] == nil)
-        // Opening the worktree is seeing the finished turn.
+        #expect(e.unseenAgentStop == stop)
+    }
+
+    @Test("@spec STATE-2.13: When the user leaves a worktree for another one, the application shall clear that worktree's finished turn that asks nothing, while a turn that asks a question stays until it is answered or dismissed.")
+    func leavingAWorktreeClearsItsFinishedTurn() {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        e.recordAgentStop(SidebarAgentStop(agentName: "Codex", stoppedAt: Date()))
+        e.leaveAttention()
         #expect(e.unseenAgentStop == nil)
 
         let question = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(),
             recap: .init(title: "Ship", completed: "Built", next: "Ship", need: "Ship it?"))
         e.recordAgentStop(question)
-        e.viewAttention()
+        e.leaveAttention()
         #expect(e.unseenAgentStop == question)
     }
 

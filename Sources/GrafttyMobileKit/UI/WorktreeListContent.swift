@@ -42,6 +42,8 @@ public struct WorktreeListContent: View {
     @Bindable private var navigation: SidebarNavigationState
     /// The project New worktree was tapped in, so the sheet starts there.
     @State private var newWorktreeProjectID: String?
+    /// The worktree opened last, whose finished turn clears once another opens.
+    @State private var lastOpenedWorktree: WorktreePanes?
     /// Shared with the screens pushed above the list, so their headers draw
     /// the same images; a local cache stands in when none is provided.
     @Environment(\.projectIconCache) private var sharedProjectIconCache
@@ -958,12 +960,23 @@ public struct WorktreeListContent: View {
     }
 
     private func recordViewedStop(_ worktree: WorktreePanes) {
-        guard let stop = SidebarProjection.activity([worktree]).first(where: { $0.agentStop != nil }) else { return }
-        navigation.opened(stop)
-        // STATE-2.4: the owning host retires a finished turn that asked nothing.
+        // STATE-2.13: moving on from the last opened worktree means its
+        // finished turn was seen; its owning host retires it.
+        if let previous = lastOpenedWorktree, MergedWorktreeList.identity(previous) != MergedWorktreeList.identity(worktree) {
+            retireFinishedTurn(previous)
+        }
+        lastOpenedWorktree = worktree
+        if let stop = SidebarProjection.activity([worktree]).first(where: { $0.agentStop != nil }) {
+            navigation.opened(stop)
+        }
+    }
+
+    private func retireFinishedTurn(_ worktree: WorktreePanes) {
+        let current = feed.state.rows.first { MergedWorktreeList.identity($0) == MergedWorktreeList.identity(worktree) } ?? worktree
+        guard let stop = SidebarProjection.activity([current]).first(where: { $0.agentStop != nil }) else { return }
         let supportsExact = feed.state.projects.first { $0.id == stop.projectID }?.supportsWorktreeEditing == true
-        guard let request = SidebarInteractionPolicy.acknowledgementOnOpen(for: stop, supportsExactAcknowledgement: supportsExact),
-              let provider = route(for: worktree)?.provider else { return }
+        guard let request = SidebarInteractionPolicy.acknowledgementOnLeave(for: stop, supportsExactAcknowledgement: supportsExact),
+              let provider = route(for: current)?.provider else { return }
         Task { _ = try? await RelayedWorktreeManagementClient.send(request, using: provider) }
     }
 

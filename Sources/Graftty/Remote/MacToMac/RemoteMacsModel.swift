@@ -961,6 +961,19 @@ final class RemoteMacsModel: ObservableObject {
         }
     }
 
+    /// STATE-2.13: leaving a remote worktree retires its finished turn on the
+    /// Mac that owns it, so every client stops showing it.
+    func acknowledgeLeftFinishedTurn(on remoteMac: RemoteMac, worktreePath: String) async {
+        let identity = RemoteMacIdentity(remoteMac)
+        guard let worktree = worktreePanesByRemote[identity]?.first(where: { $0.path == worktreePath }),
+              await sidebarSnapshot(for: remoteMac)?.projects
+                .first(where: { $0.id == SidebarProjection.projectID(worktree) })?.supportsWorktreeEditing == true else { return }
+        for item in SidebarProjection.activity([worktree]) {
+            guard let request = SidebarInteractionPolicy.acknowledgementOnLeave(for: item, supportsExactAcknowledgement: true) else { continue }
+            _ = await forwardManagement(identity: identity, request: request)
+        }
+    }
+
     struct SidebarRelaySnapshot {
         var projects: [SidebarProject] = []
         var authoritativeOwnerIDs: Set<RemoteDeviceID> = []
