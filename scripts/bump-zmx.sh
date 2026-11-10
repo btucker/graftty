@@ -8,7 +8,8 @@
 #   ./scripts/bump-zmx.sh
 #
 # Changing scripts/zmx/UPSTREAM_COMMIT is expected to require refreshing
-# scripts/zmx/graftty.patch against that exact upstream revision.
+# scripts/zmx/graftty.patch and paging.patch against that exact upstream
+# revision.
 
 set -euo pipefail
 
@@ -90,13 +91,16 @@ if [[ -z "$UPSTREAM_VERSION" ]]; then
     echo "couldn't read upstream version from build.zig.zon" >&2
     exit 1
 fi
-VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty9"
+VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty11"
 
 echo "→ testing patched zmx"
 (
     cd "$SOURCE"
     zig fmt --check src
-    zig build test
+    # An explicit target uses Zig's bundled Darwin libc headers, as the
+    # release builds below do. A native test build compiles libc++ against
+    # the host SDK, which newer SDKs than the pinned Zig can break.
+    zig build test "-Dtarget=$(uname -m | sed 's/^arm64$/aarch64/')-macos"
 )
 
 declare -a checksums
@@ -204,9 +208,9 @@ printf '%s\n' "$VERSION" > "$INSTALL_STAGE/VERSION"
     printf '# zmx %s — built from https://github.com/neurosnap/zmx commit %s\n' \
         "$VERSION" "$COMMIT"
     printf '# Built with Zig %s.\n' "$EXPECTED_ZIG_VERSION"
-    printf '# Graftty patch SHA256 %s — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.\n' \
+    printf '# Graftty patch SHA256 %s — legacy wire framing + negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.\n' \
         "$patch_sha"
-    printf '# Paging patch SHA256 %s - current screen first and requested scrollback pages.\n' \
+    printf '# Paging patch SHA256 %s - current screen first and requested scrollback pages (ghostty-8af6897c-paging-1).\n' \
         "$paging_patch_sha"
     printf '%s\n' "${checksums[@]}"
 } > "$INSTALL_STAGE/CHECKSUMS"

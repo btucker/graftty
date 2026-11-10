@@ -88,6 +88,20 @@ if [[ "$LOCK_HELD" != 1 ]]; then
     "$0" --graftty-swiftpm-lock-held "$SUBCOMMAND" "$@"
 fi
 
+# Binary dependencies such as Sparkle replace their headers in the shared
+# Products directory when worktrees resolve different versions, and Swift
+# Build then rejects precompiled modules built from the old headers. Drop
+# them whenever the resolved dependency set differs from the last command's.
+RESOLVED_STAMP="$CACHE_ROOT/resolved-dependencies"
+RESOLVED_ID=none
+if [[ -f "$REPO_ROOT/Package.resolved" ]]; then
+  RESOLVED_ID="$(git hash-object "$REPO_ROOT/Package.resolved")"
+fi
+if [[ "$(cat "$RESOLVED_STAMP" 2>/dev/null || true)" != "$RESOLVED_ID" ]]; then
+  rm -rf "$BUILD_DIR/out/Intermediates.noindex/SwiftExplicitPrecompiledModules"
+  printf '%s\n' "$RESOLVED_ID" > "$RESOLVED_STAMP"
+fi
+
 # SwiftPM's Linux XCTest discovery reads compiler index records even when the
 # tests primarily use Swift Testing. Disabling the store breaks discovery.
 INDEX_ARGUMENT=--disable-index-store

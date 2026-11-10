@@ -620,7 +620,7 @@ private final class PagedOutputCanvas {
         config.receive_resize = { _, _, _, _, _ in }
     }) throws {
         _ = NSApplication.shared
-        XCTAssertEqual(ghostty_init(0, nil), 0)
+        XCTAssertEqual(ghosttyInitWithoutArguments(), 0)
         let actions = PagedOutputActions()
         self.actions = actions
         let nativeConfig = GhosttyConfig(loadUserConfig: loadUserConfig)
@@ -725,8 +725,8 @@ private final class PagedOutputActions: @unchecked Sendable {
     var titles: [String] { lock.withLock { values } }
     func record(_ action: ghostty_action_s) {
         if action.tag == GHOSTTY_ACTION_SCROLLBAR { lock.withLock { scrollNotification }?() }
-        if action.tag == GHOSTTY_ACTION_SET_TITLE, let title = action.action.set_title.title {
-            let value = String(cString: title)
+        if action.tag == GHOSTTY_ACTION_SET_TITLE {
+            let value = String(cString: action.action.set_title.title)
             lock.withLock { values.append(value) }
         }
     }

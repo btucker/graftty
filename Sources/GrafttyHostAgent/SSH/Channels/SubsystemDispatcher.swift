@@ -10,7 +10,7 @@ import NIOSSH
 /// `TerminalSessionHandler` or one of R5's custom-subsystem handlers
 /// based on the first `SSHChannelRequestEvent` that arrives.
 ///
-/// Why this exists: swift-nio-ssh 0.13's `SSHChannelType` enum has no
+/// Why this exists: swift-nio-ssh's `SSHChannelType` enum has no
 /// custom-channel-type case. Custom channel purposes (panes-state,
 /// pane-control) ride on `.session` channels and are distinguished by
 /// the SSH-level `subsystem` channel-request per RFC 4254 §6.5 —

@@ -21,7 +21,8 @@ public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
     private var inputClosed = false
     private var channel: Channel?
     private static let capacity = TunnelCapacity()
-    // NIOSSH grants a fixed 16 MiB child receive window and delivers its entire
+    // Each SSH child channel grants a 16 MiB receive window (REMOTE-9.26, set
+    // by SSHServerSetup and SSHClientSetup) and NIOSSH delivers its entire
     // buffered window on close, even with autoRead off. Allow one outstanding
     // TCP-write batch plus that final window; keep an explicit two-window cap.
     private static let maximumPendingBytes = 2 * (1 << 24)
