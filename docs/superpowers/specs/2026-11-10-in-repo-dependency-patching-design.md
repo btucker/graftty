@@ -126,6 +126,21 @@ These were decided in conversation and are not open to the builder:
 
 ## Shape of the solution
 
+This is the established **patch series** (patch queue, "carried downstream
+patches") pattern: Debian's `3.0 (quilt)` format, Homebrew/Nix/Yocto recipes,
+and most directly Electron, which pins Chromium and Node in `DEPS` and carries
+`git format-patch` files in `patches/<upstream>/` with an ordered `.patches`
+list, updating Chromium every few weeks. Follow Electron's conventions:
+
+- Pins are plain files (decided; not submodules or subtrees), one upstream
+  commit per dependency.
+- Patches are `git format-patch` output (with author, message, and index
+  lines) listed in an explicit order file, applied with `git am -3` so most
+  upstream moves merge automatically.
+- A round-trip script applies the series to a checkout as commits and exports
+  the edited commits back to patch files; the update agent resolves conflicts
+  as ordinary git commits in between.
+
 Proposed layout (names are the builder's to refine):
 
 ```
@@ -207,8 +222,7 @@ before the migration lands; the migration imports the same patch either way.
 
 ## Left to the builder
 
-- Directory and script names; whether pins are plain files or submodules (the
-  conversation leaned toward plain files plus the shared cache).
+- Directory and script names.
 - Which of Lakr's 18 Ghostty patches and Swift sources Graftty actually needs
   (drop visionOS/Mac Catalyst/ShellCraftKit/theme pieces if unused).
 - Which platform slices each command builds (e.g. macOS-only for
