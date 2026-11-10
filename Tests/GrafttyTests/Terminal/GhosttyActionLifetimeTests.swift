@@ -232,6 +232,31 @@ struct GhosttyActionLifetimeTests {
         else { Issue.record("URL was not delivered") }
     }
 
+    @Test func emptyNotificationTitleIsDeliveredUnchanged() async throws {
+        // OSC 9 notifications carry no title; libghostty sends an empty one.
+        let bridge = GhosttyActionBridge()
+        var target = ghostty_target_s()
+        target.tag = GHOSTTY_TARGET_APP
+        var delivered: [GhosttyOwnedAction] = []
+        let title = try #require(strdup(""))
+        defer { free(title) }
+        let body = try #require(strdup("done"))
+        defer { free(body) }
+        var action = ghostty_action_s()
+        action.tag = GHOSTTY_ACTION_DESKTOP_NOTIFICATION
+        action.action.desktop_notification.title = UnsafePointer(title)
+        action.action.desktop_notification.body = UnsafePointer(body)
+        post { bridge.receive(target: target, action: action) { _, action in delivered.append(action) } }
+        await drainMainQueue()
+        try #require(delivered.count == 1)
+        guard case let .desktopNotification(deliveredTitle, deliveredBody) = delivered[0] else {
+            Issue.record("notification was not delivered")
+            return
+        }
+        #expect(deliveredTitle == "")
+        #expect(deliveredBody == "done")
+    }
+
     @Test func unknownSurfaceTargetIsDropped() async {
         let manager = TerminalManager(socketPath: "/tmp/graftty-action-lifetime.sock")
         var reloads = 0
@@ -254,7 +279,8 @@ struct GhosttyActionLifetimeTests {
         }
         action.tag = GHOSTTY_ACTION_MOUSE_OVER_LINK
         // Unhandled borrowed payloads must never be decoded or retained.
-        action.action.mouse_over_link.url = UnsafePointer<CChar>(bitPattern: 1)
+        // A deliberately invalid address: it must never be dereferenced.
+        action.action.mouse_over_link.url = UnsafePointer<CChar>(bitPattern: 1)!
         #expect(GhosttyOwnedAction(action) == nil)
     }
 

@@ -10,7 +10,7 @@ struct SurfaceScrollbackTests {
     @Test("@spec CONTEXT-33: When the application jumps a Mac terminal to a timeline message, it shall read each loaded scrollback row by absolute screen row, keeping soft-wrapped rows separate, and scroll so the message's row is at the top of the viewport.")
     func readsAbsoluteRowsAndScrollsToTheMessage() async throws {
         _ = NSApplication.shared
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         final class Scrollbar: @unchecked Sendable { var value = ghostty_action_scrollbar_s() }
         let scrollbar = Scrollbar()
         let app = GhosttyApp(config: GhosttyConfig()) { _, action in

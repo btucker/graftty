@@ -8,7 +8,7 @@ struct SurfaceNSViewSizingTests {
     @Test("@spec TERM-11.18: When a local terminal view joins a window after receiving an offscreen frame size or its backing properties change, the application shall resynchronize libghostty's content scale and backing-pixel viewport in that order even if its point size did not change.")
     func attachingPresizedViewResynchronizesPixels() throws {
         _ = NSApplication.shared
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
         let size = CGRect(x: 0, y: 0, width: 600, height: 400)
         let terminal = SurfaceNSView(frame: size)

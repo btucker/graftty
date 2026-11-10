@@ -22,8 +22,9 @@ let package = Package(
 // package reference. Local packages are opt-in: manifest evaluation is cached,
 // so filesystem auto-discovery cannot reliably follow dependency changes.
 let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-// libghostty-spm 3.0.2026102902, built from Ghostty 1.4.0.
-let publishedGhosttyRevision = "ac9cb906df805388ec9c8fd6cf9cacd4e623719b"
+// libghostty-spm 3.0.2026110901, built from Ghostty 53e55147. It decodes pages from
+// the bundled zmx under PagedTerminalLimits.codec; snapshot fixtures are unchanged.
+let publishedGhosttyRevision = "3b6d597b649819531b79b89900cef44854ac845d"
 #if os(macOS)
 import CryptoKit
 
@@ -47,7 +48,8 @@ func compatibleRenderer(at path: String) -> Bool {
           let data = try? Data(contentsOf: root.appendingPathComponent("PAGING-BUILD.json")),
           let build = try? JSONDecoder().decode(PagingBuild.self, from: data),
           build.schemaVersion == 1,
-          build.snapshotABI == "ghostty-8af6897c-paging-1",
+          // The label 3.0.2026110901's recipe records; the wire codec is unchanged.
+          build.snapshotABI == "ghostty-53e55147-paging-1",
           build.inputs["Paging/recipe.json"] != nil,
           !build.artifacts.isEmpty else { return false }
     func matches(_ hashes: [String: String], under directory: URL) -> Bool {
