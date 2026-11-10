@@ -5574,6 +5574,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERF-1.25** When the native transport latency probe is explicitly run, the probe shall report transport, parsing, and matching rendered-pixel latency separately without treating renderer completion as physical display presentation.
 
+**PERF-1.26** When the recurring branch scan reads commit dates, the application shall request integer Unix seconds from Git and convert them directly to dates without calendar or locale parsing.
+
 ## PORTS — PORTS
 
 ### PORTS-1.x

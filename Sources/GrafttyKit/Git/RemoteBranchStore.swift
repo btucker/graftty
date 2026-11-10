@@ -68,13 +68,6 @@ public final class RemoteBranchStore {
     @ObservationIgnored private var ticker: PollingTickerLike?
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "RemoteBranchStore")
-    // ISO8601DateFormatter is thread-safe for date parsing; nonisolated(unsafe) acknowledges
-    // the missing Sendable conformance while preserving the single-allocation benefit.
-    private nonisolated(unsafe) static let iso8601Formatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
     private nonisolated static let parseLogger = Logger(subsystem: "com.btucker.graftty", category: "RemoteBranchStore")
 
     /// Tests can retain each complete operation until they explicitly run it.
@@ -269,6 +262,7 @@ public final class RemoteBranchStore {
     }
 
     /// Parses the single `for-each-ref` result used by `defaultList`.
+    /// Commit dates are integer Unix seconds (`%(committerdate:unix)`).
     /// Full ref names make heads and origin refs unambiguous; the upstream
     /// and symbolic-ref columns provide the remaining snapshot metadata
     /// without launching separate Git probes.
@@ -342,8 +336,8 @@ public final class RemoteBranchStore {
         _ dateString: String,
         refName: String
     ) -> Date {
-        if let parsed = Self.iso8601Formatter.date(from: dateString) {
-            return parsed
+        if let seconds = Int64(dateString) {
+            return Date(timeIntervalSince1970: TimeInterval(seconds))
         }
         Self.parseLogger.info("RemoteBranchStore: failed to parse committerdate '\(dateString, privacy: .public)' for ref '\(refName, privacy: .public)'")
         return .distantPast
@@ -366,7 +360,7 @@ public final class RemoteBranchStore {
             let output = try await GitRunner.run(
                 args: [
                     "for-each-ref",
-                    "--format=%(refname)\t%(committerdate:iso-strict)\t%(upstream)\t%(symref)",
+                    "--format=%(refname)\t%(committerdate:unix)\t%(upstream)\t%(symref)",
                     "refs/heads/",
                     "refs/remotes/origin",
                 ],
