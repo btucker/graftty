@@ -38,6 +38,8 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public var root: Node?
     public private(set) var groups: [Group]
     public private(set) var terminals: [Session]
+    /// Optional for saved layouts that predate recording deliberate placement.
+    private var explicitDrawerSessions: Set<Session>?
     public private(set) var selectedTerminal: Session?
     public private(set) var lastAgent: Session?
     /// The active presentation may be retained content with no live terminal.
@@ -128,6 +130,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     }
 
     public mutating func remove(_ session: Session) {
+        explicitDrawerSessions?.remove(session)
         terminals.removeAll { $0 == session }
         if selectedTerminal == session { selectedTerminal = terminals.first }
         for i in groups.indices {
@@ -168,6 +171,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         guard sessions.contains(session) else { return }
         remove(session)
         addTerminal(session)
+        explicitDrawerSessions = (explicitDrawerSessions ?? []).union([session])
     }
 
     public mutating func split(_ session: Session, beside target: UUID, edge: Edge) {
@@ -191,6 +195,13 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         let previous = self
         let liveSet = Set(live).union(retained)
         for session in sessions where !liveSet.contains(session) { remove(session) }
+        // A live session can arrive before its managed-agent metadata. Correct
+        // automatic shell placement without undoing a user's drawer move.
+        let promoted = terminals.filter { agents.contains($0) && explicitDrawerSessions?.contains($0) != true }
+        for session in promoted {
+            remove(session)
+            addAgent(session)
+        }
         for session in live where !sessions.contains(session) && !completed.contains(session) {
             if agents.contains(session) { addAgent(session) }
             else { addTerminal(session) }
@@ -198,9 +209,11 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         if preservingSelection {
             for group in previous.groups { select(group.selected) }
             if let lastAgent = previous.lastAgent { select(lastAgent) }
-            if let terminal = previous.selectedTerminal { select(terminal) }
+            if let terminal = previous.selectedTerminal, terminals.contains(terminal) { select(terminal) }
             focusedSession = previous.focusedSession.flatMap { sessions.contains($0) ? $0 : nil }
+            if let focusedSession, promoted.contains(focusedSession) { select(focusedSession) }
             drawerVisible = previous.drawerVisible
         }
+        if !promoted.isEmpty && terminals.isEmpty { drawerVisible = false }
     }
 }
