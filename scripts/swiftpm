@@ -111,7 +111,7 @@ fi
 
 # Package.swift reads libghostty (and the bundled zmx) from .deps/; build or
 # reuse them for this worktree's pins and patches first.
-if [[ "$(uname -s)" == Darwin ]]; then
+if [[ "$(uname -s)" == Darwin && -x "$REPO_ROOT/scripts/deps" ]]; then
   "$REPO_ROOT/scripts/deps" prepare --platforms macos
 fi
 
