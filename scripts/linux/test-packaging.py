@@ -162,7 +162,10 @@ class ZmxBuildTests(unittest.TestCase):
         shutil.copy(ROOT / "build-zmx.sh", scripts / "build-zmx.sh")
         pins = self.repo / "scripts/zmx"
         pins.mkdir()
-        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "GRAFTTY_REVISION", "graftty.patch", "paging.patch",
+        zig_pin = self.repo / "deps/zig"
+        zig_pin.mkdir(parents=True)
+        shutil.copy(ROOT.parent.parent / "deps/zig/VERSION", zig_pin / "VERSION")
+        for name in ("UPSTREAM_COMMIT", "GRAFTTY_REVISION", "graftty.patch", "paging.patch",
                      "always-run-tests.patch"):
             shutil.copy(ROOT.parent / "zmx" / name, pins / name)
         self.tools = self.repo / "tools"
@@ -170,7 +173,7 @@ class ZmxBuildTests(unittest.TestCase):
         self.calls = self.repo / "calls"
         self.env = {**os.environ, "PATH": str(self.tools) + os.pathsep + os.environ["PATH"],
                     "GRAFTTY_TEST_ZMX_CALLS": str(self.calls),
-                    "GRAFTTY_TEST_ZIG_VERSION": (pins / "ZIG_VERSION").read_text().strip()}
+                    "GRAFTTY_TEST_ZIG_VERSION": (zig_pin / "VERSION").read_text().strip()}
         self.output = self.repo / "out/zmx"
         write_flock(self.tools / "flock")
         self.executable("git", r"""
