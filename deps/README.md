@@ -46,7 +46,8 @@ the tests read:
 
 `scripts/swiftpm` and `scripts/bundle.sh` call it automatically. Before
 opening the GrafttyMobile Xcode project, run
-`scripts/deps prepare --platforms macos,ios` once.
+`scripts/deps prepare --platforms macos,ios` once. Xcode Cloud does the same in
+`Apps/GrafttyMobile/ci_scripts/ci_post_clone.sh` (iOS slices only).
 
 Artifacts live under `~/Library/Caches/Graftty/deps/` (Linux:
 `~/.cache/graftty/deps/`), shared by every worktree and keyed by
