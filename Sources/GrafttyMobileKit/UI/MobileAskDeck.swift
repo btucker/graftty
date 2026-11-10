@@ -44,8 +44,6 @@ struct MobileAskDeck: View {
                                       onDismiss: { onDismiss(front) })
                         .fixedSize(horizontal: false, vertical: true)
                         .overlay(alignment: dragX > 0 ? .topLeading : .topTrailing) { swipeHint }
-                        .compositingGroup()
-                        .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                         .offset(x: dragX)
                         .rotationEffect(.degrees(Double(dragX) / 40), anchor: .bottom)
                         .simultaneousGesture(swipe(front))
