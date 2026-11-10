@@ -1,7 +1,9 @@
 # Graftty zmx patch
 
 `UPSTREAM_COMMIT` pins the source revision used by `scripts/bump-zmx.sh`, and
-`ZIG_VERSION` pins the compiler that must build it. The pin is the upstream
+`ZIG_VERSION` pins the compiler that must build it. `GRAFTTY_REVISION` is the
+`grafttyN` suffix of the vendored version on macOS and Linux; increment it
+whenever a patch change alters daemon or client behavior. The pin is the upstream
 v1.0.1 release. Its `build.zig.zon` uses Ghostty
 `53e55147bbbb0157672dac0228aa7744e881f1fa`, the same engine as Graftty's
 libghostty-spm build.
@@ -163,7 +165,9 @@ tests that fixture on every run and also tests the committed N-1 binary when it
 is distinct. It never derives its only legacy input from the mutable output
 path.
 
-Run `scripts/bump-zmx.sh` after changing the pin or patch. It formats and tests
+Run `scripts/bump-zmx.sh` after changing a pin (including `GRAFTTY_REVISION`)
+or patch; Linux CI fails while `Resources/zmx-binary/VERSION` disagrees with
+the pins. It formats and tests
 the patched Zig source, builds both macOS architectures in `ReleaseSafe`, makes
 a universal binary, checks the reported version, and exercises old/new
 client-daemon compatibility. It stages and verifies the replacement files
