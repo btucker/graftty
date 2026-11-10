@@ -167,7 +167,8 @@ struct WorktreeBlockIdentity: View {
                 .hidden()
                 .frame(maxWidth: .infinity)
                 .overlay { ProgressView().controlSize(.mini) }
-                .padding(.vertical, WorktreeRowContent.verticalPadding)
+                .padding(.top, WorktreeRowContent.verticalPadding)
+                .padding(.bottom, WorktreeRowContent.bottomPadding)
                 .frame(maxHeight: .infinity, alignment: .top)
         } else if worktree.iconIdentity != .none {
             SidebarWorktreeRowIdentity(identity: worktree.iconIdentity,
@@ -212,7 +213,11 @@ struct WorktreeRowContent: View {
     static func titleSize(for sizeClass: UserInterfaceSizeClass?) -> CGFloat {
         sizeClass == .regular ? 13 : 15
     }
+    /// Above the name, so it lines up with the identity beside it.
     static let verticalPadding: CGFloat = 4
+    /// IOS-13.22: below the name. The status line follows directly, so the
+    /// two read as one block rather than as separate lines.
+    static let bottomPadding: CGFloat = 0
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -246,7 +251,8 @@ struct WorktreeRowContent: View {
                 .fixedSize()
             }
         }
-        .padding(.vertical, Self.verticalPadding)
+        .padding(.top, Self.verticalPadding)
+        .padding(.bottom, Self.bottomPadding)
         .contentShape(Rectangle())
     }
 

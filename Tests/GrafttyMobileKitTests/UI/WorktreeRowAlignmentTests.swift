@@ -9,6 +9,11 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct WorktreeRowAlignmentTests {
+    @Test("@spec IOS-13.22: While a mobile worktree row shows a status line, the application shall place it directly under the name, with no padding between them.")
+    func statusLineSitsDirectlyUnderTheName() {
+        #expect(WorktreeRowContent.bottomPadding == 0)
+    }
+
     @Test("@spec IPAD-1.35: While the iPad sidebar displays a worktree, the application shall draw its name at 13 points, smaller than the 15 points used on iPhone, so the sidebar fits more.")
     func iPadNamesAreSmallerThanPhoneNames() {
         #expect(WorktreeRowContent.titleSize(for: .regular) == 13)
