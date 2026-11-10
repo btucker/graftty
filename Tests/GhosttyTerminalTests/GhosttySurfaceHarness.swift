@@ -150,3 +150,26 @@ extension Data {
         return count
     }
 }
+
+/// Waits until the terminal's own grid matches the size the surface reports.
+/// Ghostty's IO thread applies a resize behind a coalescing timer, so right
+/// after a surface builds or resizes, `ghostty_surface_size` (which
+/// `readViewportText` reads rows by) can be ahead of the screen the parser
+/// writes into. The cursor position report comes from the screen itself.
+@MainActor
+func settleGrid(_ harness: GhosttySurfaceHarness) async {
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(5)
+    var reported = ""
+    while clock.now < deadline {
+        guard let size = harness.surface?.size() else { break }
+        harness.receive("")
+        harness.session.receive("\u{1B}7\u{1B}[999;999H\u{1B}[6n\u{1B}8")
+        reported = await String(decoding: harness.drain(), as: UTF8.self)
+        if reported.hasSuffix("\u{1B}[\(size.rows);\(size.columns)R") {
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("terminal grid never matched the surface size: \(reported.debugDescription)")
+}

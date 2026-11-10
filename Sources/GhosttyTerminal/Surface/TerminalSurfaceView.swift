@@ -29,7 +29,7 @@ public struct TerminalSurfaceView: View {
     public var body: some View {
         representable
             .background(.clear)
-            .onChange(of: colorScheme) { newScheme in
+            .onChange(of: colorScheme) { _, newScheme in
                 context.adopt(colorScheme: newScheme)
             }
             .onAppear {
