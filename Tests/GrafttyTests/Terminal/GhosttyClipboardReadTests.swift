@@ -11,7 +11,7 @@ struct GhosttyClipboardReadTests {
         #expect(!GhosttyClipboardRead.accepts(nil, count: 0, listOnly: false))
         for mime in ["text/plain", "image/png"] {
             mime.withCString { pointer in
-                let types: [UnsafePointer<CChar>?] = [pointer]
+                let types: [UnsafePointer<CChar>] = [pointer]
                 types.withUnsafeBufferPointer {
                     #expect(GhosttyClipboardRead.accepts($0.baseAddress, count: $0.count, listOnly: true))
                     #expect(GhosttyClipboardRead.accepts($0.baseAddress, count: $0.count, listOnly: false) == (mime == "text/plain"))
@@ -33,7 +33,7 @@ struct GhosttyClipboardReadTests {
             #expect(completion.contents_len == 0)
             #expect(completion.available_len == (hasText ? 1 : 0))
             if hasText {
-                #expect(completion.available?.pointee.map { String(cString: $0) } == "text/plain")
+                #expect(completion.available.map { String(cString: $0.pointee) } == "text/plain")
             }
         }
         #expect(!reclaimed)
@@ -51,7 +51,7 @@ struct GhosttyClipboardReadTests {
             #expect($0.pointee.contents_len == 1)
             let content = $0.pointee.contents!.pointee
             #expect(content.len == text.utf8.count)
-            #expect(Data(bytes: content.data!, count: content.len) == Data(text.utf8))
+            #expect(Data(bytes: content.data, count: content.len) == Data(text.utf8))
         }
     }
 
@@ -83,14 +83,14 @@ struct GhosttyClipboardReadTests {
                                       pasteboard: pasteboard, reclaimControl: { reclaimed = true }) {
             #expect(reclaimed)
             #expect($0.pointee.available_len == 1)
-            #expect($0.pointee.available?.pointee.map { String(cString: $0) } == "text/plain")
+            #expect($0.pointee.available.map { String(cString: $0.pointee) } == "text/plain")
             #expect($0.pointee.contents_len == 1)
-            guard let content = $0.pointee.contents?.pointee, let data = content.data else {
+            guard let content = $0.pointee.contents?.pointee else {
                 Issue.record("Combined request omitted clipboard contents")
                 return
             }
             #expect(content.len == text.utf8.count)
-            #expect(Data(bytes: data, count: content.len) == Data(text.utf8))
+            #expect(Data(bytes: content.data, count: content.len) == Data(text.utf8))
         }
     }
 }

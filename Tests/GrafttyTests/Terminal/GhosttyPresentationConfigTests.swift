@@ -9,7 +9,7 @@ import Testing
 struct GhosttyPresentationConfigTests {
     @Test(arguments: ["relativeSymlink", "homeRelativeSymlink", "absoluteAlias", "literalTilde", "bomRoot", "bomChild"])
     func includePathsMatchNativeGhostty(scenario: String) throws {
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -79,7 +79,7 @@ struct GhosttyPresentationConfigTests {
     }
 
     @Test func includedPathResetMatchesNativeGhosttyOrder() throws {
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -103,7 +103,7 @@ struct GhosttyPresentationConfigTests {
 
     @Test(arguments: ["?\"included\"", "\"?included\"", "\"\"?included\"\""])
     func quotedIncludePathsMatchNativeGhostty(directive: String) throws {
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -129,7 +129,7 @@ struct GhosttyPresentationConfigTests {
     }
 
     @Test func rootIncludedByCycleMatchesNativeGhosttyLoadOrder() throws {
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -157,7 +157,7 @@ struct GhosttyPresentationConfigTests {
 
     @Test(arguments: [false, true])
     func exportsSelectedThemeAndExplicitOverrides(paired: Bool) throws {
-        #expect(ghostty_init(0, nil) == 0)
+        #expect(ghosttyInitWithoutArguments() == 0)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

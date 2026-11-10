@@ -8,7 +8,8 @@
 #   ./scripts/bump-zmx.sh
 #
 # Changing scripts/zmx/UPSTREAM_COMMIT is expected to require refreshing
-# scripts/zmx/graftty.patch against that exact upstream revision.
+# scripts/zmx/graftty.patch and paging.patch against that exact upstream
+# revision. scripts/zmx/GRAFTTY_REVISION supplies the grafttyN version suffix.
 
 set -euo pipefail
 
@@ -26,12 +27,18 @@ PAGING_PATCH_FILE="$REPO/scripts/zmx/paging.patch"
 COMPAT_TEST="$REPO/scripts/zmx/compatibility_test.py"
 COMPAT_UNIT_TEST="$REPO/scripts/test_zmx_compatibility.py"
 ZIG_VERSION_FILE="$REPO/scripts/zmx/ZIG_VERSION"
+REVISION_FILE="$REPO/scripts/zmx/GRAFTTY_REVISION"
 LEGACY_COMMIT_FILE="$REPO/scripts/zmx/LEGACY_GRAFTTY_COMMIT"
 LEGACY_SHA_FILE="$REPO/scripts/zmx/LEGACY_ZMX_SHA256"
 VENDORED_DIR="$REPO/Resources/zmx-binary"
 VENDORED_BINARY="$VENDORED_DIR/zmx"
 
 EXPECTED_ZIG_VERSION="$(tr -d '[:space:]' < "$ZIG_VERSION_FILE")"
+GRAFTTY_REVISION="$(tr -d '[:space:]' < "$REVISION_FILE")"
+if [[ ! "$GRAFTTY_REVISION" =~ ^graftty[0-9]+$ ]]; then
+    echo "GRAFTTY_REVISION must look like graftty<N>" >&2
+    exit 1
+fi
 ACTUAL_ZIG_VERSION="$(zig version)"
 if [[ "$ACTUAL_ZIG_VERSION" != "$EXPECTED_ZIG_VERSION" ]]; then
     echo "zmx build requires Zig $EXPECTED_ZIG_VERSION, found $ACTUAL_ZIG_VERSION" >&2
@@ -90,13 +97,16 @@ if [[ -z "$UPSTREAM_VERSION" ]]; then
     echo "couldn't read upstream version from build.zig.zon" >&2
     exit 1
 fi
-VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty9"
+VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-${GRAFTTY_REVISION}"
 
 echo "→ testing patched zmx"
 (
     cd "$SOURCE"
     zig fmt --check src
-    zig build test
+    # An explicit target uses Zig's bundled Darwin libc headers, as the
+    # release builds below do. A native test build compiles libc++ against
+    # the host SDK, which newer SDKs than the pinned Zig can break.
+    zig build test "-Dtarget=$(uname -m | sed 's/^arm64$/aarch64/')-macos"
 )
 
 declare -a checksums
@@ -204,9 +214,9 @@ printf '%s\n' "$VERSION" > "$INSTALL_STAGE/VERSION"
     printf '# zmx %s — built from https://github.com/neurosnap/zmx commit %s\n' \
         "$VERSION" "$COMMIT"
     printf '# Built with Zig %s.\n' "$EXPECTED_ZIG_VERSION"
-    printf '# Graftty patch SHA256 %s — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.\n' \
+    printf '# Graftty patch SHA256 %s — legacy wire framing + negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.\n' \
         "$patch_sha"
-    printf '# Paging patch SHA256 %s - current screen first and requested scrollback pages.\n' \
+    printf '# Paging patch SHA256 %s - current screen first and requested scrollback pages (ghostty-8af6897c-paging-1).\n' \
         "$paging_patch_sha"
     printf '%s\n' "${checksums[@]}"
 } > "$INSTALL_STAGE/CHECKSUMS"

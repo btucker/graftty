@@ -1,9 +1,40 @@
 # Graftty zmx patch
 
 `UPSTREAM_COMMIT` pins the source revision used by `scripts/bump-zmx.sh`, and
-`ZIG_VERSION` pins the compiler that must build it. `graftty.patch` applies to
-that exact source revision and carries these downstream changes:
+`ZIG_VERSION` pins the compiler that must build it. `GRAFTTY_REVISION` is the
+`grafttyN` suffix of the vendored version on macOS and Linux; increment it
+whenever a patch change alters daemon or client behavior. The pin is the upstream
+v1.0.1 release. Its `build.zig.zon` uses Ghostty
+`53e55147bbbb0157672dac0228aa7744e881f1fa`, the same engine as Graftty's
+libghostty-spm build.
+`graftty.patch` applies to that exact source revision, followed by
+`paging.patch`. `graftty.patch` carries these downstream changes:
 
+- keep zmx's legacy wire framing. Upstream 1.0 replaced the packed
+  `{tag, len}` header with an aligned header carrying a protocol version, and
+  assigned tag 22 to `Capture`. Running daemons from every earlier Graftty
+  release, down to the 0.5 floor, parse only the packed header, and Graftty
+  0.7+ daemons use tag 22 for `Snapshot`. App upgrades do not restart those
+  daemons, so Graftty keeps the packed header and tag 22 `Snapshot`, and moves
+  `Capture` to tag 33 (`zmx history --screen/--scrollback` against an older
+  daemon is unsupported). `Info` keeps upstream's `protocol_version` byte in
+  what was trailing padding, which older readers ignore;
+- carry the experimental snapshot transport (`snapshot.zig`) that upstream
+  never merged, forward-ported from commit `ccf8e9f`. That commit's
+  outer-terminal probe (`probe.zig`) is left out because Graftty never runs it
+  (see below);
+- build the daemon's ghostty-vt without Kitty graphics. The 53e55147 snapshot
+  encoder adds optional Kitty image records, and the decoders in running
+  clients (8af6897c-era zmx clients, older iOS renderers) reject unknown
+  records, so a session showing an image replayed as a blank screen. Clients
+  still render images from live bytes; reattach replay omits them, as every
+  earlier release did;
+- export the initial snapshot before the Init resize. Upstream 1.0 resizes to
+  the leader's grid before serializing; Graftty keeps a single cut so the
+  snapshot's grid is the source grid that `--replay-grid` reports;
+- restore the default SIGTERM/SIGHUP/SIGINT handlers when the client loop
+  exits, so a signal sent while a terminal-restore write blocks still kills
+  the client;
 - explicitly unblock `SIGWINCH` before installing the attach client's wake
   handler;
 - negotiate the experimental Ghostty snapshot transport without breaking
@@ -34,10 +65,11 @@ that exact source revision and carries these downstream changes:
 - retain libghostty 1.4's default 50 MB scrollback page budget, with a
   separate high line ceiling. Ghostty counts page allocations rather than
   text, so the earlier 10 MB budget kept only about 7,000 rows of a
-  156-column session and reattached panes stopped there. Upstream's new
-  2,000-line setting combines with Ghostty's 10 KB default byte budget and
-  discards most of a 10,000-line fixture. The 50 MB budget ships in
-  `graftty8`; existing daemons keep 10 MB until their sessions restart;
+  156-column session and reattached panes stopped there. Upstream 1.0 instead
+  caps scrollback at 10,000 lines with no byte budget, which drops roughly the
+  oldest half of the 20,000-line session that TERM-12.47 restores. The 50 MB
+  budget ships in `graftty8`; existing daemons keep 10 MB until their sessions
+  restart;
 - preserve zmx's legacy 4-byte `Resize` message while negotiating a separate
   pixel-size extension. The new protocol also bridges the directional tag
   18/19 shapes used by Graftty 0.6 so N-1 pixel-only resizes keep working, and
@@ -113,13 +145,29 @@ Snapshot-capable attachments never replace the replay grid with the outer PTY
 size. Ongoing owner resize events come from Graftty's ownership protocol;
 legacy zmx daemons do not broadcast those dimensions to regular followers.
 
+`paging.patch` carries paged history. Its codec stays
+`ghostty-8af6897c-paging-1`, matching `PagedTerminalLimits.codec`: the PAGE
+layout is unchanged from Ghostty 8af6897c through 53e55147, so running
+graftty7+ daemons and this build serve the same paged clients. A codec change
+needs a new name here, in `PagedTerminalLimits.codec`, and in the
+libghostty-spm recipe, plus a negotiated capability so hosts can tell older
+daemons apart before they attach.
+
+Upstream fixes from zmx 0.8 through 1.0.1 are part of the base, including
+query replies that no longer take leadership, unread input on hangup, cursor
+style replay, the SGR reset before the attach clear, the `printEnv` double
+free, the dangling-symlink loop, terminal restore on SIGHUP/SIGTERM/SIGINT
+(ZMX-9.9) and large `zmx write`. These ship in `graftty11`.
+
 `LEGACY_GRAFTTY_COMMIT` and `LEGACY_ZMX_SHA256` identify the immutable 0.5
 binary that remains the rolling-upgrade compatibility floor. The bump script
 tests that fixture on every run and also tests the committed N-1 binary when it
 is distinct. It never derives its only legacy input from the mutable output
 path.
 
-Run `scripts/bump-zmx.sh` after changing the pin or patch. It formats and tests
+Run `scripts/bump-zmx.sh` after changing a pin (including `GRAFTTY_REVISION`)
+or patch; Linux CI fails while `Resources/zmx-binary/VERSION` disagrees with
+the pins. It formats and tests
 the patched Zig source, builds both macOS architectures in `ReleaseSafe`, makes
 a universal binary, checks the reported version, and exercises old/new
 client-daemon compatibility. It stages and verifies the replacement files

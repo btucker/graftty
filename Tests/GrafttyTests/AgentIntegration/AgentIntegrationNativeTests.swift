@@ -154,7 +154,7 @@ private final class AgentIntegrationMacHost {
         let report = await installer.install(try installer.prepare(destinationRoot: configuration.stateDirectory.appendingPathComponent("agent-plugins")), executor: CLIRunner())
         guard report.succeeded else { throw AgentIntegrationError(report.summary) }
         _ = NSApplication.shared
-        guard ghostty_init(0, nil) == 0 else { throw AgentIntegrationError("Ghostty initialization failed") }
+        guard ghosttyInitWithoutArguments() == 0 else { throw AgentIntegrationError("Ghostty initialization failed") }
         app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
         driver = AgentIntegrationMacDriver(app: app, configuration: configuration,
             ownership: ownership, attachments: attachments)

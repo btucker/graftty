@@ -7,7 +7,9 @@ case "$arch" in x86_64|aarch64) ;; *) echo "Unsupported architecture: $arch" >&2
 expected_zig=$(tr -d '[:space:]' < "$repo/scripts/zmx/ZIG_VERSION")
 [[ $(zig version) == "$expected_zig" ]] || { echo "Zig $expected_zig is required" >&2; exit 1; }
 commit=$(tr -d '[:space:]' < "$repo/scripts/zmx/UPSTREAM_COMMIT")
-[[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid zmx revision' >&2; exit 1; }
+[[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid zmx upstream commit' >&2; exit 1; }
+graftty_revision=$(tr -d '[:space:]' < "$repo/scripts/zmx/GRAFTTY_REVISION")
+[[ $graftty_revision =~ ^graftty[0-9]+$ ]] || { echo 'Invalid Graftty zmx revision' >&2; exit 1; }
 patches=(graftty.patch paging.patch always-run-tests.patch)
 preparing=''
 transient_stage=''
@@ -22,7 +24,7 @@ if [[ -n ${GRAFTTY_ZMX_CACHE_DIR:-} ]]; then
 import hashlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 digest = hashlib.sha256(sys.argv[2].encode())
-for name in ('linux/build-zmx.sh', 'zmx/ZIG_VERSION', 'zmx/UPSTREAM_COMMIT',
+for name in ('linux/build-zmx.sh', 'zmx/ZIG_VERSION', 'zmx/UPSTREAM_COMMIT', 'zmx/GRAFTTY_REVISION',
              'zmx/graftty.patch', 'zmx/paging.patch', 'zmx/always-run-tests.patch'):
     digest.update((root / 'scripts' / name).read_bytes())
 print(digest.hexdigest())
@@ -84,7 +86,7 @@ zig_build_with_download_retry() {
     echo "Zmx compile and test: $((SECONDS - started)) seconds"
     started=$SECONDS
     zig_build_with_download_retry build -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe \
-        "-Dversion=$version-g${commit:0:7}-graftty9" --prefix "$stage/install" --summary all
+        "-Dversion=$version-g${commit:0:7}-$graftty_revision" --prefix "$stage/install" --summary all
     echo "Zmx ReleaseSafe build: $((SECONDS - started)) seconds"
 )
 mkdir -p "$(dirname "$output")"

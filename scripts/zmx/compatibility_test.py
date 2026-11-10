@@ -8,6 +8,7 @@ from collections.abc import Callable
 import fcntl
 import os
 import re
+import select
 import selectors
 import shlex
 import shutil
@@ -591,6 +592,34 @@ def new_daemon_old_client(
             first,
             second,
         )
+
+
+def new_daemon_kitty_image_replays_to_old_client(legacy: Path, candidate: Path) -> None:
+    """A session holding a Kitty image still replays to an older snapshot decoder."""
+    directory, env = make_scope()
+    session = "compat-kitty-image"
+    first: Attach | None = None
+    second: Attach | None = None
+    try:
+        first = Attach(candidate, env, session, rows=24, cols=80, xpixel=800, ypixel=480)
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        # Transmit and place a 1x1 RGB image, then print a marker after it.
+        first.write(
+            "printf '\\033_Ga=T,f=24,s=1,v=1;AAAA\\033\\\\'; "
+            "printf '__KITTY_%s__\\n' PLACED\n"
+        )
+        first.wait_for("__KITTY_PLACED__")
+        first.terminate_client()
+        first = None
+
+        second = Attach(legacy, env, session, rows=24, cols=80, xpixel=800, ypixel=480)
+        replay = second.wait_for("__KITTY_PLACED__")
+        if "__KITTY_PLACED__" not in replay:
+            raise AssertionError(f"old client lost the replay after a Kitty image: {replay!r}")
+        prepare_shell(second)
+    finally:
+        cleanup_case(directory, env, session, candidate, candidate, legacy, first, second)
 
 
 def new_client_new_daemon_pixels(legacy: Path, candidate: Path) -> None:
@@ -1236,6 +1265,70 @@ def replay_grid_precedes_vt(
         cleanup_case(directory, env, session, daemon_binary, candidate, daemon_binary, leader, follower)
 
 
+# Must match PagedTerminalLimits.codec and ipc.PAGED_CODEC.
+PAGED_CODEC = b"ghostty-8af6897c-paging-1"
+PAGED_SNAPSHOT_CAPABILITY = 1 << 3
+TERMINAL_RESTORE = b"\x1bc\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\"
+CANONICAL_LFLAGS = termios.ECHO | termios.ICANON | termios.ISIG
+
+
+def signal_client_once(candidate: Path, env: dict[str, str], session: str, sig: int) -> None:
+    master, slave = os.openpty()
+    process = None
+    try:
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, window_size(24, 80, 0, 0))
+        original = termios.tcgetattr(slave)
+        # Hold the slave so output and termios survive the client's exit.
+        process = subprocess.Popen(
+            [str(candidate), "attach", session, "/bin/sh"],
+            stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True,
+        )
+        deadline = time.monotonic() + 5
+        while termios.tcgetattr(slave)[3] & CANONICAL_LFLAGS:
+            assert process.poll() is None and time.monotonic() < deadline, (sig, "no raw mode")
+            time.sleep(0.02)
+        time.sleep(0.2)
+        while select.select([master], [], [], 0)[0]:
+            os.read(master, 65536)
+        os.kill(process.pid, sig)
+        # Keep reading while the client exits: its TCSAFLUSH termios restore
+        # waits until the master drains any output still queued for it.
+        output = bytearray()
+        deadline = time.monotonic() + 5
+        while process.poll() is None:
+            assert time.monotonic() < deadline, (sig, "client still running")
+            if select.select([master], [], [], 0.05)[0]:
+                output.extend(os.read(master, 65536))
+        assert process.returncode == -sig, (sig, process.returncode)
+        while select.select([master], [], [], 0.1)[0]:
+            output.extend(os.read(master, 65536))
+        assert TERMINAL_RESTORE in output, (sig, bytes(output))
+        assert termios.tcgetattr(slave) == original, sig
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        os.close(master)
+        os.close(slave)
+
+
+def client_signal_restores_terminal(daemon_binary: Path, candidate: Path) -> None:
+    """A signaled client restores its terminal, dies by that signal, and detaches."""
+    directory, env = make_scope()
+    session = "signal-restore"
+    owner = None
+    try:
+        owner = Attach(daemon_binary, env, session, rows=24, cols=80, xpixel=0, ypixel=0)
+        prepare_shell(owner)
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal_client_once(candidate, env, session, sig)
+            assert session in list_sessions(daemon_binary, env), sig
+        owner.write("printf '__OWNER_%s__\\n' ALIVE\n")
+        owner.wait_for("__OWNER_ALIVE__")
+    finally:
+        cleanup_case(directory, env, session, daemon_binary, candidate, daemon_binary, owner)
+
+
 def dense_history_pages_stay_bounded(candidate: Path) -> None:
     directory, env = make_scope()
     session = "compat-dense-history"
@@ -1253,7 +1346,13 @@ def dense_history_pages_stay_bounded(candidate: Path) -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(str(directory / session))
             send_ipc(client, 23, struct.pack("<Q", 9))
-            send_ipc(client, 26, b"ghostty-8af6897c-paging-1")
+            # Check paging support before attaching: a daemon without it ignores
+            # the request, so waiting for READY would only time out.
+            frames = read_ipc_frames_until(client, lambda values: any(tag == 23 for tag, _ in values), "capabilities")
+            advertised = next(data for tag, data in frames if tag == 23)
+            if struct.unpack("<Q", advertised)[0] & PAGED_SNAPSHOT_CAPABILITY == 0:
+                raise AssertionError("daemon did not advertise paged snapshots")
+            send_ipc(client, 26, PAGED_CODEC)
             frames = read_ipc_frames_until(client, lambda values: any(tag == 27 for tag, _ in values), "READY")
             ready = next(data for tag, data in frames if tag == 27)
             incarnation, checkpoint = struct.unpack_from("<QQ", ready)
@@ -1318,6 +1417,8 @@ def main() -> None:
     print("  ✓ old daemon → new client")
     new_daemon_old_client(legacy, candidate, args.expect_cross_version_pixels)
     print("  ✓ new daemon → old client")
+    new_daemon_kitty_image_replays_to_old_client(legacy, candidate)
+    print("  ✓ a session holding a Kitty image replays to an old client")
     new_client_new_daemon_pixels(legacy, candidate)
     print("  ✓ negotiated pixel-size resize")
     new_daemon_snapshots_first_regular_attach(legacy, candidate)
@@ -1352,6 +1453,10 @@ def main() -> None:
     print("  ✓ complete, non-duplicated large-history replay")
     dense_history_pages_stay_bounded(candidate)
     print("  ✓ dense wide history stays bounded with stable page retries")
+    client_signal_restores_terminal(candidate, candidate)
+    print("  ✓ signaled client restores its terminal and keeps the session")
+    client_signal_restores_terminal(legacy, candidate)
+    print("  ✓ signaled client restores its terminal against a running old daemon")
 
 
 if __name__ == "__main__":

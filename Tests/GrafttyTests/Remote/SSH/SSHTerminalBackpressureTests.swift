@@ -359,9 +359,12 @@ struct SSHTerminalBackpressureTests {
         await fixture.close()
     }
 
-    @Test func exitAfterAResumedPauseDrainsEveryHeldWindow() async throws {
+    @Test("@spec REMOTE-9.26: The application shall advertise a 256 KiB maximum SSH channel packet size on host and client connections, so each channel's receive window is the 16 MiB that terminal flow control is sized for.")
+    func exitAfterAResumedPauseDrainsEveryHeldWindow() async throws {
         // Resuming hands over the window NIOSSH held and re-grants it, so the
         // host can fill a second window behind the first before it closes.
+        // With swift-nio-ssh 0.15's default 128 KiB packets the window halves
+        // to 8 MiB and this host stalls with output still pending.
         let total = 32 * 1024 * 1024
         let fixture = try await SSHBackpressureFixture.make(negotiatesOutputWindow: false)
         do {
@@ -381,6 +384,11 @@ struct SSHTerminalBackpressureTests {
             } catch TerminalSessionClient.ClientError.sessionEnded(let status) {
                 #expect(status == 0)
             }
+            // The drain above exercises only the client's receive window, so
+            // check what each end advertises directly.
+            let advertised: UInt32 = 256 * 1024
+            #expect(fixture.probe.clientAdvertisedPacketSize == advertised)
+            #expect(try await fixture.hostAdvertisedPacketSize() == advertised)
         } catch {
             await fixture.close()
             throw error
@@ -508,6 +516,9 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
                     return child.eventLoop.makeFailedFuture(SSHBackpressureFailure("unexpected SSH channel type"))
                 }
                 let index = attachCount.next()
+                if index == 0, let size = try? child.syncOptions?.getOption(SSHChildChannelOptions.peerMaximumMessageLength) {
+                    probe.recordClientAdvertisedPacketSize(size)
+                }
                 child.closeFuture.whenComplete { _ in if index == 0 { probe.markChildClosed() } else { probe.markSiblingClosed() } }
                 let installed = child.pipeline.addHandlers([SSHBackpressureCreditRecorder(probe: probe), TerminalSessionHandler(
                     streamFactory: { _ in
@@ -692,6 +703,22 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
         return position == start + expected
     }
 
+    /// Opens a bare session channel and returns the maximum packet size the
+    /// host advertised for it.
+    func hostAdvertisedPacketSize() async throws -> UInt32 {
+        let result = SSHBackpressureResult<UInt32>()
+        let clientHandler = self.clientHandler!
+        try await clientParent.testingEventLoop.executeInContext {
+            clientHandler.handler.createChannel(nil, channelType: .session) { child, _ in
+                child.eventLoop.makeCompletedFuture {
+                    try child.pipeline.syncOperations.addHandler(SSHBackpressurePacketSizeRecorder(result: result))
+                }
+            }
+        }
+        try await wait(for: "bare session channel confirmation") { result.value != nil }
+        return try #require(result.value).get()
+    }
+
     func cancelConnection() { connecting?.cancel() }
     func releaseAttach() {
         attachGate?.release()
@@ -873,6 +900,10 @@ private final class SSHBackpressureProbe: @unchecked Sendable {
     private var consumed: UInt64 = 0
     var consumedAcknowledgement: UInt64 { lock.withLock { consumed } }
     func acknowledge(_ bytes: UInt64) { lock.withLock { consumed = bytes } }
+    private var clientPacketSize: UInt32?
+    /// The maximum packet size the client advertised on the primary channel.
+    var clientAdvertisedPacketSize: UInt32? { lock.withLock { clientPacketSize } }
+    func recordClientAdvertisedPacketSize(_ size: UInt32) { lock.withLock { clientPacketSize = size } }
     var authenticated: Bool { lock.withLock { didAuthenticate } }
     var childClosed: Bool { lock.withLock { didCloseChild } }
     var failure: Error? { lock.withLock { error } }
@@ -895,6 +926,21 @@ private final class SSHBackpressureCreditRecorder: ChannelInboundHandler, @unche
             }
         }
         context.fireChannelRead(data)
+    }
+}
+
+private final class SSHBackpressurePacketSizeRecorder: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    private let result: SSHBackpressureResult<UInt32>
+    init(result: SSHBackpressureResult<UInt32>) { self.result = result }
+    func channelActive(context: ChannelHandlerContext) {
+        result.complete(Result {
+            guard let options = context.channel.syncOptions else {
+                throw SSHBackpressureFailure("SSH child channel has no synchronous options")
+            }
+            return try options.getOption(SSHChildChannelOptions.peerMaximumMessageLength)
+        })
+        context.fireChannelActive()
     }
 }
 

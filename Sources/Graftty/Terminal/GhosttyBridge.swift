@@ -23,7 +23,9 @@ final class GhosttyConfig {
     internal var ownershipTransferred: Bool = false
 
     init(loadUserConfig: Bool = true) {
-        config = ghostty_config_new()
+        // ghostty_config_new returns null only when allocation fails.
+        guard let config = ghostty_config_new() else { fatalError("ghostty_config_new failed: out of memory") }
+        self.config = config
 
         // `load_default_files` only walks the XDG paths
         // (`$XDG_CONFIG_HOME/ghostty/config`, `~/.config/ghostty/config`).
@@ -278,14 +280,9 @@ final class GhosttyApp {
         let handlerPtr = Unmanaged.passRetained(handlerBox).toOpaque()
         self.handlerBoxPointer = handlerPtr
 
-        // Zero-initialize then fill. All callback slots must be non-null: libghostty will
-        // call them unconditionally. We stub clipboard + close_surface with safe no-ops that
-        // higher layers can later replace by building a richer runtime.
-        var rtConfig = ghostty_runtime_config_s()
-        rtConfig.userdata = handlerPtr
-        rtConfig.supports_selection_clipboard = false
-
-        rtConfig.wakeup_cb = { _ in
+        // libghostty calls these unconditionally, so each slot holds a C callback;
+        // confirm_read_clipboard is a safe no-op until a confirmation prompt exists.
+        let wakeupCallback: ghostty_runtime_wakeup_cb = { _ in
             if Thread.isMainThread {
                 NotificationCenter.default.post(name: .ghosttyWakeup, object: nil)
             } else {
@@ -295,20 +292,20 @@ final class GhosttyApp {
             }
         }
 
-        rtConfig.action_cb = { appHandle, target, action -> Bool in
+        let actionCallback: ghostty_runtime_action_cb = { appHandle, target, action -> Bool in
             // Recover the Swift handler. libghostty's action_cb signature has no `userdata`
             // parameter, so we retrieve it from the app via `ghostty_app_userdata`, which
             // returns the `userdata` field we set on the runtime config.
-            guard let appHandle, let userdata = ghostty_app_userdata(appHandle) else {
+            guard let userdata = ghostty_app_userdata(appHandle) else {
                 return false
             }
             let box = Unmanaged<ActionHandlerBox>.fromOpaque(userdata).takeUnretainedValue()
             return box.handler(target, action)
         }
 
-        rtConfig.read_clipboard_cb = { userdata, clipboardEnum, state, mimes, count, includesAvailableTypes in
+        let readClipboardCallback: ghostty_runtime_read_clipboard_cb = { userdata, clipboardEnum, state, mimes, count, includesAvailableTypes in
             let listOnly = count == 0 && includesAvailableTypes
-            guard let userdata, let state,
+            guard let userdata,
                   GhosttyClipboardRead.accepts(mimes, count: count, listOnly: listOnly)
             else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
             let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
@@ -334,29 +331,26 @@ final class GhosttyApp {
             return GHOSTTY_CLIPBOARD_READ_STARTED
         }
 
-        rtConfig.confirm_read_clipboard_cb = { _, _, _, _ in
+        let confirmReadClipboardCallback: ghostty_runtime_confirm_read_clipboard_cb = { _, _, _, _ in
             // OSC 52 clipboard-read confirmation. Security-sensitive — no-op
             // until we build a proper confirmation prompt. Terminals that
             // request OSC 52 reads will silently fail, which is the safe
             // default.
         }
-        rtConfig.write_clipboard_cb = { userdata, clipboardEnum, content, count, _ in
+        let writeClipboardCallback: ghostty_runtime_write_clipboard_cb = { userdata, clipboardEnum, content, count, _ in
             // libghostty hands us an array of `{mime, data}` pairs; we
             // currently honor the plain-text entry (UTF-8 in `data`) and
             // ignore other mime types. `count` is the array length.
-            guard count > 0, let content else { return }
+            guard count > 0 else { return }
             let pasteboard = pasteboardForClipboard(clipboardEnum)
             var plainText: String?
             for i in 0..<Int(count) {
                 let entry = content[i]
                 // Clipboard payloads are length-based; preserve embedded NULs
                 // and ignore formats other than UTF-8 plain text.
-                if let dataPtr = entry.data {
-                    guard let mime = entry.mime, String(cString: mime) == "text/plain" else { continue }
-                    let bytes = UnsafeRawPointer(dataPtr).assumingMemoryBound(to: UInt8.self)
-                    plainText = String(decoding: UnsafeBufferPointer(start: bytes, count: entry.len), as: UTF8.self)
-                    break
-                }
+                guard String(cString: entry.mime) == "text/plain" else { continue }
+                plainText = String(decoding: UnsafeRawBufferPointer(start: entry.data, count: entry.len), as: UTF8.self)
+                break
             }
             guard let text = plainText else { return }
             let box = userdata.map {
@@ -375,7 +369,7 @@ final class GhosttyApp {
                 pasteboard.setString(copiedText, forType: .string)
             }
         }
-        rtConfig.close_surface_cb = { userdata, _ in
+        let closeSurfaceCallback: ghostty_runtime_close_surface_cb = { userdata, _ in
             // libghostty passes the *surface's* userdata here (set via
             // `ghostty_surface_config_s.userdata`). That's our
             // `SurfaceUserdataBox` — recover it, read the terminalID, and
@@ -395,6 +389,17 @@ final class GhosttyApp {
             }
         }
 
+        // ghostty.h requires every callback except close_surface_cb.
+        let rtConfig = ghostty_runtime_config_s(
+            userdata: handlerPtr,
+            supports_selection_clipboard: false,
+            wakeup_cb: wakeupCallback,
+            action_cb: actionCallback,
+            read_clipboard_cb: readClipboardCallback,
+            confirm_read_clipboard_cb: confirmReadClipboardCallback,
+            write_clipboard_cb: writeClipboardCallback,
+            close_surface_cb: closeSurfaceCallback
+        )
         self.runtimeConfig = rtConfig
 
         guard let newApp = ghostty_app_new(&self.runtimeConfig, config.config) else {
@@ -422,12 +427,10 @@ final class GhosttyApp {
 
 /// Adapts desktop text paste and type-list queries to the length-based clipboard ABI.
 enum GhosttyClipboardRead {
-    static func accepts(_ mimes: UnsafePointer<UnsafePointer<CChar>?>?, count: Int, listOnly: Bool) -> Bool {
+    static func accepts(_ mimes: UnsafePointer<UnsafePointer<CChar>>?, count: Int, listOnly: Bool) -> Bool {
         if listOnly { return true }
         guard let mimes, count > 0 else { return false }
-        return UnsafeBufferPointer(start: mimes, count: count).contains {
-            $0.map { String(cString: $0) == "text/plain" } ?? false
-        }
+        return UnsafeBufferPointer(start: mimes, count: count).contains { String(cString: $0) == "text/plain" }
     }
 
     static func complete(
@@ -443,7 +446,7 @@ enum GhosttyClipboardRead {
             text.withCString { data in
                 var content = ghostty_clipboard_content_s(mime: mime, data: data, len: text.utf8.count)
                 withUnsafePointer(to: &content) { contents in
-                    let types: [UnsafePointer<CChar>?] = hasText ? [mime] : []
+                    let types: [UnsafePointer<CChar>] = hasText ? [mime] : []
                     types.withUnsafeBufferPointer { available in
                         var completion = ghostty_clipboard_complete_s(
                             contents: listOnly ? nil : contents, contents_len: listOnly ? 0 : 1,
@@ -479,4 +482,18 @@ private final class ActionHandlerBox {
     init(handler: @escaping (ghostty_target_s, ghostty_action_s) -> Bool) {
         self.handler = handler
     }
+}
+
+/// An empty, NULL-terminated argv. libghostty keeps argv in its global state
+/// after `ghostty_init` returns, so the vector lives for the whole process.
+private let emptyGhosttyArgv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> = {
+    let argv = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 1)
+    argv.initialize(to: nil)
+    return argv
+}()
+
+/// Calls `ghostty_init` without command-line arguments. ghostty.h requires a
+/// valid argv array even when argc is zero.
+func ghosttyInitWithoutArguments() -> Int32 {
+    ghostty_init(0, emptyGhosttyArgv)
 }
