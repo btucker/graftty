@@ -360,11 +360,15 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         return true
     }
 
-    /// Viewing a worktree clears notifications. Stopped agents still need
-    /// attention until provider progress or explicit occurrence dismissal.
+    /// Viewing a worktree clears notifications and a finished turn that asks
+    /// nothing: opening it is seeing it. Stopped agents that ask something
+    /// still need attention until provider progress or explicit dismissal.
     public mutating func viewAttention() {
         if attention?.source != .agentStop { attention = nil }
         paneAttention = paneAttention.filter { $0.value.source == .agentStop }
+        if unseenAgentStop?.recap?.need?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+            unseenAgentStop = nil
+        }
     }
 
     /// Viewing a pane clears its notification while preserving agent requests.

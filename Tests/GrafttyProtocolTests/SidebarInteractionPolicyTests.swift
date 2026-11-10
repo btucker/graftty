@@ -18,6 +18,21 @@ struct SidebarInteractionPolicyTests {
         #expect(SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: false) == nil)
     }
 
+    /// Opening a worktree is seeing its finished turn, so every client retires
+    /// it on the host, worktree-scoped as the host records it (STATE-2.4).
+    @Test func openingRetiresAFinishedTurnThatAsksNothing() {
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: 50),
+            recap: .init(title: "Stop", completed: "Done", next: "Next"))
+        var item = SidebarActivityItem(id: "w:stop", projectID: "p", worktreeID: "/w", paneID: "agent", projectName: "P",
+            worktreeName: "W", title: stop.title, occurrence: stop.occurrence, isBusy: false, agentStop: stop)
+        #expect(SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: true)
+            == .acknowledgeOccurrence(worktreeID: "/w", paneID: nil, occurrence: stop.occurrence))
+        // A turn that ended with a question waits for an answer.
+        item.agentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: stop.stoppedAt,
+            recap: .init(title: "Ask", completed: "Done", next: "Next", need: "Which?"))
+        #expect(SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: true) == nil)
+    }
+
     @Test("@spec REMOTE-14.10: When an attention target is opened on an owner without exact acknowledgement support, the application shall preserve host attention rather than acknowledge unrelated or newer requests.")
     func safeAcknowledgement() {
         let item = SidebarActivityItem(id: "w", projectID: "p", worktreeID: "route", paneID: nil, projectName: "Project", worktreeName: "Worktree", title: "Review", occurrence: .init(timestamp: Date(), text: "Review", source: .agentStop), isBusy: false)

@@ -13,10 +13,18 @@ public enum SidebarInteractionPolicy {
         return .acknowledgeOccurrence(worktreeID: item.worktreeID, paneID: item.paneID, occurrence: occurrence)
     }
 
-    /// Opening agent content records a visit without retiring its request.
+    /// Opening agent content records a visit without retiring its request,
+    /// but it does retire a finished turn that asked nothing.
     /// Explicit dismissal continues to use `acknowledgement(for:)`.
     public static func acknowledgementOnOpen(for item: SidebarActivityItem,
                                              supportsExactAcknowledgement: Bool) -> WorktreeManagementRequest? {
+        // Opening is seeing a finished turn that asked nothing; the host
+        // records that turn per worktree, not per pane.
+        if item.agentStop != nil, !item.needsAttention {
+            var worktreeScoped = item
+            worktreeScoped.paneID = nil
+            return acknowledgement(for: worktreeScoped, supportsExactAcknowledgement: supportsExactAcknowledgement)
+        }
         guard item.occurrence?.source != .agentStop else { return nil }
         return acknowledgement(for: item, supportsExactAcknowledgement: supportsExactAcknowledgement)
     }

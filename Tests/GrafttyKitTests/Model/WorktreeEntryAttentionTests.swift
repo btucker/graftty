@@ -82,21 +82,27 @@ struct WorktreeEntryAttentionTests {
         #expect(e.attention != nil)                 // worktree-scoped untouched
     }
 
-    @Test("@spec STATE-2.4: When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention until the agent resumes or the request is explicitly dismissed.")
-    func viewingWorktreePreservesStoppedAgents() {
+    @Test("@spec STATE-2.4: When the user views a worktree or pane, the application shall clear its notification overlays and a finished turn that asks nothing, while preserving stopped-agent requests and questions until the agent resumes or the request is explicitly dismissed.")
+    func viewingWorktreeClearsFinishedTurnsButKeepsQuestions() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let slot = PaneSlotID(id: UUID())
         e.attention = att("w", .userNotify)
         e.paneAttention[slot] = att("p", .agentStop)
         let notification = PaneSlotID(id: UUID())
         e.paneAttention[notification] = att("done", .commandFinished)
-        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date())
-        e.recordAgentStop(stop)
+        e.recordAgentStop(SidebarAgentStop(agentName: "Codex", stoppedAt: Date()))
         e.viewAttention()
         #expect(e.attention == nil)
         #expect(e.paneAttention[slot] != nil)
         #expect(e.paneAttention[notification] == nil)
-        #expect(e.unseenAgentStop == stop)
+        // Opening the worktree is seeing the finished turn.
+        #expect(e.unseenAgentStop == nil)
+
+        let question = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(),
+            recap: .init(title: "Ship", completed: "Built", next: "Ship", need: "Ship it?"))
+        e.recordAgentStop(question)
+        e.viewAttention()
+        #expect(e.unseenAgentStop == question)
     }
 
     @Test("""

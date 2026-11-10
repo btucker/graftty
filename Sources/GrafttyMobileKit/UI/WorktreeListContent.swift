@@ -958,9 +958,13 @@ public struct WorktreeListContent: View {
     }
 
     private func recordViewedStop(_ worktree: WorktreePanes) {
-        if let stop = SidebarProjection.activity([worktree]).first(where: { $0.agentStop != nil }) {
-            navigation.opened(stop)
-        }
+        guard let stop = SidebarProjection.activity([worktree]).first(where: { $0.agentStop != nil }) else { return }
+        navigation.opened(stop)
+        // STATE-2.4: the owning host retires a finished turn that asked nothing.
+        let supportsExact = feed.state.projects.first { $0.id == stop.projectID }?.supportsWorktreeEditing == true
+        guard let request = SidebarInteractionPolicy.acknowledgementOnOpen(for: stop, supportsExactAcknowledgement: supportsExact),
+              let provider = route(for: worktree)?.provider else { return }
+        Task { _ = try? await RelayedWorktreeManagementClient.send(request, using: provider) }
     }
 
     /// Pinned agents as tiles that light up in place (LAYOUT-2.225): tap opens,

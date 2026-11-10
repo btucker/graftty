@@ -34,7 +34,9 @@ public enum SidebarRowStatus: Equatable, Sendable {
     public func identityOpacity(isDark: Bool) -> Double {
         switch self {
         case .question, .notification, .working: return 1
-        case .whereWeAre, .none: return isDark ? 0.55 : 0.6
+        // Everything in Needs you is at full strength.
+        case .whereWeAre(_, let isUnread): return isUnread ? 1 : (isDark ? 0.55 : 0.6)
+        case .none: return isDark ? 0.55 : 0.6
         }
     }
 
