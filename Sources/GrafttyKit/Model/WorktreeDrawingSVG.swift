@@ -31,7 +31,7 @@ public struct WorktreeDrawing: Codable, Sendable, Equatable {
 public enum WorktreeDrawingSVG {
     public static let maxBytes = AttentionRecap.maxIconBytes
 
-    /// @spec AGENT-3.39
+    /// @spec AGENT-3.42
     /// A drawing is wide (96 by 64) so it fills a row's identity slot and a
     /// pinned tile; square drawings from before stay valid.
     public enum Canvas: Sendable, Equatable {

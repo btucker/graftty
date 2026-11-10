@@ -76,6 +76,8 @@ public extension HeadlessHostRuntime {
                     state.repos[index.repo].worktrees[index.worktree].acknowledgePaneAttention(slot)
                 } else { state.repos[index.repo].worktrees[index.worktree].acknowledgeAttention() }
                 try save()
+            case let .explainRequest(path, pane):
+                return await AttentionExplainDelivery.deliver(worktreeID: path, paneID: pane, platform: controlPlatform)
             case .acknowledgeOccurrence(let path, let pane, let occurrence):
                 _ = SidebarHostNavigation.acknowledge(in: &state, worktreeID: path, paneID: pane, occurrence: occurrence)
                 try save()

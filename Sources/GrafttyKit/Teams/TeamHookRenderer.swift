@@ -47,7 +47,7 @@ public enum TeamHookRenderer {
     /// Both providers accept UserPromptSubmit context before the ordinary
     /// turn. Stop cannot silently ask the main agent to execute another tool.
     /// `requestsWideRedraw` is set while the worktree's drawing still uses the
-    /// older square canvas (AGENT-3.41).
+    /// older square canvas (AGENT-3.44).
     public static func userPromptSubmit(assignmentContext: String = "", requestsWideRedraw: Bool = false) throws -> String {
         try hookJSON(eventName: "UserPromptSubmit", additionalContext: recapGuidance
             + (requestsWideRedraw ? " " + wideRedrawRequest : "")
@@ -56,7 +56,7 @@ public enum TeamHookRenderer {
 
     static let wideRedrawRequest = "This worktree's `icon` still uses the older square canvas. Redraw it once on the wide canvas, `<svg viewBox='0 0 96 64'>`, and include it in this turn's report; Graftty accepts it without `purposeChanged`."
 
-    static let recapGuidance = "During this turn, load the `graftty` skill and run `graftty attention report --stdin` before your final response. Include the stable title, problem and motivation in context, verified completed work, next steps, decisions, task-specific emoji and emojiAlternatives, an `icon` drawing once the purpose is clear and only again when it changes, and historyEntry only for a meaningful change. Do not mention the report unless it fails. Do not send an extra final response for the recap or acknowledge routine team notifications that require no action. The command publishes your brief immediately. Stop verifies the report and asks for a correction only if it is missing."
+    static let recapGuidance = "During this turn, load the `graftty` skill and run `graftty attention report --stdin` before your final response. Include the stable title, problem and motivation in context, verified completed work, next steps, decisions, task-specific emoji and emojiAlternatives, an `icon` drawing once the purpose is clear and only again when it changes, and historyEntry only for a meaningful change. When the user must decide something, include a `need` and a `catchUp`: the situation, the choices, and your recommendation, written for someone who has forgotten this worktree. When you ask the user a question with choices, always include an Explain more choice. Do not mention the report unless it fails. Do not send an extra final response for the recap or acknowledge routine team notifications that require no action. The command publishes your brief immediately. Stop verifies the report and asks for a correction only if it is missing."
 
     /// Only a missing report reaches this fallback. `stop_hook_active` lets
     /// the correction turn finish even if the report command fails again.

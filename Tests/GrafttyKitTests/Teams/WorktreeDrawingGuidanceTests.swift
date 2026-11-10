@@ -40,7 +40,7 @@ struct WorktreeDrawingGuidanceTests {
     }
 }
 
-@Suite("@spec AGENT-3.41: While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start for one wide redraw, and shall not ask once the drawing is wide or absent.")
+@Suite("@spec AGENT-3.44: While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start for one wide redraw, and shall not ask once the drawing is wide or absent.")
 struct WideRedrawRequestTests {
     @Test func turnStartAsksForAWideRedraw() throws {
         let asking = try TeamHookRenderer.userPromptSubmit(requestsWideRedraw: true)

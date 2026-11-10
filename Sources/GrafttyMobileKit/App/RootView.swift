@@ -461,7 +461,7 @@ public struct RootView: View {
             compactPicker()
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button { showsHosts = true } label: { Image(systemName: "gearshape") }
+                        Button { showsHosts = true } label: { Image(systemName: "server.rack") }
                             .accessibilityLabel("Hosts")
                     }
                 }

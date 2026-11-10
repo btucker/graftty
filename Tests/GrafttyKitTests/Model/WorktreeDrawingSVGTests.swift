@@ -82,7 +82,7 @@ struct WorktreeDrawingSVGTests {
     }
 }
 
-@Suite("@spec AGENT-3.39: When an agent submits a worktree drawing, the application shall accept a wide 96-by-64 canvas as well as the older 64-unit square, reject any other canvas, and know which canvas a stored drawing uses.")
+@Suite("@spec AGENT-3.42: When an agent submits a worktree drawing, the application shall accept a wide 96-by-64 canvas as well as the older 64-unit square, reject any other canvas, and know which canvas a stored drawing uses.")
 struct WorktreeDrawingCanvasTests {
     @Test func acceptsWideAndSquareOnly() throws {
         let wide = WorktreeDrawingSVGTests.svg("<rect width=\"90\" height=\"60\" fill=\"primary\"/>", viewBox: "0 0 96 64")

@@ -45,7 +45,7 @@ public struct WorktreePickerView: View {
             onSelectWorktreeDetail: onSelectWorktreeDetail
         )
         .navigationTitle(project?.name ?? "Projects")
-        .navigationBarTitleDisplayMode(project == nil ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 #endif

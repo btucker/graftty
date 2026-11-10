@@ -59,6 +59,8 @@ public struct WorktreeListContent: View {
     @State private var rowHold: WorktreeActivitySections.Hold?
     @State private var isTouchingList = false
     @State private var showsAllProjectsNeedingYou = false
+    /// Asks whose Explain more prompt is on its way, so a second tap doesn't type it twice.
+    @State private var explainingAsks: Set<String> = []
     @State private var orderMutationID: UUID?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var worktreeScrollSpace = UUID()
@@ -191,6 +193,45 @@ public struct WorktreeListContent: View {
                 showErrorToast("Couldn't dismiss this request on the owning Mac.")
             }
         }
+    }
+
+    private func askDeckEntries(_ rows: [MergedWorktreeRow], merged: SidebarMergedRows) -> [MobileAskDeck.Entry] {
+        rows.compactMap { row in
+            guard row.availability != .wakeable else { return nil }
+            let context = navigation.worktreeContext(row.row)
+            guard let card = AttentionAskCard(context: context) else { return nil }
+            let project = merged.project(id: merged.mergedID(forMember: SidebarProjection.projectID(row.row)))?.name
+            let worktree = row.row.isMainCheckout ? nil : row.row.displayName
+            let source = [project, worktree, SidebarMergedRows.hostText(row, isLocal: false)].compactMap { $0 }.joined(separator: " · ")
+            return .init(row: row, context: context, card: card, source: source,
+                         time: WorktreeActivitySections.rowDate(row.row, context: context))
+        }
+    }
+
+    private func openAsk(_ entry: MobileAskDeck.Entry) {
+        Task { await openReportTarget(entry.card.openTarget, worktrees: feed.state.rows) }
+    }
+
+    /// Types the catch-up prompt into a stopped agent, then opens its terminal
+    /// at once so the explanation is read as it arrives (IOS-13.20, IOS-13.21).
+    private func explainAsk(_ entry: MobileAskDeck.Entry) {
+        guard !explainingAsks.contains(entry.id) else { return }
+        if case .sendPrompt(let paneID) = entry.card.explain, let provider = route(for: entry.row.row)?.provider {
+            let request = WorktreeManagementRequest.explainRequest(worktreeID: entry.row.row.path, paneID: paneID)
+            explainingAsks.insert(entry.id)
+            Task {
+                defer { explainingAsks.remove(entry.id) }
+                do {
+                    if case .error(let code, let message, _, _) = try await RelayedWorktreeManagementClient.send(request, using: provider) {
+                        // A host from before explain_request can't decode it.
+                        showErrorToast(code == "malformed-request" ? "Update Graftty on this Mac to use Explain more." : message)
+                    }
+                } catch {
+                    showErrorToast("Couldn't ask the agent to explain.")
+                }
+            }
+        }
+        openAsk(entry)
     }
 
     private func isSelected(_ worktree: WorktreePanes) -> Bool {
@@ -484,8 +525,23 @@ public struct WorktreeListContent: View {
             List {
                 pendingCreationRows()
                 let needingYou = activitySections(merged, holding: rowHold).needsYou
-                if !needingYou.isEmpty {
-                    let preview = WorktreeActivitySections.preview(needingYou, showsAll: showsAllProjectsNeedingYou)
+                let askEntries = askDeckEntries(needingYou, merged: merged)
+                if !askEntries.isEmpty {
+                    Section {
+                        MobileAskDeck(entries: askEntries, onExplain: explainAsk, onOpen: openAsk,
+                                      onDismiss: { dismissRequest($0.row.row) })
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    } header: {
+                        WorktreeListSectionTitle("Waiting on you", count: askEntries.count, tone: .attention).padding(.bottom, 4)
+                    }
+                }
+                // Requests without a question, such as `graftty notify`, stay rows.
+                let askIDs = Set(askEntries.map(\.id))
+                let notices = needingYou.filter { !askIDs.contains($0.id) }
+                if !notices.isEmpty {
+                    let preview = WorktreeActivitySections.preview(notices, showsAll: showsAllProjectsNeedingYou)
                     Section {
                         ForEach(preview.rows) { row in worktreeRow(row, merged: merged, namesProject: true) }
                         if preview.hidden > 0 {
@@ -497,7 +553,7 @@ public struct WorktreeListContent: View {
                     } header: {
                         // A header, not a row: this list's rows sit in a card that
                         // only rounds the corners of its first and last rows.
-                        WorktreeListSectionTitle("Needs you", count: needingYou.count, tone: .attention).padding(.bottom, 4)
+                        WorktreeListSectionTitle("Needs you", count: notices.count, tone: .attention).padding(.bottom, 4)
                     }
                 }
                 Section {

@@ -146,7 +146,7 @@ struct WorktreeDrawingRecapStrippingTests {
 private let wideDrawing = WorktreeDrawingSVGTests.svg("<rect x=\"8\" y=\"8\" width=\"80\" height=\"48\" fill=\"accent\"/>", viewBox: "0 0 96 64")
 private let otherWideDrawing = WorktreeDrawingSVGTests.svg("<circle cx=\"48\" cy=\"32\" r=\"20\" fill=\"primary\"/>", viewBox: "0 0 96 64")
 
-@Suite("@spec AGENT-3.40: When a worktree's adopted drawing uses the older square canvas, the application shall replace it with the first wide drawing a valid recap carries, even without purposeChanged, and keep its hue.")
+@Suite("@spec AGENT-3.43: When a worktree's adopted drawing uses the older square canvas, the application shall replace it with the first wide drawing a valid recap carries, even without purposeChanged, and keep its hue.")
 struct WorktreeWideRedrawTests {
     @Test func squareDrawingTakesOneWideRedraw() {
         var repos = repos()
