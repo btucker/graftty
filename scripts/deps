@@ -16,7 +16,8 @@ Usage: scripts/deps <command> [arguments]
                           on top of the pinned upstream commit.
   key ghostty|zmx [--platforms CSV]
                           Print the cache key for the current inputs.
-  test ghostty            Run the Ghostty gate against .deps/.
+  test ghostty [--once]   Run the Ghostty gate against .deps/ (--once: skip a
+                          key that already passed here).
   zig                     Print the path of the pinned Zig, downloading it.
   host                    Print the Zig host triple for this machine.
 USAGE
@@ -139,19 +140,26 @@ normalize_platforms() {
 key_inputs() {
   local name="$1"
   case "$name" in
-    ghostty) find "$DEPS_ROOT/ghostty" "$DEPS_ROOT/zig" -type f ;;
-    zmx) find "$DEPS_ROOT/zig" "$REPO/scripts/zmx" -type f ! -name '*.md' ! -path '*/__pycache__/*' ;;
+    # The gate's probes and docs cannot change the library.
+    ghostty) find "$DEPS_ROOT/ghostty" "$DEPS_ROOT/zig" -type f ! -path "$DEPS_ROOT/ghostty/tests/*" ! -name '*.md' ;;
+    zmx)
+      find "$DEPS_ROOT/zig" -type f
+      for file in UPSTREAM_COMMIT GRAFTTY_REVISION graftty.patch paging.patch build.sh; do
+        echo "$REPO/scripts/zmx/$file"
+      done ;;
     *) die "unknown dependency: $name" ;;
   esac
   echo "$REPO/scripts/deps"
 }
 
 input_key() {
-  local name="$1" file
+  local name="$1" file rel
   {
     echo "$name"
     key_inputs "$name" | LC_ALL=C sort | while IFS= read -r file; do
-      echo "${file#"$DEPS_ROOT"/} $(sha256 < "$file")"
+      # Relative names: worktrees and CI jobs share keys across paths.
+      rel="${file#"$DEPS_ROOT"/}"
+      echo "${rel#"$REPO"/} $(sha256 < "$file")"
     done
   } | sha256
 }
@@ -349,19 +357,33 @@ prepare() {
   if [[ -n "$record" ]]; then write_record "$record"; fi
 }
 
+# The Ghostty gate against the linked library. --once skips a key whose gate
+# already passed on this machine (CI's native-deps job).
 run_gate() {
   [[ "${1:-}" == ghostty ]] || { usage; exit 64; }
+  local once=0 key source marker
+  [[ "${2:-}" != --once ]] || once=1
   [[ -f "$LINK_DIR/ghostty.key" ]] || die "run scripts/deps prepare ghostty first"
-  local key source
   key="$(cut -d ' ' -f 1 "$LINK_DIR/ghostty.key")"
+  marker="$CACHE/ghostty/$key/.gate-passed"
+  if [[ "$once" == 1 && -f "$marker" ]]; then
+    log "Ghostty gate already passed for ${key:0:12}"
+    return
+  fi
   source="$CACHE/ghostty/src/$key"
-  [[ -d "$source" ]] || die "no patched source for $key; run scripts/deps prepare ghostty --rebuild"
+  if [[ ! -d "$source" ]]; then
+    rm -rf "$source.tmp"
+    checkout ghostty "$source.tmp"
+    mv "$source.tmp" "$source"
+  fi
   GRAFTTY_DEPS_ZIG="$(zig_path)" GRAFTTY_DEPS_CACHE="$CACHE" \
     "$DEPS_ROOT/ghostty/tests/run.sh" "$source" "$LINK_DIR/GhosttyKit.xcframework"
+  mkdir -p "$(dirname "$marker")"
+  touch "$marker"
 }
 
 [[ $# -gt 0 ]] || { usage; exit 64; }
-case "$1" in prepare|checkout|test|zig) lock_and_exec "$@" ;; esac
+case "$1" in prepare|checkout|test|zig|zig-lib-ios) lock_and_exec "$@" ;; esac
 command="$1"
 shift
 case "$command" in
@@ -373,6 +395,7 @@ case "$command" in
     input_key "$1" ;;
   test) run_gate "$@" ;;
   zig) zig_path ;;
+  zig-lib-ios) zig_lib_ios ;;
   host) host_triple ;;
   -h|--help|help) usage ;;
   *) usage; exit 64 ;;

@@ -109,6 +109,12 @@ if [[ "$(uname -s)" == Linux && "$SUBCOMMAND" == test ]]; then
   INDEX_ARGUMENT=--enable-index-store
 fi
 
+# Package.swift reads libghostty (and the bundled zmx) from .deps/; build or
+# reuse them for this worktree's pins and patches first.
+if [[ "$(uname -s)" == Darwin ]]; then
+  "$REPO_ROOT/scripts/deps" prepare --platforms macos
+fi
+
 # Read the manifest once without its evaluation cache, then pass the renderer
 # context globally: dependency targets such as GhosttyTerminal need it too.
 RENDERER_ARGUMENTS=(--manifest-cache none)

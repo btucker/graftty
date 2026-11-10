@@ -163,6 +163,21 @@ test_link_dir_satisfies_prepare() {
   [[ "$(builds)" == 1 ]] || fail "prelinked: rebuilt a satisfying .deps ($(builds) builds)"
 }
 
+test_key_independent_of_checkout_path() {
+  # Worktrees and CI jobs check the repository out at different paths; the
+  # same inputs must produce the same key so artifacts can be shared.
+  local copy="$WORK/elsewhere/repo"
+  mkdir -p "$copy/scripts"
+  cp -R "$REPO/deps" "$copy/deps"
+  cp -R "$REPO/scripts/zmx" "$copy/scripts/zmx"
+  cp "$REPO/scripts/deps" "$copy/scripts/deps"
+  local name
+  for name in ghostty zmx; do
+    [[ "$(GRAFTTY_DEPS_CACHE="$WORK/keycache" "$copy/scripts/deps" key "$name")" == \
+       "$(GRAFTTY_DEPS_CACHE="$WORK/keycache" "$DEPS" key "$name")" ]] || fail "key: $name depends on the checkout path"
+  done
+}
+
 test_zig_checksum_mismatch() {
   local sb="$WORK/zig"
   mkdir -p "$sb/payload/zig-fake" "$sb/cache"

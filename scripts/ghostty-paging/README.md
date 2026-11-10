@@ -1,9 +1,11 @@
-# Paging renderer ownership
+# Paging renderer
 
-Native renderer assembly, patches, fixtures, and probes now live in
-[btucker/libghostty-spm/Paging](https://github.com/btucker/libghostty-spm/tree/3.0.2026110901/Paging).
-Graftty consumes one published package revision on Mac and mobile.
+The paging renderer is Ghostty at `deps/ghostty/UPSTREAM_COMMIT` plus the
+patch series in `deps/ghostty/patches/`, built by `scripts/deps`; see
+[deps/README.md](../../deps/README.md). Its probes and fixtures live in
+`deps/ghostty/tests/`.
 
-See [BUILD.md](BUILD.md) for published builds and the explicit dependency override.
-[RESULTS.md](RESULTS.md) records the original feasibility experiment; its historical
-commands refer to files that have moved into the dependency repository.
+`compiler-context.py` reads the renderer's compiler definition from the
+package manifest so CI and `scripts/swiftpm` can pass it to every target.
+[RESULTS.md](RESULTS.md) records the original feasibility experiment; its
+historical commands refer to files that have since moved.

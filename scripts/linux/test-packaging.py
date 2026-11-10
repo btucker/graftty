@@ -139,18 +139,8 @@ sys.exit(subprocess.call([{native_install!r}] + sys.argv[1:]))
 
 class ZmxRevisionPinTests(unittest.TestCase):
     def test_build_scripts_do_not_hardcode_the_revision(self):
-        for script in (ROOT / "build-zmx.sh", ROOT.parent / "bump-zmx.sh"):
+        for script in (ROOT / "build-zmx.sh", ROOT.parent / "zmx/build.sh"):
             self.assertIsNone(re.search(r"graftty[0-9]", script.read_text()), script)
-
-    def test_vendored_macos_version_matches_the_pins(self):
-        # Linux builds zmx from the pins in CI; macOS ships the binary that
-        # scripts/bump-zmx.sh committed. Rerun the bump after changing a pin.
-        pins = ROOT.parent / "zmx"
-        commit = (pins / "UPSTREAM_COMMIT").read_text().strip()
-        revision = (pins / "GRAFTTY_REVISION").read_text().strip()
-        vendored = (ROOT.parent.parent / "Resources/zmx-binary/VERSION").read_text().strip()
-        self.assertTrue(vendored.endswith(f"-g{commit[:7]}-{revision}"),
-                        f"Resources/zmx-binary/VERSION is {vendored}; rerun scripts/bump-zmx.sh")
 
 class ZmxBuildTests(unittest.TestCase):
     def setUp(self):
