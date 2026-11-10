@@ -105,7 +105,7 @@
             Key(code: code, characters: String(letter), ignoringModifiers: String(letter))
         }
 
-        func event(window: NSWindow) -> NSEvent {
+        @MainActor func event(window: NSWindow) -> NSEvent {
             NSEvent.keyEvent(
                 with: .keyDown, location: .zero, modifierFlags: flags,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
