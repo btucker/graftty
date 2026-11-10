@@ -1660,9 +1660,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-1.1** The application shall include a `zmx` binary in the app bundle at `Graftty.app/Contents/Helpers/zmx`, mirroring the placement of the `graftty` CLI.
 
-**ZMX-1.2** The bundled `zmx` binary shall be a universal Mach-O containing both `arm64` and `x86_64` slices, produced by `scripts/bump-zmx.sh`.
+**ZMX-1.2** The bundled `zmx` binary shall be a universal Mach-O containing both `arm64` and `x86_64` slices, built from the pins in `scripts/zmx` by `scripts/zmx/build.sh`.
 
-**ZMX-1.3** The application shall pin the vendored `zmx` version in `Resources/zmx-binary/VERSION` and record its SHA256 in `Resources/zmx-binary/CHECKSUMS`.
+**ZMX-1.3** When `scripts/deps prepare` builds `zmx`, it shall record the built version in `.deps/zmx/VERSION` and its SHA256 values in `.deps/zmx/CHECKSUMS`.
 
 ### ZMX-2.x — Session Naming
 
@@ -1776,7 +1776,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.5** When a terminal child requests microphone access, the packaged macOS application shall declare why it uses the microphone and carry the audio-input entitlement so macOS can authorize the request for Graftty.
 
-**DIST-1.6** When Graftty selects its terminal dependency, development, CI, and release builds shall enable paging from the same published revision, diagnose ignored local packages, and reject explicit overrides whose package-owned build provenance does not match their sources and binaries.
+**DIST-1.6** When Graftty builds its terminal dependency, development, CI, and release builds shall build libghostty from the pinned Ghostty commit and the patch series in deps/ghostty, reuse a cached build only when every input matches its key, and report the first patch that no longer applies.
 
 **DIST-1.7** When the shared wrapper, bundle script, or CI builds with a changed renderer or headers, the build shall apply a distinct Clang module signature to application and dependency targets.
 
