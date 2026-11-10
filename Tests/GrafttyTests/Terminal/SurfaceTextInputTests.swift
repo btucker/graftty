@@ -78,7 +78,7 @@ struct NativeDictationDeliveryTests {
         #expect(claims == [true])
     }
 
-    @Test("@spec TEAM-15.19: When a user invokes Complete Worktree with the native Mac Cmd+` menu shortcut in an input-eligible terminal, the application shall open fuzzy search independently of the cursor boundary, retain terminal focus, favor the current project while offering other projects, and leave ordinary percent input unchanged.")
+    @Test("@spec TEAM-15.19: When a user invokes Complete Worktree with the native Mac Cmd+Shift+K menu shortcut in an input-eligible terminal, the application shall open fuzzy search independently of the cursor boundary, retain terminal focus, favor the current project while offering other projects, and leave ordinary percent input unchanged.")
     func nativeWorktreeSearchCommand() async throws {
         let fixture = TextInputFixture()
         let current = AgentCompletionCandidate(address: "/repo/fix#codex", projectPath: "/repo", projectName: "Repo", worktreePath: "/repo/fix", worktreeName: "fix", hostName: "Mac", runtime: "codex")
@@ -89,10 +89,10 @@ struct NativeDictationDeliveryTests {
         #expect(fixture.keyCodes == [23])
         fixture.view.agentCompletion.invalidateBoundary()
         let menu = NSMenu()
-        let item = menu.addItem(withTitle: "Complete Worktree…", action: #selector(SurfaceNSView.completeWorktree(_:)), keyEquivalent: "`")
+        let item = menu.addItem(withTitle: "Complete Worktree…", action: #selector(SurfaceNSView.completeWorktree(_:)), keyEquivalent: "K")
         item.keyEquivalentModifierMask = .command
         item.target = fixture.view
-        #expect(menu.performKeyEquivalent(with: try fixture.keyEvent(50, text: "`", modifiers: .command)))
+        #expect(menu.performKeyEquivalent(with: try fixture.keyEvent(40, text: "K", modifiers: [.command, .shift])))
         #expect(fixture.view.agentCompletion.isActive)
         #expect(fixture.window.firstResponder === fixture.view)
         await fixture.view.agentCompletion.waitForLoad()

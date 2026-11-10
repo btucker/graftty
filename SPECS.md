@@ -3276,7 +3276,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-15.18** When a user searches native completion, the application shall fuzzy-match ordered characters case-insensitively across worktree, project, host, provider and address fields, require every space-separated term, and rank compact and word-boundary matches above scattered matches within each project-priority group.
 
-**TEAM-15.19** When a user invokes Complete Worktree with the native Mac Cmd+` menu shortcut in an input-eligible terminal, the application shall open fuzzy search independently of the cursor boundary, retain terminal focus, favor the current project while offering other projects, and leave ordinary percent input unchanged.
+**TEAM-15.19** When a user invokes Complete Worktree with the native Mac Cmd+Shift+K menu shortcut in an input-eligible terminal, the application shall open fuzzy search independently of the cursor boundary, retain terminal focus, favor the current project while offering other projects, and leave ordinary percent input unchanged.
 
 **TEAM-15.20** While native Mac worktree search is open, the application shall support multiword queries, keep an empty query open on Backspace, preserve the query on repeated invocation, consume Enter when no candidate matches, and discard the query on Escape without inserting terminal text.
 
