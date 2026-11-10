@@ -430,6 +430,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.231** When a sidebar worktree context is projected, the application shall look up retained reports by its exact stable stop identifier or, for older hosts, its project and path, preserving report order without scanning unrelated reports.
 
+**LAYOUT-2.232** While a project is on several hosts whose checkouts share a path, the application shall draw a tile for each host's pinned agent rather than leaving an empty cell for the second.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

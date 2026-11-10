@@ -1040,7 +1040,7 @@ public struct WorktreeListContent: View {
             .pinnedTileAccessibility(name: row.relativeName, host: host, state: state, isSelected: isSelected(wt)) {
                 beginSelectingWorktree(wt)
             }
-            .id(wt.sidebar?.id ?? wt.path)
+            .id(row.id)
     }
 
     /// LAYOUT-2.227: where a new worktree starts, directly under the tiles.

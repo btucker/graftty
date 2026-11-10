@@ -15,6 +15,9 @@ struct PinnedTileGrid<Tile: View>: View {
 
     var body: some View {
         LazyVGrid(columns: Self.columns, spacing: 6) {
+            // LAYOUT-2.232: tiles are keyed by their row, which names the host.
+            // A tile must not set its own `.id` from its path: two hosts can
+            // keep a checkout at the same path, and the clash blanks a cell.
             ForEach(rows) { tile($0) }
         }
     }

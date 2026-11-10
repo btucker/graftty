@@ -651,7 +651,6 @@ struct RemoteMacsSection: View {
             .modifier(PinnedTileDropTarget(isEnabled: query.isEmpty && !worktree.state.isInFlight, onDrop: tile.onDrop))
             .modifier(PinnedTileHoverCard(name: tile.displayName, host: host, status: status))
             .pinnedTileAccessibility(name: tile.displayName, host: host, state: state, isSelected: isActive, open: tile.onOpen)
-            .id(worktree.path)
     }
 
     private func groupedRepositories(

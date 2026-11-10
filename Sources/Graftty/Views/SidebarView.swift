@@ -852,7 +852,6 @@ struct SidebarView: View {
             })
             .modifier(PinnedTileHoverCard(name: row.relativeName, host: nil, status: status))
             .pinnedTileAccessibility(name: row.relativeName, host: nil, state: state, isSelected: isActive, open: select)
-            .id(worktree.path)
     }
 
     /// LAYOUT-2.227: where a new worktree starts, directly under the tiles.
