@@ -11,6 +11,15 @@ import XCTest
 
 #if GRAFTTY_PAGED_HISTORY
 struct MacPagedOutputDeadlockTests {
+    @Test("@spec TERM-12.70: When a Mac terminal applies an authoritative source-grid change, the application shall preserve retained prompt and input rows and their rendered content rather than blank them for shell redraw.", arguments: [false, true])
+    func historyPixelsAfterVisibilityAndResize(promptRedraw: Bool) async throws {
+        try await runChild(promptRedraw ? "testHistoryPixelsWithPromptRedraw" : "testHistoryPixelsWithoutPromptRedraw", timeout: .seconds(30))
+    }
+
+    @Test func commandOutputPixelsAfterVisibilityAndResize() async throws {
+        try await runChild("testHistoryPixelsWithCommandOutput", timeout: .seconds(30))
+    }
+
     @Test("@spec PERF-1.25: When the native transport latency probe is explicitly run, the probe shall report transport, parsing, and matching rendered-pixel latency separately without treating renderer completion as physical display presentation.",
           .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TERMINAL_FLOW_PROBES"] != nil), .serialized, arguments: [false, true])
     func nativeTransportLatency(direct: Bool) async throws {
@@ -114,6 +123,90 @@ struct MacPagedOutputDeadlockTests {
 
 @MainActor
 final class MacPagedOutputDeadlockChild: XCTestCase {
+    func testHistoryPixelsWithPromptRedraw() async throws {
+        try await historyPixelsAfterVisibilityAndResize(promptRedraw: true)
+    }
+
+    func testHistoryPixelsWithoutPromptRedraw() async throws {
+        try await historyPixelsAfterVisibilityAndResize(promptRedraw: false)
+    }
+
+    func testHistoryPixelsWithCommandOutput() async throws {
+        try await historyPixelsAfterVisibilityAndResize(promptRedraw: true, commandOutput: true)
+    }
+
+    private func historyPixelsAfterVisibilityAndResize(promptRedraw: Bool, commandOutput: Bool = false) async throws {
+        let directory = try probeDirectory()
+        let canvas = try PagedOutputCanvas(loadUserConfig: false)
+        let access = MacPagedSurface(canvas.surface)
+        defer { access.close(); canvas.close() }
+        let renderer = MacPagedTerminalRenderer(surface: access, prepareGrid: canvas.prepareGrid)
+        try await renderer.resize(cols: 193, rows: 86)
+        // A fixed stripe covers the sampled center without wrapping styled
+        // trailing blanks when the source narrows from 193 to 190 columns.
+        let history = (0..<1000).map {
+            let text = "history-\($0)".padding(toLength: 120, withPad: " ", startingAt: 0)
+            return "\u{1b}[48;2;220;30;30m\(text)\u{1b}[0m\r\n"
+        }.joined()
+        let prompt = "\u{1b}]133;A;redraw=\(promptRedraw ? 1 : 0)\u{7}prompt> \u{1b}]133;B\u{7}"
+            + (commandOutput ? "\u{1b}]133;C\u{7}" : "")
+        let recent = (0..<100).map {
+            let text = "recent-\($0)".padding(toLength: 120, withPad: " ", startingAt: 0)
+            return "\u{1b}[48;2;30;30;220m\(text)\u{1b}[0m\r\n"
+        }.joined()
+        try await access.writeAndWait(Data((prompt + history + recent + "\u{1b}[0mlive-bottom").utf8))
+        @MainActor func waitForPixels(red: Bool, marker: String) async throws -> Bool {
+            let deadline = ContinuousClock.now + .seconds(2)
+            repeat {
+                canvas.app.tick()
+                ghostty_surface_draw(canvas.surface)
+                if canvas.text().contains(marker), canvas.hasPresentedSize(ghostty_surface_size(canvas.surface)),
+                   let pixel = canvas.renderedPixel() {
+                    let dominant = red ? Int(pixel.red) : Int(pixel.blue)
+                    let opposite = red ? Int(pixel.blue) : Int(pixel.red)
+                    if dominant > Int(pixel.green) + 50 && dominant > opposite + 50 { return true }
+                }
+                try await Task.sleep(for: .milliseconds(10))
+            } while ContinuousClock.now < deadline
+            return false
+        }
+        XCTAssertTrue(canvas.oldestHistoryRow().contains("history-0"))
+        var original = ghostty_action_scrollbar_s()
+        ghostty_surface_read_scrollbar(canvas.surface, &original)
+        var previousColumns: UInt16 = 193
+        for grid in [(UInt16(193), UInt16(84)), (193, 86), (190, 86), (193, 86)] {
+            var beforeResize = ghostty_action_scrollbar_s()
+            ghostty_surface_read_scrollbar(canvas.surface, &beforeResize)
+            ghostty_surface_set_occlusion(canvas.surface, false)
+            canvas.prepareGrid(try DisplayGrid(cols: grid.0, rows: grid.1))
+            let physical = ghostty_surface_size(canvas.surface)
+            let scale = canvas.window.backingScaleFactor
+            canvas.window.setContentSize(NSSize(width: CGFloat(physical.width_px) / scale, height: CGFloat(physical.height_px) / scale))
+            try await renderer.setSourceGrid(cols: grid.0, rows: grid.1)
+            ghostty_surface_set_occlusion(canvas.surface, true)
+            let stored = canvas.oldestHistoryRow().contains("history-0")
+            XCTAssertTrue(stored, "Stored history missing at \(grid)")
+            guard stored else { return }
+            let bottom = "scroll_to_bottom"
+            _ = bottom.withCString { ghostty_surface_binding_action(canvas.surface, $0, UInt(bottom.utf8.count)) }
+            let blue = try await waitForPixels(red: false, marker: "recent-")
+            XCTAssertTrue(blue, "Blue live frame missing at \(grid): pixels=\(String(describing: canvas.renderedPixel())) frame=\(String(describing: canvas.presentedPixelSize)) physical=\(physical.width_px)x\(physical.height_px) view=\(canvas.view.bounds) layer=\(String(describing: canvas.view.layer?.bounds))")
+            let action = "scroll_to_top"
+            _ = action.withCString { ghostty_surface_binding_action(canvas.surface, $0, UInt(action.utf8.count)) }
+            let visible = try await waitForPixels(red: true, marker: "history-0")
+            XCTAssertTrue(canvas.text().contains("history-0"), "Stored history missing at \(grid)")
+            XCTAssertTrue(visible, "Retained history rendered black at \(grid): \(String(describing: canvas.renderedPixel()))")
+            var scrollbar = ghostty_action_scrollbar_s()
+            ghostty_surface_read_scrollbar(canvas.surface, &scrollbar)
+            if grid.0 == previousColumns {
+                XCTAssertEqual(scrollbar.total, beforeResize.total, "A height resize must preserve retained rows")
+            }
+            XCTAssertGreaterThanOrEqual(scrollbar.total, original.total)
+            previousColumns = grid.0
+        }
+        try complete(directory)
+    }
+
     private func probeDirectory() throws -> URL {
         guard let directory = ProcessInfo.processInfo.environment["GRAFTTY_PAGED_OUTPUT_PROBE"] else {
             throw XCTSkip("Isolated native paged output probe")
@@ -577,6 +670,17 @@ private final class PagedOutputCanvas {
         guard ghostty_surface_read_text(surface, selection, &text) else { return "" }
         defer { ghostty_surface_free_text(surface, &text) }
         return text.text.map { String(decoding: Data(bytes: $0, count: Int(text.text_len)), as: UTF8.self) } ?? ""
+    }
+
+    var presentedPixelSize: CGSize? {
+        guard let contents = view.layer?.contents,
+              CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() else { return nil }
+        let frame = unsafeBitCast(contents as CFTypeRef, to: IOSurfaceRef.self)
+        return CGSize(width: IOSurfaceGetWidth(frame), height: IOSurfaceGetHeight(frame))
+    }
+
+    func hasPresentedSize(_ size: ghostty_surface_size_s) -> Bool {
+        presentedPixelSize == CGSize(width: Int(size.width_px), height: Int(size.height_px))
     }
 
     /// Read a blank cell near the center, away from the cursor and padding.
