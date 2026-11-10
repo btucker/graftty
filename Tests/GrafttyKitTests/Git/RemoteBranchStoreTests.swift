@@ -42,18 +42,33 @@ struct RemoteBranchStoreTests {
             "feature/local": "feature/remote",
         ])
         #expect(snapshot.defaultBranch == "main")
-        let expectedMainDate = ISO8601DateFormatter.dateFromInternetDateTime(
-            "2026-05-10T12:30:00-05:00"
-        )
+        let expectedMainDate = Date(timeIntervalSince1970: 1_778_434_200)
         #expect(
             snapshot.remoteBranches.first { $0.name == "main" }?.lastCommitDate
                 == expectedMainDate
         )
     }
 
+    @Test("""
+    @spec PERF-1.26: When the recurring branch scan reads commit dates, the application shall request integer Unix seconds from Git and convert them directly to dates without calendar or locale parsing.
+    """)
+    func defaultListUsesUnixCommitSeconds() async throws {
+        let executor = CombinedRefScanExecutor()
+        let snapshot = try await RemoteBranchStore.makeDefaultList(executor: executor)("/repo")
+
+        #expect(executor.invocations.map(\.args) == [[
+            "for-each-ref",
+            "--format=%(refname)\t%(committerdate:unix)\t%(upstream)\t%(symref)",
+            "refs/heads/",
+            "refs/remotes/origin",
+        ]])
+        #expect(snapshot.localBranches.first { $0.name == "main" }?.lastCommitDate
+            == Date(timeIntervalSince1970: 1_778_434_200))
+    }
+
     @Test func combinedRefScanFallsBackToConventionalDefaultBranch() {
         let snapshot = RemoteBranchStore.parseCombinedRefs("""
-        refs/remotes/origin/master\t2026-05-10T12:30:00-05:00\t\t
+        refs/remotes/origin/master\t1778434200\t\t
 
         """)
 
@@ -697,12 +712,12 @@ private final class CombinedRefScanExecutor: CLIExecutor, @unchecked Sendable {
     }
 
     private let output = """
-    refs/heads/feature/local\t2026-05-13T09:15:00-05:00\trefs/remotes/origin/feature/remote\t
-    refs/heads/main\t2026-05-10T12:30:00-05:00\trefs/remotes/origin/main\t
-    refs/heads/non-origin\t2026-05-09T12:30:00-05:00\trefs/remotes/upstream/main\t
-    refs/remotes/origin/HEAD\t2026-05-10T12:30:00-05:00\t\trefs/remotes/origin/main
-    refs/remotes/origin/feature/remote\t2026-05-13T09:15:00-05:00\t\t
-    refs/remotes/origin/main\t2026-05-10T12:30:00-05:00\t\t
+    refs/heads/feature/local\t1778681700\trefs/remotes/origin/feature/remote\t
+    refs/heads/main\t1778434200\trefs/remotes/origin/main\t
+    refs/heads/non-origin\t1778347800\trefs/remotes/upstream/main\t
+    refs/remotes/origin/HEAD\t1778434200\t\trefs/remotes/origin/main
+    refs/remotes/origin/feature/remote\t1778681700\t\t
+    refs/remotes/origin/main\t1778434200\t\t
 
     """
 
@@ -774,14 +789,6 @@ private final class PermitBlocker: @unchecked Sendable {
             return continuation
         }
         continuation?.resume()
-    }
-}
-
-private extension ISO8601DateFormatter {
-    static func dateFromInternetDateTime(_ s: String) -> Date? {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f.date(from: s)
     }
 }
 
