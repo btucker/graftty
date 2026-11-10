@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ci-cache/zmx
-          key: zmx-v1-${{ matrix.arch }}-${{ hashFiles('scripts/linux/build-zmx.sh', 'scripts/zmx/ZIG_VERSION', 'scripts/zmx/UPSTREAM_COMMIT', 'scripts/zmx/*.patch') }}
+          key: zmx-v1-${{ matrix.arch }}-${{ hashFiles('scripts/linux/build-zmx.sh', 'scripts/zmx/ZIG_VERSION', 'scripts/zmx/UPSTREAM_COMMIT', 'scripts/zmx/GRAFTTY_REVISION', 'scripts/zmx/*.patch') }}
       - name: Run portable tests
         run: |
           python3 scripts/generate-specs.py --check

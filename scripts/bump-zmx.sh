@@ -9,7 +9,7 @@
 #
 # Changing scripts/zmx/UPSTREAM_COMMIT is expected to require refreshing
 # scripts/zmx/graftty.patch and paging.patch against that exact upstream
-# revision.
+# revision. scripts/zmx/GRAFTTY_REVISION supplies the grafttyN version suffix.
 
 set -euo pipefail
 
@@ -27,12 +27,18 @@ PAGING_PATCH_FILE="$REPO/scripts/zmx/paging.patch"
 COMPAT_TEST="$REPO/scripts/zmx/compatibility_test.py"
 COMPAT_UNIT_TEST="$REPO/scripts/test_zmx_compatibility.py"
 ZIG_VERSION_FILE="$REPO/scripts/zmx/ZIG_VERSION"
+REVISION_FILE="$REPO/scripts/zmx/GRAFTTY_REVISION"
 LEGACY_COMMIT_FILE="$REPO/scripts/zmx/LEGACY_GRAFTTY_COMMIT"
 LEGACY_SHA_FILE="$REPO/scripts/zmx/LEGACY_ZMX_SHA256"
 VENDORED_DIR="$REPO/Resources/zmx-binary"
 VENDORED_BINARY="$VENDORED_DIR/zmx"
 
 EXPECTED_ZIG_VERSION="$(tr -d '[:space:]' < "$ZIG_VERSION_FILE")"
+GRAFTTY_REVISION="$(tr -d '[:space:]' < "$REVISION_FILE")"
+if [[ ! "$GRAFTTY_REVISION" =~ ^graftty[0-9]+$ ]]; then
+    echo "GRAFTTY_REVISION must look like graftty<N>" >&2
+    exit 1
+fi
 ACTUAL_ZIG_VERSION="$(zig version)"
 if [[ "$ACTUAL_ZIG_VERSION" != "$EXPECTED_ZIG_VERSION" ]]; then
     echo "zmx build requires Zig $EXPECTED_ZIG_VERSION, found $ACTUAL_ZIG_VERSION" >&2
@@ -91,7 +97,7 @@ if [[ -z "$UPSTREAM_VERSION" ]]; then
     echo "couldn't read upstream version from build.zig.zon" >&2
     exit 1
 fi
-VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty11"
+VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-${GRAFTTY_REVISION}"
 
 echo "→ testing patched zmx"
 (
