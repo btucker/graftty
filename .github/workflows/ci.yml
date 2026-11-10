@@ -88,6 +88,12 @@ jobs:
         timeout-minutes: 45
         run: scripts/deps test ghostty --once
 
+      - name: Run the zmx compatibility checks for new inputs
+        # Upstream tests, the 0.5 floor, and the latest release's zmx; once
+        # per zmx key, like the Ghostty gate.
+        timeout-minutes: 30
+        run: scripts/zmx/verify.sh --once
+
       - name: Package .deps
         # Dereference the cache links; artifacts drop file modes, tar keeps them.
         run: tar -chf "$RUNNER_TEMP/native-deps.tar" -C .deps .
@@ -101,8 +107,19 @@ jobs:
   macos-build-and-test:
     # Hosted Xcode 27 avoids the single-capacity self-hosted runner queue.
     needs: native-deps
+    # A job skipped because native-deps failed reports as passing to branch
+    # protection, so run anyway and fail this required check explicitly.
+    if: ${{ !cancelled() }}
     runs-on: xcode-27
     steps:
+      - name: Require native dependencies
+        if: needs.native-deps.result != 'success'
+        env:
+          RESULT: ${{ needs.native-deps.result }}
+        run: |
+          echo "::error::native-deps did not succeed ($RESULT); libghostty or zmx could not be built or failed the Ghostty gate."
+          exit 1
+
       - uses: actions/checkout@v4
 
       - name: Show tool versions

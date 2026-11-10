@@ -14,10 +14,9 @@ Usage: scripts/deps <command> [arguments]
                           patch series as commits (git am -3).
   export ghostty DIR      Rewrite deps/ghostty/patches/ from DIR's commits
                           on top of the pinned upstream commit.
-  key ghostty|zmx [--platforms CSV]
-                          Print the cache key for the current inputs.
+  key ghostty|zmx         Print the cache key for the current inputs.
   test ghostty [--once]   Run the Ghostty gate against .deps/ (--once: skip a
-                          key that already passed here).
+                          library and gate that already passed here).
   zig                     Print the path of the pinned Zig, downloading it.
   host                    Print the Zig host triple for this machine.
 USAGE
@@ -86,8 +85,12 @@ zig_path() {
   line="$(awk -v host="$host" '$1 == host { print $2, $3 }' "$checksums")"
   [[ -n "$line" ]] || die "no Zig $version checksum for $host in $checksums"
   read -r sha url <<<"$line"
+  # Callers capture this function with $(...), where bash does not apply
+  # errexit, so every step below checks its own status. The lock is held, so
+  # any stage left by an interrupted download is stale.
   mkdir -p "$CACHE/zig"
-  stage="$(mktemp -d "$CACHE/zig/.stage.XXXXXX")"
+  rm -rf "$CACHE/zig"/.stage.*
+  stage="$(mktemp -d "$CACHE/zig/.stage.XXXXXX")" || die "could not create a Zig stage in $CACHE/zig"
   log "downloading Zig $version for $host"
   if ! curl --retry 3 -fsSL "$url" -o "$stage/zig.tar.xz"; then
     rm -rf "$stage"; die "could not download $url"
@@ -97,12 +100,15 @@ zig_path() {
     rmdir "$CACHE/zig" 2>/dev/null || true
     die "checksum mismatch for $url"
   fi
-  mkdir "$stage/zig"
-  tar -xJf "$stage/zig.tar.xz" --strip-components=1 -C "$stage/zig"
+  if ! mkdir "$stage/zig" || ! tar -xJf "$stage/zig.tar.xz" --strip-components=1 -C "$stage/zig" \
+      || [[ "$("$stage/zig/zig" version 2>/dev/null)" != "$version" ]]; then
+    rm -rf "$stage"
+    rmdir "$CACHE/zig" 2>/dev/null || true
+    die "could not unpack Zig $version from $url"
+  fi
   rm -rf "$dir"
-  mv "$stage/zig" "$dir"
+  mv "$stage/zig" "$dir" || { rm -rf "$stage"; die "could not install Zig into $dir"; }
   rm -rf "$stage"
-  [[ "$("$dir/zig" version)" == "$version" ]] || die "downloaded Zig is not $version"
   echo "$dir/zig"
 }
 
@@ -152,16 +158,24 @@ key_inputs() {
   echo "$REPO/scripts/deps"
 }
 
+hash_files() {
+  local file rel
+  LC_ALL=C sort | while IFS= read -r file; do
+    # Relative names: worktrees and CI jobs share keys across paths.
+    rel="${file#"$DEPS_ROOT"/}"
+    echo "${rel#"$REPO"/} $(sha256 < "$file")"
+  done
+}
+
 input_key() {
-  local name="$1" file rel
-  {
-    echo "$name"
-    key_inputs "$name" | LC_ALL=C sort | while IFS= read -r file; do
-      # Relative names: worktrees and CI jobs share keys across paths.
-      rel="${file#"$DEPS_ROOT"/}"
-      echo "${rel#"$REPO"/} $(sha256 < "$file")"
-    done
-  } | sha256
+  local name="$1"
+  { echo "$name"; key_inputs "$name" | hash_files; } | sha256
+}
+
+# The gate's own probes and fixtures: not library inputs, but a change to
+# them must rerun the gate.
+gate_key() {
+  find "$DEPS_ROOT/ghostty/tests" -type f | hash_files | sha256
 }
 
 # --- Patch series ----------------------------------------------------------
@@ -192,23 +206,60 @@ mirror() {
   echo "$dir"
 }
 
+# Every patch file must be in the order file; an unlisted one would change
+# the key without ever being applied.
+check_series() {
+  local series="$1" file
+  [[ -f "$series/.patches" ]] || die "missing ${series#"$REPO"/}/.patches"
+  for file in "$series"/*.patch; do
+    [[ -e "$file" ]] || continue
+    grep -qxF "$(basename "$file")" "$series/.patches" \
+      || die "$(basename "$file") is not listed in ${series#"$REPO"/}/.patches"
+  done
+}
+
+# Returns 2 when a patch does not apply (the checkout is left mid-am for
+# resolution) and 1 for any other failure. Callers may run this on the left
+# of ||, where bash ignores errexit, so every step checks its own status.
 checkout() {
-  local name="$1" dir="$2" commit series patch
+  local name="$1" dir="$2" commit series patch mirror_dir
   [[ ! -e "$dir" ]] || die "$dir already exists"
   commit="$(upstream_commit "$name")"
   series="$DEPS_ROOT/$name/patches"
-  git init --quiet "$dir"
-  git -C "$dir" fetch --quiet --depth=1 "file://$(mirror "$name")" "$commit"
-  git -C "$dir" checkout --quiet --detach FETCH_HEAD
-  while IFS= read -r patch; do
+  check_series "$series"
+  mirror_dir="$(mirror "$name")" || return 1
+  git init --quiet "$dir" || return 1
+  git -C "$dir" fetch --quiet --depth=1 "file://$mirror_dir" "$commit" \
+    || { echo "scripts/deps: could not fetch $commit from $mirror_dir" >&2; return 1; }
+  git -C "$dir" checkout --quiet --detach FETCH_HEAD || return 1
+  # A final line without a newline is still a patch.
+  while IFS= read -r patch || [[ -n "$patch" ]]; do
     [[ -n "$patch" ]] || continue
+    # The user's signing or am configuration must not change the result.
     if ! git -C "$dir" -c user.name=graftty-deps -c user.email=deps@graftty.invalid \
-        am --quiet -3 --keep-cr "$series/$patch" >&2; then
+        -c commit.gpgSign=false am --quiet -3 --keep-cr "$series/$patch" >&2; then
       echo "patch failed: $patch" >&2
-      echo "resolve it in $dir with git am --continue, then run scripts/deps export $name $dir" >&2
-      return 1
+      return 2
     fi
   done < "$series/.patches"
+}
+
+# A cached source tree for KEY, checked out from the current inputs.
+ensure_source() {
+  local key="$1" source status=0
+  source="$CACHE/ghostty/src/$key"
+  if [[ ! -d "$source" ]]; then
+    mkdir -p "$CACHE/ghostty/src" || die "could not create $CACHE/ghostty/src"
+    rm -rf "$source.tmp"
+    checkout ghostty "$source.tmp" || status=$?
+    if [[ "$status" != 0 ]]; then
+      rm -rf "$source.tmp"
+      [[ "$status" != 2 ]] || echo "reproduce it with scripts/deps checkout ghostty DIR, resolve it there with git am --continue, then run scripts/deps export ghostty DIR" >&2
+      exit 1
+    fi
+    mv "$source.tmp" "$source" || die "could not publish $source"
+  fi
+  echo "$source"
 }
 
 export_series() {
@@ -218,8 +269,14 @@ export_series() {
   git -C "$dir" cat-file -e "$base^{commit}" 2>/dev/null || die "$dir does not contain $base"
   mkdir -p "$series"
   find "$series" -name '*.patch' -delete
-  git -C "$dir" format-patch --quiet --zero-commit --no-signature --no-stat --full-index \
-    --keep-subject --no-numbered -o "$series" "$base..HEAD" >/dev/null
+  # Pin every diff and format option a user's git config could change, so
+  # an export depends only on the commits.
+  git -C "$dir" -c diff.algorithm=myers -c diff.context=3 -c diff.interHunkContext=0 \
+    -c diff.noprefix=false -c diff.mnemonicPrefix=false -c diff.relative=false \
+    -c format.useAutoBase=false \
+    format-patch --quiet --zero-commit --no-signature --no-stat --full-index \
+    --keep-subject --no-numbered --no-signoff --no-cover-letter --no-attach --no-notes \
+    --no-from --suffix=.patch -o "$series" "$base..HEAD" >/dev/null
   (cd "$series" && ls -1 ./*.patch 2>/dev/null | sed 's|^\./||' | LC_ALL=C sort) > "$series/.patches"
   log "exported $(wc -l < "$series/.patches" | tr -d ' ') patches to ${series#"$REPO"/}"
 }
@@ -254,7 +311,7 @@ linked_satisfies() {
 }
 
 prepare_ghostty() {
-  local platforms="$1" rebuild="$2" key artifact candidate source builder stage
+  local platforms="$1" rebuild="$2" key artifact candidate source builder stage zig
   key="$(input_key ghostty)"
   if [[ "$rebuild" != 1 && -e "$LINK_DIR/GhosttyKit.xcframework" ]] \
       && linked_satisfies "$LINK_DIR/ghostty.key" "$key" "$platforms"; then
@@ -270,19 +327,16 @@ prepare_ghostty() {
     done
   fi
   if [[ -z "$artifact" ]]; then
-    source="$CACHE/ghostty/src/$key"
-    if [[ ! -d "$source" ]]; then
-      mkdir -p "$CACHE/ghostty/src"
-      rm -rf "$source.tmp"
-      checkout ghostty "$source.tmp" || { rm -rf "$source.tmp"; exit 1; }
-      mv "$source.tmp" "$source"
-    fi
+    source="$(ensure_source "$key")"
+    zig="$(zig_path)"
     builder="${GRAFTTY_DEPS_GHOSTTY_BUILDER:-$DEPS_ROOT/ghostty/build.sh}"
+    # Under the lock no other build is running, so any stage here was left
+    # by an interrupted one.
+    rm -rf "$CACHE/ghostty/$key"/.build.*
     stage="$CACHE/ghostty/$key/.build.$$"
-    rm -rf "$stage"
     mkdir -p "$stage"
     log "building libghostty ($platforms) for key ${key:0:12}"
-    GRAFTTY_DEPS_ZIG="$(zig_path)" GRAFTTY_DEPS_CACHE="$CACHE" \
+    GRAFTTY_DEPS_ZIG="$zig" GRAFTTY_DEPS_CACHE="$CACHE" \
       "$builder" "$source" "$platforms" "$stage" >&2 || { rm -rf "$stage"; die "libghostty build failed"; }
     artifact="$CACHE/ghostty/$key/$platforms"
     rm -rf "$artifact"
@@ -294,7 +348,7 @@ prepare_ghostty() {
 }
 
 prepare_zmx() {
-  local rebuild="$1" key artifact stage
+  local rebuild="$1" key artifact stage zig
   key="$(input_key zmx)"
   if [[ "$rebuild" != 1 && -e "$LINK_DIR/zmx/zmx" ]] \
       && linked_satisfies "$LINK_DIR/zmx.key" "$key" ""; then
@@ -302,11 +356,13 @@ prepare_zmx() {
   fi
   artifact="$CACHE/zmx/$key"
   if [[ "$rebuild" == 1 || ! -x "$artifact/zmx" ]]; then
+    zig="$(zig_path)"
+    # Under the lock, any stage here was left by an interrupted build.
+    rm -rf "$CACHE/zmx"/.build.*
     stage="$CACHE/zmx/.build.$key.$$"
-    rm -rf "$stage"
     mkdir -p "$stage"
     log "building zmx for key ${key:0:12}"
-    GRAFTTY_DEPS_ZIG="$(zig_path)" GRAFTTY_DEPS_CACHE="$CACHE" \
+    GRAFTTY_DEPS_ZIG="$zig" GRAFTTY_DEPS_CACHE="$CACHE" \
       "${GRAFTTY_DEPS_ZMX_BUILDER:-$REPO/scripts/zmx/build.sh}" "$stage" >&2 \
       || { rm -rf "$stage"; die "zmx build failed"; }
     rm -rf "$artifact"
@@ -357,38 +413,48 @@ prepare() {
   if [[ -n "$record" ]]; then write_record "$record"; fi
 }
 
-# The Ghostty gate against the linked library. --once skips a key whose gate
-# already passed on this machine (CI's native-deps job).
+# The Ghostty gate against the linked library. --once skips it when this
+# library and these probes already passed on this machine (CI's native-deps
+# job). It runs without the cache lock: it only reads the source tree and the
+# linked library, and holding the lock would stall every worktree's
+# scripts/swiftpm for the whole gate. Locked subcommands prepare the source
+# tree and Zig first.
 run_gate() {
   [[ "${1:-}" == ghostty ]] || { usage; exit 64; }
-  local once=0 key source marker
+  local once=0 key source marker zig
   [[ "${2:-}" != --once ]] || once=1
   [[ -f "$LINK_DIR/ghostty.key" ]] || die "run scripts/deps prepare ghostty first"
   key="$(cut -d ' ' -f 1 "$LINK_DIR/ghostty.key")"
-  marker="$CACHE/ghostty/$key/.gate-passed"
+  [[ "$key" == "$(input_key ghostty)" ]] \
+    || die "${LINK_DIR#"$REPO"/} holds libghostty for other inputs; run scripts/deps prepare ghostty first"
+  marker="$CACHE/ghostty/$key/.gate-passed.$(gate_key)"
   if [[ "$once" == 1 && -f "$marker" ]]; then
-    log "Ghostty gate already passed for ${key:0:12}"
+    log "Ghostty gate already passed for ${key:0:12} with these probes"
     return
   fi
-  source="$CACHE/ghostty/src/$key"
-  if [[ ! -d "$source" ]]; then
-    rm -rf "$source.tmp"
-    checkout ghostty "$source.tmp"
-    mv "$source.tmp" "$source"
-  fi
-  GRAFTTY_DEPS_ZIG="$(zig_path)" GRAFTTY_DEPS_CACHE="$CACHE" \
+  source="$("$0" gate-source "$key")"
+  zig="$("$0" zig)"
+  GRAFTTY_DEPS_ZIG="$zig" GRAFTTY_DEPS_CACHE="$CACHE" \
     "$DEPS_ROOT/ghostty/tests/run.sh" "$source" "$LINK_DIR/GhosttyKit.xcframework"
   mkdir -p "$(dirname "$marker")"
   touch "$marker"
 }
 
 [[ $# -gt 0 ]] || { usage; exit 64; }
-case "$1" in prepare|checkout|test|zig|zig-lib-ios) lock_and_exec "$@" ;; esac
+case "$1" in prepare|checkout|gate-source|zig|zig-lib-ios) lock_and_exec "$@" ;; esac
 command="$1"
 shift
 case "$command" in
   prepare) prepare "$@" ;;
-  checkout) [[ "${1:-}" == ghostty && -n "${2:-}" ]] || { usage; exit 64; }; checkout "$@" ;;
+  checkout)
+    [[ "${1:-}" == ghostty && -n "${2:-}" ]] || { usage; exit 64; }
+    status=0
+    checkout "$@" || status=$?
+    [[ "$status" != 2 ]] || echo "resolve it in $2 with git am --continue, then run scripts/deps export $1 $2" >&2
+    exit "$status" ;;
+  gate-source) # internal: run_gate's locked checkout
+    [[ "${1:-}" == "$(input_key ghostty)" ]] || die "gate-source: inputs changed"
+    ensure_source "$1" ;;
   export) [[ "${1:-}" == ghostty && -n "${2:-}" ]] || { usage; exit 64; }; export_series "$@" ;;
   key)
     [[ "${1:-}" == ghostty || "${1:-}" == zmx ]] || { usage; exit 64; }
@@ -397,6 +463,7 @@ case "$command" in
   zig) zig_path ;;
   zig-lib-ios) zig_lib_ios ;;
   host) host_triple ;;
+  cache-dir) echo "$CACHE" ;; # internal: scripts/zmx/verify.sh's pass marker
   -h|--help|help) usage ;;
   *) usage; exit 64 ;;
 esac

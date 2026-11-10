@@ -1622,7 +1622,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TECH-2.x
 
-**TECH-2** The application shall use libghostty (via the libghostty-spm Swift Package) as its terminal engine.
+**TECH-2** The application shall use libghostty, built from the pinned Ghostty commit and patch series in `deps/ghostty`, as its terminal engine.
 
 ### TECH-3.x
 

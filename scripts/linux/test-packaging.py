@@ -312,6 +312,26 @@ elif args[0] == 'build':
         self.assertEqual(self.calls.read_text().splitlines(), ["test", "release", "test"])
         self.assertFalse(self.output.exists())
 
+class InstallZigTests(unittest.TestCase):
+    def test_missing_host_checksum_is_reported(self):
+        with tempfile.TemporaryDirectory(prefix="graftty-install-zig-") as temp:
+            repo = Path(temp)
+            (repo / "scripts/linux").mkdir(parents=True)
+            shutil.copy(ROOT / "install-zig.sh", repo / "scripts/linux/install-zig.sh")
+            (repo / "deps/zig").mkdir(parents=True)
+            shutil.copy(ROOT.parent.parent / "deps/zig/VERSION", repo / "deps/zig/VERSION")
+            (repo / "deps/zig/checksums").write_text("# no hosts\n")
+            tools = repo / "tools"
+            tools.mkdir()
+            (tools / "uname").write_text("#!/bin/sh\necho x86_64\n")
+            (tools / "uname").chmod(0o755)
+            env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+            result = subprocess.run(["bash", str(repo / "scripts/linux/install-zig.sh"), str(repo / "zig")],
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("No pinned Zig", result.stderr)
+            self.assertFalse((repo / "zig").exists())
+
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="graftty-installer-")

@@ -56,7 +56,7 @@ patch_packages() {
 }
 
 build_target() {
-  local target="$1" out="$2" sdk clang_target cpu args
+  local target="$1" out="$2" sdk clang_target cpu args zig_lib
   case "$target" in
     aarch64-macos) sdk=macosx; clang_target=arm64-apple-macos13.0; cpu=apple_m1 ;;
     x86_64-macos) sdk=macosx; clang_target=x86_64-apple-macos13.0; cpu= ;;
@@ -73,7 +73,9 @@ build_target() {
   echo "[*] zig build $target" >&2
   if [[ "$target" == *-ios* ]]; then
     # Zig 0.17.0's std does not compile for iOS; use the staged patched copy.
-    (cd "$source_dir" && ZIG_LIB_DIR="$("$REPO/scripts/deps" zig-lib-ios)" zig "${args[@]}")
+    # A separate assignment, so a staging failure stops the build here.
+    zig_lib="$("$REPO/scripts/deps" zig-lib-ios)"
+    (cd "$source_dir" && ZIG_LIB_DIR="$zig_lib" zig "${args[@]}")
   else
     (cd "$source_dir" && zig "${args[@]}")
   fi

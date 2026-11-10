@@ -71,7 +71,7 @@ fi
 echo "→ GRAFTTY_VERSION=$GRAFTTY_VERSION"
 echo "→ GRAFTTY_BUILD_VERSION=$GRAFTTY_BUILD_VERSION"
 if [[ "$CONFIGURATION" == "release" ]]; then
-  # Published and explicitly overridden packages both provide paging.
+  # The in-repo libghostty build always provides paging.
   export GRAFTTY_REQUIRE_PAGED_HISTORY=1
 fi
 # libghostty and zmx come from the pins and patches in deps/ and scripts/zmx/.

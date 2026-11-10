@@ -6,7 +6,8 @@ version=$(tr -d '[:space:]' < "$repo/deps/zig/VERSION")
 arch=$(uname -m)
 case "$arch" in x86_64|aarch64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 64 ;; esac
 prefix=${1:?Usage: install-zig.sh PREFIX}
-read -r sha url < <(awk -v host="$arch-linux" '$1 == host { print $2, $3 }' "$repo/deps/zig/checksums")
+# read fails on a missing host line; report that below instead of exiting silently.
+read -r sha url < <(awk -v host="$arch-linux" '$1 == host { print $2, $3 }' "$repo/deps/zig/checksums") || true
 [[ $url == "https://ziglang.org/download/$version/"* && $sha =~ ^[0-9a-f]{64}$ ]] || { echo "No pinned Zig $version checksum for $arch-linux" >&2; exit 1; }
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT

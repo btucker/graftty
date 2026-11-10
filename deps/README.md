@@ -16,11 +16,18 @@ separately published binary is consumed.
 against Chromium:
 
 - every patch is `git format-patch` output (author, message and full `index`
-  lines), so `git am -3` can merge most upstream moves on its own;
-- `deps/ghostty/patches/.patches` lists the order explicitly;
+  lines);
+- `deps/ghostty/patches/.patches` lists the order explicitly, and every
+  patch file must appear in it;
 - `scripts/deps checkout ghostty DIR` applies the series to the pinned commit
   as one commit per patch, and `scripts/deps export ghostty DIR` writes DIR's
   commits back to patch files.
+
+To move the pin, check the series out at the current pin and rebase its
+commits onto the new upstream commit (the recipe in `AGENTS.md`). The
+checkout is shallow, so after moving `UPSTREAM_COMMIT` first, `git am -3` has
+no preimage blobs to merge with and stops at the first patch whose context
+changed.
 
 `deps/ghostty/package-patches/<package>-*.patch` patch Zig packages that
 Ghostty fetches (`zig-pkg/<package>-*`); Zig verifies each fetched package
@@ -48,7 +55,9 @@ patches, package patches, build script, Zig pin, and `scripts/deps` itself).
 Changing any of them builds a new artifact; nothing else does. Builds run
 under a lock and publish atomically, so concurrent worktrees wait rather than
 build twice. Old keys are never deleted automatically; remove
-`~/Library/Caches/Graftty/deps/ghostty/<key>` directories to reclaim space.
+`~/Library/Caches/Graftty/deps/ghostty/<key>` and its patched source
+`ghostty/src/<key>` to reclaim space. A build that is interrupted leaves its
+stage behind until the next build under the lock removes it.
 
 ## The Ghostty gate
 
@@ -56,7 +65,9 @@ build twice. Old keys are never deleted automatically; remove
 pass: the core paging probes, the production surface probes against the
 packaged library (AppKit; UIKit when given a simulator UDID through
 `deps/ghostty/tests/run.sh`), Ghostty's `snapshot.snapshot` lib-vt tests, and
-the license check. CI's `native-deps` job runs it once per new key.
+the license check. CI's `native-deps` job runs it once per new pair of library
+key and `deps/ghostty/tests/` contents. The gate does not hold the cache lock
+while it runs, so other worktrees can keep building.
 
 ## Licenses
 
