@@ -84,7 +84,8 @@ public enum SidebarHostNavigation {
             let hue = current.drawingHue ?? WorktreeColorAssignment.hue(
                 avoiding: repos[repoIndex].worktrees.compactMap(\.drawingHue) + [projectHue].compactMap { $0 })
             repos[repoIndex].worktrees[index].drawingHue = hue
-            repos[repoIndex].worktrees[index].drawing = WorktreeDrawing(svg: svg, hue: hue)
+            repos[repoIndex].worktrees[index].drawing = WorktreeDrawing(
+                svg: svg, hue: hue, description: recap.iconDescription, adoptedAt: Date())
             return
         }
     }

@@ -358,7 +358,9 @@ public enum ControlRequestCore {
                 ? (try? TeamHookRenderer.userPromptSubmit(assignmentContext: AgentControl.currentSessionInstructions(
                     path: callerPath, agentID: callerAgentID, paneSessionName: paneSessionName,
                     provider: runtime, platform: platform),
-                    requestsWideRedraw: platform.state.worktree(forPath: callerPath)?.drawing?.canvas == .square)) ?? "{}" : "{}")
+                    requestsWideRedraw: platform.state.worktree(forPath: callerPath)?.drawing?.canvas == .square,
+                    drawingsInUse: WorktreeDrawing.descriptionsInUse(besidesWorktreePath: callerPath,
+                                                                     in: platform.state.repos))) ?? "{}" : "{}")
         }
 
         do {

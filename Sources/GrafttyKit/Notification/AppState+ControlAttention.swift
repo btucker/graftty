@@ -200,6 +200,7 @@ private extension AttentionRecap {
     var withoutDrawing: AttentionRecap {
         var stripped = self
         stripped.icon = nil
+        stripped.iconDescription = nil
         return stripped
     }
 }

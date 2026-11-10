@@ -14,14 +14,33 @@ import Crypto
 public struct WorktreeDrawing: Codable, Sendable, Equatable {
     public var svg: String
     public var revision: String
+    /// The agent's few words naming the drawing (AGENT-3.45); nil for older drawings.
+    public var description: String?
+    /// When the drawing was adopted; nil for older drawings.
+    public var adoptedAt: Date?
 
-    public init(svg: String, hue: Double) {
+    public init(svg: String, hue: Double, description: String? = nil, adoptedAt: Date? = nil) {
         self.svg = svg
+        self.description = description
+        self.adoptedAt = adoptedAt
         self.revision = SHA256.hash(data: Data(svg.utf8)).map { String(format: "%02x", $0) }.joined() + ":\(Int(hue.rounded()))"
     }
 
     /// Older drawings are square; current ones are drawn wide.
     public var canvas: WorktreeDrawingSVG.Canvas { WorktreeDrawingSVG.canvas(of: svg) ?? .square }
+
+    /// @spec AGENT-3.46
+    /// While a linked worktree still needs a wide drawing, the descriptions of
+    /// the most recently adopted other drawings in its repository, newest first,
+    /// so its agent can draw something different.
+    public static func descriptionsInUse(besidesWorktreePath path: String, in repos: [RepoEntry], limit: Int = 8) -> [String] {
+        guard let repo = repos.first(where: { $0.path != path && $0.worktrees.contains { $0.path == path } }),
+              repo.worktrees.first(where: { $0.path == path })?.drawing?.canvas != .wide else { return [] }
+        return repo.worktrees.filter { $0.path != path }.compactMap(\.drawing)
+            .filter { $0.description != nil }
+            .sorted { ($0.adoptedAt ?? .distantPast) > ($1.adoptedAt ?? .distantPast) }
+            .prefix(limit).compactMap(\.description)
+    }
 }
 
 /// @spec AGENT-3.33

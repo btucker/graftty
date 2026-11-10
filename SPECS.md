@@ -4868,6 +4868,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.44** While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start for one wide redraw, and shall not ask once the drawing is wide or absent.
 
+**AGENT-3.45** When the application adopts a recap's drawing, it shall store the recap's iconDescription of at most 120 characters with that drawing, keep the description of a drawing it does not adopt out of the worktree, keep saved drawings without a description decodable, and reject a recap whose iconDescription is longer.
+
+**AGENT-3.46** While a linked worktree has no wide drawing, the application shall list at turn start the descriptions of up to eight of the most recently adopted other drawings in its repository and ask for a different subject, and shall list none once the worktree's drawing is wide.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
