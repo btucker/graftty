@@ -1,7 +1,0 @@
-# zmx 1.0.1-ga35f00a-graftty11 — built from https://github.com/neurosnap/zmx commit a35f00a2118b15a5e9d522a43035c8d7487df9b7
-# Built with Zig 0.17.0.
-# Graftty patch SHA256 038a78daf10664fd8d4c849ea8e6994bce7866a92f20fca88623e85e87fc70fe — legacy wire framing + negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.
-# Paging patch SHA256 558c5c23b9c7b981b377f6d06fd77c19b095cd65050ac1cfbd38f5d7f14fa5f3 - current screen first and requested scrollback pages (ghostty-8af6897c-paging-1).
-b83ff4ea8cc6a9f1c1a539c04b2fbae09bf74d49e3005b274d72e36d4086e937  zmx-aarch64
-a105ce0b440643777bb5bc0c038a1785446cb396c6d5d016463f9dfd26bff13f  zmx-x86_64
-fc8f45c0c158e7af1ee0e940113a6d0e2f9b4571545701a15b1e77d7607fafe7  zmx (universal)

@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ben Tucker <ben@btucker.net>
+Date: Tue, 10 Nov 2026 12:33:54 -0600
+Subject: Paging: screen text history
+
+
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 1655d87bc872ccbe0fde571e69b5ef26959b6fc7..2d6bfc77f33c322567fd744165cdb567f52a22f7 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1704,7 +1704,13 @@ pub const CAPI = struct {
+ 
+             // Clamp our point to the screen bounds.
+             const clamped_x = @min(self.x, screen.pages.cols -| 1);
+-            const clamped_y = @min(self.y, screen.pages.rows -| 1);
++            // Screen-relative text reads include the retained history rows.
++            // Viewport coordinates remain bounded by the visible grid.
++            const coordinate_rows: usize = switch (tag) {
++                .screen => screen.pages.total_rows,
++                else => screen.pages.rows,
++            };
++            const clamped_y: u32 = @intCast(@min(self.y, coordinate_rows -| 1));
+ 
+             return switch (self.coord_tag) {
+                 // Exact coordinates require a specific pin.

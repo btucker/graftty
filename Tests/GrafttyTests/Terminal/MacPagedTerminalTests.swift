@@ -664,7 +664,7 @@ struct MacPagedTerminalTests {
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             let dir = URL(fileURLWithPath: "/private/tmp/mac-paging-\(UUID().uuidString.prefix(8))")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            launcher = ZmxLauncher(executable: executable ?? root.appendingPathComponent("Resources/zmx-binary/zmx"), zmxDir: dir)
+            launcher = ZmxLauncher(executable: executable ?? root.appendingPathComponent(".deps/zmx/zmx"), zmxDir: dir)
             // Keep the shell alive after producing the fixture; the client reader
             // drains the PTY so this setup cannot block on its output buffer.
             let output = output

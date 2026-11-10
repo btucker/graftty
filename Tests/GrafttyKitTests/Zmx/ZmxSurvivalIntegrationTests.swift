@@ -13,8 +13,8 @@ struct ZmxSurvivalIntegrationTests {
     // MARK: Helpers
 
     /// Locate the bundled zmx binary by walking up from this source file
-    /// to the repo root and looking under `Resources/zmx-binary/zmx`.
-    /// Returns nil if the binary hasn't been vendored — tests should
+    /// to the repo root and looking under `.deps/zmx/zmx`, where
+    /// `scripts/deps prepare` links it. Returns nil if it isn't prepared — tests should
     /// `try #require()` on this and surface a helpful skip message.
     static func vendoredZmx() -> URL? {
         // #file resolves to /…/Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift
@@ -26,8 +26,8 @@ struct ZmxSurvivalIntegrationTests {
             .deletingLastPathComponent()  // Tests/
             .deletingLastPathComponent()  // repo root
         let candidate = repoRoot
-            .appendingPathComponent("Resources")
-            .appendingPathComponent("zmx-binary")
+            .appendingPathComponent(".deps")
+            .appendingPathComponent("zmx")
             .appendingPathComponent("zmx")
         guard FileManager.default.isExecutableFile(atPath: candidate.path) else {
             return nil
@@ -40,7 +40,7 @@ struct ZmxSurvivalIntegrationTests {
     static func withScopedZmxDir<T>(_ body: (ZmxLauncher) throws -> T) throws -> T {
         let zmx = try #require(
             vendoredZmx(),
-            "zmx binary not vendored — run scripts/bump-zmx.sh"
+            "zmx is not prepared — run scripts/deps prepare zmx"
         )
         // Use /tmp directly (not NSTemporaryDirectory) because zmx sockets
         // are Unix domain sockets with a 104-byte path limit on macOS.

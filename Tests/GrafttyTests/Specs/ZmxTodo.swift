@@ -14,12 +14,12 @@ struct ZmxTodo {
     func zmx_1_1() async throws { }
 
     @Test("""
-@spec ZMX-1.2: The bundled `zmx` binary shall be a universal Mach-O containing both `arm64` and `x86_64` slices, produced by `scripts/bump-zmx.sh`.
+@spec ZMX-1.2: The bundled `zmx` binary shall be a universal Mach-O containing both `arm64` and `x86_64` slices, built from the pins in `scripts/zmx` by `scripts/zmx/build.sh`.
 """, .disabled("not yet implemented"))
     func zmx_1_2() async throws { }
 
     @Test("""
-@spec ZMX-1.3: The application shall pin the vendored `zmx` version in `Resources/zmx-binary/VERSION` and record its SHA256 in `Resources/zmx-binary/CHECKSUMS`.
+@spec ZMX-1.3: When `scripts/deps prepare` builds `zmx`, it shall record the built version in `.deps/zmx/VERSION` and its SHA256 values in `.deps/zmx/CHECKSUMS`.
 """, .disabled("not yet implemented"))
     func zmx_1_3() async throws { }
 

@@ -14,7 +14,7 @@ struct ReleaseAutomationTests {
     }
 
     @Test("""
-    @spec DIST-2.1: When a git tag containing valid SemVer after its leading `v` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and, for stable versions, ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
+    @spec DIST-2.1: When a git tag containing valid SemVer after its leading `v` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, rebuild libghostty and zmx from the tag's pins and patches rather than a cached build, ensure a GitHub release tagged `v<version>` has the zip and the native dependency build record `native-deps-record.json` attached, and, for stable versions, ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
     """)
     func taggedWorkflowPublishesArtifactsAndStableCaskUpdates() throws {
         let workflow = try Self.contents(of: ".github/workflows/release.yml")
@@ -23,7 +23,8 @@ struct ReleaseAutomationTests {
         #expect(workflow.contains("CONFIGURATION: release"))
         #expect(workflow.contains("codesign --verify --strict --verbose=2 .build/Graftty.app"))
         #expect(workflow.contains(#"ZIP="Graftty-$VERSION.zip""#))
-        #expect(workflow.contains(#"gh release upload "v$VERSION" "$ZIP" --clobber"#))
+        #expect(workflow.contains("scripts/deps prepare all --platforms macos --rebuild --record native-deps-record.json"))
+        #expect(workflow.contains(#"gh release upload "v$VERSION" "$ZIP" native-deps-record.json --clobber"#))
         #expect(workflow.contains("- name: Update Homebrew tap\n        if: steps.version.outputs.prerelease != 'true'"))
     }
 
@@ -54,7 +55,7 @@ struct ReleaseAutomationTests {
     }
 
     @Test("""
-    @spec DIST-2.3: If a release for the pushed tag already exists, then the workflow shall re-upload the zip with `--clobber` and continue to the cask update step for stable versions rather than failing.
+    @spec DIST-2.3: If a release for the pushed tag already exists, then the workflow shall re-upload the zip and build record with `--clobber` and continue to the cask update step for stable versions rather than failing.
     """)
     func existingReleaseIsClobberedBeforeStableCaskUpdate() throws {
         let workflow = try Self.contents(of: ".github/workflows/release.yml")
@@ -62,7 +63,7 @@ struct ReleaseAutomationTests {
             workflow.range(of: #"if gh release view "v$VERSION" >/dev/null 2>&1; then"#)
         )
         let clobberUpload = try #require(
-            workflow.range(of: #"gh release upload "v$VERSION" "$ZIP" --clobber"#)
+            workflow.range(of: #"gh release upload "v$VERSION" "$ZIP" native-deps-record.json --clobber"#)
         )
         let stableCaskStep = try #require(
             workflow.range(of: "- name: Update Homebrew tap\n        if: steps.version.outputs.prerelease != 'true'")
