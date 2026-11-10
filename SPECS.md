@@ -428,6 +428,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.230** While a worktree row is shown, the application shall give its identity a 60 by 40 point slot that a wide drawing fills, start the row's text after that slot, and keep emoji and project icons at most 32 points.
 
+**LAYOUT-2.231** When a sidebar worktree context is projected, the application shall look up retained reports by its exact stable stop identifier or, for older hosts, its project and path, preserving report order without scanning unrelated reports.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
