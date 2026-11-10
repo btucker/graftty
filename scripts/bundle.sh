@@ -71,9 +71,11 @@ fi
 echo "→ GRAFTTY_VERSION=$GRAFTTY_VERSION"
 echo "→ GRAFTTY_BUILD_VERSION=$GRAFTTY_BUILD_VERSION"
 if [[ "$CONFIGURATION" == "release" ]]; then
-  # Published and explicitly overridden packages both provide paging.
+  # The in-repo libghostty build always provides paging.
   export GRAFTTY_REQUIRE_PAGED_HISTORY=1
 fi
+# libghostty and zmx come from the pins and patches in deps/ and scripts/zmx/.
+"$REPO/scripts/deps" prepare --platforms macos
 RENDERER_CONTEXT="$(python3 "$REPO/scripts/ghostty-paging/compiler-context.py" "$REPO" "$REPO/.build")"
 RENDERER_ARGUMENTS=(--manifest-cache none -Xcc "$RENDERER_CONTEXT")
 echo "→ swift build --configuration $CONFIGURATION"
@@ -124,9 +126,9 @@ done
 
 echo "→ install bundled zmx"
 # zmx is the per-pane PTY child for every Graftty terminal, providing
-# session persistence so shells survive app quits. The binary is vendored
-# at Resources/zmx-binary/zmx; bundle.sh just copies it into Helpers/.
-cp "$REPO/Resources/zmx-binary/zmx" "$APP/Contents/Helpers/zmx"
+# session persistence so shells survive app quits. The binary is built
+# into .deps/zmx by scripts/deps prepare above; bundle.sh copies it into Helpers/.
+cp "$REPO/.deps/zmx/zmx" "$APP/Contents/Helpers/zmx"
 chmod +x "$APP/Contents/Helpers/zmx"
 
 echo "→ build + copy app icon"

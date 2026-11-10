@@ -423,7 +423,7 @@ struct ZmxNativeHostManagedIntegrationTests {
     static func withScopedZmxDir<T>(_ body: (ZmxLauncher) throws -> T) throws -> T {
         let zmx = try #require(
             ZmxSurvivalIntegrationTests.vendoredZmx(),
-            "zmx binary not vendored — run scripts/bump-zmx.sh"
+            "zmx is not prepared — run scripts/deps prepare zmx"
         )
         let zmxDir = URL(fileURLWithPath: "/tmp")
             .appendingPathComponent("zmx-\(UUID().uuidString.prefix(8))", isDirectory: true)

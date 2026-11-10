@@ -123,7 +123,7 @@ struct ZmxResizePropagationTests {
     private static func withScopedZmxDir<T>(_ body: (ZmxLauncher) throws -> T) throws -> T {
         let zmx = try #require(
             ZmxSurvivalIntegrationTests.vendoredZmx(),
-            "zmx binary not vendored — run scripts/bump-zmx.sh"
+            "zmx is not prepared — run scripts/deps prepare zmx"
         )
         // /tmp (4-char base) leaves ample room under the 104-byte
         // Unix-domain-socket path limit for our 16-char session name.

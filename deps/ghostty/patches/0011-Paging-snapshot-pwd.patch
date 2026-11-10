@@ -1,0 +1,170 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ben Tucker <ben@btucker.net>
+Date: Tue, 10 Nov 2026 12:33:54 -0600
+Subject: Paging: snapshot pwd
+
+
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 23bd4f61ed03e7012af2bd21c2d4b487b4a92a73..22666391b3314d9c6e53993f3b30c4b33a6b5716 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -2209,6 +2209,10 @@ fn resolvePathForOpening(
+             return null;
+         };
+ 
++        // Path resolution does not make a relative base absolute. Never pass
++        // an unparsed URI or relative terminal PWD to accessAbsolute.
++        if (!std.fs.path.isAbsolute(terminal_pwd)) return null;
++
+         const resolved = try std.fs.path.resolve(self.alloc, &.{ terminal_pwd, path });
+ 
+         std.Io.Dir.accessAbsolute(global.io(), resolved, .{}) catch {
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 1ae766b17c1ae6fb56d6f754b7f0540539f949e1..1655d87bc872ccbe0fde571e69b5ef26959b6fc7 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1993,6 +1993,19 @@ pub const CAPI = struct {
+         defer decoded.deinit(alloc);
+         if (source.seek != len) return false;
+ 
++        // VT snapshots retain raw OSC 7 URIs, whereas native surfaces store
++        // decoded filesystem paths. Normalize while the decoded terminal is
++        // still detached, using the same acceptance rules as live OSC 7.
++        if (decoded.terminal.?.getPwd()) |pwd| {
++            if (!std.fs.path.isAbsolute(pwd)) {
++                var arena: std.heap.ArenaAllocator = .init(alloc);
++                defer arena.deinit();
++                const StreamHandler = @import("../termio/stream_handler.zig").StreamHandler;
++                const path = StreamHandler.pwdPath(arena.allocator(), pwd) catch return false;
++                decoded.terminal.?.setPwd(path orelse "") catch return false;
++            }
++        }
++
+         // A search worker can hold pins to the old terminal. Join without the
+         // renderer mutex, which that worker also acquires. No old pins survive.
+         if (core.search) |*search| {
+diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
+index 6cc7010f2edd8a03e11ad417332f1282172adc0a..fcdd09b6c2584dabdd421665d022dbce0de8c844 100644
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -1513,32 +1513,15 @@ pub const StreamHandler = struct {
+         try self.terminal.semanticPrompt(cmd);
+     }
+ 
+-    fn reportPwd(self: *StreamHandler, url: []const u8) !void {
+-        // Special handling for the empty URL. We treat the empty URL
+-        // as resetting the pwd as if we never saw a pwd. I can't find any
+-        // other terminal that does this but it seems like a reasonable
+-        // behavior that enables some useful features. For example, the macOS
+-        // proxy icon can be hidden when a program reports it doesn't know
+-        // the pwd rather than showing a stale pwd.
+-        if (url.len == 0) {
+-            // Blank value can never fail because no allocs happen.
+-            self.terminal.setPwd("") catch unreachable;
+-
+-            // If we haven't seen a title, we're using the pwd as our title.
+-            // Set it to blank which will reset our title behavior.
+-            if (!self.seen_title) {
+-                try self.windowTitle("");
+-                assert(!self.seen_title);
+-            }
+-
+-            // Report the change.
+-            self.surfaceMessageWriter(.{ .pwd_change = .{ .stable = "" } });
+-            return;
+-        }
+-
++    /// Decode an OSC 7 value using the native surface's scheme and local-host rules.
++    /// Returned bytes borrow from url or alloc; the caller owns their lifetime.
++    /// Validate an OSC 7 URL and return its local path, or null when the
++    /// URL is invalid or names another host. Shared by OSC 7 handling and
++    /// snapshot working-directory restoration.
++    pub fn pwdPath(alloc: Allocator, url: []const u8) !?[]const u8 {
+         if (builtin.target.os.tag == .windows) {
+             log.warn("reportPwd unimplemented on windows", .{});
+-            return;
++            return null;
+         }
+ 
+         // Attempt to parse this file-style URI using options appropriate
+@@ -1549,25 +1532,25 @@ pub const StreamHandler = struct {
+             .raw_path = std.mem.startsWith(u8, url, "kitty-shell-cwd://"),
+         }) catch |e| {
+             log.warn("invalid url in OSC 7: {}", .{e});
+-            return;
++            return null;
+         };
+ 
+         if (!std.mem.eql(u8, "file", uri.scheme) and
+             !std.mem.eql(u8, "kitty-shell-cwd", uri.scheme))
+         {
+             log.warn("OSC 7 scheme must be file or kitty-shell-cwd, got: {s}", .{uri.scheme});
+-            return;
++            return null;
+         }
+ 
+         var host_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
+         const host = osc7Host(uri, &host_buffer) catch |err| switch (err) {
+             error.UriMissingHost => {
+                 log.warn("OSC 7 uri must contain a hostname: {}", .{err});
+-                return;
++                return null;
+             },
+             error.NameTooLong => {
+                 log.warn("failed to get full hostname for OSC 7 validation: {}", .{err});
+-                return;
++                return null;
+             },
+         };
+ 
+@@ -1579,21 +1562,46 @@ pub const StreamHandler = struct {
+             error.Unexpected,
+             => {
+                 log.warn("failed to get hostname for OSC 7 validation: {}", .{err});
+-                return;
++                return null;
+             },
+         };
+         if (!host_valid) {
+             log.warn("OSC 7 host ({s}) must be local", .{host});
++            return null;
++        }
++
++        // We need the raw path, which might require unescaping.
++        return try uri.path.toRawMaybeAlloc(alloc);
++    }
++
++    fn reportPwd(self: *StreamHandler, url: []const u8) !void {
++        // Special handling for the empty URL. We treat the empty URL
++        // as resetting the pwd as if we never saw a pwd. I can't find any
++        // other terminal that does this but it seems like a reasonable
++        // behavior that enables some useful features. For example, the macOS
++        // proxy icon can be hidden when a program reports it doesn't know
++        // the pwd rather than showing a stale pwd.
++        if (url.len == 0) {
++            // Blank value can never fail because no allocs happen.
++            self.terminal.setPwd("") catch unreachable;
++
++            // If we haven't seen a title, we're using the pwd as our title.
++            // Set it to blank which will reset our title behavior.
++            if (!self.seen_title) {
++                try self.windowTitle("");
++                assert(!self.seen_title);
++            }
++
++            // Report the change.
++            self.surfaceMessageWriter(.{ .pwd_change = .{ .stable = "" } });
+             return;
+         }
+ 
+-        // We need the raw path, which might require unescaping. We try to
+-        // avoid making any heap allocations by using the stack first.
+         var arena_alloc: std.heap.ArenaAllocator = .init(self.alloc);
+         var stack_alloc_buf: [1024]u8 = undefined;
+         var stack_alloc: std.heap.BufferFirstAllocator = .init(&stack_alloc_buf, arena_alloc.allocator());
+         defer arena_alloc.deinit();
+-        const path = try uri.path.toRawMaybeAlloc(stack_alloc.allocator());
++        const path = try pwdPath(stack_alloc.allocator(), url) orelse return;
+ 
+         log.debug("terminal pwd: {s}", .{path});
+         try self.terminal.setPwd(path);

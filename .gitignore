@@ -23,5 +23,6 @@ __pycache__/
 .ci-cache/
 .ci-results/
 
-# Reproducible local Ghostty renderer package.
-.dependencies/
+
+# Native dependencies linked by scripts/deps (see deps/README.md).
+.deps/
