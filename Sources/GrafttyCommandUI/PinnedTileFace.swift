@@ -40,7 +40,7 @@ public struct PinnedTileFace: View {
                 if identity == .none {
                     Image(systemName: "arrow.triangle.branch").font(.system(size: 17)).foregroundStyle(.secondary)
                 } else {
-                    WorktreeIdentityView(identity: identity, project: project, imageData: imageData, size: 26)
+                    WorktreeIdentityView(identity: identity, project: project, imageData: imageData, size: 36, maxWidth: 54)
                 }
             }
                 .opacity(state == .idle ? (isDark ? 0.55 : 0.6) : 1)

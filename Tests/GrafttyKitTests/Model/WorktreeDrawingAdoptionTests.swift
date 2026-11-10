@@ -142,3 +142,25 @@ struct WorktreeDrawingRecapStrippingTests {
         #expect(state.repos[0].worktrees[1].drawing?.svg == firstDrawing)
     }
 }
+
+private let wideDrawing = WorktreeDrawingSVGTests.svg("<rect x=\"8\" y=\"8\" width=\"80\" height=\"48\" fill=\"accent\"/>", viewBox: "0 0 96 64")
+private let otherWideDrawing = WorktreeDrawingSVGTests.svg("<circle cx=\"48\" cy=\"32\" r=\"20\" fill=\"primary\"/>", viewBox: "0 0 96 64")
+
+@Suite("@spec AGENT-3.40: When a worktree's adopted drawing uses the older square canvas, the application shall replace it with the first wide drawing a valid recap carries, even without purposeChanged, and keep its hue.")
+struct WorktreeWideRedrawTests {
+    @Test func squareDrawingTakesOneWideRedraw() {
+        var repos = repos()
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: firstDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        let hue = repos[0].worktrees[1].drawingHue
+        // Another square drawing still needs a purpose change.
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: secondDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.svg == firstDrawing)
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: wideDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.svg == wideDrawing)
+        #expect(repos[0].worktrees[1].drawingHue == hue)
+        // Once wide, the usual rule applies again.
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: otherWideDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing?.svg == wideDrawing)
+    }
+}
+

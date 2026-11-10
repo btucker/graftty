@@ -36,15 +36,15 @@ Keep each field brief:
 - `emoji`: task-specific subject. Include up to three distinct task-related `emojiAlternatives`. The first report assigns the worktree's enduring emoji.
 - Optional `icon`: a drawing of this worktree that Graftty shows in place of the emoji, so make it memorable. Send it once you understand the worktree's purpose. Afterwards, send a new `icon` only in a report with `purposeChanged: true`, and only when the old picture no longer makes sense; Graftty ignores other redraws. Keep sending `emoji`; it remains the fallback.
   - Draw the subject the user would picture, never the activity: a database for fixture data, not a checkmark for testing. Add one odd, specific detail that makes it this worktree's own, such as a 5k price tag on stacked postings.
-  - Use one `<svg viewBox='0 0 64 64'>` of at most 16 KB, built only from `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `g`, `text`, and linear or radial gradients. Single-quote attributes so the drawing fits in the JSON string.
+  - Use one wide `<svg viewBox='0 0 96 64'>` of at most 16 KB, built only from `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `g`, `text`, and linear or radial gradients. Single-quote attributes so the drawing fits in the JSON string.
   - Paint only with the tokens `primary`, `primary-light`, `primary-dark`, `accent`, `accent-light`, `ink`, and `white`, or with `url(#id)` for a gradient built from them. Graftty assigns each worktree's colors and adds a white outline.
-  - Outline shapes in `ink` with a stroke width near 2.5. At sidebar size only the silhouette and color survive, so let the silhouette carry the meaning, and pick shapes that still make sense in any color.
+  - Outline shapes in `ink` with a stroke width near 2.5. Let the silhouette carry the meaning, and pick shapes that still make sense in any color. Graftty shows the drawing about 60 points wide, so use the width: put the subject on the left and its odd detail beside it, large enough to read, rather than tucked into a corner of the subject.
   - When the project suggests a world, such as sailing, you may add one supporting element from it, like a life ring standing in for a check mark. Never make it the subject.
 
-  For a parser cache, a page of parsed lines with a lightning bolt:
+  For a parser cache, a page of parsed lines with a lightning bolt beside it:
 
   ```svg
-  <svg viewBox='0 0 64 64'><defs><linearGradient id='page' x1='0' x2='1'><stop offset='0' stop-color='primary-light'/><stop offset='1' stop-color='primary'/></linearGradient></defs><rect x='12' y='8' width='34' height='44' rx='4' fill='url(#page)' stroke='ink' stroke-width='2.5'/><path d='M19 20h20M19 28h20M19 36h12' stroke='white' stroke-width='3' stroke-linecap='round'/><path d='M44 30l-8 14h7l-4 14 13-18h-7l5-10z' fill='accent' stroke='ink' stroke-width='2.5' stroke-linejoin='round'/></svg>
+  <svg viewBox='0 0 96 64'><defs><linearGradient id='page' x1='0' x2='1'><stop offset='0' stop-color='primary-light'/><stop offset='1' stop-color='primary'/></linearGradient></defs><rect x='10' y='8' width='44' height='48' rx='4' fill='url(#page)' stroke='ink' stroke-width='2.5'/><path d='M19 20h26M19 30h26M19 40h16' stroke='white' stroke-width='3.5' stroke-linecap='round'/><path d='M76 6l-14 26h12l-6 26 20-32h-12l8-20z' fill='accent' stroke='ink' stroke-width='2.5' stroke-linejoin='round'/></svg>
   ```
 - Optional `need`: a brief question or action only when the user must decide or supply something before work can continue. Omit it when no input is needed; still report completed turns.
 - Optional `decisions`: the complete current list of decisions worth retaining, up to eight short strings of at most 200 characters each. Omission preserves the prior list; `[]` clears it. Include the reason when it helps explain a choice.

@@ -368,7 +368,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.200** While a linked worktree has an adopted drawing, the application shall identify it by that drawing ahead of an agent emoji, while a home checkout keeps its project icon and an emoji the user chose keeps precedence.
 
-**LAYOUT-2.201** When a host serves a worktree drawing, the application shall fill its palette tokens from the worktree's hue, render it to a 256-pixel PNG with a white outline, and answer only requests whose revision matches the current drawing.
+**LAYOUT-2.201** When a host serves a worktree drawing, the application shall fill its palette tokens from the worktree's hue, render it to a PNG 256 pixels tall that keeps the drawing's width-to-height ratio, with a white outline, and answer only requests whose revision matches the current drawing.
 
 **LAYOUT-2.202** While a linked worktree with a drawing appears in the Mac sidebar or breadcrumb, the application shall show its rendered drawing in place of the emoji.
 
@@ -425,6 +425,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.228** When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.
 
 **LAYOUT-2.229** While the header watermark reaches below the header band, the application shall draw that part faintly over the content beneath instead of cutting it off, without taking clicks.
+
+**LAYOUT-2.230** While a worktree row is shown, the application shall give its identity a 60 by 40 point slot that a wide drawing fills, start the row's text after that slot, and keep emoji and project icons at most 32 points.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -4838,7 +4840,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.32** When a Claude session exports only CLAUDE_CODE_SESSION_ID, the application shall derive the same canonical report identity from it that a registered presence record carries, so a recap files under the identity the app already consumes.
 
-**AGENT-3.33** When an agent submits a worktree drawing, the application shall accept only a 64-unit SVG of at most 16384 bytes built from allowlisted shapes, gradients and text whose paints are palette tokens or local gradient references, and reject scripts, event handlers, external references, embedded images and foreign content.
+**AGENT-3.33** When an agent submits a worktree drawing, the application shall accept only a 96-by-64 or 64-unit SVG of at most 16384 bytes built from allowlisted shapes, gradients and text whose paints are palette tokens or local gradient references, and reject scripts, event handlers, external references, embedded images and foreign content.
 
 **AGENT-3.34** When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only when the same recap sets purposeChanged, keep its assigned hue across redraws, and ignore drawings for the home checkout.
 
@@ -4849,6 +4851,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.37** When an Attention report carries a drawing that fails validation, the CLI shall reject the report with the specific reason before staging it.
 
 **AGENT-3.38** When an agent reports a recap carrying a drawing of up to 16384 bytes, the application shall deliver that recap and its stopped turn through the file handoff.
+
+**AGENT-3.39** When an agent submits a worktree drawing, the application shall accept a wide 96-by-64 canvas as well as the older 64-unit square, reject any other canvas, and know which canvas a stored drawing uses.
+
+**AGENT-3.40** When a worktree's adopted drawing uses the older square canvas, the application shall replace it with the first wide drawing a valid recap carries, even without purposeChanged, and keep its hue.
+
+**AGENT-3.41** While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start for one wide redraw, and shall not ask once the drawing is wide or absent.
 
 ### AGENT-4.x
 

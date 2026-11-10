@@ -37,11 +37,13 @@ public enum WorktreeDrawingRenderer {
                   let color = colors[String(svg[token])], let whole = Range(match.range, in: filled) else { continue }
             filled.replaceSubrange(whole, with: "\(svg[attribute])=\"\(color)\"")
         }
-        guard let image = NSImage(data: Data(filled.utf8)), let shape = bitmap(pixels, { context in
+        // A wide drawing keeps its shape: `pixels` is always the height.
+        let width = Int((Double(pixels) * (WorktreeDrawingSVG.canvas(of: svg) ?? .square).aspect).rounded())
+        guard let image = NSImage(data: Data(filled.utf8)), let shape = bitmap(width, pixels, { context in
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
-            image.draw(in: NSRect(x: 0, y: 0, width: pixels, height: pixels))
-        }), let outlined = bitmap(pixels, { context in
-            let full = CGRect(x: 0, y: 0, width: pixels, height: pixels)
+            image.draw(in: NSRect(x: 0, y: 0, width: width, height: pixels))
+        }), let outlined = bitmap(width, pixels, { context in
+            let full = CGRect(x: 0, y: 0, width: width, height: pixels)
             let radius = Double(pixels) / 36
             for step in 0..<16 {
                 let angle = Double(step) * .pi / 8
@@ -99,8 +101,8 @@ public enum WorktreeDrawingRenderer {
         return hue < 0 ? hue + 360 : hue
     }
 
-    private static func bitmap(_ side: Int, _ draw: (CGContext) -> Void) -> CGImage? {
-        guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+    private static func bitmap(_ width: Int, _ height: Int, _ draw: (CGContext) -> Void) -> CGImage? {
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         NSGraphicsContext.saveGraphicsState()
         draw(context)

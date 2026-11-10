@@ -78,7 +78,9 @@ public enum SidebarHostNavigation {
             guard worktreePath != repos[repoIndex].path,
                   let index = repos[repoIndex].worktrees.firstIndex(where: { $0.path == worktreePath }) else { continue }
             let current = repos[repoIndex].worktrees[index]
-            guard current.drawing == nil || recap.purposeChanged == true else { return }
+            // AGENT-3.40: a square drawing from before takes one wide redraw.
+            let widens = current.drawing?.canvas == .square && WorktreeDrawingSVG.canvas(of: svg) == .wide
+            guard current.drawing == nil || recap.purposeChanged == true || widens else { return }
             let hue = current.drawingHue ?? WorktreeColorAssignment.hue(
                 avoiding: repos[repoIndex].worktrees.compactMap(\.drawingHue) + [projectHue].compactMap { $0 })
             repos[repoIndex].worktrees[index].drawingHue = hue

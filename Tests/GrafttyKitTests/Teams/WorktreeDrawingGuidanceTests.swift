@@ -39,3 +39,21 @@ struct WorktreeDrawingGuidanceTests {
         #expect(try WorktreeDrawingSVG.validate(example) == example)
     }
 }
+
+@Suite("@spec AGENT-3.41: While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start for one wide redraw, and shall not ask once the drawing is wide or absent.")
+struct WideRedrawRequestTests {
+    @Test func turnStartAsksForAWideRedraw() throws {
+        let asking = try TeamHookRenderer.userPromptSubmit(requestsWideRedraw: true)
+        #expect(asking.contains("0 0 96 64"))
+        #expect(!(try TeamHookRenderer.userPromptSubmit()).contains("0 0 96 64"))
+    }
+
+    @Test func skillsTeachTheWideCanvas() throws {
+        for provider in ["claude", "codex"] {
+            let text = try skill(provider)
+            #expect(text.contains("viewBox='0 0 96 64'"))
+            #expect(!text.contains("viewBox='0 0 64 64'"))
+        }
+    }
+}
+
