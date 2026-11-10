@@ -432,6 +432,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.232** While a project is on several hosts whose checkouts share a path, the application shall draw a tile for each host's pinned agent rather than leaving an empty cell for the second.
 
+**LAYOUT-2.233** While two hosts have worktrees at the same path, the application shall identify each list row by its host and worktree, so neither row hides the other.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -3756,7 +3758,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.7** When a paired client opens the authenticated worktree-management subsystem, the host shall install the management handler only if that peer has worktree-management permission and shall reject and close the channel otherwise.
 
-**REMOTE-13.8** While a Remote Mac is connected and the project column is disabled, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and status line presentation components as local worktrees.
+**REMOTE-13.8** While a Remote Mac is connected and the project column is disabled, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and status line presentation components as local worktrees. @spec LAYOUT-2.233 A list row's view identity: its host and worktree, never its path alone, because two hosts can have worktrees at the same path.
 
 **REMOTE-13.9** When a Remote Mac connection becomes unavailable, the application shall remove its cached worktree and repository rows so offline remote worktrees are not displayed or relayed.
 

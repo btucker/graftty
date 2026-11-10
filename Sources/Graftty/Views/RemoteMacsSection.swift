@@ -270,6 +270,13 @@ struct RemoteSidebarExpansion {
 /// @spec REMOTE-13.8: While a Remote Mac is connected and the project column is disabled, the sidebar shall
 /// render Mac → repository → worktree → pane hierarchy using the same
 /// WorktreeRow and status line presentation components as local worktrees.
+/// @spec LAYOUT-2.233
+/// A list row's view identity: its host and worktree, never its path alone,
+/// because two hosts can have worktrees at the same path.
+enum SidebarRowIdentity {
+    static func id(for worktree: WorktreePanes) -> String { MergedWorktreeList.identity(worktree) }
+}
+
 struct RemoteMacsSection: View {
     @ObservedObject var model: RemoteMacsModel
     @Binding var expansion: RemoteSidebarExpansion
@@ -581,7 +588,7 @@ struct RemoteMacsSection: View {
                 heading
             }
             .buttonStyle(.plain)
-            .id(worktree.path)
+            .id(SidebarRowIdentity.id(for: worktree))
             .rightClickMenu {
                 remoteWorktreeMenu(worktree, context: context, remoteMac: remoteMac)
             }

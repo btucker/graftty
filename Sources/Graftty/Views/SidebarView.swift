@@ -474,8 +474,9 @@ struct SidebarView: View {
                             }
                         }
                         .onChange(of: navigation.selectedProjectID) { _, _ in
-                            if let path = navigation.selectedProjectID.flatMap({ navigation.rememberedWorktrees[$0] }) {
-                                proxy.scrollTo(path, anchor: .center)
+                            // Rows are identified by host and worktree (LAYOUT-2.233).
+                            if let id = navigation.selectedProjectID.flatMap({ rememberedRowIDs[$0] ?? navigation.rememberedWorktrees[$0] }) {
+                                proxy.scrollTo(id, anchor: .center)
                             }
                         }
                     }
@@ -880,7 +881,7 @@ struct SidebarView: View {
            let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == row.row.path } }),
            let worktree = displayedWorktrees(in: repo).first(where: { $0.path == row.row.path }) {
             worktreeBlock(worktree, repo: repo, displayName: row.relativeName, activityCounts: counts,
-                          hostLabel: SidebarMergedRows.hostText(row, isLocal: true))
+                          hostLabel: SidebarMergedRows.hostText(row, isLocal: true), scrollID: row.id)
                 .modifier(MergedRowInsets(projectColumn: showsProjectRail))
         } else if let mac = remoteMacsModel.remoteMac(delivering: row.row) {
             remoteSection(contexts: remoteContexts, projectFilter: nil, singleRow: .init(worktree: row.row, remoteMac: mac, displayName: row.relativeName,
@@ -1094,7 +1095,8 @@ struct SidebarView: View {
         repo: RepoEntry,
         displayName: String,
         activityCounts: SidebarActivityCounts,
-        hostLabel: String? = nil
+        hostLabel: String? = nil,
+        scrollID: String? = nil
     ) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: displayName)
@@ -1135,7 +1137,8 @@ struct SidebarView: View {
             menu: { anchor in buildWorktreeMenu(worktree, repo: repo, context: context, window: anchor.window) },
             onDrop: { drop, placement in
                 handleRowDrop(drop, target: worktree.path, targetHost: owner.deviceID, after: placement == .after)
-            }
+            },
+            scrollID: scrollID
         ) {
             WorktreeRowIdentitySlot(entry: worktree, displayName: displayName, isMainCheckout: worktree.path == repo.path, theme: theme,
                 prBadge: prBadge, status: status, project: project, projectIconData: iconStore.iconData(for: repo),

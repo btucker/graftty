@@ -37,3 +37,18 @@ struct PinnedTileGridTests {
         }
     }
 }
+
+struct SidebarRowIdentityTests {
+    @Test("@spec LAYOUT-2.233: While two hosts have worktrees at the same path, the application shall identify each list row by its host and worktree, so neither row hides the other.")
+    func sameRowPathOnTwoHostsGetsTwoIdentities() {
+        func row(_ host: String) -> WorktreePanes {
+            WorktreePanes(path: "/Users/me/app/.worktrees/fix", displayName: "fix", repoDisplayName: "app", displayBranch: "fix",
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                origin: WorktreeOrigin(deviceID: RemoteDeviceID(value: host), deviceLabel: host, relayDepth: 0),
+                sidebar: .init(id: "\(host):app:fix", projectID: "\(host):app"))
+        }
+        let ids = [SidebarRowIdentity.id(for: row("mac")), SidebarRowIdentity.id(for: row("studio"))]
+        #expect(Set(ids).count == 2)
+        #expect(!ids.contains("/Users/me/app/.worktrees/fix"))
+    }
+}
