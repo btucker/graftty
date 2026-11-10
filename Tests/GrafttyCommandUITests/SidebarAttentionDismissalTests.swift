@@ -22,8 +22,8 @@ struct SidebarAttentionDismissalTests {
                      layout: nil, sidebar: .init(id: "/done", projectID: "p", unseenAgentStop: stop, lastAgentStop: stop))
     }
 
-    @Test("@spec LAYOUT-2.218: When the user dismisses a worktree's request or unopened finished turn on any client, the application shall retire it on the owning host, so no client keeps showing it under Needs You.")
-    func dismissingAFinishedTurnRetiresItOnTheHost() {
+    /// LAYOUT-2.218 covers the host side; this covers what each client sends.
+    @Test func dismissingAFinishedTurnRetiresItOnTheHost() {
         let row = finished()
         let context = SidebarWorktreeContext(worktree: row)
         #expect(context.pending.isEmpty)

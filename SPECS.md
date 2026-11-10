@@ -94,17 +94,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.31** The agent "needs input" attention (source .agentStop) shall render as a bare red `rectangle.and.pencil.and.ellipsis` SF Symbol (no pill) beside a red-colored pane title, with the text retained as the icon's accessibility label; user-notify and command-finished capsules shall render as text in a red pill.
 
-**LAYOUT-2.32** When at least two pinned linked worktrees beneath `<repo>/.worktrees` share a directory component in their relative names, the sidebar shall collect them beneath a recursively expandable folder row for that component and label each worktree relative to that folder. If fewer than two worktrees share a component, the sidebar shall render the worktree ungrouped with its full relative name.
+**LAYOUT-2.32** When at least two pinned linked worktrees beneath `<repo>/.worktrees` share a directory component in their relative names, the host shall publish that component as a virtual folder in their worktree metadata for older clients, labeling each worktree relative to it. If fewer than two worktrees share a component, the host shall publish the worktree ungrouped with its full relative name.
 
-**LAYOUT-2.33** When at least two pinned linked worktrees outside `<repo>/.worktrees` diverge beneath the same directory that is at least two components below the filesystem root and is neither the user's home nor an ancestor of the main checkout, the sidebar shall infer that directory as an additional expandable folder root. Worktrees without such a shared root shall remain ungrouped.
+**LAYOUT-2.33** When at least two pinned linked worktrees outside `<repo>/.worktrees` diverge beneath the same directory that is at least two components below the filesystem root and is neither the user's home nor an ancestor of the main checkout, the host shall infer that directory as an additional folder root in the metadata it publishes for older clients. Worktrees without such a shared root shall remain ungrouped.
 
-**LAYOUT-2.34** If a user drops a worktree row onto a worktree with a different virtual-folder parent, then the application shall reject the reorder so persisted flat order cannot disagree with the displayed hierarchy.
-
-**LAYOUT-2.35** When worktree rows sharing a virtual-folder parent occupy noncontiguous persisted positions, the application shall reorder only those sibling rows within their existing positions so unrelated rows do not move.
-
-**LAYOUT-2.36** When a virtual folder among pinned agents first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.
-
-**LAYOUT-2.37** When virtual folders coexist with ungrouped pinned agents, the sidebar shall apply the established compact worktree-row inset to both top-level and nested worktrees while reserving native disclosure indentation for folder rows.
+**LAYOUT-2.34** When a user drops a pinned agent onto any other pinned agent in its repository, the application shall reorder the one flat list of pinned agents, whatever their names.
 
 **LAYOUT-2.38** When projects are reordered, the application shall preserve their manual order across refreshes, retain unavailable projects, and append newly discovered projects.
 
@@ -174,7 +168,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.80** When a project or report target is opened, the application shall select the target project and worktree only after a successful visit and preserve newer navigation intentions.
 
-**LAYOUT-2.81** While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then the worktree name, then any PR/MR badge; otherwise, the row shall use its type or progress icon in the same position.
+**LAYOUT-2.81** While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then the worktree name, then any PR/MR badge right-aligned on the name line; otherwise, the row shall use its type or progress icon in the same position.
 
 **LAYOUT-2.82** While the main checkout is not in flight, its project-view row shall use the project icon ahead of the worktree name and any PR/MR badge, even if the checkout has an assigned emoji.
 
@@ -186,7 +180,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.88** While an Attention card's agent is running, the application shall display elapsed running time in compact units from its resume time, preserve that time across snapshots and relaunches, and clear it when a new request arrives.
 
-**LAYOUT-2.89** While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Add Worktree line fixed above its viewport in both macOS sidebar modes.
+**LAYOUT-2.89** While the ordinary worktree list scrolls with the project rail shown, the application shall keep the pinned tiles and the New worktree line fixed above its viewport; without the rail, each project's tiles shall scroll with its list.
 
 **LAYOUT-2.91** When a worktree request is opened, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.
 
@@ -208,13 +202,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.102** When worktree state is saved and restored, the application shall preserve explicit pin state and decode older linked worktrees as temporary worktrees.
 
-**LAYOUT-2.103** While the sidebar displays a repository, the application shall show temporary worktrees without a heading below a collapsible Pinned Agents section, put the default-branch checkout first in that section, and preserve manual pinned order even when temporary worktrees use recent activity order.
+**LAYOUT-2.103** While the sidebar displays a repository, the application shall show its pinned agents as tiles above its temporary worktrees, put the default-branch checkout first among the tiles, and preserve manual pinned order even when temporary worktrees use recent activity order.
 
 **LAYOUT-2.104** When a worktree is reordered in the sidebar, the application shall constrain the move to siblings within the same temporary or pinned section, allowing manual pinned moves while temporary worktrees use recent activity order.
 
 **LAYOUT-2.105** If a pinned worktree becomes stale, then the application shall retain its sidebar entry until the user explicitly dismisses it or removes its pin.
-
-**LAYOUT-2.106** When the user collapses a repository's Pinned Agents section, the application shall preserve that disclosure state across relaunches and initially expand Pinned Agents for older state.
 
 **LAYOUT-2.107** When a context menu or CLI changes an eligible worktree's pin state, the application shall change only its explicit pin state, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.
 
@@ -228,7 +220,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.112** While the sidebar displays Pinned Agents, the application shall align its disclosure and title with worktree rows and use compact spacing when the section begins the list.
 
-**LAYOUT-2.113** When a user drops an eligible temporary local worktree on the Pinned Agents header or a pinned row in its repository, the application shall pin it, reveal the section, preserve its workspace and existing peer order, and keep the default checkout first, including when temporary worktrees use recent activity order.
+**LAYOUT-2.113** When a user drops an eligible temporary local worktree on the pinned tile grid or a pinned tile in its repository, the application shall pin it, preserve its workspace and existing peer order, and keep the default checkout first, including when temporary worktrees use recent activity order.
 
 **LAYOUT-2.114** While worktree reports are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.
 
@@ -236,11 +228,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.116** When the user clicks a visible worktree heading in the project column outside its embedded controls such as the PR/MR badge, the application shall select that worktree, including after another block changes height, after the column scrolls, and after the window resizes.
 
-**LAYOUT-2.119** If pinned agents exceed the available sidebar height, then the application shall scroll them independently within the usable sidebar height, keep the sort line fixed, reserve 96 points for ordinary worktrees when space permits, and otherwise fit all pinned agents by default.
+**LAYOUT-2.119** While a project has more pinned agents than fit in one row, the application shall wrap its tiles onto further rows without scrolling them separately, so every tile stays visible and the list below takes the remaining height.
 
-**LAYOUT-2.120** While the macOS sidebar displays pinned agents, the application shall start their content below the dedicated search row without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.
+**LAYOUT-2.120** While the macOS sidebar displays pinned agents, the application shall start their tiles below the dedicated search row without an extra title-bar inset.
 
-**LAYOUT-2.121** When the user first clicks a pinned-agent heading in an inactive macOS window, the application shall select that agent on the same click without requiring a second click.
+**LAYOUT-2.121** When the user first clicks a pinned tile in an inactive macOS window, the application shall select that agent on the same click without requiring a second click.
 
 **LAYOUT-2.122** While the macOS sidebar is displayed below native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.
 
@@ -299,12 +291,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.154** While an editable remote project is connected, the application shall expose Add worktree before repository details are cached, resolve the promoted repository alias to its owning identity, and fetch the captured repository on action or report its error.
 
 **LAYOUT-2.156** The application shall disable temporary worktree reordering on remote projects and preserve manual pinned worktree reordering.
-
-**LAYOUT-2.157** While the macOS sidebar has enough space for all pinned agents and 96 points of ordinary worktrees, the application shall fit all pinned agents by default even when they need more than half the available height.
-
-**LAYOUT-2.158** When the user drags the macOS pinned-agent divider, the application shall override its automatic height, keep both sections independently scrollable, and reserve 96 points for ordinary worktrees when space permits.
-
-**LAYOUT-2.159** When an agent is pinned or unpinned in the macOS sidebar, the application shall return the pinned section to automatic sizing so it expands or contracts to fit the current pinned agents.
 
 **LAYOUT-2.160** When the user drags a project in the sidebar on Mac or mobile, the application shall show an insertion marker at the hovered row's upper or lower edge and move the project before or after that row only on drop, while rejecting unrelated payloads and disabled reordering.
 
@@ -402,11 +388,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.209** While a status line asks for input, the application shall keep its text at 4.5:1 or better against its tint on both light and dark backgrounds.
 
-**LAYOUT-2.210** While a project has worktrees asking for input, the application shall show how many as a count in the attention color rather than a hand.
+**LAYOUT-2.210** While a project has worktrees waiting for the user, pinned or not, with a question, a notification, or a finished turn the user has not opened, the application shall show how many as a count in the attention color rather than a hand.
 
 **LAYOUT-2.211** While a worktree row shows its emoji, the application shall draw it at full strength while the worktree asks for input or works, and fade it otherwise.
 
-**LAYOUT-2.212** While the Mac sidebar shows a project, the application shall keep Needs you and Pinned in its resizable top pane and Working and Recent in the list below it.
+**LAYOUT-2.212** While the Mac sidebar shows a project, the application shall keep its pinned tiles above the list and show Needs you, Working, and Recent in the list below them.
 
 **LAYOUT-2.213** While a selected sidebar row shows its question on a tint, the application shall leave the same space between the tint and the selection's bottom edge as between the tint and its trailing edge.
 
@@ -414,23 +400,29 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.215** While the sidebar shows a worktree row, the application shall draw its name at no less than 80 percent of the theme foreground, and at full foreground when the row is selected, brighter than the status line beneath it.
 
-**LAYOUT-2.216** While a worktree row needs the user, the application shall offer Dismiss Request in that row's menu, and dismissing shall move the row out of Needs You until a later request arrives.
+**LAYOUT-2.216** While a worktree row waits for the user, the application shall offer Dismiss Request in that row's or tile's menu, and dismissing shall move it out of Needs You until a later request or finished turn arrives.
 
 **LAYOUT-2.217** When the user right-clicks a macOS worktree's status line, the application shall open that worktree's row menu.
 
-**LAYOUT-2.218** When the user dismisses a worktree's request on any client, the application shall retire it on the owning host, so no client keeps showing it under Needs You.
+**LAYOUT-2.218** When the user dismisses a worktree's request or unopened finished turn on any client, the application shall retire it on the owning host, so no client keeps showing it under Needs You.
 
 **LAYOUT-2.219** When a user reorders pinned agents or projects, the application shall store a sortable fractional rank that always leaves room between two neighbors, so every device agrees on the order from the ranks alone.
 
 **LAYOUT-2.220** When a dragged row lands between rows whose ranks tie, the application shall also rewrite the writable tied rows so the row lands exactly at the drop position on every device.
 
-**LAYOUT-2.221** While a project is on several hosts, the application shall show its temporary worktrees as one flat list by recent activity across hosts and its pinned agents by shared rank, naming the host on pinned rows always and on temporary rows only when names clash.
+**LAYOUT-2.221** While a project is on several hosts, the application shall show its temporary worktrees as one flat list by recent activity across hosts and its pinned agents as one flat grid by shared rank, naming the host on every pinned agent and on every temporary row that is on another host.
 
 **LAYOUT-2.222** While the sidebar displays a worktree, the application shall show at most one status line, choosing in order an agent question, notification text, a working agent, the where-we-are text, or nothing.
 
 **LAYOUT-2.223** When a host loads repositories and pinned worktrees without ranks, the application shall assign ranks from their current order without a change time and keep existing ranks.
 
 **LAYOUT-2.224** When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.
+
+**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall mark it as waiting when it asks a question, carries a notification, or finished a turn the user has not opened, as working while an agent works, as asleep while its host sleeps, and as idle otherwise.
+
+**LAYOUT-2.226** While a pinned agent is shown as a tile, the application shall caption it with the first part of its worktree name, split at hyphens, underscores, slashes, and spaces, or with the branch name for the default checkout.
+
+**LAYOUT-2.227** While the sidebar shows a project that can add worktrees, the application shall offer New worktree as a line directly below the pinned tiles and above Needs you, Working, and Recent, in both macOS sidebar modes.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1552,7 +1544,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### DIVERGE-1.x — Display
 
-**DIVERGE-1.1** Each worktree entry in the sidebar shall display a trailing-aligned divergence indicator, placed to the left of the attention badge (or at the trailing edge when no attention badge is present).
+**DIVERGE-1.1** Each worktree row in the Mac sidebar shall display its divergence indicator right-aligned on its status line, beneath any PR/MR badge, so the status text truncates before it; while the row offers to remove a merged worktree, that button shall take the indicator's place on the name line.
 
 **DIVERGE-1.2** The indicator shall display zero, one, or both of the following on a single line, separated by a single space when both are present:
 
@@ -2722,13 +2714,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-13.x
 
-**IOS-13.1** While a mobile worktree list shows a project, the application shall group its rows into Needs you, Pinned, Working, and Recent, in that order, with Needs you holding rows that ask a question or carry a notification, newest first.
+**IOS-13.1** While a worktree list shows a project, the application shall show its pinned agents as tiles, then group its temporary worktrees into Needs you, Working, and Recent, in that order, with Needs you holding rows that ask a question, carry a notification, or finished a turn the user has not opened, newest first.
 
-**IOS-13.2** While a pinned worktree asks a question, the application shall show it under Needs you instead of Pinned, and return it to its pinned place once answered.
+**IOS-13.2** While a pinned worktree waits for the user, the application shall keep its tile in its pinned place in that project's list rather than also listing it under Needs you.
 
 **IOS-13.3** While a pinned worktree has a working agent, the application shall keep it in Pinned, so Working holds only temporary worktrees.
 
-**IOS-13.4** While a worktree has an unread stop that asks nothing, the application shall leave it in its usual section rather than under Needs you.
+**IOS-13.4** While a temporary worktree has a finished turn the user has not opened, the application shall list it under Needs you, and list a finished turn that asks a question there once.
 
 **IOS-13.5** While a worktree is being created, the application shall list it under Working so it stays near the top of the list.
 
