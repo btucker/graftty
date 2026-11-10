@@ -8,12 +8,22 @@ extension SurfaceNSView {
     func configureAgentCompletion(currentWorktreePath: String?,
                                   updates: ((@escaping AgentCompletionModel.CatalogUpdate) async throws -> [AgentCompletionCandidate])? = nil,
                                   loader: @escaping () async throws -> [AgentCompletionCandidate]) {
+        agentCompletion.opensOnPercent = false
         agentCompletion.currentWorktreePath = currentWorktreePath
         agentCompletion.loadCandidates = loader
         agentCompletion.loadCandidatesWithUpdates = updates
         agentCompletion.onInsertText = { [weak self] text in self?.insertAgentCompletionText(text, claimEngagement: true) }
         agentCompletion.onInsertLiteral = { [weak self] text in self?.insertAgentCompletionText(text, claimEngagement: false) }
         agentCompletionPresentation = MacAgentCompletionPresentation(view: self)
+    }
+
+    @objc func completeWorktree(_ sender: Any?) {
+        guard canReceiveNativeText, !hasMarkedText() else { return }
+        // Menu commands bypass keyDown. Keep their release out of the PTY too.
+        if let event = NSApp.currentEvent, event.type == .keyDown {
+            agentCompletionKeyCodes.insert(event.keyCode)
+        }
+        agentCompletion.openSearch()
     }
 
     func handleAgentCompletionKey(_ event: NSEvent) -> Bool {

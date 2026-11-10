@@ -361,6 +361,10 @@ struct GrafttyApp: App {
                 }
             }
 
+            CommandGroup(after: .pasteboard) {
+                WorktreeCompletionCommandButton()
+            }
+
             CommandGroup(after: .toolbar) {
                 ForEach(GhosttyCommandRegistry.macZoomActions, id: \.action) { command in
                     bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {

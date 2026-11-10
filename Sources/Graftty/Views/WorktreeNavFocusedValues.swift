@@ -70,7 +70,8 @@ struct NavigationCommandShortcutPolicy {
         let hostCandidates: [GrafttyNavigationShortcuts.SourcedCandidate<ShortcutCandidate>] =
             commands.compactMap { command in
                 guard let chord = bridge[command.action],
-                      let shortcut = KeyboardShortcutFromChord.shortcut(from: chord) else {
+                      let shortcut = KeyboardShortcutFromChord.shortcut(from: chord),
+                      shortcut != WorktreeCompletionCommandButton.shortcut else {
                     return nil
                 }
                 return GrafttyNavigationShortcuts.SourcedCandidate(

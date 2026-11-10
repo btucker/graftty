@@ -29,6 +29,32 @@ struct AgentCompletionModelTests {
         .init(address: "/repo/\(name)#codex", projectPath: project, projectName: "Project", worktreePath: "/repo/\(name)", worktreeName: name, hostName: host, runtime: "codex")
     }
 
+    @Test("@spec TEAM-15.21: When a native Mac worktree search query changes, the application shall select the highest-ranked match, while later catalog updates shall preserve the user's valid selection.")
+    func searchSelectsBestMatchAndPreservesManualSelectionDuringDiscovery() async {
+        let model = AgentCompletionModel()
+        var publish: AgentCompletionModel.CatalogUpdate?
+        let scattered = candidate("a-long-b")
+        let compact = candidate("ab")
+        model.onInsertText = { _ in }
+        model.loadCandidatesWithUpdates = { update in
+            publish = update
+            return [scattered, compact]
+        }
+        #expect(model.openSearch())
+        await model.waitForLoad()
+        #expect(model.selectedID == scattered.id)
+        #expect(model.handleText("ab"))
+        #expect(model.candidates.first == compact)
+        #expect(model.selectedID == compact.id)
+        #expect(model.handleKey(.down))
+        #expect(model.selectedID == scattered.id)
+        publish?([compact, scattered])
+        #expect(model.selectedID == scattered.id)
+        #expect(model.handleBackspace())
+        #expect(model.selectedID == model.candidates.first?.id)
+        model.cancel(preserveLiteral: false)
+    }
+
     @Test("@spec TEAM-15.11: While remote agent discovery is pending for a local Mac terminal, the application shall display and permit selection of available local agents and ignore later discovery updates after acceptance.")
     func localCandidatesArriveBeforeRemoteDiscovery() async {
         let model = AgentCompletionModel()
@@ -51,7 +77,7 @@ struct AgentCompletionModelTests {
         #expect(model.candidates.isEmpty)
     }
 
-    @Test("@spec TEAM-15.1: When a user types a percent prefix at a word boundary in a native Mac or iOS terminal, the application shall buffer the completion token locally, filter agent suggestions, and insert only the selected address without submitting terminal input.")
+    @Test("@spec TEAM-15.1: When a user types a percent prefix at a word boundary in a native iOS terminal, the application shall buffer the completion token locally, filter agent suggestions, and insert only the selected address without submitting terminal input.")
     func buffersAndAccepts() async {
         let model = AgentCompletionModel()
         var inserted: [String] = []

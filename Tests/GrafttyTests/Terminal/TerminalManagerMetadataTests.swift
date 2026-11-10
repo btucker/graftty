@@ -21,12 +21,12 @@ struct TerminalManagerMetadataTests {
         view.surfaceOperations.imeRect = { _ in .zero }
         var loadedPath: String?
         manager.agentCompletionLoader = { path, _ in loadedPath = path; return [] }
-        #expect(view.agentCompletion.handleText("%"))
+        #expect(view.agentCompletion.openSearch())
         manager.recordPaneSession(PaneSessionID(), for: slot, worktreePath: "/project-b/fix")
         #expect(!view.agentCompletion.isActive)
         #expect(view.agentCompletion.currentWorktreePath == "/project-b/fix")
         #expect(!view.agentCompletion.handleText(" "))
-        #expect(view.agentCompletion.handleText("%"))
+        #expect(view.agentCompletion.openSearch())
         await view.agentCompletion.waitForLoad()
         #expect(loadedPath == "/project-b/fix")
         view.agentCompletion.cancel(preserveLiteral: false)

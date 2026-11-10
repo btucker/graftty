@@ -6,6 +6,13 @@ import Testing
 
 @Suite("Navigation command shortcut policy")
 struct NavigationCommandShortcutTests {
+    @Test("Native worktree completion reserves Cmd+` over host keybindings")
+    func worktreeCompletionWinsHostCollision() {
+        let command = GhosttyCommandRegistry[.nextTab]!
+        let bridge = GhosttyKeybindBridge(chords: [.nextTab: ShortcutChord(key: "backquote", modifiers: [.command])])
+        #expect(NavigationCommandShortcutPolicy.hostShortcutWinners(commands: [command], bridge: bridge)[.nextTab] == nil)
+    }
+
     @Test("fixed pane and worktree commands use app chords")
     func fixedCommands() {
         #expect(NavigationCommandShortcutPolicy.fixedPaneCommands.map(\.chord) == [
