@@ -951,6 +951,14 @@ public struct WorktreeListContent: View {
                 if !wt.state.isInFlight {
                     MobileWorktreeRowMenu(context: context, onReport: { showReport(wt) }, onDismiss: { dismissRequest(wt) })
                 }
+                // A tile has no swipe, so the row's swipe action lives here.
+                if let action = WorktreePickerGrouping.swipeAction(for: wt) {
+                    Button(role: .destructive) {
+                        pendingDelete = PendingDelete(worktree: wt, action: action)
+                    } label: {
+                        Label(action.buttonLabel, systemImage: action == .dismiss ? "eye.slash" : "trash")
+                    }
+                }
             }
             .modifier(reportPopover(wt))
             .pinnedTileAccessibility(name: row.relativeName, host: host, state: state, isSelected: isSelected(wt)) {

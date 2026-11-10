@@ -422,6 +422,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.227** While the sidebar shows a project that can add worktrees, the application shall offer New worktree as a line directly below the pinned tiles and above Needs you, Working, and Recent, in both macOS sidebar modes.
 
+**LAYOUT-2.228** When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

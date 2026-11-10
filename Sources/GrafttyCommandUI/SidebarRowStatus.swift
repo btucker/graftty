@@ -55,7 +55,9 @@ public enum SidebarRowStatus: Equatable, Sendable {
         // It outranks pane liveness, which lags behind it, unless the agent resumed.
         let hasUnreadStop = context.hasUnseenStop
         func whereWeAre(isUnread: Bool) -> SidebarRowStatus {
-            completed.isEmpty ? .none : .whereWeAre(completed, isUnread: isUnread)
+            // A stop without a recap still waits for the user, so it says who stopped.
+            if completed.isEmpty, isUnread, let stop = worktree.sidebar?.unseenAgentStop { return .whereWeAre(stop.title, isUnread: true) }
+            return completed.isEmpty ? .none : .whereWeAre(completed, isUnread: isUnread)
         }
         if isCached { return whereWeAre(isUnread: false) }
         if let question = context.question { return .question(question, paneID: context.questionPaneID) }

@@ -647,7 +647,7 @@ struct RemoteMacsSection: View {
             .modifier(RemoteWorktreeDragSource(payload: .init(identity: identity, path: worktree.path),
                                                isEnabled: canReorder(worktree, on: tile.remoteMac), preview: AnyView(face.frame(width: 60))))
             .modifier(PinnedTileDropTarget(isEnabled: query.isEmpty && !worktree.state.isInFlight, onDrop: tile.onDrop))
-            .modifier(PinnedTileHoverCard(name: tile.displayName, host: host, status: status, secondary: theme.sidebarSecondaryText))
+            .modifier(PinnedTileHoverCard(name: tile.displayName, host: host, status: status))
             .pinnedTileAccessibility(name: tile.displayName, host: host, state: state, isSelected: isActive, open: tile.onOpen)
             .id(worktree.path)
     }

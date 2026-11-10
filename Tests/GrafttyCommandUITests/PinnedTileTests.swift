@@ -24,6 +24,14 @@ struct PinnedTileTests {
         #expect(PinnedTile.word(name: name, isMainCheckout: isMainCheckout, branch: branch) == expected)
     }
 
+    @Test("@spec LAYOUT-2.228: When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.")
+    func hoverTextNamesTheTileAndItsStatus() {
+        #expect(PinnedTile.hoverText(name: "crash-report", host: "studio", status: .question("Retry?", paneID: nil))
+            == "crash-report · studio\nNeeds your input: Retry?")
+        #expect(PinnedTile.hoverText(name: "triage", host: nil, status: .working("Running tests")) == "triage\nRunning tests")
+        #expect(PinnedTile.hoverText(name: "main", host: nil, status: .none) == "main")
+    }
+
     @Test func accessibilityLabelNamesHostAndState() {
         #expect(PinnedTile.accessibilityLabel(name: "crash-report", host: "studio", state: .waiting) == "crash-report, on studio, waiting for you")
         #expect(PinnedTile.accessibilityLabel(name: "triage", host: nil, state: .idle) == "triage")

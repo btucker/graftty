@@ -76,6 +76,18 @@ struct WorktreeActivitySectionsTests {
         #expect(sections.recent.isEmpty)
     }
 
+    /// An agent can stop without ever sending a recap; it still waits for the user.
+    @Test func unreadStopWithoutARecapStillNeedsYou() {
+        let bare = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: 3), recap: nil)
+        let row = WorktreePanes(path: "/bare", displayName: "bare", repoDisplayName: "app", displayBranch: "bare", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "bare", projectID: "p", unseenAgentStop: bare))
+        let sections = make(temporary: [row])
+        #expect(names(sections.needsYou) == ["bare"])
+        #expect(SidebarRowStatus.resolve(context: SidebarWorktreeContext(worktree: row), worktree: row, isCached: false)
+            == .whereWeAre("Codex stopped", isUnread: true))
+    }
+
     @Test("@spec IOS-13.5: While a worktree is being created, the application shall list it under Working so it stays near the top of the list.")
     func creatingRowCountsAsWorking() {
         let sections = make(temporary: [worktree("old", activity: 5), worktree("new", state: .creating)])

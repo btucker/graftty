@@ -46,35 +46,13 @@ struct PinnedTileDropTarget: ViewModifier {
 }
 
 /// Hovering a tile names it and shows the line its row would show, so a
-/// pinned agent's question can be read without opening it.
+/// pinned agent's question can be read without opening it (LAYOUT-2.228).
 struct PinnedTileHoverCard: ViewModifier {
     let name: String
     let host: String?
     let status: SidebarRowStatus
-    let secondary: Color
-    @State private var isHovering = false
-    @State private var isShowing = false
 
     func body(content: Content) -> some View {
-        content
-            .onHover { isHovering = $0 }
-            .task(id: isHovering) {
-                guard isHovering else { isShowing = false; return }
-                try? await Task.sleep(for: .milliseconds(450))
-                if !Task.isCancelled { isShowing = true }
-            }
-            .popover(isPresented: $isShowing, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(name).font(.system(size: 12, weight: .semibold))
-                        if let host { Text(host).font(.system(size: 11)).foregroundStyle(.secondary) }
-                    }
-                    if status != .none {
-                        SidebarStatusLine(status: status, secondary: secondary)
-                    }
-                }
-                .padding(10)
-                .frame(minWidth: 160, maxWidth: 280, alignment: .leading)
-            }
+        content.help(PinnedTile.hoverText(name: name, host: host, status: status))
     }
 }

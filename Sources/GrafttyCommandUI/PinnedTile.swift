@@ -40,6 +40,19 @@ public enum PinnedTile {
         return source.components(separatedBy: separators).first { !$0.isEmpty } ?? source
     }
 
+    /// What hovering a tile on Mac says. A native tooltip never takes focus
+    /// from the terminal the way a popover window could.
+    public static func hoverText(name: String, host: String?, status: SidebarRowStatus) -> String {
+        let heading = ([name] + (host.map { [$0] } ?? [])).joined(separator: " · ")
+        let line: String?
+        switch status {
+        case .question(let text, _): line = "Needs your input: " + text
+        case .notification(let text, _), .working(let text), .whereWeAre(let text, _): line = text
+        case .none: line = nil
+        }
+        return ([heading] + (line.map { [$0] } ?? [])).joined(separator: "\n")
+    }
+
     public static func accessibilityLabel(name: String, host: String?, state: PinnedTileState) -> String {
         ([name, host.map { "on \($0)" }, state.spokenName].compactMap { $0 }).joined(separator: ", ")
     }

@@ -725,8 +725,11 @@ struct SidebarView: View {
             pullsWaitingPins: false).placed(in: section)
         if section != .tasks {
             pinnedTiles(activity.pinned, project: project, remoteContexts: remoteContexts)
-            if section == .all, let repo = localRepo(in: project), SidebarMenuVisibility.showsAddWorktree(repo: repo) {
-                newWorktreeLine(project.name) { presentAddWorktree(for: repo) }
+            // Without the rail every project is listed, each with its own line (LAYOUT-2.227).
+            if section == .all, let member = addWorktreeTarget(for: project, merged: merged),
+               canAddWorktree(to: member, merged: merged) {
+                newWorktreeLine(project.name) { presentAddWorktree(member: member, project: project) }
+                    .disabled(localRepo(in: project) == nil && remoteProjectOperationInProgress)
                     .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
             }
         }
@@ -822,7 +825,7 @@ struct SidebarView: View {
                 return drop.apply(repoID: repo.id, targetWorktreeID: worktree.id, placement: after ? .after : .before,
                                   allowsReordering: true, to: &appState) != .rejected
             })
-            .modifier(PinnedTileHoverCard(name: row.relativeName, host: nil, status: status, secondary: theme.sidebarSecondaryText))
+            .modifier(PinnedTileHoverCard(name: row.relativeName, host: nil, status: status))
             .pinnedTileAccessibility(name: row.relativeName, host: nil, state: state, isSelected: isActive, open: select)
             .id(worktree.path)
     }
@@ -966,8 +969,11 @@ struct SidebarView: View {
 
     /// The checkout Add worktree targets in the selected project.
     private func addWorktreeTarget(in merged: SidebarMergedRows) -> SidebarProject? {
-        guard let project = merged.project(id: merged.selectedProjectID(for: navigation.selectedProjectID)),
-              let choice = AddWorktreeHostChoice.defaultChoice(addWorktreeChoices(project, merged: merged), lastUsedID: lastUsedHost(project))?.choice else { return nil }
+        merged.project(id: merged.selectedProjectID(for: navigation.selectedProjectID)).flatMap { addWorktreeTarget(for: $0, merged: merged) }
+    }
+
+    private func addWorktreeTarget(for project: MergedProject, merged: SidebarMergedRows) -> SidebarProject? {
+        guard let choice = AddWorktreeHostChoice.defaultChoice(addWorktreeChoices(project, merged: merged), lastUsedID: lastUsedHost(project))?.choice else { return nil }
         return project.members.first { $0.id == choice.id }
     }
 
