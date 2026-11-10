@@ -1284,6 +1284,11 @@ final class RemoteMacsModel: ObservableObject {
             }
             return await forwardManagement(identity: route.identity, request: .acknowledgeOccurrence(worktreeID: route.path, paneID: downstreamPane, occurrence: occurrence))
 
+        case let .explainRequest(worktreeID, paneID):
+            guard let route = relayRouter.resolveWorktree(worktreeID), let pane = relayRouter.resolvePane(paneID),
+                  pane.identity == route.identity, pane.worktreePath == route.path else { return nil }
+            return await forwardManagement(identity: route.identity, request: .explainRequest(worktreeID: route.path, paneID: pane.sessionName))
+
         case .acknowledge(let worktreeID, let paneID):
             guard let worktreeRoute = relayRouter.resolveWorktree(worktreeID)
             else { return nil }

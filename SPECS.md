@@ -2738,7 +2738,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.8** While a mobile worktree row has a known time, the application shall state how long ago it asked or was last active in one compact unit, and otherwise shall show no time.
 
-**IOS-13.9** While the compact Projects screen has worktrees needing the user across projects, the application shall list them above the project list, showing two with a control for the rest until it is used.
+**IOS-13.9** While the compact Projects screen has worktrees needing the user for something other than a question, the application shall list them between the ask deck and the project list, showing two with a control for the rest until it is used.
 
 **IOS-13.10** While a finger is on a mobile worktree list, the application shall report it held without claiming the touch, so scrolling, tapping, and swiping keep working.
 
@@ -2750,7 +2750,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.14** When the compact Projects screen appears, the application shall clear any worktree search, because a list opened afterwards would filter by it with its search field hidden.
 
-**IOS-13.15** While the Projects screen lists worktrees needing the user, the application shall name each one's project on its own line above the worktree, so a long worktree name can't crowd it out.
+**IOS-13.15** While the Projects screen lists worktrees needing the user for something other than a question, the application shall name each one's project on its own line above the worktree, so a long worktree name can't crowd it out.
 
 **IOS-13.16** When the user taps a worktree with agents on iPhone, the application shall open the agent that most needs them, in the order asking, working, idle, failed, then finished, rather than a list of its agents.
 
@@ -2759,6 +2759,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-13.18** While a mobile worktree row offers to remove a merged worktree, the application shall keep the row as tall as it is without that button.
 
 **IOS-13.19** While a terminal is open, the application shall show no activity indicator beside the agent's name, because the terminal itself shows whether the agent is working.
+
+**IOS-13.20** While a worktree's agent has stopped with a question, its ask card shall show the question, the agent's catch-up or else what it last completed, and Explain more shall send the catch-up prompt to that agent's pane and open that pane at once.
+
+**IOS-13.21** While an agent waits at its harness's own prompt rather than a stopped turn, its ask card shall open that prompt's pane, and its Explain more shall open it without typing into it.
 
 ## IPAD — iPad Layout
 
@@ -4855,6 +4859,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.37** When an Attention report carries a drawing that fails validation, the CLI shall reject the report with the specific reason before staging it.
 
 **AGENT-3.38** When an agent reports a recap carrying a drawing of up to 16384 bytes, the application shall deliver that recap and its stopped turn through the file handoff.
+
+**AGENT-3.39** When an agent reports a need with a catch-up, the application shall retain the catch-up, limited to 600 characters and allowing line breaks, while decoding older recaps without one.
+
+**AGENT-3.40** When a client asks a host to explain a stopped agent's question, the host shall type the catch-up prompt into that agent's pane and submit it, and shall refuse a pane it cannot find or one waiting at its harness's own prompt.
+
+**AGENT-3.41** When the application renders agent recap guidance, it shall ask for a `catchUp` with every `need` and for Explain more as an option in every agent question that offers choices.
 
 ### AGENT-4.x
 
