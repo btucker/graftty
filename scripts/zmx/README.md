@@ -1,7 +1,7 @@
 # Graftty zmx patch
 
-`UPSTREAM_COMMIT` pins the source revision used by `scripts/bump-zmx.sh`, and
-`ZIG_VERSION` pins the compiler that must build it. `GRAFTTY_REVISION` is the
+`UPSTREAM_COMMIT` pins the source revision built by `scripts/zmx/build.sh`, and
+`deps/zig/VERSION` pins the compiler that must build it. `GRAFTTY_REVISION` is the
 `grafttyN` suffix of the vendored version on macOS and Linux; increment it
 whenever a patch change alters daemon or client behavior. The pin is the upstream
 v1.0.1 release. Its `build.zig.zon` uses Ghostty
@@ -160,18 +160,16 @@ free, the dangling-symlink loop, terminal restore on SIGHUP/SIGTERM/SIGINT
 (ZMX-9.9) and large `zmx write`. These ship in `graftty11`.
 
 `LEGACY_GRAFTTY_COMMIT` and `LEGACY_ZMX_SHA256` identify the immutable 0.5
-binary that remains the rolling-upgrade compatibility floor. The bump script
-tests that fixture on every run and also tests the committed N-1 binary when it
-is distinct. It never derives its only legacy input from the mutable output
-path.
+binary that remains the rolling-upgrade compatibility floor.
 
-Run `scripts/bump-zmx.sh` after changing a pin (including `GRAFTTY_REVISION`)
-or patch; Linux CI fails while `Resources/zmx-binary/VERSION` disagrees with
-the pins. It formats and tests
-the patched Zig source, builds both macOS architectures in `ReleaseSafe`, makes
-a universal binary, checks the reported version, and exercises old/new
-client-daemon compatibility. It stages and verifies the replacement files
-before renaming them into `Resources/zmx-binary`.
+`scripts/deps prepare zmx` builds the universal macOS binary from these pins
+with `scripts/zmx/build.sh` and links it into `.deps/zmx/`; the app bundle and
+the tests use that copy, and Linux builds the same pins with
+`scripts/linux/build-zmx.sh`. After changing a pin (including
+`GRAFTTY_REVISION`) or patch, run `scripts/zmx/verify.sh`. It formats and tests
+the patched Zig source, then exercises old/new client-daemon compatibility
+against the 0.5 floor and against the zmx shipped in the latest Graftty
+release.
 
 For a quick check of the compatibility harness's process-lifecycle helpers
 without rebuilding zmx, run `python3 scripts/test_zmx_compatibility.py`.

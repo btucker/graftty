@@ -1,0 +1,37 @@
+name: Prepare native dependencies
+description: >-
+  Link libghostty and zmx into .deps/ (downloading the native-deps job's
+  artifact when asked, otherwise building from deps/ and scripts/zmx/), then
+  export the renderer compiler context.
+inputs:
+  platforms:
+    description: Platform groups libghostty must contain (macos or macos,ios).
+    default: macos
+  download:
+    description: Download the native-deps workflow artifact first.
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - if: inputs.download == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: native-deps
+        path: ${{ runner.temp }}/native-deps
+    - name: Prepare native dependencies
+      shell: bash
+      env:
+        PLATFORMS: ${{ inputs.platforms }}
+        DOWNLOADED: ${{ inputs.download }}
+      run: |
+        # Artifacts drop file modes, so the native-deps job ships a tarball.
+        if [[ "$DOWNLOADED" == true ]]; then
+          mkdir -p .deps
+          tar -xf "$RUNNER_TEMP/native-deps/native-deps.tar" -C .deps
+        fi
+        # Copies, not cache symlinks: some jobs swap .deps/zmx/zmx in place.
+        echo 'GRAFTTY_DEPS_LINK_MODE=copy' >> "$GITHUB_ENV"
+        GRAFTTY_DEPS_LINK_MODE=copy scripts/deps prepare --platforms "$PLATFORMS"
+        echo 'GRAFTTY_REQUIRE_PAGED_HISTORY=1' >> "$GITHUB_ENV"
+        context="$(python3 scripts/ghostty-paging/compiler-context.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/graftty-manifest")"
+        echo "GRAFTTY_RENDERER_CONTEXT=$context" >> "$GITHUB_ENV"

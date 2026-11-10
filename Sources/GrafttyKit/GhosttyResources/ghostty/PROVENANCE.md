@@ -17,7 +17,7 @@ target to Lakr233's `storage.1.2.2` artifact, built from ghostty v1.2.2.
 
 ## Update procedure
 
-When `libghostty-spm` moves to a new ghostty version:
+When `deps/ghostty/UPSTREAM_COMMIT` moves to a new ghostty release:
 1. Download `https://release.files.ghostty.org/<ver>/Ghostty.dmg`.
 2. Re-extract both directories exactly as above (see the design doc
    `docs/superpowers/specs/2026-06-03-vendor-ghostty-resources-design.md`).

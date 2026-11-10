@@ -139,18 +139,8 @@ sys.exit(subprocess.call([{native_install!r}] + sys.argv[1:]))
 
 class ZmxRevisionPinTests(unittest.TestCase):
     def test_build_scripts_do_not_hardcode_the_revision(self):
-        for script in (ROOT / "build-zmx.sh", ROOT.parent / "bump-zmx.sh"):
+        for script in (ROOT / "build-zmx.sh", ROOT.parent / "zmx/build.sh"):
             self.assertIsNone(re.search(r"graftty[0-9]", script.read_text()), script)
-
-    def test_vendored_macos_version_matches_the_pins(self):
-        # Linux builds zmx from the pins in CI; macOS ships the binary that
-        # scripts/bump-zmx.sh committed. Rerun the bump after changing a pin.
-        pins = ROOT.parent / "zmx"
-        commit = (pins / "UPSTREAM_COMMIT").read_text().strip()
-        revision = (pins / "GRAFTTY_REVISION").read_text().strip()
-        vendored = (ROOT.parent.parent / "Resources/zmx-binary/VERSION").read_text().strip()
-        self.assertTrue(vendored.endswith(f"-g{commit[:7]}-{revision}"),
-                        f"Resources/zmx-binary/VERSION is {vendored}; rerun scripts/bump-zmx.sh")
 
 class ZmxBuildTests(unittest.TestCase):
     def setUp(self):
@@ -162,7 +152,10 @@ class ZmxBuildTests(unittest.TestCase):
         shutil.copy(ROOT / "build-zmx.sh", scripts / "build-zmx.sh")
         pins = self.repo / "scripts/zmx"
         pins.mkdir()
-        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "GRAFTTY_REVISION", "graftty.patch", "paging.patch",
+        zig_pin = self.repo / "deps/zig"
+        zig_pin.mkdir(parents=True)
+        shutil.copy(ROOT.parent.parent / "deps/zig/VERSION", zig_pin / "VERSION")
+        for name in ("UPSTREAM_COMMIT", "GRAFTTY_REVISION", "graftty.patch", "paging.patch",
                      "always-run-tests.patch"):
             shutil.copy(ROOT.parent / "zmx" / name, pins / name)
         self.tools = self.repo / "tools"
@@ -170,7 +163,7 @@ class ZmxBuildTests(unittest.TestCase):
         self.calls = self.repo / "calls"
         self.env = {**os.environ, "PATH": str(self.tools) + os.pathsep + os.environ["PATH"],
                     "GRAFTTY_TEST_ZMX_CALLS": str(self.calls),
-                    "GRAFTTY_TEST_ZIG_VERSION": (pins / "ZIG_VERSION").read_text().strip()}
+                    "GRAFTTY_TEST_ZIG_VERSION": (zig_pin / "VERSION").read_text().strip()}
         self.output = self.repo / "out/zmx"
         write_flock(self.tools / "flock")
         self.executable("git", r"""
@@ -318,6 +311,26 @@ elif args[0] == 'build':
         self.assertEqual(result.returncode, 42, result.stderr)
         self.assertEqual(self.calls.read_text().splitlines(), ["test", "release", "test"])
         self.assertFalse(self.output.exists())
+
+class InstallZigTests(unittest.TestCase):
+    def test_missing_host_checksum_is_reported(self):
+        with tempfile.TemporaryDirectory(prefix="graftty-install-zig-") as temp:
+            repo = Path(temp)
+            (repo / "scripts/linux").mkdir(parents=True)
+            shutil.copy(ROOT / "install-zig.sh", repo / "scripts/linux/install-zig.sh")
+            (repo / "deps/zig").mkdir(parents=True)
+            shutil.copy(ROOT.parent.parent / "deps/zig/VERSION", repo / "deps/zig/VERSION")
+            (repo / "deps/zig/checksums").write_text("# no hosts\n")
+            tools = repo / "tools"
+            tools.mkdir()
+            (tools / "uname").write_text("#!/bin/sh\necho x86_64\n")
+            (tools / "uname").chmod(0o755)
+            env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+            result = subprocess.run(["bash", str(repo / "scripts/linux/install-zig.sh"), str(repo / "zig")],
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("No pinned Zig", result.stderr)
+            self.assertFalse((repo / "zig").exists())
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):

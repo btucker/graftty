@@ -97,7 +97,13 @@ jobs:
 
           security find-identity -v -p codesigning "$KEYCHAIN"
 
-      - uses: ./.github/actions/paging-renderer
+      - name: Build native dependencies from source
+        # Releases never reuse a cached libghostty or zmx: build both from the
+        # tag's pins and patches, and publish the input and output hashes.
+        timeout-minutes: 60
+        run: GRAFTTY_DEPS_LINK_MODE=copy scripts/deps prepare all --platforms macos --rebuild --record native-deps-record.json
+
+      - uses: ./.github/actions/native-deps
 
       - name: Build app bundle
         env:
@@ -237,7 +243,7 @@ jobs:
             fi
             gh release create "v$VERSION" "${CREATE_ARGS[@]}"
           fi
-          gh release upload "v$VERSION" "$ZIP" --clobber
+          gh release upload "v$VERSION" "$ZIP" native-deps-record.json --clobber
 
       - name: Fetch release notes for appcast
         id: notes

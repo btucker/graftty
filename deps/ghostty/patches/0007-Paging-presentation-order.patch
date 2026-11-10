@@ -1,0 +1,173 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ben Tucker <ben@btucker.net>
+Date: Tue, 10 Nov 2026 12:33:53 -0600
+Subject: Paging: presentation order
+
+
+diff --git a/src/renderer/Metal.zig b/src/renderer/Metal.zig
+index 747d223af0d91a168008ef93b3ad7bdc5d7a22e6..a7c58b42e65eb83ca88bbeea6b968f10810eb528 100644
+--- a/src/renderer/Metal.zig
++++ b/src/renderer/Metal.zig
+@@ -240,17 +240,17 @@ pub fn initTarget(self: *const Metal, width: usize, height: usize) !Target {
+ }
+ 
+ /// Present the provided target.
+-pub inline fn present(self: *Metal, target: Target, sync: bool) !void {
+-    // iOS: always present synchronously — the render loop already runs on
+-    // the main thread, so the async GCD hop is unnecessary overhead.
++pub inline fn present(self: *Metal, target: Target, sync: bool, sequence: usize) !void {
++    // iOS layer contents must be updated on main, including GPU completions
++    // from the render thread. Preserve the encoding order through that hop.
+     if (comptime builtin.os.tag == .ios) {
+-        try self.layer.setSurface(target.surface);
++        try self.layer.setSurface(target.surface, sequence);
+         return;
+     }
+     if (sync) {
+-        self.layer.setSurfaceSync(target.surface);
++        self.layer.setSurfaceSync(target.surface, sequence);
+     } else {
+-        try self.layer.setSurface(target.surface);
++        try self.layer.setSurface(target.surface, sequence);
+     }
+ }
+ 
+diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
+index 388b4f9ed8e9e1dc32d79e15a38b857862ebc957..c3db092f688a97807d3b16dc20223b2b85d652a8 100644
+--- a/src/renderer/metal/Frame.zig
++++ b/src/renderer/metal/Frame.zig
+@@ -9,6 +9,7 @@ const mtl = @import("api.zig");
+ const Renderer = @import("../generic.zig").Renderer(Metal);
+ const Metal = @import("../Metal.zig");
+ const Target = @import("Target.zig");
++const IOSurfaceLayer = @import("IOSurfaceLayer.zig");
+ const RenderPass = @import("RenderPass.zig");
+ 
+ const Health = @import("../../renderer.zig").Health;
+@@ -48,6 +49,7 @@ pub fn begin(
+             .renderer = renderer,
+             .target = target,
+             .sync = false,
++            .sequence = IOSurfaceLayer.reserveSequence(),
+         },
+         &bufferCompleted,
+     );
+@@ -60,6 +62,7 @@ const CompletionBlock = objc.Block(struct {
+     renderer: *Renderer,
+     target: *Target,
+     sync: bool,
++    sequence: usize,
+ }, .{
+     objc.c.id, // MTLCommandBuffer
+ }, void);
+@@ -82,6 +85,7 @@ fn bufferCompleted(
+         block.renderer.api.present(
+             block.target.*,
+             block.sync,
++            block.sequence,
+         ) catch |err| {
+             log.err("Failed to present render target: err={}", .{err});
+         };
+diff --git a/src/renderer/metal/IOSurfaceLayer.zig b/src/renderer/metal/IOSurfaceLayer.zig
+index bc76e0c593d3c201887f1db46cbaad5e7cad2923..16d6ea95ffdefbbea157c5991e1beac3e075fade 100644
+--- a/src/renderer/metal/IOSurfaceLayer.zig
++++ b/src/renderer/metal/IOSurfaceLayer.zig
+@@ -14,6 +14,14 @@ const IOSurface = macos.iosurface.IOSurface;
+ /// to make the subclass once, and then we can use it as a singleton.
+ var Subclass: ?objc.Class = null;
+ 
++// Reserve before encoding, rather than when a GPU completion arrives. A late
++// completion must keep the sequence of the frame that originally produced it.
++var frame_sequence: std.atomic.Value(usize) = .init(0);
++
++pub fn reserveSequence() usize {
++    return frame_sequence.fetchAdd(1, .monotonic) + 1;
++}
++
+ /// The underlying CALayer
+ layer: objc.Object,
+ 
+@@ -50,7 +58,7 @@ pub fn release(self: *IOSurfaceLayer) void {
+ /// Sets the layer's `contents` to the provided IOSurface.
+ ///
+ /// Makes sure to do so on the main thread to avoid visual artifacts.
+-pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
++pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface, sequence: usize) !void {
+     // We retain the surface to make sure it's not GC'd
+     // before we can set it as the contents of the layer.
+     //
+@@ -63,6 +71,7 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
+     var block = SetSurfaceBlock.init(.{
+         .layer = self.layer.value,
+         .surface = surface,
++        .sequence = sequence,
+     }, &setSurfaceCallback);
+ 
+     // We check if we're on the main thread and run the block directly if so.
+@@ -84,20 +93,24 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
+ // Experiment-only entry point for deterministic late-frame presentation tests.
+ export fn graftty_probe_layer_present(layer_ptr: objc.c.id, surface: *IOSurface) bool {
+     var wrapper: IOSurfaceLayer = .{ .layer = objc.Object.fromId(layer_ptr) };
+-    wrapper.setSurface(surface) catch return false;
++    wrapper.setSurface(surface, reserveSequence()) catch return false;
+     return true;
+ }
+ 
+ /// Sets the layer's `contents` to the provided IOSurface.
+ ///
+ /// Does not ensure this happens on the main thread.
+-pub inline fn setSurfaceSync(self: *IOSurfaceLayer, surface: *IOSurface) void {
++pub inline fn setSurfaceSync(self: *IOSurfaceLayer, surface: *IOSurface, sequence: usize) void {
++    if (comptime builtin.os.tag == .ios) {
++        if (!acceptSequence(self.layer, sequence)) return;
++    }
+     self.layer.setProperty("contents", surface);
+ }
+ 
+ const SetSurfaceBlock = objc.Block(struct {
+     layer: objc.c.id,
+     surface: *IOSurface,
++    sequence: usize,
+ }, .{}, void);
+ 
+ fn setSurfaceCallback(
+@@ -128,9 +141,23 @@ fn setSurfaceCallback(
+     // to make itself fit after a resize.
+     if (dw > max_drift or dh > max_drift) return;
+ 
++    if (comptime builtin.os.tag == .ios) {
++        if (!acceptSequence(layer, block.sequence)) return;
++    }
+     layer.setProperty("contents", surface);
+ }
+ 
++// Only main accesses the layer's scalar sequence field. It is not an Objective-C
++// object, so read and write its integer storage rather than an object ivar API.
++fn acceptSequence(layer: objc.Object, sequence: usize) bool {
++    const ivar = objc.c.object_getInstanceVariable(layer.value, "presented_sequence", null);
++    const offset: usize = @intCast(objc.c.ivar_getOffset(ivar));
++    const previous: *usize = @ptrFromInt(@intFromPtr(layer.value) + offset);
++    if (sequence < previous.*) return false;
++    previous.* = sequence;
++    return true;
++}
++
+ pub const DisplayCallback = ?*align(8) const fn (?*anyopaque) void;
+ 
+ pub fn setDisplayCallback(
+@@ -164,6 +191,15 @@ fn getSubclass() error{ObjCFailed}!objc.Class {
+ 
+     if (!subclass.addIvar("display_cb")) return error.ObjCFailed;
+     if (!subclass.addIvar("display_ctx")) return error.ObjCFailed;
++    const added_sequence = objc.c.class_addIvar(
++        subclass.value,
++        "presented_sequence",
++        @sizeOf(usize),
++        std.math.log2_int(usize, @alignOf(usize)),
++        "Q",
++    );
++    if (if (comptime @TypeOf(added_sequence) == bool) !added_sequence else added_sequence == 0)
++        return error.ObjCFailed;
+ 
+     subclass.replaceMethod("display", struct {
+         fn display(target: objc.c.id, sel: objc.c.SEL) callconv(.c) void {

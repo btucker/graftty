@@ -1,5 +1,5 @@
 {
-  "originHash" : "9bf9ec868992d6a60ba0ad4f3873b0f0648d5b13f682f295ec25caa4c1f8b404",
+  "originHash" : "cd7442378be400c02fbd7942b5539ce6560aeba909c1cdb7b75abb3c8a82e759",
   "pins" : [
     {
       "identity" : "displaylink",
@@ -17,14 +17,6 @@
       "state" : {
         "revision" : "bb4b61273b5a976bb571859c17f903ebc3439df1",
         "version" : "1.6.0"
-      }
-    },
-    {
-      "identity" : "libghostty-spm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/btucker/libghostty-spm.git",
-      "state" : {
-        "revision" : "3b6d597b649819531b79b89900cef44854ac845d"
       }
     },
     {

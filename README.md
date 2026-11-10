@@ -82,14 +82,15 @@ check manually from `Graftty → Check for Updates…`.
 Requires Xcode 26 or later to build. Graftty supports macOS 14 Sonoma or later.
 
 ```sh
+scripts/deps prepare   # builds libghostty and zmx from deps/ (first run downloads Zig)
 swift build
 ```
 
-Open `Package.swift` in Xcode to run the app.
+Open `Package.swift` in Xcode to run the app. For GrafttyMobile, run
+`scripts/deps prepare --platforms macos,ios` first.
 
-Mac and GrafttyMobile builds use the same pinned, published paging renderer.
-No native dependency build is required. For renderer development, see the
-[explicit local override instructions](scripts/ghostty-paging/BUILD.md).
+libghostty and zmx are built from pinned upstream commits plus the patch
+series in this repository; see [deps/README.md](deps/README.md).
 
 ## Developing the web client
 
