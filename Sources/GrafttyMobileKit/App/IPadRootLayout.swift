@@ -148,7 +148,7 @@ public struct IPadRootLayout: View {
                 // Hosts are managed here. They don't change what the sidebar shows.
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button { showsHosts = true } label: { Image(systemName: "gearshape") }
+                        Button { showsHosts = true } label: { Image(systemName: "server.rack") }
                             .accessibilityLabel("Hosts")
                             .foregroundStyle(appState.theme.foreground)
                     }
