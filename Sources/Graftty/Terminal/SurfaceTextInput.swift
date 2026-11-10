@@ -47,13 +47,13 @@ extension SurfaceNSView: NSTextInputClient {
         // execute a shell command; control bytes must not act as terminal keys.
         let text = Self.singleLineNativeText(committed)
         guard !text.isEmpty, let surface else { return }
+        if agentCompletion.handleText(text) { return }
         if canTakeDisplayControlNotifier?() == true {
             guard takeDisplayControlNotifier?() == true else {
                 NSSound.beep()
                 return
             }
         }
-        if agentCompletion.handleText(text) { return }
         let deliver = { self.surfaceOperations.text(surface, text) }
         if let hostManagedUserInputScope { hostManagedUserInputScope(deliver) }
         else { deliver() }

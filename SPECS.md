@@ -3254,7 +3254,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-15.6** When a paired client requests agent completions, the application shall round-trip the candidate catalog through the worktree management protocol without changing routing addresses.
 
-**TEAM-15.7** When a Mac terminal accepts worktree search by keyboard, the application shall consume the query, acceptance press and their releases, and deliver the selected agent address once through the terminal text path.
+**TEAM-15.7** When a Mac terminal accepts worktree search by keyboard, the application shall consume the query and acceptance presses, suppress their remaining repeats and releases, and deliver the selected agent address once through the terminal text path.
 
 **TEAM-15.8** If an input-eligible Mac worktree search loses focus or begins composition or modified input, then the application shall discard its query before continuing the existing input path and shall not retain a hidden picker.
 
@@ -3272,17 +3272,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-15.15** When a native Mac pane is reassigned to another tracked worktree, the application shall dismiss pending completion and use the pane's new worktree context for subsequent agent discovery.
 
-**TEAM-15.16** If another display client owns a Mac pane before its worktree search is dismissed, then the application shall discard the query without taking display control back or sending stale input.
+**TEAM-15.16** While another display client owns a Mac pane, the application shall keep worktree search query edits and dismissal local without taking display control or sending terminal input.
 
 **TEAM-15.17** While agent completion is idle, the application shall invalidate its input boundary without publishing unchanged picker state or triggering a terminal view refresh.
 
-**TEAM-15.18** When a user searches native completion, the application shall fuzzy-match ordered characters case-insensitively across worktree, project, host, provider and address fields, require every space-separated term, and rank compact and word-boundary matches above scattered matches within each project-priority group.
+**TEAM-15.18** When a user searches native completion, the application shall fuzzy-match ordered characters case-insensitively across worktree, project, host, provider and address fields, require every space-separated term, and prefer exact names and addresses before fuzzy scores within each project-priority group.
 
-**TEAM-15.19** When a user invokes Complete Worktree with the native Mac Cmd+Shift+K menu shortcut in an input-eligible terminal, the application shall open fuzzy search independently of the cursor boundary, retain terminal focus, favor the current project while offering other projects, and leave ordinary percent input unchanged.
+**TEAM-15.19** When a user invokes Complete Worktree with the native Mac Cmd+Shift+K menu shortcut in an input-eligible terminal, the application shall open fuzzy search independently of the cursor boundary, retain terminal focus through modifier release, favor the current project while offering other projects, and leave ordinary percent input unchanged.
 
 **TEAM-15.20** While native Mac worktree search is open, the application shall support multiword queries, keep an empty query open on Backspace, preserve the query on repeated invocation, consume Enter when no candidate matches, and discard the query on Escape without inserting terminal text.
 
-**TEAM-15.21** When a native Mac worktree search query changes, the application shall select the highest-ranked match, while later catalog updates shall preserve the user's valid selection.
+**TEAM-15.21** When a native Mac worktree search query or catalog changes, the application shall select the highest-ranked match while preserving a valid manual selection across catalog updates.
 
 ## INSTR — Agent Instruction Files
 

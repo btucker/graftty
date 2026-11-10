@@ -33,18 +33,22 @@ public struct AgentCompletionCandidate: Codable, Equatable, Identifiable, Sendab
                     || currentWorktreePath.hasPrefix(candidate.projectPath + "/")
             }.max { $0.projectPath.count < $1.projectPath.count }?.projectPath
         let words = query.split(whereSeparator: \.isWhitespace).map { normalized(String($0)) }
+        let exactQuery = normalized(query.trimmingCharacters(in: .whitespacesAndNewlines))
         var seen = Set<String>()
-        let matches: [(candidate: Self, score: Int)] = candidates.compactMap { candidate in
+        let matches: [(candidate: Self, exact: Bool, score: Int)] = candidates.compactMap { candidate in
             guard seen.insert(candidate.id).inserted else { return nil }
-            guard !words.isEmpty else { return (candidate, 0) }
-            let fields = [candidate.worktreeName, candidate.projectName, candidate.hostName,
-                          candidate.runtime, candidate.address].map(normalized)
+            guard !words.isEmpty else { return (candidate, false, 0) }
+            let name = normalized(candidate.worktreeName)
+            let address = normalized(candidate.address)
+            if name == exactQuery || address == exactQuery { return (candidate, true, 0) }
+            let fields = [name, normalized(candidate.projectName), normalized(candidate.hostName),
+                          normalized(candidate.runtime), address]
             var total = 0
             for word in words {
                 guard let best = fields.compactMap({ fuzzyScore(word, in: $0) }).max() else { return nil }
                 total += best
             }
-            return (candidate, total)
+            return (candidate, false, total)
         }
         return matches.sorted { leftMatch, rightMatch in
             let lhs = leftMatch.candidate
@@ -52,6 +56,7 @@ public struct AgentCompletionCandidate: Codable, Equatable, Identifiable, Sendab
             let leftCurrent = lhs.isCurrentProject ?? (currentProject != nil && lhs.projectPath == currentProject)
             let rightCurrent = rhs.isCurrentProject ?? (currentProject != nil && rhs.projectPath == currentProject)
             if leftCurrent != rightCurrent { return leftCurrent }
+            if leftMatch.exact != rightMatch.exact { return leftMatch.exact }
             if leftMatch.score != rightMatch.score { return leftMatch.score > rightMatch.score }
             let left = [lhs.hostName, lhs.projectName, lhs.worktreeName, lhs.runtime, lhs.address].joined(separator: "\u{0}")
             let right = [rhs.hostName, rhs.projectName, rhs.worktreeName, rhs.runtime, rhs.address].joined(separator: "\u{0}")

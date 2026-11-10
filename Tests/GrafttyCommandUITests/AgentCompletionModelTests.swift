@@ -29,7 +29,7 @@ struct AgentCompletionModelTests {
         .init(address: "/repo/\(name)#codex", projectPath: project, projectName: "Project", worktreePath: "/repo/\(name)", worktreeName: name, hostName: host, runtime: "codex")
     }
 
-    @Test("@spec TEAM-15.21: When a native Mac worktree search query changes, the application shall select the highest-ranked match, while later catalog updates shall preserve the user's valid selection.")
+    @Test("@spec TEAM-15.21: When a native Mac worktree search query or catalog changes, the application shall select the highest-ranked match while preserving a valid manual selection across catalog updates.")
     func searchSelectsBestMatchAndPreservesManualSelectionDuringDiscovery() async {
         let model = AgentCompletionModel()
         var publish: AgentCompletionModel.CatalogUpdate?
@@ -38,12 +38,14 @@ struct AgentCompletionModelTests {
         model.onInsertText = { _ in }
         model.loadCandidatesWithUpdates = { update in
             publish = update
-            return [scattered, compact]
+            return [scattered]
         }
         #expect(model.openSearch())
         await model.waitForLoad()
         #expect(model.selectedID == scattered.id)
         #expect(model.handleText("ab"))
+        #expect(model.selectedID == scattered.id)
+        publish?([scattered, compact])
         #expect(model.candidates.first == compact)
         #expect(model.selectedID == compact.id)
         #expect(model.handleKey(.down))

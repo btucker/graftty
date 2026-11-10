@@ -23,6 +23,7 @@ public final class AgentCompletionModel: ObservableObject {
     private var literalPrefix: String? = "%"
     private var catalog: [AgentCompletionCandidate] = []
     private var atWordBoundary = true
+    private var hasManualSelection = false
     private var loadTask: Task<Void, Never>?
     private var generation: UInt64 = 0
 
@@ -43,6 +44,7 @@ public final class AgentCompletionModel: ObservableObject {
         isActive = true
         query = ""
         catalog = []
+        hasManualSelection = false
         filter()
         startLoad()
         return true
@@ -59,7 +61,8 @@ public final class AgentCompletionModel: ObservableObject {
                 return false
             }
             query += text
-            filter(selectFirst: isSearch)
+            hasManualSelection = false
+            filter()
             return true
         }
         if opensOnPercent, text == "%", atWordBoundary {
@@ -77,7 +80,8 @@ public final class AgentCompletionModel: ObservableObject {
             atWordBoundary = true
         } else {
             query.removeLast()
-            filter(selectFirst: isSearch)
+            hasManualSelection = false
+            filter()
         }
         return true
     }
@@ -93,6 +97,7 @@ public final class AgentCompletionModel: ObservableObject {
             let current = candidates.firstIndex { $0.id == selectedID } ?? 0
             let delta = key == .up ? -1 : 1
             selectedID = candidates[(current + delta + candidates.count) % candidates.count].id
+            hasManualSelection = isSearch
         }
         return true
     }
@@ -161,8 +166,11 @@ public final class AgentCompletionModel: ObservableObject {
         }
     }
 
-    private func filter(selectFirst: Bool = false) {
+    private func filter() {
         candidates = AgentCompletionCandidate.matching(catalog, query: query, currentWorktreePath: currentWorktreePath)
-        if selectFirst || !candidates.contains(where: { $0.id == selectedID }) { selectedID = candidates.first?.id }
+        if (isSearch && !hasManualSelection) || !candidates.contains(where: { $0.id == selectedID }) {
+            selectedID = candidates.first?.id
+            hasManualSelection = false
+        }
     }
 }
