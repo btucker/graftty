@@ -212,12 +212,13 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.13.0"),
+        // REMOTE-9.26: SSHChannelWindow mirrors this release line's 64-packet window.
+        .package(url: "https://github.com/apple/swift-nio-ssh.git", .upToNextMinor(from: "0.15.1")),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.22.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
-        .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.0"),
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "72a09adb79e0b7112df92949612533c013c6c664"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.2"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "b9778b054bbdbf2e81deef0494ffecb8683c1e4a"),
     ] + appleDependencies,
     targets: ([
         .target(name: "CGrafttyConPTY"),

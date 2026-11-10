@@ -3614,6 +3614,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.25** When an adaptive terminal consumer speeds up with no buffered output, the client shall send newly available credit without waiting for another inbound frame.
 
+**REMOTE-9.26** The application shall advertise a 256 KiB maximum SSH channel packet size on host and client connections, so each channel's receive window is the 16 MiB that terminal flow control is sized for.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.

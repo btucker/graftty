@@ -172,4 +172,48 @@ if [[ "$ACTUAL_LOCK_LOG" != "$EXPECTED_LOCK_LOG" ]]; then
   exit 1
 fi
 
+# A binary dependency such as Sparkle swaps its headers in the shared
+# Products directory when worktrees resolve different versions, and Swift
+# Build then rejects its cached precompiled module ("has been modified since
+# the module file ... was built"). The wrapper drops precompiled modules
+# whenever the resolved dependency set differs from the previous command's.
+MODULE_CACHE="$FIXTURE_ROOT/module-cache"
+PCM_DIR="$MODULE_CACHE/build/out/Intermediates.noindex/SwiftExplicitPrecompiledModules"
+seed_module() {
+  mkdir -p "$PCM_DIR"
+  touch "$PCM_DIR/Sparkle-SEEDED.pcm"
+}
+run_fake_build() {
+  (
+    cd "$1"
+    PATH="$FAKE_BIN:$PATH" \
+      LOCK_MARKER=modules \
+      LOCK_LOG="$FIXTURE_ROOT/modules.log" \
+      GRAFTTY_SWIFTPM_SHARED_DIR="$MODULE_CACHE" \
+      "$WRAPPER" build
+  )
+}
+printf '%s\n' '{"pins":[{"identity":"sparkle","state":{"version":"2.9.1"}}]}' > "$ROOT_A/Package.resolved"
+printf '%s\n' '{"pins":[{"identity":"sparkle","state":{"version":"2.10.1"}}]}' > "$ROOT_B/Package.resolved"
+
+seed_module
+run_fake_build "$ROOT_A"
+seed_module
+run_fake_build "$ROOT_A"
+if [[ ! -f "$PCM_DIR/Sparkle-SEEDED.pcm" ]]; then
+  echo 'wrapper dropped precompiled modules although resolved dependencies were unchanged' >&2
+  exit 1
+fi
+run_fake_build "$ROOT_B"
+if [[ -e "$PCM_DIR/Sparkle-SEEDED.pcm" ]]; then
+  echo 'wrapper kept precompiled modules after resolved dependencies changed' >&2
+  exit 1
+fi
+seed_module
+run_fake_build "$ROOT_A"
+if [[ -e "$PCM_DIR/Sparkle-SEEDED.pcm" ]]; then
+  echo 'wrapper kept precompiled modules after switching back to other dependencies' >&2
+  exit 1
+fi
+
 echo 'shared SwiftPM wrapper tests passed'
