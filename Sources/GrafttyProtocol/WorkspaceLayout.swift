@@ -43,9 +43,6 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     /// The active presentation may be retained content with no live terminal.
     public private(set) var focusedSession: Session?
     public var drawerVisible: Bool
-    /// Agents the user moved to the drawer; reconcile leaves them there.
-    /// Optional so layouts saved before this field still decode.
-    public private(set) var userDrawerSessions: Set<Session>?
     public var drawerHeight: Double
     public var sessions: [Session] { groups.flatMap(\.sessions) + terminals }
     /// Visible canvas groups in spatial order, with each group's tab order.
@@ -131,8 +128,6 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     }
 
     public mutating func remove(_ session: Session) {
-        userDrawerSessions?.remove(session)
-        if userDrawerSessions?.isEmpty == true { userDrawerSessions = nil }
         terminals.removeAll { $0 == session }
         if selectedTerminal == session { selectedTerminal = terminals.first }
         for i in groups.indices {
@@ -173,7 +168,6 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         guard sessions.contains(session) else { return }
         remove(session)
         addTerminal(session)
-        userDrawerSessions = (userDrawerSessions ?? []).union([session])
     }
 
     public mutating func split(_ session: Session, beside target: UUID, edge: Edge) {
@@ -205,20 +199,21 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
             if agents.contains(session) { addAgent(session) }
             else { addTerminal(session) }
         }
-        let misfiled = terminals.filter { launched.contains($0) && userDrawerSessions?.contains($0) != true }
+        let misfiled = terminals.filter(launched.contains)
         for session in misfiled {
-            let wasFocused = focusedSession == session
             remove(session)
             addAgent(session)
-            if wasFocused { select(session) }
         }
         if preservingSelection {
             for group in previous.groups { select(group.selected) }
             if let lastAgent = previous.lastAgent { select(lastAgent) }
-            if let terminal = previous.selectedTerminal { select(terminal) }
+            // A drawer terminal moved into the tabs above must not become its group's visible tab.
+            if let terminal = previous.selectedTerminal, terminals.contains(terminal) { select(terminal) }
             focusedSession = previous.focusedSession.flatMap { sessions.contains($0) ? $0 : nil }
             drawerVisible = previous.drawerVisible
         }
+        // Focus follows a moved terminal into its tab.
+        if let focused = previous.focusedSession, misfiled.contains(focused) { select(focused) }
         if !misfiled.isEmpty && terminals.isEmpty { drawerVisible = false }
     }
 }

@@ -178,8 +178,8 @@ struct WorkspaceLayoutTests {
         #expect(WorkspaceLayout<String>.initial(for: legacy).groups.count == 1)
     }
 
-    @Test("@spec LAYOUT-2.240: When a host identifies a launched agent after its pane already appeared as a terminal, the application shall move that session from the terminal drawer into the agent tabs, leaving observed agents and sessions the user moved to the drawer in place.")
-    func lateIdentifiedLaunchedAgentLeavesDrawer() throws {
+    @Test("@spec LAYOUT-2.240: When a host identifies a launched agent after its pane already appeared as a terminal, the application shall move that session from the terminal drawer into the agent tabs, leaving agents the user started by hand in a shell in place.")
+    func lateIdentifiedLaunchedAgentLeavesDrawer() {
         func snapshot(_ sessions: [String], agents: [AgentSessionInfo]) -> WorktreePanes {
             let leaves = sessions.map { PaneLayoutNode.leaf(sessionName: $0, title: "", attentionText: nil, isBusy: false, attentionSource: nil) }
             let inventory = leaves.dropFirst().reduce(leaves[0]) { .split(direction: .horizontal, ratio: 0.5, left: $0, right: $1) }
@@ -205,22 +205,26 @@ struct WorkspaceLayoutTests {
         layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: "claude", launched: true),
             agent("o", session: "shell", launched: nil)]), preservingSelection: true)
         #expect(layout.terminals == ["shell"])
-
-        // The user's explicit move to the drawer survives later snapshots and a restore.
-        layout.moveToDrawer("claude")
-        layout = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONEncoder().encode(layout))
-        layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: "claude", launched: true)]),
-            preservingSelection: true)
-        #expect(layout.terminals == ["shell", "claude"])
-        #expect(layout.groups.isEmpty)
-
-        // Closing that view ends the exemption.
-        layout.remove("claude")
-        layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: nil, launched: true)]),
-            preservingSelection: true)
-        layout.reconcile(with: snapshot(["shell", "claude"], agents: [agent("a", session: "claude", launched: true)]),
-            preservingSelection: true)
         #expect(layout.groups.map(\.sessions) == [["claude"]])
+    }
+
+    @Test func lateIdentifiedLaunchedAgentKeepsTheSelectedTabOfItsNewGroup() {
+        // The drawer's selected terminal is identified while focus is on another agent tab.
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("x"); layout.addTerminal("claude")
+        _ = layout.hideDrawer()
+        layout.reconcile(live: ["x", "claude"], agents: ["x", "claude"], launched: ["claude"], preservingSelection: true)
+        #expect(layout.groups.map(\.sessions) == [["x", "claude"]])
+        #expect(layout.groups.map(\.selected) == ["x"])
+        #expect(layout.lastAgent == "x")
+        #expect(layout.focusedSession == "x")
+
+        // A focused drawer terminal is followed into the tab it moves to.
+        var focused = WorkspaceLayout<String>()
+        focused.addAgent("x"); focused.addTerminal("claude"); focused.select("claude")
+        focused.reconcile(live: ["x", "claude"], agents: ["x", "claude"], launched: ["claude"], preservingSelection: true)
+        #expect(focused.groups.map(\.selected) == ["claude"])
+        #expect(focused.focusedSession == "claude")
     }
 
 }
