@@ -51,8 +51,8 @@ def assert_notification_evidence(observation, provider, worktree, expected):
                 raise InvariantFailure('native request lost its provider/worktree/session/pane route')
             recap = event['recap']
             if (not attempt['identifier'] or attempt['title'] != recap['title']
-                    or attempt['body'] != (recap.get('need') or recap.get('completed'))):
-                raise InvariantFailure('native request lost its useful purpose or recap')
+                    or not recap.get('need', '').strip() or attempt['body'] != recap['need']):
+                raise InvariantFailure('native request lost its purpose or question')
         return events
     except (KeyError, ValueError, TypeError) as error:
         raise InvariantFailure('native notification evidence is missing or malformed') from error
@@ -79,6 +79,7 @@ class NotificationRun(Run):
         self.notification_actions = []
         self.summary['notificationCase'] = options.notification_case
         self.server.models.fixture_text = notification_scenario_text
+        self.server.models.recap_need = 'Can you open the fixture to verify the terminal?'
         nonce = uuid.uuid4().hex[:8]
         self.markers = {provider: f'NOTIFY_{provider.upper()}_{nonce}' for provider in ('claude', 'codex')}
         self.server.models.completion_text = lambda provider: self.markers[provider]

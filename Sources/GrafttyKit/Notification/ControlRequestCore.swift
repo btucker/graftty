@@ -179,7 +179,7 @@ public enum ControlRequestCore {
                                     paneSessionName: paneSessionName, attentionReason: attentionReason)
     }
 
-    /// Records a stopped turn and posts its notification through the platform.
+    /// Records a stopped turn and posts its request for input, if present.
     public static func recordStoppedTurn(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
                                          sessionID: String?, paneSessionName: String?, recap: AttentionRecap?,
                                          stoppedAt: Date, recapReportedAt: Date? = nil, turnID: String? = nil, platform: any ControlPlatform) {

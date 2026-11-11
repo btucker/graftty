@@ -525,25 +525,28 @@ public struct RootView: View {
     }
 
     private func compactPicker(project: SidebarProject? = nil) -> some View {
-        WorktreePickerView(
+        func selectPane(_ host: Host, _ worktree: WorktreePanes, _ leaf: PaneLayoutNode.Leaf, takesControl: Bool) {
+            adoptHost(host)
+            Self.applyCompactPaneSelection(leaf, in: worktree, host: host, project: project,
+                                           appState: iPadAppState, navigationPath: &navigationPath,
+                                           takesControl: takesControl)
+        }
+        return WorktreePickerView(
             feed: feed,
             onSelect: { host, wt in
                 adoptHost(host)
                 Self.applyCompactWorktreeSelection(wt, host: host, project: project, appState: iPadAppState,
                                                    navigationPath: &navigationPath)
             },
-            onSelectPane: { host, worktree, leaf in
-                adoptHost(host)
-                Self.applyCompactPaneSelection(leaf, in: worktree, host: host, project: project,
-                                               appState: iPadAppState, navigationPath: &navigationPath)
-            },
+            onSelectPane: { selectPane($0, $1, $2, takesControl: false) },
             navigation: iPadAppState.sidebarNavigation,
             project: project,
             onSelectWorktreeDetail: { host, worktree in
                 adoptHost(host)
                 iPadAppState.select(hostID: host.id, worktreePath: worktree.path, paneID: iPadAppState.focusedPaneId)
                 navigationPath.append(WorktreeStep(host: host, worktree: worktree, project: project))
-            }
+            },
+            onSelectPaneTakingControl: { selectPane($0, $1, $2, takesControl: true) }
         )
         .task {
             if let project,
@@ -612,11 +615,12 @@ public struct RootView: View {
     /// Compact picker pane-row tap: select the pane and push its terminal.
     static func applyCompactPaneSelection(_ leaf: PaneLayoutNode.Leaf, in worktree: WorktreePanes, host: Host,
                                           project: SidebarProject?, appState: IPadAppState,
-                                          navigationPath: inout NavigationPath) {
+                                          navigationPath: inout NavigationPath, takesControl: Bool = false) {
         appState.select(hostID: host.id, worktreePath: worktree.path, paneID: leaf.sessionName)
         if case let .session(sessionName, title) = MobileNavigationDecision.decide(paneRow: leaf) {
             navigationPath.append(SessionStep(host: host, worktreePath: worktree.path, sessionName: sessionName,
-                title: title, worktreeProject: project ?? SidebarProjection.projects([worktree]).first))
+                title: title, worktreeProject: project ?? SidebarProjection.projects([worktree]).first,
+                takesControl: takesControl))
         }
     }
 
@@ -761,6 +765,7 @@ struct SessionStep: Hashable {
     let title: String
     /// Retain the originating picker even when a search opens another project.
     let worktreeProject: SidebarProject?
+    let takesControl: Bool
 
     // Replacing a NavigationPath destination can reuse its SwiftUI state.
     // Keep the mounted client scoped to the same identity as retained panes.
@@ -771,13 +776,15 @@ struct SessionStep: Hashable {
         worktreePath: String? = nil,
         sessionName: String,
         title: String,
-        worktreeProject: SidebarProject? = nil
+        worktreeProject: SidebarProject? = nil,
+        takesControl: Bool = false
     ) {
         self.host = host
         self.worktreePath = worktreePath
         self.sessionName = sessionName
         self.title = title
         self.worktreeProject = worktreeProject
+        self.takesControl = takesControl
     }
 
     func worktreePickerPath(showsProjectRail: Bool) -> NavigationPath {

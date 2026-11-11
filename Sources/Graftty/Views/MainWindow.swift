@@ -31,6 +31,7 @@ struct MainWindow: View {
     let makeRemoteMacPairingDriver: () throws -> AddRemoteMacPairingDriving
 
     @EnvironmentObject private var updaterController: UpdaterController
+    @Environment(\.agentWorkspaceRequest) private var agentWorkspaceRequest
 
     @State private var showsWorktreeContext = false
     @State private var requestedRemoteAgent: String?
@@ -53,6 +54,7 @@ struct MainWindow: View {
     @State private var worktreeHistory = WorktreeNavigationHistory()
     @State private var attentionOpenGeneration: UInt64 = 0
     @State private var remoteRouteSelectionTask: Task<Void, Never>?
+    @State private var retryingAgentLaunch = false
     @StateObject private var voiceDictation = VoiceDictationController()
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
@@ -229,8 +231,9 @@ struct MainWindow: View {
                     WorktreeCreationDetailView(progress: progress,
                         foreground: terminalManager.theme.foreground, background: terminalManager.theme.background,
                         onOpenTerminal: row.state == .closed ? {
-                            _ = selectWorktree(row.path, acknowledging: false, inspectingCreation: false)
-                        } : nil)
+                            _ = selectWorktree(row.path, acknowledging: false, inspectingCreation: false, openingTerminal: true)
+                        } : nil,
+                        onRetryAgent: retryFailedAgentLaunch(in: row))
                 } else if let worktree = selectedWorktreeBinding {
                     WorkspaceContentView(
                         terminalManager: terminalManager,
@@ -996,8 +999,31 @@ struct MainWindow: View {
         selectWorktree(path, acknowledging: true)
     }
 
+    /// Failed creation leaves the agent that was to start there; offer to start it once the checkout exists.
+    private func retryFailedAgentLaunch(in worktree: WorktreeEntry) -> (() -> Void)? {
+        guard worktree.state == .closed, let request = agentWorkspaceRequest,
+              let agent = worktree.agents.first(where: \.canRetryLaunch) else { return nil }
+        let path = worktree.path, agentID = agent.id
+        return {
+            // The button stays visible until the launch is reserved; a second click would only be refused.
+            guard !retryingAgentLaunch else { return }
+            retryingAgentLaunch = true
+            Task { @MainActor in
+                defer { retryingAgentLaunch = false }
+                let response = await request(.init(action: .resume, callerWorktree: path, agentID: agentID, selectTab: true))
+                guard case .error(let message) = response else { return }
+                let alert = NSAlert()
+                alert.messageText = "Could not start the agent"
+                alert.informativeText = message
+                alert.alertStyle = .warning
+                alert.runModal()
+            }
+        }
+    }
+
     @discardableResult
-    private func selectWorktree(_ path: String, acknowledging: Bool, inspectingCreation: Bool = true) -> Bool {
+    private func selectWorktree(_ path: String, acknowledging: Bool, inspectingCreation: Bool = true,
+                                openingTerminal: Bool = false) -> Bool {
         remoteRouteSelectionTask?.cancel()
         remoteViewer.cancelRouteRecovery()
         wakeFlow = nil
@@ -1053,8 +1079,7 @@ struct MainWindow: View {
                     continue
                 }
 
-                if appState.repos[repoIdx].worktrees[wtIdx].state == .closed,
-                   !appState.repos[repoIdx].worktrees[wtIdx].agents.contains(where: { $0.completion != nil }) {
+                if appState.repos[repoIdx].worktrees[wtIdx].startsShellWhenSelected(openingTerminal: openingTerminal) {
                     _ = PaneCommands.startWorktree(
                         path: path,
                         appState: $appState,

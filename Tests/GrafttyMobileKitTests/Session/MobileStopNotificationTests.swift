@@ -25,18 +25,19 @@ struct MobileStopNotificationTests {
     }
     #endif
 
-    private func splitRow(_ time: Double, state: WorktreeWireState = .running, suffix: String = "", unseen: Bool = false) -> WorktreePanes {
-        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: time), paneSlotID: "second-slot")
+    private func splitRow(_ time: Double, state: WorktreeWireState = .running, suffix: String = "") -> WorktreePanes {
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: time), recap: .init(title: "Routing", completed: "Ready.", next: "Review.", need: "Open the second pane?"),
+            paneSlotID: "second-slot")
         return .init(path: "/task", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
             state: state, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
             layout: state == .closed ? nil : .split(direction: .horizontal, ratio: 0.5,
                 left: .leaf(sessionName: "first" + suffix, title: "First", attentionText: nil, isBusy: false, attentionSource: nil),
                 right: .leaf(sessionName: "second" + suffix, title: "Second", attentionText: nil, isBusy: false, attentionSource: nil)),
             sidebar: .init(id: "task", projectID: "project", paneIDs: ["first" + suffix: "first-slot", "second" + suffix: "second-slot"],
-                unseenAgentStop: unseen ? stop : nil, lastAgentStop: stop))
+                unseenAgentStop: stop, lastAgentStop: stop))
     }
 
-    @Test func acknowledgedStopsRetainTheirPaneAcrossReopening() throws {
+    @Test func questionNotificationsRetainTheirPaneAcrossReopening() throws {
         let host = UUID()
         var ledger = MobileStopNotificationLedger()
         _ = ledger.receive([splitRow(10)], hostID: host)
@@ -77,22 +78,32 @@ struct MobileStopNotificationTests {
                      sidebar: .init(id: "task", projectID: "project", unseenAgentStop: unseen ? stop : nil, lastAgentStop: stop))
     }
 
-    @Test("@spec NOTIF-1.12: When a mobile client receives a new stopped turn, the application shall create a native notification for stops with or without reports, deduplicate repeated and older snapshots across reconnects and relaunches, and keep hosts distinct.")
-    func everyStopIsDeduplicatedAndHostsAreDistinct() throws {
+    @Test("@spec NOTIF-1.12: When a mobile client receives a new, unacknowledged stopped turn that requests input, the application shall notify once with the request, deduplicate repeated and older snapshots across reconnects and relaunches, and keep hosts distinct. Routine and acknowledged stops shall remain silent.")
+    func stoppedQuestionsAreDeduplicatedAndHostsAreDistinct() throws {
         var ledger = MobileStopNotificationLedger()
         let host = UUID(), other = UUID()
-        let first = ledger.receive([row(10)], hostID: host)
+        let routine = AttentionRecap(title: "Context", completed: "Built the drawer.", next: "Review.")
+        var blankQuestion = routine
+        blankQuestion.need = "  "
+        var question = routine
+        question.need = "Does the drawer look right?"
+        #expect(ledger.receive([row(5)], hostID: host).isEmpty)
+        #expect(ledger.receive([row(6, recap: blankQuestion)], hostID: host).isEmpty)
+        #expect(ledger.receive([row(7, recap: routine)], hostID: host).isEmpty)
+        let first = ledger.receive([row(10, recap: question)], hostID: host)
         #expect(first.count == 1)
-        #expect(first.first?.body == "Codex stopped.")
+        #expect(first.first?.body == question.need)
         #expect(first.first?.route.worktreePath == "/task")
-        #expect(ledger.receive([row(10)], hostID: host).isEmpty)
-        #expect(ledger.receive([row(9)], hostID: host).isEmpty)
-        #expect(ledger.receive([row(10)], hostID: other).count == 1)
+        #expect(ledger.receive([row(10, recap: question)], hostID: host).isEmpty)
+        #expect(ledger.receive([row(9, recap: question)], hostID: host).isEmpty)
+        #expect(ledger.receive([row(10, recap: question)], hostID: other).count == 1)
         var restored = try JSONDecoder().decode(MobileStopNotificationLedger.self, from: JSONEncoder().encode(ledger))
-        #expect(restored.receive([row(10)], hostID: host).isEmpty)
-        let next = restored.receive([row(20, recap: .init(title: "Context", completed: "Built the drawer.", next: "Review."))], hostID: host)
+        #expect(restored.receive([row(10, recap: question)], hostID: host).isEmpty)
+        #expect(restored.receive([row(20, recap: routine)], hostID: host).isEmpty)
+        #expect(restored.receive([row(19, recap: question)], hostID: host).isEmpty)
+        let next = restored.receive([row(30, recap: question)], hostID: host)
         #expect(next.first?.title == "Context")
-        #expect(next.first?.body == "Built the drawer.")
+        #expect(next.first?.body == question.need)
         #expect(next.first?.identifier == first.first?.identifier)
     }
 
@@ -116,13 +127,17 @@ struct MobileStopNotificationTests {
         #expect(ledger.receive([prompt(10)], hostID: host).isEmpty)
         #expect(ledger.receive([prompt(20)], hostID: host).count == 1)
         #expect(ledger.receive([prompt(30, source: .commandFinished)], hostID: host).isEmpty)
-        #expect(ledger.receive([prompt(20, stoppedAt: 40)], hostID: host).count == 1)
+        #expect(ledger.receive([prompt(20, stoppedAt: 40)], hostID: host).isEmpty)
     }
 
-    @Test func previouslyReadHistoryDoesNotNotifyOnFirstConnection() {
+    @Test func acknowledgedQuestionsStaySilent() {
         var ledger = MobileStopNotificationLedger()
         let host = UUID()
-        #expect(ledger.receive([row(10, unseen: false)], hostID: host).isEmpty)
-        #expect(ledger.receive([row(20, unseen: false)], hostID: host).count == 1)
+        let question = AttentionRecap(title: "Context", completed: "Built the drawer.", next: "Review.",
+                                      need: "Does the drawer look right?")
+        #expect(ledger.receive([row(10, recap: question, unseen: false)], hostID: host).isEmpty)
+        #expect(ledger.receive([row(20, recap: question, unseen: false)], hostID: host).isEmpty)
+        #expect(ledger.receive([row(20, recap: question)], hostID: host).isEmpty)
+        #expect(ledger.receive([row(30, recap: question)], hostID: host).count == 1)
     }
 }

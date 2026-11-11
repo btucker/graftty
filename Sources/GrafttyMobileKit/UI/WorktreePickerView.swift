@@ -15,6 +15,7 @@ public struct WorktreePickerView: View {
     public let onSelect: (Host, WorktreePanes) -> Void
     public let onSelectPane: (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)?
+    private let onSelectPaneTakingControl: ((Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void)?
 
     public init(
         feed: MultiHostFeed,
@@ -23,7 +24,8 @@ public struct WorktreePickerView: View {
         onSelectPane: @escaping (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void,
         navigation: SidebarNavigationState? = nil,
         project: SidebarProject? = nil,
-        onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)? = nil
+        onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)? = nil,
+        onSelectPaneTakingControl: ((Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void)? = nil
     ) {
         self.navigation = navigation
         self.feed = feed
@@ -32,6 +34,7 @@ public struct WorktreePickerView: View {
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail
+        self.onSelectPaneTakingControl = onSelectPaneTakingControl
     }
 
     public var body: some View {
@@ -42,7 +45,8 @@ public struct WorktreePickerView: View {
             onSelectPane: onSelectPane,
             navigation: navigation,
             project: project,
-            onSelectWorktreeDetail: onSelectWorktreeDetail
+            onSelectWorktreeDetail: onSelectWorktreeDetail,
+            onSelectPaneTakingControl: onSelectPaneTakingControl
         )
         .navigationTitle(project?.name ?? "Projects")
         .navigationBarTitleDisplayMode(.inline)

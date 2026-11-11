@@ -610,11 +610,11 @@ struct GrafttyApp: App {
             NSApp.activate(ignoringOtherApps: true)
             AgentNotificationActivation.shared.enqueue(payload)
         }
-        services.remoteMacsModel.onRemoteNotification = { [remoteMacsModel = services.remoteMacsModel] event in
+        services.remoteMacsModel.onRemoteNotification = { [remoteMacsModel = services.remoteMacsModel] event, isCurrent in
             AgentNotificationRouter.shared.post(event, resolvingIdentity: {
                 let identity = await remoteMacsModel.notificationProjectIdentity(for: event)
                 return identity.flatMap { ProjectNotificationIdentity.image(project: $0.0, data: $0.1) }
-            })
+            }, isCurrent: isCurrent)
         }
         AgentNotificationRouter.shared.onActivateRemote = {
             [remoteMacsModel = services.remoteMacsModel] event in

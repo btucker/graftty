@@ -371,7 +371,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// STATE-2.13: leaving a worktree for another means its finished turn was
     /// seen. A turn that asks something stays until answered or dismissed.
     public mutating func leaveAttention() {
-        if unseenAgentStop?.recap?.need?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+        if unseenAgentStop?.question == nil {
             unseenAgentStop = nil
         }
     }

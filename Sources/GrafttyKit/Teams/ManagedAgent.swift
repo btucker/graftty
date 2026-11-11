@@ -73,6 +73,8 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public private(set) var completion: Completion?
     public private(set) var results: [Completion]
     public private(set) var failure: String?
+    /// The interrupted completion a host stop caused. Host start restarts that conversation once.
+    public private(set) var hostStopCompletionID: UUID?
     /// Completion is an outbox item until its exact parent inbox row is durable.
     public var deliveredCompletionID: UUID?
     public var deliveryFailure: String?
@@ -167,10 +169,24 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         sessionEnded(reason: reason, failedLaunch: true)
     }
 
-    public mutating func sessionEnded(reason: String, failedLaunch: Bool = false) {
+    public mutating func sessionEnded(reason: String, failedLaunch: Bool = false, hostStopped: Bool = false) {
+        let wasUnfinished = completion == nil
         processObservation = .exited
         recordInterruption(reason: reason, failedLaunch: failedLaunch)
+        if hostStopped, wasUnfinished, completion?.outcome == .interrupted { hostStopCompletionID = completion?.id }
     }
+
+    /// A provider bound by the running host did not end with an earlier host stop.
+    public func launchedBefore(_ hostStart: Date) -> Bool { nativeBindingDate.map { $0 < hostStart } ?? true }
+
+    /// A closed tab has no pane slot, and a bounded assignment keeps its outcome for the parent.
+    public var awaitsHostRestart: Bool {
+        !isBoundedAssignment && status == .interrupted && paneSlotID != nil && providerSessionID?.isEmpty == false
+            && hostStopCompletionID != nil && hostStopCompletionID == completion?.id
+    }
+
+    /// One attempt per host stop: a failed restart leaves the manual Resume action.
+    public mutating func hostRestartAttempted() { hostStopCompletionID = nil }
 
     /// Closing intent records the assignment outcome without claiming the process has exited.
     public mutating func requestSessionClose(reason: String) {
@@ -228,6 +244,23 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         launchOrigin = .resumedSession
         paneSlotID = presentationSlotID ?? PaneSlotID()
         if paneSessionID == nil { paneSessionID = PaneSessionID() }
+        processObservation = nil
+        status = .starting
+    }
+
+    /// A launch that failed before its provider started holds no conversation, only its task.
+    public var canRetryLaunch: Bool {
+        status == .failed && completion?.outcome == .failed && providerSessionID?.isEmpty != false
+    }
+
+    public mutating func retryLaunch() throws {
+        guard canRetryLaunch else { throw LifecycleError.invalidState }
+        let task = initialPrompt
+        resetConversationAssignment()
+        initialPrompt = task
+        launchTargetWorktree = nil
+        paneSlotID = presentationSlotID ?? PaneSlotID()
+        paneSessionID = PaneSessionID()
         processObservation = nil
         status = .starting
     }

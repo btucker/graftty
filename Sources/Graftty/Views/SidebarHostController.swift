@@ -234,14 +234,68 @@ final class SidebarHostController: ObservableObject {
     }
 }
 
+/// Only structural presentation data. Live entries and row contexts are never retained here.
+struct SidebarLocalWorktreeMetadata {
+    let ancestry: [UUID: [SidebarWorktreeHierarchy.Folder]]
+    let labels: [UUID: String]
+
+    init(repo: RepoEntry, defaultBranch: String?) {
+        ancestry = SidebarHostNavigation.folderAncestry(in: repo)
+        labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
+                                          defaultBranch: defaultBranch)
+    }
+}
+
+@MainActor
+final class SidebarLocalWorktreeMetadataCache {
+    // Keep this key aligned with folderAncestry and SidebarWorktreeLabel.texts.
+    // Branch is needed for the label fallback on an empty/root path. Rank,
+    // activity, state, titles, and reports affect live rows, not this metadata.
+    private struct WorktreeKey: Equatable {
+        let id: UUID
+        let path: String
+        let branch: String
+        let isPinned: Bool
+    }
+    private struct Key: Equatable {
+        let path: String
+        let defaultBranch: String?
+        let worktrees: [WorktreeKey]
+    }
+    private var entries: [UUID: (key: Key, metadata: SidebarLocalWorktreeMetadata)] = [:]
+    private let build: (RepoEntry, String?) -> SidebarLocalWorktreeMetadata
+
+    init(build: @escaping (RepoEntry, String?) -> SidebarLocalWorktreeMetadata = SidebarLocalWorktreeMetadata.init) {
+        self.build = build
+    }
+
+    func retainRepositories(_ repos: [RepoEntry]) {
+        let ids = Set(repos.map(\.id))
+        entries = entries.filter { ids.contains($0.key) }
+    }
+
+    func metadata(for repo: RepoEntry, defaultBranch: String?) -> SidebarLocalWorktreeMetadata {
+        let key = Key(path: repo.path, defaultBranch: defaultBranch, worktrees: repo.worktrees.map {
+            WorktreeKey(id: $0.id, path: $0.path, branch: $0.branch, isPinned: $0.isPinned)
+        })
+        if let cached = entries[repo.id], cached.key == key { return cached.metadata }
+        let metadata = build(repo, defaultBranch)
+        entries[repo.id] = (key, metadata)
+        return metadata
+    }
+}
+
 /// Uses the same `WorktreePanes(entry:repo:inputs:)` projection as the published snapshot.
 @MainActor
 func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
                           titles: [PaneSlotID: String], liveness: [String: AgentLiveness], prBadges: [String: PRBadge] = [:],
+                          metadataCache: SidebarLocalWorktreeMetadataCache? = nil,
                           defaultBranch: (RepoEntry) -> String? = { $0.defaultBranchHint }) -> [WorktreePanes] {
-    state.repos.flatMap { repo in
+    metadataCache?.retainRepositories(state.repos)
+    return state.repos.flatMap { repo in
         sidebarLocalWorktrees(SidebarHostNavigation.displayedWorktrees(in: repo), in: repo, owner: owner,
-                              titles: titles, liveness: liveness, prBadge: { prBadges[$0] }, defaultBranch: defaultBranch)
+                              titles: titles, liveness: liveness, prBadge: { prBadges[$0] },
+                              metadataCache: metadataCache, defaultBranch: defaultBranch)
     }
 }
 
@@ -261,13 +315,14 @@ func sidebarLocalWorktree(atPath path: String, state: AppState, owner: WorktreeO
 @MainActor
 private func sidebarLocalWorktrees(_ worktrees: [WorktreeEntry], in repo: RepoEntry, owner: WorktreeOrigin,
                                    titles: [PaneSlotID: String], liveness: [String: AgentLiveness],
-                                   prBadge: (String) -> PRBadge?, defaultBranch: (RepoEntry) -> String?) -> [WorktreePanes] {
-    let ancestry = SidebarHostNavigation.folderAncestry(in: repo)
-    let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
-                                           defaultBranch: defaultBranch(repo))
+                                   prBadge: (String) -> PRBadge?, metadataCache: SidebarLocalWorktreeMetadataCache? = nil,
+                                   defaultBranch: (RepoEntry) -> String?) -> [WorktreePanes] {
+    let branch = defaultBranch(repo)
+    let metadata = metadataCache?.metadata(for: repo, defaultBranch: branch)
+        ?? SidebarLocalWorktreeMetadata(repo: repo, defaultBranch: branch)
     return worktrees.map { wt in
-        sidebarLocalWorktree(wt, repo: repo, owner: owner, displayName: labels[wt.id] ?? "",
-                             titles: titles, liveness: liveness, prBadge: prBadge(wt.path), folders: ancestry[wt.id])
+        sidebarLocalWorktree(wt, repo: repo, owner: owner, displayName: metadata.labels[wt.id] ?? "",
+                             titles: titles, liveness: liveness, prBadge: prBadge(wt.path), folders: metadata.ancestry[wt.id])
     }
 }
 

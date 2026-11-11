@@ -113,8 +113,13 @@ final class NativeTeamDelivery {
         let lifecycleRouter = SocketRequestRouter(appState: binding, terminalManager: tm, services: services)
         let lifecycleTicker = PollingTicker(interval: .seconds(2), pauseWhenInactive: { false })
         self.lifecycleTicker = lifecycleTicker
-        lifecycleTicker.start { await AgentControl.reconcileOutbox(platform: lifecycleRouter) }
-        Task { await AgentControl.reconcileOutbox(platform: lifecycleRouter) }
+        // Each pass can newly record providers that a host stop ended; restart those conversations.
+        let reconcile: @MainActor () async -> Void = {
+            await AgentControl.reconcileOutbox(platform: lifecycleRouter)
+            await AgentControl.resumeHostStoppedConversations(platform: lifecycleRouter)
+        }
+        lifecycleTicker.start { await reconcile() }
+        Task { await reconcile() }
 
         let presenceTicker = PollingTicker(
             interval: .seconds(30),

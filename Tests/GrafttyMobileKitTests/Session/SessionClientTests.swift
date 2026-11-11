@@ -2291,6 +2291,31 @@ struct SessionClientTests {
         #expect(takeovers.first?.3 == 40)
     }
 
+    @Test("@spec IOS-13.26: When the user swipes an iPhone question card to open an identified agent pane, the application shall open that pane and request control when the terminal connects.", .timeLimit(.minutes(1)))
+    func terminalOpenedBySwipeClaimsControlAfterOwnershipArrives() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "swipe-open", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        primeViewport(client, columns: 80, rows: 24)
+        let clientID = try await waitForHelloClientID(ws)
+        let host = Host(label: "Mac", baseURL: URL(string: "https://fixture.invalid")!)
+        let step = SessionStep(host: host, sessionName: client.sessionName, title: "Agent", takesControl: true)
+        let view = SingleSessionView(step: step, navigationPath: .constant(NavigationPath()), initialClient: client)
+            .environment(\.scenePhase, .inactive)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 700))
+        window.rootViewController = UIHostingController(rootView: view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        window.rootViewController?.view.layoutIfNeeded()
+        let takeover = WebControlEnvelope.takeControl(clientID: clientID, kind: .ios, cols: 120, rows: 40)
+        #expect(!envelopes(ws).contains(takeover))
+
+        try confirmFollower(client, cols: 120, rows: 40)
+        try await waitUntil("takeover after the ownership snapshot") { envelopes(ws).contains(takeover) }
+        #expect(envelopes(ws).filter { $0 == takeover }.count == 1)
+    }
+
     @Test("@spec IOS-4.40: When a follower presenting an authoritative canvas requests display control, the application shall claim at the canvas's authoritative grid rather than a memoized pre-canvas viewport, so the claim itself never resizes the PTY; the confirmed physical viewport that follows carries the owner's real grid.")
     func followerCanvasClaimUsesAuthoritativeGridNotStalePlaceholderViewport() async throws {
         let ws = FakeWS()

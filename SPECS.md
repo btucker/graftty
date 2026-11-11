@@ -1082,6 +1082,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.41** If Apple Intelligence is unavailable, fails, exceeds an eight-second generation budget, returns no usable name, or proposes a name already known in the repository, then the application shall use a brief unique kebab-case fallback; if name generation is cancelled, then the application shall stop submission.
 
+**GIT-5.42** When creation fails with an error that its captured output already contains, the application shall record a short failure summary instead of repeating that output.
+
+**GIT-5.43** When creation diagnostics contain carriage-return progress updates, the application shall place each update on its own line.
+
+**GIT-5.44** When the user opens a terminal from a failed creation whose worktree exists, the application shall start a shell there even when a failed agent launch is recorded.
+
+**GIT-5.45** When a retried agent launch starts in a worktree whose creation failed, the application shall mark that creation complete so the failure no longer replaces the worktree's content.
+
 ### GIT-6.x — Auto-tracking Pinned Agents
 
 **GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.
@@ -1472,15 +1480,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.3** If the user has denied notification authorization, the application shall silently skip the notification rather than surfacing an error.
 
-**NOTIF-1.4** When any agent turn stops, the application shall send a native notification using its stable purpose title, worktree identity, and question or completed result, with a fallback for stops without a report.
+**NOTIF-1.4** When a stopped turn includes a nonblank request for the user, the application shall send a native notification with the request, stable purpose title, and worktree identity. If the turn has no such request, then the application shall suppress the notification.
 
 **NOTIF-1.5** When another agent Attention notification is sent for the same worktree, the application shall replace its existing macOS notification while keeping other worktrees' notifications distinct.
 
 **NOTIF-1.6** While Graftty is active, agent Attention notifications shall display native banners and sounds using the user's macOS notification settings.
 
-**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
+**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once if it requests input. The application shall ignore duplicate deliveries and stops older than a recorded stop or that provider's progress.
 
-**NOTIF-1.8** When a connected Remote Mac records any new stopped turn, the application shall send one macOS notification with its stable purpose title and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
+**NOTIF-1.8** When a connected Remote Mac records a stopped turn that requests input, the application shall send one macOS notification with its stable purpose title and worktree identity. The application shall keep routine completions, repeated snapshots, initial snapshots, and superseded prompts at the same target silent.
 
 **NOTIF-1.9** When a native Attention notification represents the home checkout, the application shall use the current project icon and fallback instead of its stored worktree emoji while preserving linked worktree identities and notification activation routes.
 
@@ -1488,9 +1496,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.11** When the user activates a local agent notification, the application shall retain the request until a window can open its worktree through the normal selection path, restoring terminal surfaces and the originating pane without changing selection or acknowledging attention if the worktree cannot wake.
 
-**NOTIF-1.12** When a mobile client receives a new stopped turn, the application shall create a native notification for stops with or without reports, deduplicate repeated and older snapshots across reconnects and relaunches, and keep hosts distinct.
+**NOTIF-1.12** When a mobile client receives a new, unacknowledged stopped turn that requests input, the application shall notify once with the request, deduplicate repeated and older snapshots across reconnects and relaunches, and keep hosts distinct. Routine and acknowledged stops shall remain silent.
 
-**NOTIF-1.13** When an agent stops while GrafttyMobile is suspended or terminated, the application shall receive a native push notification through Graftty-server and APNs and route activation to its authenticated host and worktree.
+**NOTIF-1.13** When an agent requests input while GrafttyMobile is suspended or terminated, the application shall receive a native push notification through Graftty-server and APNs and route activation to its authenticated host and worktree.
 
 **NOTIF-1.14** When an agent requests permission or input on mobile, the application shall deliver a native notification once per new request, suppress command-finished markers, and suppress an older prompt superseded by a stop at the same pane.
 
@@ -1510,7 +1518,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.22** When the mobile application initializes, the application shall install its notification delegate before constructing the root view so launch notification responses can be received.
 
-**NOTIF-1.23** When mobile receives the same originating stop through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.
+**NOTIF-1.23** When mobile receives the same originating stopped-turn question through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.
 
 **NOTIF-1.24** If a mobile notification lacks a pane identity and its worktree has multiple panes, then the application shall report that the pane cannot be identified instead of opening an unrelated pane.
 
@@ -1521,6 +1529,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **NOTIF-1.27** When a notification reopens a retained mobile pane whose pending history has expired, the application shall refresh its checkpoint and load older history on scroll demand while preserving the retained client and usable live output and input.
 
 **NOTIF-1.28** When a resolved notification attaches its mobile pane, the application shall consume recovery intent once within that window for the matching host and pane, preserve its in-flight recovery task identity, and discard intent superseded by newer navigation.
+
+**NOTIF-1.29** When an agent request is dismissed or superseded while native notification authorization or identity lookup is pending, the application shall suppress its obsolete notification before submission.
 
 ### NOTIF-2.x — Attention Badge Auto-Population
 
@@ -2752,7 +2762,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.8** While a mobile ask card has a known time, the application shall state how long ago it asked or was last active in one compact unit, and otherwise shall show no time.
 
-**IOS-13.9** While the compact Projects screen has worktrees needing the user for something other than a question, the application shall list them between the ask deck and the project list, showing two with a control for the rest until it is used.
+**IOS-13.9** While the compact Projects screen previews worktrees with unread updates, the application shall show up to two with a control for the rest until it is used.
 
 **IOS-13.10** While a finger is on a mobile worktree list, the application shall report it held without claiming the touch, so scrolling, tapping, and swiping keep working.
 
@@ -2779,6 +2789,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-13.21** While an agent waits at its harness's own prompt rather than a stopped turn, its ask card shall open that prompt's pane, and its Explain more shall open it without typing into it.
 
 **IOS-13.22** While a mobile worktree row shows a status line, the application shall place it directly under the name, with no padding between them.
+
+**IOS-13.23** While iPhone Projects has questions or unread updates, the application shall show one Needs you section with a combined count and keep updates accessible from that section.
+
+**IOS-13.24** While agents are working across projects on iPhone, the application shall list them in a Working section above All projects, including agents in pinned worktrees and multiple working agents in one worktree.
+
+**IOS-13.25** While the iPhone picker displays pinned agents, the application shall use wider tiles with four across at typical phone widths and at most five across on wider layouts.
+
+**IOS-13.26** When the user swipes an iPhone question card to open an identified agent pane, the application shall open that pane and request control when the terminal connects.
+
+**IOS-13.27** When a question-card drag ends with more vertical than horizontal displacement or its projected endpoint crosses the origin, the application shall leave the card in place and preserve terminal control.
+
+**IOS-13.28** While a mobile worktree row offers removal, the application shall align the trash icon to the trailing edge of the row.
 
 ## IPAD — iPad Layout
 
@@ -5296,6 +5318,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.156** While an iPhone agent launch awaits the host's response, the application shall keep existing-agent selection and Terminal available in the agent dropdown and disable additional launches.
 
+**AGENT-6.157** When a host starts after a shutdown ended an ongoing agent's provider, the application shall restart that agent's saved conversation without user action, leaving bounded assignments and closed tabs unchanged.
+
+**AGENT-6.158** If a host is draining when it starts, then the application shall leave conversations ended by a shutdown interrupted rather than restart them.
+
+**AGENT-6.159** When a provider exit recorded before the host started is applied, the application shall mark that ongoing conversation for restart, and shall leave an exit recorded while the host was running interrupted.
+
+**AGENT-6.160** When a user retries an agent launch that failed before its provider started, the application shall start that agent again in its worktree with its original task under a new assignment.
+
+**AGENT-6.161** If an ongoing agent's terminal ends without an exit report after the host observed it running, then the application shall leave that conversation interrupted rather than restart it.
+
+**AGENT-6.162** If a failed launch's worktree was never created, then the application shall refuse to retry that agent rather than start it in the worktree that retains its record.
+
+**AGENT-6.163** When a failed launch whose terminal is still open is retried, the application shall end that terminal before starting the agent again.
+
+**AGENT-6.164** When a failed launch is retried, the application shall select the new agent tab only if the request asks for it.
+
 ## CLI — CLI
 
 ### CLI-1.x
@@ -5450,7 +5488,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-34.x
 
-**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.
+**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks merged when their displayed centers are closer than 3 points or their bars overlap, and a box showing the current viewport, and shall hide the card while no message is located.
 
 ### CONTEXT-35.x
 
@@ -5510,7 +5548,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-49.x
 
-**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge, retain a fixed 44-point touch target, expand the card inward while held, dragged, or hovered, and collapse it when interaction ends or is cancelled without changing its vertical scrub coordinates.
+**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge. While the map is visible, the application shall retain a 44-point-wide touch target. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.
 
 ### CONTEXT-50.x
 
@@ -5539,6 +5577,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-56.x
 
 **CONTEXT-56** When the mobile Context drawer uses a different color scheme from its enclosing screen, the application shall apply the Ghostty-derived scheme only inside the drawer and preserve the enclosing screen's appearance when opening or closing it.
+
+### CONTEXT-57.x
+
+**CONTEXT-57** While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the displayed geometry for navigation throughout the animation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.
 
 ## MEM — MEM
 
@@ -5617,6 +5659,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PERF-1.25** When the native transport latency probe is explicitly run, the probe shall report transport, parsing, and matching rendered-pixel latency separately without treating renderer completion as physical display presentation.
 
 **PERF-1.26** When the recurring branch scan reads commit dates, the application shall request integer Unix seconds from Git and convert them directly to dates without calendar or locale parsing.
+
+**PERF-1.27** While local sidebar repository paths, worktree identities, paths, branches, pins, membership, order, and resolved default branches are unchanged, the application shall reuse folder ancestry and labels while projecting current row content and display order.
+
+**PERF-1.28** When local sidebar metadata inputs change or a repository is removed, the application shall invalidate the affected cached metadata and preserve the uncached projection's labels, folders, identities, membership, and ordering.
 
 ## PORTS — PORTS
 

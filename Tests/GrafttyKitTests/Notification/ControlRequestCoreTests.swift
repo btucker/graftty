@@ -31,6 +31,7 @@ struct ControlRequestCoreTests {
         var instructionsDirectory: URL { root }
         var drawingThemeContext: String?
         var stateChanges = 0
+        var hostStart = ProcessIdentityReader.currentProcessStart
         var liveness: [(TeamHookEvent, String)] = []
         var notifications: [AgentStopNotificationContent] = []
         var platformRequests: [NotificationMessage] = []
@@ -203,7 +204,7 @@ struct ControlRequestCoreTests {
                 sessionID: event.sessionID, paneSessionName: event.paneSessionName, recap: event.recap, stoppedAt: event.stoppedAt,
                 recapReportedAt: event.recapReportedAt, turnID: event.turnID, platform: platform)
         }
-        #expect(platform.notifications.count == (recoveredTurn == "first" ? 1 : 2))
+        #expect(platform.notifications.count == 1)
         if recoveredTurn == "second" {
             #expect(platform.state.worktree(forPath: "/repo")?.unseenAgentStop?.recap == nil)
             ControlRequestCore.recordStoppedTurn(callerPath: "/repo", runtime: .codex, callerAgentID: "codex-a",
@@ -225,7 +226,7 @@ struct ControlRequestCoreTests {
         #expect(await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "second", fallbackReport: report), platform: platform) == .teamHookOutput(TeamHookRenderer.requestRecap()))
         let failedCorrection = NotificationMessage.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, stopHookActive: true, turnID: "second", fallbackReport: report)
         #expect(await ControlRequestCore.handleRequest(failedCorrection, platform: platform) == .teamHookOutput("{}"))
-        #expect(platform.notifications.count == 2)
+        #expect(platform.notifications.count == 1)
         #expect(platform.state.worktree(forPath: "/repo")?.unseenAgentStop?.recap == nil)
         let restarted = try RecordingPlatform()
         restarted.state = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(platform.state))
@@ -315,7 +316,7 @@ struct ControlRequestCoreTests {
         #expect(routing.sends.count == 2)
     }
 
-    @Test("team hooks record liveness only for panes tracked in the caller's worktree and post stopped-turn notifications")
+    @Test("team hooks record liveness only for panes tracked in the caller's worktree and record routine stops silently")
     func teamHookPlatformEffects() async throws {
         let platform = try RecordingPlatform()
         let pane = platform.paneSession
@@ -331,6 +332,6 @@ struct ControlRequestCoreTests {
         let stop = try #require(platform.state.worktree(forPath: "/repo")?.lastAgentStop)
         #expect(stop.agentName == "Codex")
         #expect(stop.paneTitle == "editor")
-        #expect(platform.notifications.count == 1)
+        #expect(platform.notifications.isEmpty)
     }
 }

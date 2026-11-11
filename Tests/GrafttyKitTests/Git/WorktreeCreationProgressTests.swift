@@ -38,6 +38,36 @@ struct WorktreeCreationProgressTests {
         #expect(receivedBeforeExit)
     }
 
+    @Test("@spec GIT-5.42: When creation fails with an error that its captured output already contains, the application shall record a short failure summary instead of repeating that output.")
+    func failureDoesNotRepeatCapturedOutput() {
+        var repeated = WorktreeCreationProgress()
+        repeated.output = "Preparing worktree\nerror: could not lock config file\nexit status 255\n"
+        repeated.transition(to: .failed, error: "Preparing worktree\nerror: could not lock config file\nexit status 255...")
+        #expect(repeated.error == WorktreeCreationProgress.outputFailureSummary)
+        var distinct = WorktreeCreationProgress()
+        distinct.output = "Preparing worktree\n"
+        distinct.transition(to: .failed, error: "Git finished, but pane startup did not complete.")
+        #expect(distinct.error == "Git finished, but pane startup did not complete.")
+    }
+
+    @Test("@spec GIT-5.43: When creation diagnostics contain carriage-return progress updates, the application shall place each update on its own line.")
+    func carriageReturnProgressBecomesLines() {
+        #expect(WorktreeCreationProgress.plainText("Updating files: 12%\rUpdating files: 13%\r\ndone\n")
+            == "Updating files: 12%\nUpdating files: 13%\ndone\n")
+    }
+
+    @Test("@spec GIT-5.44: When the user opens a terminal from a failed creation whose worktree exists, the application shall start a shell there even when a failed agent launch is recorded.")
+    func openingATerminalIgnoresAFailedLaunchRecord() {
+        var agent = ManagedAgent(name: "Delegate", provider: .codex, parent: nil, status: .starting, launchOrigin: .cliAgentAdd, isPrimary: true)
+        agent.launchFailed(reason: "git worktree add failed")
+        var worktree = WorktreeEntry(path: "/repo/.worktrees/child", branch: "child", state: .closed)
+        worktree.agents = [agent]
+        #expect(!worktree.startsShellWhenSelected(openingTerminal: false))
+        #expect(worktree.startsShellWhenSelected(openingTerminal: true))
+        worktree.state = .running
+        #expect(!worktree.startsShellWhenSelected(openingTerminal: true))
+    }
+
     @Test("@spec GIT-5.26: While creation is pending, discovery shall preserve the creating row and its progress whether Git has registered the worktree yet or not.", arguments: [false, true])
     func reconciliationPreservesProgress(discovered: Bool) throws {
         var state = AppState()

@@ -10,6 +10,8 @@ public protocol ControlPlatform: ControlTeamPlatform {
     var instructionsDirectory: URL { get }
     /// Resolved terminal colors for the drawing agent's contrast reference.
     var drawingThemeContext: String? { get }
+    /// Providers that ended before this moment ended while no host was observing them.
+    var hostStart: Date { get }
 
     /// Called after the core mutates `state`. The Mac schedules a coalesced
     /// save here, since no window may be observing state; the headless host
@@ -44,7 +46,7 @@ public protocol ControlPlatform: ControlTeamPlatform {
 
 public extension ControlPlatform {
     var drawingThemeContext: String? { nil }
-
+    var hostStart: Date { ProcessIdentityReader.currentProcessStart }
     var agentArchives: AgentArchiveStore {
         AgentArchiveStore(directory: worktreeCreation.agentPromptDirectory.appendingPathComponent("archives", isDirectory: true))
     }

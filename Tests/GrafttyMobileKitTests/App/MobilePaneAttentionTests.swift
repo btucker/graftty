@@ -11,6 +11,21 @@ import UIKit
 @Suite("Pane Attention navigation")
 @MainActor
 struct MobilePaneAttentionTests {
+    @Test("An unidentified stop can open the only pane without taking control of it")
+    func takeoverRequiresAnIdentifiedPane() throws {
+        let row = worktree("old-stop").with(layout: .leaf(sessionName: "shell", title: "Shell",
+            attentionText: nil, isBusy: false, attentionSource: nil))
+        var item = try #require(SidebarProjection.activity([row]).first)
+        let fallback = SidebarProjection.attentionPaneRoute(for: item, in: row)
+        #expect(fallback == "shell")
+        #expect(!MobilePaneAttention.canTakeControl(of: fallback, for: item))
+
+        item.paneID = "shell"
+        let identified = SidebarProjection.attentionPaneRoute(for: item, in: row)
+        #expect(MobilePaneAttention.canTakeControl(of: identified, for: item))
+        #expect(!MobilePaneAttention.canTakeControl(of: nil, for: item))
+    }
+
     @Test("Pending attention counts other worktrees and opens a separate pending route")
     func countsOtherWorktreesAndNavigatesDirectly() {
         let navigation = SidebarNavigationState(prefix: "pane-attention.\(UUID())")

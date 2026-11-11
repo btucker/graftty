@@ -68,7 +68,7 @@ public struct SidebarWorktreeContext: Equatable {
                 && !(candidate.agentStop.map { $0.timestamp < (stop?.timestamp ?? -.infinity) } ?? false)
         }
         let stopRequest = pending.first { $0.id == target.id && $0.occurrence == target.occurrence }
-        let stoppedQuestion = stopRequest != nil ? stop?.recap?.need : nil
+        let stoppedQuestion = stopRequest != nil ? stop?.question : nil
         let providerRequest = pending.first { $0.agentStop == nil && $0.occurrence?.source == .agentStop }
         self.question = stoppedQuestion ?? providerRequest?.occurrence?.text
         self.questionPaneID = stoppedQuestion != nil ? route : providerRequest?.paneID

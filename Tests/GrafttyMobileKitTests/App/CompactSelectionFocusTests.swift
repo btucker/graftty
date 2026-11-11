@@ -57,6 +57,20 @@ struct CompactSelectionFocusTests {
         #expect(state.focusRequestCount == 0)
     }
 
+    @Test("A swipe to open passes the control request to the selected terminal")
+    func swipeOpenCarriesControlRequestToTheTerminal() throws {
+        let (state, host, row) = try fixture()
+        let leaf = try #require(row.layout?.leaves.last)
+        var path = NavigationPath()
+        RootView.applyCompactPaneSelection(leaf, in: row, host: host, project: nil, appState: state,
+                                           navigationPath: &path, takesControl: true)
+        var expected = NavigationPath()
+        expected.append(SessionStep(host: host, worktreePath: row.path, sessionName: leaf.sessionName,
+            title: leaf.displayTitle, worktreeProject: SidebarProjection.projects([row]).first, takesControl: true))
+        #expect(path == expected)
+        #expect(state.focusedPaneId == leaf.sessionName)
+    }
+
     @Test func compactContextLinkDoesNotRequestFocus() throws {
         let (state, host, row) = try fixture()
         let path = try #require(RootView.applyContextWorktree(row, host: host, appState: state,

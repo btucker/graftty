@@ -81,7 +81,8 @@ extension SocketRequestRouter: ControlPlatform {
                 $0.agents.contains { $0.paneSlotID == slot && $0.status != .closed }
             }), let agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) else { return }
             try AgentControl.sessionEnded(path: worktree.path, slot: slot,
-                reason: "Terminal process was absent after restart", preserveView: !agent.isBoundedAssignment, platform: self)
+                reason: "Terminal process was absent after restart", preserveView: !agent.isBoundedAssignment,
+                hostStopped: true, platform: self)
         }
         terminalManager.managedPaneClose = { [weak self] slot, userInitiated in
             guard let self, let worktree = self.state.repos.flatMap(\.worktrees).first(where: {
