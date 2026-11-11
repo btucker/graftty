@@ -49,6 +49,7 @@ public enum TeamHookRenderer {
     /// Turn start asks for a pending redraw and lists nearby drawings
     /// while this worktree needs a drawing (AGENT-3.44, AGENT-3.46, AGENT-3.47).
     public static func userPromptSubmit(assignmentContext: String = "", drawingRedraw: WorktreeDrawing.Redraw? = nil,
+                                        drawingThemeContext: String? = nil,
                                         drawingsInUse: [String] = []) throws -> String {
         let redrawRequest = switch drawingRedraw {
         case .widen: " This worktree's `icon` still uses the older square canvas. Redraw it once on the wide canvas, `<svg viewBox='0 0 96 64'>`, and include it in this turn's report. Graftty accepts it without `purposeChanged`."
@@ -57,6 +58,9 @@ public enum TeamHookRenderer {
         }
         return try hookJSON(eventName: "UserPromptSubmit", additionalContext: recapGuidance
             + redrawRequest
+            + (drawingThemeContext.map {
+                "\n\nThe active Ghostty theme has these resolved colors. Use them as a contrast reference for the worktree drawing at sidebar size. Paint the drawing with SVG palette tokens.\n\($0)\n"
+            } ?? "")
             + (drawingsInUse.isEmpty ? "" : " Drawings already used in this project: "
                 + drawingsInUse.joined(separator: "; ") + ". Draw a different subject and composition with a distinct silhouette.")
             + (assignmentContext.isEmpty ? "" : "\n\n" + assignmentContext))

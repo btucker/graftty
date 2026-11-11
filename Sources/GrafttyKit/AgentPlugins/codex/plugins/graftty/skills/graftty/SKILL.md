@@ -41,6 +41,7 @@ Keep each field brief:
   - Use one wide `<svg viewBox='0 0 96 64'>` of at most 16 KB, built only from `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `g`, `text`, and linear or radial gradients. Single-quote attributes so the drawing fits in the JSON string.
   - Paint only with the tokens `primary`, `primary-light`, `primary-dark`, `accent`, `accent-light`, `ink`, and `white`, or with `url(#id)` for a gradient built from them. Graftty assigns each worktree's colors and adds a white outline.
   - Outline shapes in `ink` with a stroke width near 2.5. Graftty shows the drawing about 60 points wide. Give the outline and the odd detail enough room to read at that size and in any palette.
+  - Use the resolved Ghostty theme colors supplied in the turn context as a contrast reference for the drawing. Paint with SVG palette tokens.
   - When the project suggests a world, such as sailing, you may add one supporting element from it, like a life ring standing in for a check mark. Never make it the subject.
 
   For branch date parsing, a clock with a branching hand.

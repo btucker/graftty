@@ -28,6 +28,7 @@ struct WorktreeDrawingGuidanceTests {
             #expect(text.contains("purposeChanged"))
             #expect(text.contains("`emoji`"))
             #expect(text.contains("Vary the composition"))
+            #expect(text.contains("resolved Ghostty theme colors"))
             #expect(!text.contains("put the subject on the left"))
             #expect(text.components(separatedBy: "- Optional `icon`").count == 2, "The drawing guidance appears once")
         }
@@ -115,5 +116,34 @@ struct DrawingsInUseTests {
             let text = try skill(provider)
             #expect(text.contains("`iconDescription`"))
         }
+    }
+}
+
+@Suite("@spec AGENT-3.48: When a host supplies resolved Ghostty theme colors, the application shall include them in each agent turn's drawing guidance as a contrast reference while requiring SVG palette tokens.")
+@MainActor
+struct WorktreeDrawingThemeGuidanceTests {
+    @Test(arguments: [TeamHookRuntime.codex, .claude])
+    func turnStartIncludesCurrentTheme(provider: TeamHookRuntime) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.drawingThemeContext = "background = #282a36\nforeground = #f8f8f2\npalette = 1=#ff5555"
+        let response = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo",
+            callerAgentID: nil, runtime: provider, event: .userPromptSubmit,
+            sessionID: nil, paneSessionName: platform.paneSession), platform: platform)
+        let output = try #require(response)
+        guard case .teamHookOutput(let json) = output else {
+            Issue.record("Expected hook output")
+            return
+        }
+        let object = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let hook = try #require(object["hookSpecificOutput"] as? [String: Any])
+        let context = try #require(hook["additionalContext"] as? String)
+        #expect(context.contains(try #require(platform.drawingThemeContext)))
+        #expect(context.contains("contrast reference"))
+        #expect(context.contains("SVG palette tokens"))
+    }
+
+    @Test func hostsWithoutAThemeOmitTheReference() throws {
+        let text = try TeamHookRenderer.userPromptSubmit()
+        #expect(!text.contains("active Ghostty theme"))
     }
 }

@@ -359,6 +359,7 @@ public enum ControlRequestCore {
                     path: callerPath, agentID: callerAgentID, paneSessionName: paneSessionName,
                     provider: runtime, platform: platform),
                     drawingRedraw: platform.state.worktree(forPath: callerPath)?.drawing?.redraw,
+                    drawingThemeContext: platform.drawingThemeContext,
                     drawingsInUse: WorktreeDrawing.descriptionsInUse(besidesWorktreePath: callerPath,
                                                                      in: platform.state.repos))) ?? "{}" : "{}")
         }

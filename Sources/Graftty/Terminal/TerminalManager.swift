@@ -230,6 +230,11 @@ final class TerminalManager: ObservableObject {
         return GhosttyPresentationConfig.render(config: config, text: text)
     }
 
+    func drawingThemeContext() -> String? {
+        guard let config = ghosttyConfig?.config else { return nil }
+        return GhosttyPresentationConfig.drawingContext(config: config)
+    }
+
     /// Per-pane titles set by the running program via the OSC-0/OSC-2 escape
     /// sequences (e.g. `\033]0;TITLE\007`). Populated in response to
     /// `GHOSTTY_ACTION_SET_TITLE` after filtering obvious env-assignment

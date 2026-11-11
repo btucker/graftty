@@ -14,6 +14,7 @@ extension SocketRequestRouter: ControlPlatform {
     var attentionRecaps: AttentionRecapCoordinator { .shared }
     var remoteTeamRouting: (any ControlRemoteTeamRouting)? { remoteTeamRouter }
     var instructionsDirectory: URL { InstructionStore.defaultApplicationSupportDirectory }
+    var drawingThemeContext: String? { terminalManager.drawingThemeContext() }
 
     func stateDidChange() { GrafttyApp.persistAppState(appState.wrappedValue) }
 

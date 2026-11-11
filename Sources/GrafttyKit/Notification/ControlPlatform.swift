@@ -8,6 +8,8 @@ import GrafttyProtocol
 public protocol ControlPlatform: ControlTeamPlatform {
     var attentionRecaps: AttentionRecapCoordinator { get }
     var instructionsDirectory: URL { get }
+    /// Resolved terminal colors for the drawing agent's contrast reference.
+    var drawingThemeContext: String? { get }
 
     /// Called after the core mutates `state`. The Mac schedules a coalesced
     /// save here, since no window may be observing state; the headless host
@@ -41,6 +43,8 @@ public protocol ControlPlatform: ControlTeamPlatform {
 }
 
 public extension ControlPlatform {
+    var drawingThemeContext: String? { nil }
+
     var agentArchives: AgentArchiveStore {
         AgentArchiveStore(directory: worktreeCreation.agentPromptDirectory.appendingPathComponent("archives", isDirectory: true))
     }

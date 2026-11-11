@@ -7,6 +7,38 @@ import Testing
 @Suite("@spec IOS-4.45: When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings from root and included config files including fonts and keybindings, and retain explicit overrides over the selected host theme branch.")
 @MainActor
 struct GhosttyPresentationConfigTests {
+    @Test(arguments: ["#faf8ef", "#282a36"])
+    func drawingContextUsesResolvedColorsAndOnlyStandardANSIPalette(background: String) throws {
+        #expect(ghosttyInitWithoutArguments() == 0)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("config")
+        try """
+        background = \(background)
+        foreground = #252525
+        palette = 1=#aa1122
+        palette = 15=#dddddd
+        palette = 16=#123456
+        font-family = TestFont
+        """.write(to: file, atomically: true, encoding: .utf8)
+        let config = try #require(ghostty_config_new())
+        defer { ghostty_config_free(config) }
+        ghostty_config_load_file(config, file.path)
+        ghostty_config_finalize(config)
+        #expect(ghostty_config_diagnostics_count(config) == 0)
+
+        let context = GhosttyPresentationConfig.drawingContext(config: config)
+        #expect(context.contains("background = \(background)"))
+        #expect(context.contains("foreground = #252525"))
+        #expect(context.contains("palette = 1=#aa1122"))
+        #expect(context.contains("palette = 15=#dddddd"))
+        #expect(!context.contains("palette = 16="))
+        #expect(!context.contains("font-family"))
+        #expect(!context.contains("theme ="))
+        #expect(context.split(separator: "\n").count == 18)
+    }
+
     @Test(arguments: ["relativeSymlink", "homeRelativeSymlink", "absoluteAlias", "literalTilde", "bomRoot", "bomChild"])
     func includePathsMatchNativeGhostty(scenario: String) throws {
         #expect(ghosttyInitWithoutArguments() == 0)
@@ -196,6 +228,12 @@ struct GhosttyPresentationConfigTests {
         #expect(ghostty_config_get(config, &palette, "palette", 7))
         let themeRed = palette.colors.1
         #expect(exported.contains(String(format: "palette = 1=#%02x%02x%02x", themeRed.r, themeRed.g, themeRed.b)))
+        let drawing = GhosttyPresentationConfig.drawingContext(config: config)
+        #expect(drawing.contains(expectedBackground))
+        #expect(drawing.contains("foreground = #123456"))
+        #expect(drawing.contains("palette = 2=#98971a"))
+        #expect(drawing.contains(String(format: "palette = 1=#%02x%02x%02x", themeRed.r, themeRed.g, themeRed.b)))
+        #expect(!drawing.contains(directory.path))
         #expect(exported.split(separator: "\n").filter { $0.hasPrefix("palette =") }.count >= 256)
         // A portable export must still load after the host's theme files disappear.
         try FileManager.default.removeItem(at: light)
