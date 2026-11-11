@@ -7,6 +7,20 @@ import GrafttyProtocol
 
 @MainActor
 struct WideIdentitySlotTests {
+    @Test("@spec LAYOUT-2.241: While a worktree sidebar row is shown on Mac or Mobile, the application shall add six points of top padding above its icon and text.")
+    func rowInsetsIdentityAndTextTogether() throws {
+        let row = SidebarWorktreeRowLayout {
+            Color.red
+        } content: {
+            Color.blue.frame(height: 20)
+        }
+        let pixel = try render(row, width: 300, height: 50)
+        #expect(pixel(30, 3).alphaComponent < 0.1)
+        #expect(pixel(80, 3).alphaComponent < 0.1)
+        #expect(pixel(30, 8).redComponent > 0.9)
+        #expect(pixel(80, 8).blueComponent > 0.9)
+    }
+
     private func render<V: View>(_ view: V, width: CGFloat, height: CGFloat) throws -> (Int, Int) -> NSColor {
         let renderer = ImageRenderer(content: view.frame(width: width, height: height, alignment: .topLeading))
         renderer.scale = 1
@@ -31,11 +45,11 @@ struct WideIdentitySlotTests {
         } content: {
             Color.blue.frame(height: 20)
         }
-        let pixel = try render(row, width: 300, height: 44)
+        let pixel = try render(row, width: 300, height: 50)
         // The drawing spans the slot's width and height.
         #expect(pixel(3, 20).redComponent > 0.9)
         #expect(pixel(56, 20).redComponent > 0.9)
-        #expect(pixel(30, 3).redComponent > 0.9)
+        #expect(pixel(30, 9).redComponent > 0.9)
         // Text begins after the slot.
         #expect(pixel(70, 10).blueComponent > 0.9)
         #expect(pixel(63, 10).blueComponent < 0.1)

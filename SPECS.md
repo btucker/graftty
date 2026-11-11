@@ -436,6 +436,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.240** When a host identifies a launched agent after its pane already appeared as a terminal, the application shall move that session from the terminal drawer into the agent tabs, leaving agents the user started by hand in a shell in place.
 
+**LAYOUT-2.241** While a worktree sidebar row is shown on Mac or Mobile, the application shall add six points of top padding above its icon and text.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
