@@ -1086,6 +1086,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.44** When the user opens a terminal from a failed creation whose worktree exists, the application shall start a shell there even when a failed agent launch is recorded.
 
+**GIT-5.45** When a retried agent launch starts in a worktree whose creation failed, the application shall mark that creation complete so the failure no longer replaces the worktree's content.
+
 ### GIT-6.x — Auto-tracking Pinned Agents
 
 **GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.
@@ -5311,6 +5313,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.159** When a provider exit recorded before the host started is applied, the application shall mark that ongoing conversation for restart, and shall leave an exit recorded while the host was running interrupted.
 
 **AGENT-6.160** When a user retries an agent launch that failed before its provider started, the application shall start that agent again in its worktree with its original task under a new assignment.
+
+**AGENT-6.161** If an ongoing agent's terminal ends without an exit report after the host observed it running, then the application shall leave that conversation interrupted rather than restart it.
+
+**AGENT-6.162** If a failed launch's worktree was never created, then the application shall refuse to retry that agent rather than start it in the worktree that retains its record.
+
+**AGENT-6.163** When a failed launch whose terminal is still open is retried, the application shall end that terminal before starting the agent again.
+
+**AGENT-6.164** When a failed launch is retried, the application shall select the new agent tab only if the request asks for it.
 
 ## CLI — CLI
 

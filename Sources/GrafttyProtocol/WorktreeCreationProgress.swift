@@ -50,7 +50,8 @@ public struct WorktreeCreationProgress: Codable, Sendable, Hashable {
         max(0, (finishedAt ?? now).timeIntervalSince(startedAt))
     }
 
-    public static let outputFailureSummary = "Git or one of its hooks reported an error. The output below has the details."
+    /// Surfaces place the captured output above or below this text, so it names no position.
+    public static let outputFailureSummary = "Git or one of its hooks reported an error. The captured output has the details."
 
     public mutating func transition(to phase: Phase, error: String? = nil, now: Date = Date()) {
         self.phase = phase

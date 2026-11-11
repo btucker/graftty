@@ -111,6 +111,98 @@ struct AgentConversationResumeTests {
         #expect(pane.managedAgent?.id == agent.id)
     }
 
+    @Test("@spec AGENT-6.161: If an ongoing agent's terminal ends without an exit report after the host observed it running, then the application shall leave that conversation interrupted rather than restart it.")
+    func terminalLostWhileHostRunsStaysInterrupted() async throws {
+        for (observedRunning, expected) in [(true, ManagedAgent.Status.interrupted), (false, .starting)] {
+            let platform = try ControlRequestCoreTests.RecordingPlatform()
+            platform.controlCapabilities.insert(.paneAgent)
+            let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
+            var agent = ManagedAgent(name: "Primary", provider: .codex, parent: nil, launchOrigin: .userInterface, isPrimary: true)
+            agent.paneSlotID = slot
+            agent.paneSessionID = platform.state.repos[0].worktrees[0].paneSessions[slot]
+            agent.providerSessionID = "conversation"
+            platform.state.repos[0].worktrees[0].agents = [agent]
+            if observedRunning { await AgentControl.reconcileOutbox(platform: platform) }
+            platform.liveAgentSessionNames = []
+            await AgentControl.reconcileOutbox(platform: platform)
+            #expect(platform.state.repos[0].worktrees[0].agents[0].status == .interrupted)
+            await AgentControl.resumeHostStoppedConversations(platform: platform)
+            #expect(platform.state.repos[0].worktrees[0].agents[0].status == expected)
+        }
+    }
+
+    @Test("@spec AGENT-6.162: If a failed launch's worktree was never created, then the application shall refuse to retry that agent rather than start it in the worktree that retains its record.")
+    func retryRefusesAnAgentWhoseWorktreeWasNeverCreated() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.controlCapabilities.insert(.paneAgent)
+        var agent = ManagedAgent(name: "Delegate", provider: .codex, parent: nil, status: .starting,
+            launchOrigin: .cliAgentAdd, isPrimary: true)
+        agent.initialPrompt = "Fix the employer timeouts"
+        agent.launchTargetWorktree = "/repo/.worktrees/delegate"
+        agent.launchFailed(reason: "/repo/.worktrees/delegate: git worktree add failed")
+        platform.state.repos[0].worktrees[0].agents = [agent]
+        let response = await AgentControl.handle(.init(action: .resume, callerWorktree: "/repo", agentID: agent.id), platform: platform)
+        guard case .error = response else { Issue.record("Expected a refusal: \(response)"); return }
+        let retained = try #require(platform.state.repos[0].worktrees[0].agents.first)
+        #expect(platform.platformRequests.isEmpty)
+        #expect(retained.status == .failed)
+        #expect(retained.assignmentID == agent.assignmentID)
+        #expect(retained.launchTargetWorktree == "/repo/.worktrees/delegate")
+    }
+
+    @Test("@spec AGENT-6.163: When a failed launch whose terminal is still open is retried, the application shall end that terminal before starting the agent again.")
+    func retryEndsTheFailedLaunchTerminalFirst() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.controlCapabilities.insert(.paneAgent)
+        let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
+        var agent = ManagedAgent(name: "Delegate", provider: .codex, parent: nil, status: .starting,
+            launchOrigin: .cliAgentAdd, isPrimary: false)
+        agent.paneSlotID = slot
+        agent.paneSessionID = platform.state.repos[0].worktrees[0].paneSessions[slot]
+        agent.launchFailed(reason: "Codex exited with status 127.")
+        platform.state.repos[0].worktrees[0].agents = [agent]
+        platform.beforeAgentClose = { #expect(platform.platformRequests.isEmpty) }
+        let response = await AgentControl.handle(.init(action: .resume, callerWorktree: "/repo", agentID: agent.id), platform: platform)
+        guard case .agents = response else { Issue.record("Expected retry: \(response)"); return }
+        #expect(platform.closedAgentSlots == [slot])
+        #expect(platform.platformRequests.count == 1)
+        let retried = try #require(platform.state.repos[0].worktrees[0].agents.first)
+        #expect(retried.status == .starting)
+        #expect(retried.presentationSlotID == slot)
+        #expect(retried.paneSessionID != agent.paneSessionID)
+    }
+
+    @Test("@spec AGENT-6.164: When a failed launch is retried, the application shall select the new agent tab only if the request asks for it.", arguments: [nil, true] as [Bool?])
+    func retrySelectsItsTabOnlyOnRequest(selectTab: Bool?) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.controlCapabilities.insert(.paneAgent)
+        var agent = ManagedAgent(name: "Delegate", provider: .codex, parent: nil, status: .starting,
+            launchOrigin: .cliAgentAdd, isPrimary: false)
+        agent.launchFailed(reason: "Could not start the agent's terminal backend.")
+        platform.state.repos[0].worktrees[0].agents = [agent]
+        _ = await AgentControl.handle(.init(action: .resume, callerWorktree: "/repo", agentID: agent.id,
+            selectTab: selectTab), platform: platform)
+        guard case .addPane(let pane)? = platform.platformRequests.first else { Issue.record("Expected a pane launch"); return }
+        #expect(pane.selectTab == selectTab)
+    }
+
+    @Test("@spec GIT-5.45: When a retried agent launch starts in a worktree whose creation failed, the application shall mark that creation complete so the failure no longer replaces the worktree's content.")
+    func retriedLaunchResolvesFailedCreation() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.controlCapabilities.insert(.paneAgent)
+        var progress = WorktreeCreationProgress()
+        progress.transition(to: .failed, error: "git worktree add failed")
+        platform.state.repos[0].worktrees[0].creationProgress = progress
+        var agent = ManagedAgent(name: "Delegate", provider: .codex, parent: nil, status: .starting,
+            launchOrigin: .cliAgentAdd, isPrimary: true)
+        agent.launchFailed(reason: "git worktree add failed")
+        platform.state.repos[0].worktrees[0].agents = [agent]
+        let response = await AgentControl.handle(.init(action: .resume, callerWorktree: "/repo", agentID: agent.id), platform: platform)
+        guard case .agents = response else { Issue.record("Expected retry: \(response)"); return }
+        #expect(platform.state.repos[0].worktrees[0].creationProgress?.phase == .ready)
+        #expect(platform.state.repos[0].worktrees[0].creationProgress?.error == nil)
+    }
+
     @Test("@spec AGENT-6.139: When a paired viewer requests a saved conversation, the host shall return bounded content for the exact worktree and reject an agent addressed through a different worktree.")
     func remoteConversationUsesExactWorktree() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()

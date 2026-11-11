@@ -54,6 +54,7 @@ struct MainWindow: View {
     @State private var worktreeHistory = WorktreeNavigationHistory()
     @State private var attentionOpenGeneration: UInt64 = 0
     @State private var remoteRouteSelectionTask: Task<Void, Never>?
+    @State private var retryingAgentLaunch = false
     @StateObject private var voiceDictation = VoiceDictationController()
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
@@ -1004,8 +1005,18 @@ struct MainWindow: View {
               let agent = worktree.agents.first(where: \.canRetryLaunch) else { return nil }
         let path = worktree.path, agentID = agent.id
         return {
+            // The button stays visible until the launch is reserved; a second click would only be refused.
+            guard !retryingAgentLaunch else { return }
+            retryingAgentLaunch = true
             Task { @MainActor in
-                _ = await request(.init(action: .resume, callerWorktree: path, agentID: agentID))
+                defer { retryingAgentLaunch = false }
+                let response = await request(.init(action: .resume, callerWorktree: path, agentID: agentID, selectTab: true))
+                guard case .error(let message) = response else { return }
+                let alert = NSAlert()
+                alert.messageText = "Could not start the agent"
+                alert.informativeText = message
+                alert.alertStyle = .warning
+                alert.runModal()
             }
         }
     }
