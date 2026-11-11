@@ -4754,6 +4754,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.21** When a remote host's catalog reports a newer revision of a displayed preview, the application shall download it and update that preview in place.
 
+**PREVIEW-1.22** When a macOS preview window is resized, hidden, or updated, the application shall preserve its requested size without repeated titlebar-height growth or constraint exceptions.
+
 ### PREVIEW-2.x
 
 **PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.
