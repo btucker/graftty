@@ -4872,11 +4872,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.33** When an agent submits a worktree drawing, the application shall accept only a 96-by-64 or 64-unit SVG of at most 16384 bytes built from allowlisted shapes, gradients and text whose paints are palette tokens or local gradient references, and reject scripts, event handlers, external references, embedded images and foreign content.
 
-**AGENT-3.34** When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only when the same recap sets purposeChanged, keep its assigned hue across redraws, and ignore drawings for the home checkout.
+**AGENT-3.34** When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only for a purpose change or a one-time redraw, keep its assigned hue across redraws, and ignore drawings for the home checkout.
 
 **AGENT-3.35** When the application records a recap that carried a drawing, it shall store and broadcast that recap without the drawing.
 
-**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, its palette tokens and the redraw rule while still requiring an emoji.
+**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, varied compositions, its palette tokens and the redraw rule while still requiring an emoji.
 
 **AGENT-3.37** When an Attention report carries a drawing that fails validation, the CLI shall reject the report with the specific reason before staging it.
 
@@ -4892,11 +4892,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.43** When a worktree's adopted drawing uses the older square canvas, the application shall replace it with the first wide drawing a valid recap carries, even without purposeChanged, and keep its hue.
 
-**AGENT-3.44** While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start for one wide redraw, and shall not ask once the drawing is wide or absent.
+**AGENT-3.44** While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start to redraw it on the wide canvas.
 
 **AGENT-3.45** When the application adopts a recap's drawing, it shall store the recap's iconDescription of at most 120 characters with that drawing, keep the description of a drawing it does not adopt out of the worktree, keep saved drawings without a description decodable, and reject a recap whose iconDescription is longer.
 
-**AGENT-3.46** While a linked worktree has no wide drawing, the application shall list at turn start the descriptions of up to eight of the most recently adopted other drawings in its repository and ask for a different subject, and shall list none once the worktree's drawing is wide.
+**AGENT-3.46** While a linked worktree needs a first drawing or a one-time redraw, the application shall list at turn start the descriptions of up to eight of the most recently adopted other drawings in its repository and ask for a different subject and composition.
+
+**AGENT-3.47** When a linked worktree has a saved wide drawing from before varied compositions, the application shall request a new composition at turn start and adopt the first different wide drawing from a valid recap while keeping the worktree's assigned hue.
 
 ### AGENT-4.x
 

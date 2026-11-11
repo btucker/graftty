@@ -18,24 +18,37 @@ public struct WorktreeDrawing: Codable, Sendable, Equatable {
     public var description: String?
     /// When the drawing was adopted; nil for older drawings.
     public var adoptedAt: Date?
+    /// Saved drawings from before the varied composition guidance lack this flag.
+    private var usesVariedCompositionGuidance: Bool?
 
     public init(svg: String, hue: Double, description: String? = nil, adoptedAt: Date? = nil) {
         self.svg = svg
         self.description = description
         self.adoptedAt = adoptedAt
+        self.usesVariedCompositionGuidance = true
         self.revision = SHA256.hash(data: Data(svg.utf8)).map { String(format: "%02x", $0) }.joined() + ":\(Int(hue.rounded()))"
     }
 
     /// Older drawings are square; current ones are drawn wide.
     public var canvas: WorktreeDrawingSVG.Canvas { WorktreeDrawingSVG.canvas(of: svg) ?? .square }
 
+    public enum Redraw: Sendable {
+        case widen, varyComposition
+    }
+
+    public var redraw: Redraw? {
+        if canvas == .square { return .widen }
+        return usesVariedCompositionGuidance == true ? nil : .varyComposition
+    }
+
     /// @spec AGENT-3.46
-    /// While a linked worktree still needs a wide drawing, the descriptions of
-    /// the most recently adopted other drawings in its repository, newest first,
-    /// so its agent can draw something different.
+    /// While a linked worktree needs a first drawing or a one-time redraw, the application shall
+    /// list at turn start the descriptions of up to eight of the most recently adopted other drawings
+    /// in its repository and ask for a different subject and composition.
     public static func descriptionsInUse(besidesWorktreePath path: String, in repos: [RepoEntry], limit: Int = 8) -> [String] {
         guard let repo = repos.first(where: { $0.path != path && $0.worktrees.contains { $0.path == path } }),
-              repo.worktrees.first(where: { $0.path == path })?.drawing?.canvas != .wide else { return [] }
+              let worktree = repo.worktrees.first(where: { $0.path == path }),
+              worktree.drawing == nil || worktree.drawing?.redraw != nil else { return [] }
         return repo.worktrees.filter { $0.path != path }.compactMap(\.drawing)
             .filter { $0.description != nil }
             .sorted { ($0.adoptedAt ?? .distantPast) > ($1.adoptedAt ?? .distantPast) }

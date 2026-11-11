@@ -34,18 +34,25 @@ Keep each field brief:
 - `completed`: verified recent progress toward that purpose; state unknown results honestly.
 - `next`: remaining concrete work.
 - `emoji`: task-specific subject. Include up to three distinct task-related `emojiAlternatives`. The first report assigns the worktree's enduring emoji.
-- Optional `icon`: a drawing of this worktree that Graftty shows in place of the emoji, so make it memorable. Send it once you understand the worktree's purpose. Afterwards, send a new `icon` only in a report with `purposeChanged: true`, and only when the old picture no longer makes sense; Graftty ignores other redraws. Keep sending `emoji`; it remains the fallback.
-  - Draw the subject the user would picture, never the activity: a database for fixture data, not a checkmark for testing. Make it one concrete, recognizable object, with a distinct second object beside it as the odd detail that makes it this worktree's own, such as a clock beside a git branch for date parsing on branches. Avoid generic boxes, pages, and documents with lines.
-  - Send an `iconDescription` with every `icon`: a few words naming the subject and its odd detail, such as `a clock beside a git branch`. Graftty lists these to later agents in the project so each drawing stays distinct; when it lists drawings already used, draw a different subject and silhouette.
+- Optional `icon`: the worktree's drawing. Send it once you understand the worktree's purpose. Send a replacement when the host asks for a one-time redraw, or when the purpose changes and the old picture no longer fits. Set `purposeChanged: true` only for an actual purpose change. Keep sending `emoji` as the fallback.
+  - Pick a concrete subject tied to the work, such as a database for fixture data. Give it one odd detail that someone could remember after a glance.
+  - Vary the composition. Let the subject and the detail suggest the layout. A clock can have a git branch for a hand. A paper boat can hang from the hook of a crane. Two spools can sit at opposite corners with a thread between them. Try a centered shape, a diagonal, a stack, or an overlap as the subject calls for it. Use the project's recent drawings to choose a different subject and overall silhouette.
+  - Send an `iconDescription` with every `icon`. Name the subject, its odd detail, and how they fit together in a few words, such as `a clock with a branching hand`. Graftty shares these descriptions with other agents in the project.
   - Use one wide `<svg viewBox='0 0 96 64'>` of at most 16 KB, built only from `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `g`, `text`, and linear or radial gradients. Single-quote attributes so the drawing fits in the JSON string.
   - Paint only with the tokens `primary`, `primary-light`, `primary-dark`, `accent`, `accent-light`, `ink`, and `white`, or with `url(#id)` for a gradient built from them. Graftty assigns each worktree's colors and adds a white outline.
-  - Outline shapes in `ink` with a stroke width near 2.5. Let the silhouette carry the meaning, and pick shapes that still make sense in any color. Graftty shows the drawing about 60 points wide, so use the width: put the subject on the left and its odd detail beside it, large enough to read, rather than tucked into a corner of the subject.
+  - Outline shapes in `ink` with a stroke width near 2.5. Graftty shows the drawing about 60 points wide. Give the outline and the odd detail enough room to read at that size and in any palette.
   - When the project suggests a world, such as sailing, you may add one supporting element from it, like a life ring standing in for a check mark. Never make it the subject.
 
-  For fixing branch date parsing, a git branch with a clock beside it, sent with `"iconDescription":"a clock beside a git branch"`:
+  For branch date parsing, a clock with a branching hand.
 
   ```svg
-  <svg viewBox='0 0 96 64'><path d='M18 54V10M18 40c0-12 22-10 22-22' fill='none' stroke='ink' stroke-width='2.5' stroke-linecap='round'/><circle cx='18' cy='10' r='6' fill='primary' stroke='ink' stroke-width='2.5'/><circle cx='18' cy='54' r='6' fill='primary' stroke='ink' stroke-width='2.5'/><circle cx='40' cy='16' r='6' fill='primary-light' stroke='ink' stroke-width='2.5'/><circle cx='70' cy='34' r='20' fill='accent-light' stroke='ink' stroke-width='2.5'/><path d='M70 22v12l8 6' fill='none' stroke='ink' stroke-width='3' stroke-linecap='round'/></svg>
+  <svg viewBox='0 0 96 64'><g stroke='ink' stroke-width='2.5' stroke-linecap='round'><circle cx='48' cy='32' r='27' fill='primary'/><circle cx='48' cy='32' r='21' fill='primary-light'/><path d='M48 43V19m0 16c0-6 11-4 11-11' fill='none'/><circle cx='48' cy='43' r='3' fill='accent'/><circle cx='48' cy='19' r='3' fill='accent'/><circle cx='59' cy='24' r='3' fill='accent'/></g></svg>
+  ```
+
+  For reconnecting a sync link, two spools joined by a loose diagonal thread.
+
+  ```svg
+  <svg viewBox='0 0 96 64'><g stroke='ink' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M25 21c21-14 20 27 42 22' fill='none' stroke-width='4'/><path d='M12 7h24v6h-4v13h4v6H12v-6h4V13h-4Z' fill='primary'/><path d='M16 15h16m-16 5h16m-16 5h16' fill='none'/><path d='M62 33h24v6h-4v13h4v6H62v-6h4V39h-4Z' fill='accent'/><path d='M66 41h16m-16 5h16m-16 5h16' fill='none'/></g></svg>
   ```
 - Optional `need`: a brief question or action only when the user must decide or supply something before work can continue. Omit it when no input is needed; still report completed turns.
 - Optional `catchUp`: include it with every `need`, in at most 600 characters, written for someone who has forgotten this worktree: what you are doing and why, what you found, the choices and what each costs, and what you recommend. Graftty shows it beside the question, so the user can answer without asking you to explain again. For example: `"need":"Merge now or wait for CI?","catchUp":"The fix is a 6-line reorder; CI takes 25 min and last failed on an unrelated flake. I'd merge now."`
