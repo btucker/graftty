@@ -89,7 +89,7 @@ public extension AppState {
 
     /// Records a provider's stopped turn on the sidebar. Stops older than
     /// the same session's last progress, older than the recorded stop, or
-    /// identical to it are dropped. Returns the notification to post.
+    /// identical to it are dropped. Returns a notification if the turn requests input.
     mutating func recordStoppedTurn(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
                                     sessionID: String?, paneSessionName: String?, recap: AttentionRecap?,
                                     stoppedAt: Date, recapReportedAt: Date? = nil, turnID: String? = nil, paneTitle: (PaneSlotID, WorktreeEntry) -> String?) -> AgentStopNotificationContent? {

@@ -21,6 +21,7 @@ class ModelState:
         self.rows = rows
         self.fixture_text = scenario_text
         self.completion_text = lambda agent: 'Graftty integration'
+        self.recap_need = None
         self.pause_after_output = False
         self.condition = threading.Condition()
         self.barriers = {}
@@ -124,6 +125,8 @@ class ModelState:
                     recap = {'title': 'Agent fixture ' + agent, 'context': 'Automated native terminal integration',
                              'completed': 'Scripted fixture turn completed', 'next': 'Wait for the next test action',
                              'emoji': '🧪', 'emojiAlternatives': ['📱', '⌨️']}
+                    if self.recap_need is not None:
+                        recap['need'] = self.recap_need
                     delimiter = 'GRAFTTY_RECAP_' + key
                     command = (f'{shlex.quote(self.cli)} attention report --stdin <<\'{delimiter}\'\n'
                                + json.dumps(recap) + '\n' + delimiter + '\n'

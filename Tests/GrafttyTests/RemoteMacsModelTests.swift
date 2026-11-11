@@ -2037,7 +2037,7 @@ struct RemoteMacsModelTests {
     }
 
     @Test("""
-    @spec NOTIF-1.8: When a connected Remote Mac records any new stopped turn, the application shall send one macOS notification with its stable purpose title and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
+    @spec NOTIF-1.8: When a connected Remote Mac records a stopped turn that requests input, the application shall send one macOS notification with its stable purpose title and worktree identity. The application shall keep routine completions, repeated snapshots, initial snapshots, and superseded prompts at the same target silent.
     """)
     func remoteRecapsUseTaskContent() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -2055,9 +2055,11 @@ struct RemoteMacsModelTests {
         let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.",
                                    need: "Does this look right?")
         func snapshot(time: Double?, userNotification: Bool = false,
-                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false, home: Bool = false, bare: Bool = false) -> [WorktreePanes] {
+                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false, home: Bool = false, bare: Bool = false, routine: Bool = false) -> [WorktreePanes] {
+            var report = recap
+            if routine { report.need = nil }
             let stop = time.map { SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: $0),
-                                                  recap: bare ? nil : recap, paneSlotID: "slot") }
+                                                  recap: bare ? nil : report, paneSlotID: "slot") }
             let prompt = PaneLayoutNode.leaf(sessionName: separatePane ? "other-pane" : "agent-pane", title: "Agent",
                 attentionText: userNotification ? "Check the preview" : time == nil ? nil : "Codex has a question", isBusy: false,
                 attentionSource: userNotification ? .userNotify : .agentStop,
@@ -2110,9 +2112,14 @@ struct RemoteMacsModelTests {
         #expect(fallback?.0.id == "project")
         let count = events.count
         registry.onPaneSnapshot(identity, snapshot(time: 600, bare: true))
+        registry.onPaneSnapshot(identity, snapshot(time: 700, routine: true))
+        #expect(events.count == count)
+        model.disconnect(identity: identity)
+        registry.onPaneSnapshot(identity, snapshot(time: 800, routine: true))
+        #expect(events.count == count)
+        registry.onPaneSnapshot(identity, snapshot(time: 900))
         #expect(events.count == count + 1)
-        #expect(events.last?.kind == .agentStop)
-        #expect(events.last?.body.contains("stopped") == true)
+        #expect(events.last?.body.contains(recap.need!) == true)
     }
 
     @Test("""

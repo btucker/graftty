@@ -1556,7 +1556,6 @@ final class RemoteMacsModel: ObservableObject {
                 deviceLabel: remoteMac.label,
                 relayDepth: 0
             )
-            let recap = worktree.sidebar?.unseenAgentStop?.recap
             let recapItem = SidebarProjection.activity([worktree]).first(where: { $0.agentStop != nil })
             let recapPaneID = recapItem.flatMap { SidebarProjection.attentionPaneRoute(for: $0, in: worktree) }
             func supersedesAgentAttention(paneID: String?, timestamp: Date?) -> Bool {
@@ -1564,12 +1563,11 @@ final class RemoteMacsModel: ObservableObject {
                       paneID == recapPaneID else { return false }
                 return timestamp.map { $0 <= stop.stoppedAt } ?? true
             }
-            if let stop = worktree.sidebar?.unseenAgentStop,
-               recapItem != nil {
+            if let stop = recapItem?.agentStop, let recap = stop.recap, let question = stop.question {
                 events.append(makeAttentionEvent(
                     remoteMac: remoteMac, origin: origin, worktree: worktree,
                     paneID: recapPaneID,
-                    text: recap?.title ?? "\(stop.agentName) stopped.", kind: .agentStop, attentionTimestamp: stop.stoppedAt, recap: recap
+                    text: question, kind: .agentStop, attentionTimestamp: stop.stoppedAt, recapTitle: recap.title
                 ))
             }
             let worktreeTimestamp = worktree.sidebar?.attentionTimestamps?["worktree"]
@@ -1633,23 +1631,23 @@ final class RemoteMacsModel: ObservableObject {
         text: String,
         kind: RemoteNotificationEvent.Kind,
         attentionTimestamp: Date?,
-        recap: AttentionRecap? = nil
+        recapTitle: String? = nil
     ) -> (RemoteAttentionKey, RemoteNotificationEvent) {
         let key = RemoteAttentionKey(
             worktreeID: worktree.path,
             paneID: paneID,
-            text: recap.map { $0.title + "\n" + ($0.need ?? $0.completed) } ?? text,
+            text: recapTitle.map { $0 + "\n" + text } ?? text,
             kind: kind,
             attentionTimestamp: attentionTimestamp
         )
         let worktreeName = worktree.displayName.isEmpty
             ? worktree.displayBranch
             : worktree.displayName
-        let title = kind == .agentStop ? (worktree.sidebar?.brief?.title ?? recap?.title ?? text) : "Notification from \(remoteMac.label)"
+        let title = kind == .agentStop ? (worktree.sidebar?.brief?.title ?? recapTitle ?? text) : "Notification from \(remoteMac.label)"
         let body: String
-        if let recap {
+        if recapTitle != nil {
             let identity = [worktree.effectiveEmoji, worktreeName].compactMap { $0 }.joined(separator: " ")
-            body = "\(identity) on \(remoteMac.label)\n\(recap.need ?? recap.completed)"
+            body = "\(identity) on \(remoteMac.label)\n\(text)"
         } else {
             body = kind == .agentStop
                 ? "\(worktreeName) on \(remoteMac.label): \(text)"

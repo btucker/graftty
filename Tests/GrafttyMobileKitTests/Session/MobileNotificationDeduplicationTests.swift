@@ -5,10 +5,10 @@ import Testing
 
 struct MobileNotificationDeduplicationTests {
     private func row(_ time: Double, owner: String = "origin-mac", relayed: Bool = false,
-                     body: String = "Tests passed.") -> WorktreePanes {
+                     question: String = "Approve the result?", unseen: Bool = true) -> WorktreePanes {
         let stop = SidebarAgentStop(agentName: "Codex",
             stoppedAt: Date(timeIntervalSinceReferenceDate: time),
-            recap: .init(title: "Notification routing", completed: body, next: "Review."),
+            recap: .init(title: "Notification routing", completed: "Tests passed.", next: "Review.", need: question),
             paneSlotID: "agent-slot", providerSessionKey: "codex:session:fixture")
         let session = relayed ? "relay-pane-alias" : "local-pane"
         return .init(path: relayed ? "relay-worktree-alias" : "/repo/task", displayName: "Task",
@@ -17,10 +17,10 @@ struct MobileNotificationDeduplicationTests {
             layout: .leaf(sessionName: session, title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil),
             origin: .init(deviceID: .init(value: owner), deviceLabel: "Origin Mac", relayDepth: relayed ? 1 : 0),
             sidebar: .init(id: "stable-worktree", projectID: "stable-project", paneIDs: [session: "agent-slot"],
-                unseenAgentStop: stop, lastAgentStop: stop))
+                unseenAgentStop: unseen ? stop : nil, lastAgentStop: stop))
     }
 
-    @Test("@spec NOTIF-1.23: When mobile receives the same originating stop through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.", arguments: [false, true])
+    @Test("@spec NOTIF-1.23: When mobile receives the same originating stopped-turn question through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.", arguments: [false, true])
     func directAndRelayedOccurrencesNotifyOnce(relayFirst: Bool) throws {
         var ledger = MobileStopNotificationLedger()
         let direct = UUID(), relay = UUID()
@@ -33,7 +33,15 @@ struct MobileNotificationDeduplicationTests {
         #expect(restored.receive([row(20)], hostID: direct).count == 1)
         #expect(restored.receive([row(20, relayed: true)], hostID: relay).isEmpty)
         #expect(restored.receive([row(20, owner: "another-mac")], hostID: UUID()).count == 1)
-        #expect(restored.receive([row(21, body: "A different result.")], hostID: UUID()).count == 1)
+        #expect(restored.receive([row(21, question: "Approve the new result?")], hostID: UUID()).count == 1)
+    }
+
+    @Test func acknowledgedQuestionStaysSilentOnAStaleRelay() throws {
+        var ledger = MobileStopNotificationLedger()
+        #expect(ledger.receive([row(10, unseen: false)], hostID: UUID()).isEmpty)
+        let restored = try JSONDecoder().decode(MobileStopNotificationLedger.self, from: JSONEncoder().encode(ledger))
+        ledger = restored
+        #expect(ledger.receive([row(10, relayed: true)], hostID: UUID()).isEmpty)
     }
 
     @Test func legacyLedgerStillDecodes() throws {
