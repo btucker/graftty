@@ -48,11 +48,17 @@ struct WorktreeContextPanelTests {
         defer { window.close() }
         let scroll = try #require(Self.find(NSScrollView.self, in: host).first)
         #expect(try Self.distanceFromBottom(scroll) < 2)
-        #expect(accessibilityPress("worktree.context.title", in: host))
         try await Self.settle(host)
+        #expect(accessibilityPress("worktree.context.title", in: host))
         let document = try #require(scroll.documentView)
-        let visible = scroll.contentView.documentVisibleRect
-        let fromTop = document.isFlipped ? visible.minY - document.bounds.minY : document.bounds.maxY - visible.maxY
+        var fromTop = Double.infinity
+        // The scroll to the details waits a turn for them to exist.
+        for _ in 0..<20 where fromTop >= 26 {
+            try await Task.sleep(for: .milliseconds(50))
+            host.layoutSubtreeIfNeeded()
+            let visible = scroll.contentView.documentVisibleRect
+            fromTop = document.isFlipped ? visible.minY - document.bounds.minY : document.bounds.maxY - visible.maxY
+        }
         // Only the scroll's 24-point padding may sit above the details.
         #expect(fromTop < 26, "The details at the top of the scroll are visible, not \(fromTop) points below them")
     }
@@ -146,10 +152,13 @@ struct WorktreeContextPanelTests {
         }
         let (window, host) = try await Self.host(panel("/first"), height: 700)
         defer { window.close() }
+        // Let the panel finish opening (a scroller can still appear and re-wrap rows) before the reader scrolls.
+        try await Self.settle(host)
         let first = try #require(Self.find(NSScrollView.self, in: host).first)
         try Self.scroll(first, toDistanceFromBottom: 10_000)
         try await Self.settle(host)
-        #expect(try Self.distanceFromBottom(first) > 500, "The reader scrolled back through the first worktree")
+        let scrolledBack = try Self.distanceFromBottom(first)
+        #expect(scrolledBack > 500, "The reader scrolled back through the first worktree, not \(scrolledBack) points")
         host.rootView = panel("/second")
         try await Self.settle(host)
         let second = try #require(Self.find(NSScrollView.self, in: host).first)

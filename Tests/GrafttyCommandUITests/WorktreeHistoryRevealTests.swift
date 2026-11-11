@@ -20,11 +20,12 @@ struct WorktreeHistoryRevealTests {
             revealInTerminal: { revealed.append($0); return found }))
         defer { host.close() }
         let collapsed = host.height
-        try await host.click(fromBottom: 45)
+        // The input's one line sits under its day label, right of the You label.
+        try await host.click(x: 160, fromTop: 54)
         #expect(revealed == [timeline.events[0].id])
         #expect(host.height > collapsed + 8, "A message missing from scrollback must show a note")
         found = true
-        try await host.click(fromBottom: host.height - collapsed + 45)
+        try await host.click(x: 160, fromTop: 54)
         #expect(revealed.count == 2)
         #expect(abs(host.height - collapsed) < 1, "A found message must clear the note")
     }
@@ -39,10 +40,12 @@ struct WorktreeHistoryRevealTests {
             gists: PeerMessageGistProvider { _ in nil }, revealInTerminal: { revealed.append($0); return true }))
         defer { host.close() }
         let collapsed = host.height
-        try await host.click(fromBottom: 53)
+        // The message line follows the sender link on the row's first line.
+        try await host.click(x: 220, fromTop: 54)
         #expect(revealed.isEmpty, "Tapping a peer message expands it without scrolling the terminal")
-        #expect(host.height > collapsed + 40)
-        try await host.click(fromBottom: 53)
+        #expect(host.height > collapsed + 30)
+        // Show in terminal is the last control under the expanded text.
+        try await host.click(x: 150, fromBottom: 36)
         #expect(revealed == [timeline.events[0].id])
     }
 
@@ -63,12 +66,21 @@ struct WorktreeHistoryRevealTests {
 
         var height: Double { view.fittingSize.height }
 
-        func click(fromBottom offset: Double) async throws {
+        func click(x: Double, fromTop offset: Double) async throws {
+            try await click(x: x, top: offset)
+        }
+
+        func click(x: Double, fromBottom offset: Double) async throws {
+            window.setContentSize(view.fittingSize)
+            view.layoutSubtreeIfNeeded()
+            try await click(x: x, top: height - offset)
+        }
+
+        private func click(x: Double, top: Double) async throws {
             window.setContentSize(view.fittingSize)
             view.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(100))
-            let top = height - offset
-            let point = view.convert(NSPoint(x: 80, y: view.isFlipped ? top : view.bounds.height - top), to: nil)
+            let point = view.convert(NSPoint(x: x, y: view.isFlipped ? top : view.bounds.height - top), to: nil)
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                 let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
                     windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))

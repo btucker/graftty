@@ -35,7 +35,7 @@ struct WorktreeHistoryContentTests {
         try capture(host, named: "harness-reply-\(Int(width))-\(scheme == .dark ? "dark" : "light")")
     }
 
-    @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall align sender and time beside a quiet timeline rail with message text on one reading edge, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two multiline gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0])
+    @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall put the sender, the message line and the time on one baseline beside a quiet timeline rail, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two one-line gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0])
     func humanInputAndPeerMessages(width: Double) async throws {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
         let firstPeer = UUID(), longPeer = UUID()
@@ -70,6 +70,8 @@ struct WorktreeHistoryContentTests {
         try capture(host, named: "messages-collapsed-\(Int(width))")
         // The rail's latest label sits below the messages; sender navigation is a separate header.
         let collapsedHeight = host.fittingSize.height
+        // Rows are one line each, so controls sit at fixed offsets above the collapsed bottom;
+        // nothing above an expanded message moves.
         func click(x: Double, fromBottom offset: Double) async throws {
             let top = collapsedHeight - offset
             let point = host.convert(NSPoint(x: x, y: host.isFlipped ? top : host.bounds.height - top), to: nil)
@@ -81,24 +83,24 @@ struct WorktreeHistoryContentTests {
             try await Task.sleep(for: .milliseconds(100))
             host.layoutSubtreeIfNeeded()
         }
-        try await click(x: width / 2, fromBottom: 284)
+        try await click(x: 53, fromBottom: 114)
         #expect(openedPaths == ["/repo/layout"])
-        #expect(abs(host.fittingSize.height - collapsedHeight) < 3, "Opening the worktree must not toggle the card")
-        try await click(x: width / 2, fromBottom: 202)
+        #expect(abs(host.fittingSize.height - collapsedHeight) < 3, "Opening the worktree must not toggle the message")
+        try await click(x: 150, fromBottom: 51)
         #expect(host.fittingSize.height > collapsedHeight + 400, "Tapping a message must reveal its complete text")
         #expect(openedPaths.count == 1, "Expanding must not navigate to the worktree")
         let expandedHeight = host.fittingSize.height
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
-        try await click(x: 62, fromBottom: 234)
-        #expect(host.fittingSize.height > expandedHeight + 25, "The earlier control must reveal the older message")
+        try await click(x: 100, fromBottom: 83)
+        #expect(host.fittingSize.height > expandedHeight + 15, "The earlier control must reveal the older message")
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
         try capture(host, named: "messages-expanded-\(Int(width))")
     }
 
-    @Test("@spec CONTEXT-43: While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.")
-    func summariesReserveFourLinesRegardlessOfTextLength() {
+    @Test("@spec CONTEXT-43: While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall show it as one line, the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on activation without shifting later rows when generation finishes.")
+    func summariesTakeOneLineRegardlessOfTextLength() {
         for width in [260.0, 390.0] {
             #expect(abs(summaryHeight("Updated the workflows.", width: width) - summaryHeight(String(repeating: "Long summary with enough words to wrap ", count: 20), width: width)) < 1)
         }
@@ -224,7 +226,7 @@ struct WorktreeHistoryContentTests {
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
         #expect(abs(host.fittingSize.width - width) < 1)
-        #expect(host.fittingSize.height > 200)
+        #expect(host.fittingSize.height < 110, "A collapsed reply takes one line beside the input above it")
         try capture(host, named: "agent-reply-\(Int(width))-\(scheme == .dark ? "dark" : "light")")
     }
 

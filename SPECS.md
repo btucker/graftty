@@ -5436,7 +5436,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-19.x
 
-**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall align sender and time beside a quiet timeline rail with message text on one reading edge, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two multiline gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.
+**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall put the sender, the message line and the time on one baseline beside a quiet timeline rail, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two one-line gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.
 
 ### CONTEXT-20.x
 
@@ -5528,7 +5528,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-43.x
 
-**CONTEXT-43** While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.
+**CONTEXT-43** While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall show it as one line, the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on activation without shifting later rows when generation finishes.
 
 ### CONTEXT-44.x
 
