@@ -107,7 +107,8 @@ public struct WorktreeActivitySections: Sendable, Equatable {
         showsAll ? (rows, 0) : (Array(rows.prefix(limit)), max(0, rows.count - limit))
     }
 
-    /// What a row's time means: when it asked, or else when it was last active.
+    /// When a row asked, or else when it was last active: an ask card's time,
+    /// and the order of Needs you.
     public static func rowDate(_ worktree: WorktreePanes, context: SidebarWorktreeContext) -> Date? {
         context.pending.compactMap { $0.occurrence?.timestamp }.max()
             ?? worktree.sidebar?.activityTime.map(Date.init(timeIntervalSinceReferenceDate:))

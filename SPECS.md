@@ -2628,7 +2628,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.13** When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.
 
-**IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and its time.
+**IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button.
 
 **IOS-9.15** When mobile worktree creation fails, the application shall remove its temporary row and show the error outside the dismissed form.
 
@@ -2746,7 +2746,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.7** While the user is touching or editing a mobile worktree list or a row's report is open, the application shall keep each row in its section and position, then apply any changes on release.
 
-**IOS-13.8** While a mobile worktree row has a known time, the application shall state how long ago it asked or was last active in one compact unit, and otherwise shall show no time.
+**IOS-13.8** While a mobile ask card has a known time, the application shall state how long ago it asked or was last active in one compact unit, and otherwise shall show no time.
 
 **IOS-13.9** While the compact Projects screen has worktrees needing the user for something other than a question, the application shall list them between the ask deck and the project list, showing two with a control for the rest until it is used.
 
@@ -2754,7 +2754,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.11** While a worktree is open on mobile, the application shall show how far it is ahead of and behind its base there, rather than on its list row.
 
-**IOS-13.12** While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one and its time at the trailing edge.
+**IOS-13.12** While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one, and shall show no time, matching the Mac sidebar.
 
 **IOS-13.13** While a mobile worktree list is shown, the application shall offer Edit from a More menu, replace that menu with Done while editing, and reveal search when the list is pulled down.
 
@@ -2782,11 +2782,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.1** When `horizontalSizeClass == .regular`, the iPad application shall render `IPadRootLayout` (NavigationSplitView, 2-column) in place of the compact-width `NavigationStack`.
 
-**IPAD-1.3** While `IPadRootLayout` is presented, the sidebar shall render `WorktreeListContent` extracted from `WorktreePickerView`, preserving `WorktreePickerGrouping`, swipe actions, PR badges, attention pills, and row times.
+**IPAD-1.3** While `IPadRootLayout` is presented, the sidebar shall render `WorktreeListContent` extracted from `WorktreePickerView`, preserving `WorktreePickerGrouping`, swipe actions, PR badges, and attention pills.
 
 **IPAD-1.4** When the user opens a pane from an attention request at iPad regular width, the application shall set `IPadAppState.focusedPaneId` to that leafs `sessionName` without pushing a new navigation stack frame.
 
-**IPAD-1.5** While `IPadRootLayout` is presented, the sidebar's row text (worktree name, secondary branch label, type icon for closed/creating/deleting states, pane `↳` arrow and pane title, row time, section titles, and the Section repository header) shall be colored from `appState.theme` rather than system label colors, sharing the same opacity ladder the Mac sidebar applies via `GhosttyThemeColors.sidebarPrimaryText`/`sidebarSecondaryText`/`sidebarDimIcon`/`sidebarStaleText`/`paneArrow`/`paneTitle`.
+**IPAD-1.5** While `IPadRootLayout` is presented, the sidebar's row text (worktree name, secondary branch label, type icon for closed/creating/deleting states, pane `↳` arrow and pane title, section titles, and the Section repository header) shall be colored from `appState.theme` rather than system label colors, sharing the same opacity ladder the Mac sidebar applies via `GhosttyThemeColors.sidebarPrimaryText`/`sidebarSecondaryText`/`sidebarDimIcon`/`sidebarStaleText`/`paneArrow`/`paneTitle`.
 
 **IPAD-1.6** While `IPadRootLayout` is presented, the sidebar and detail shall render side-by-side as a permanent two-column layout (NavigationSplitView with `.balanced` style and an initial `columnVisibility` of `.all`) rather than the system's overlay default, mirroring the Mac sidebar's always-visible behavior.
 
@@ -2812,7 +2812,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.18** While an iPad detail `SingleSessionView` renders with `isFullScreen == false` to preserve the split-view sidebar toggle, ownership controls shall remain independent of that visual mode. A fullscreen-role mobile client that is currently a follower or ownerless shall still expose Take Control in the detail column.
 
-**IPAD-1.19** While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so a row's time sits near the sidebar edge.
+**IPAD-1.19** While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so a row's trailing content sits near the sidebar edge.
 
 **IPAD-1.20** While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
 

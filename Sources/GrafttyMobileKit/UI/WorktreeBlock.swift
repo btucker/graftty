@@ -121,8 +121,7 @@ struct WorktreeBlock: View {
     private var rowIdentity: some View {
         WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
             theme: theme, isActive: isActive, isOpening: isOpening,
-            hostText: hostText,
-            time: WorktreeActivitySections.rowDate(worktree, context: context))
+            hostText: hostText)
             .frame(minHeight: 24)
             .contentShape(Rectangle())
     }
@@ -190,7 +189,7 @@ private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
 }
 
 /// Compact worktree heading with its name and forge reference on one line.
-/// @spec IOS-13.12: While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one and its time at the trailing edge.
+/// @spec IOS-13.12: While a mobile worktree list shows a row, the application shall show its name in its own letter case, followed by its PR number when it has one, and shall show no time, matching the Mac sidebar.
 struct WorktreeRowContent: View {
     let worktree: WorktreePanes
     var project: SidebarProject? = nil
@@ -203,8 +202,6 @@ struct WorktreeRowContent: View {
     let isActive: Bool
     let isOpening: Bool
     var hostText: String? = nil
-    /// When it asked or was last active.
-    var time: Date? = nil
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -241,15 +238,6 @@ struct WorktreeRowContent: View {
             }
             if let badge = worktree.prBadge { SidebarPRBadge(badge: badge).fixedSize() }
             Spacer(minLength: 0)
-            if let time {
-                TimelineView(.periodic(from: .now, by: 60)) { timeline in
-                    Text(WorktreeActivitySections.ageText(since: time, now: timeline.date))
-                        .font(.caption)
-                        .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
-                        .accessibilityLabel(time.formatted(.relative(presentation: .named)))
-                }
-                .fixedSize()
-            }
         }
         .padding(.top, Self.verticalPadding)
         .padding(.bottom, Self.bottomPadding)
