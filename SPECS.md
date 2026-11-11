@@ -4916,7 +4916,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.40** When a client asks a host to explain a stopped agent's question, the host shall type the catch-up prompt into that agent's pane and submit it, and shall refuse a pane it cannot find or one waiting at its harness's own prompt.
 
-**AGENT-3.41** When the application renders agent recap guidance, it shall ask for a `catchUp` with every `need` and for Explain more as an option in every agent question that offers choices.
+**AGENT-3.41** When the application renders agent recap guidance, it shall ask for a one-sentence plain completed state, short plain history headlines, and, for a question with clear choices, options with a few words of cost each in place of a catch-up paragraph, without lengthening the per-turn guidance.
 
 **AGENT-3.42** When an agent submits a worktree drawing, the application shall accept a wide 96-by-64 canvas as well as the older 64-unit square, reject any other canvas, and know which canvas a stored drawing uses.
 
@@ -4931,6 +4931,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.47** When a linked worktree has a saved wide drawing from before varied compositions, the application shall request a new composition at turn start and adopt the first different wide drawing from a valid recap while keeping the worktree's assigned hue.
 
 **AGENT-3.48** When a host supplies resolved Ghostty theme colors, the application shall include them in each agent turn's drawing guidance as a contrast reference while requiring SVG palette tokens.
+
+**AGENT-3.49** When an agent reports a question with options, the application shall accept two to four options with distinct labels of at most 40 characters, optional costs of at most 80 characters, and at most one suggested option, reject options without a question, and decode older recaps without options.
+
+**AGENT-3.50** When a client answers a stopped agent's question, the host shall type the answer as one line into that agent's pane and submit it, and shall refuse when the question has changed or cleared, the answer is empty, the pane is gone, or the pane is waiting at its harness's own prompt.
 
 ### AGENT-4.x
 
@@ -5460,15 +5464,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-27.x
 
-**CONTEXT-27** When Context is opened on Mac or mobile, the application shall pin the current brief above the timeline, capped at half the panel height by default and scrolling internally only when it exceeds its allocated height, and shall scroll the oldest-first timeline independently, opening at its latest event.
+**CONTEXT-27** When Context is opened on Mac or mobile, the application shall show the worktree's title in a pinned header in place of a static Context label, and every other section in one scroll that opens at its latest content.
 
 ### CONTEXT-28.x
 
 **CONTEXT-28** When a new event arrives in the Context timeline, the application shall scroll to it only while the reader is at the bottom of the timeline, and otherwise shall show a Jump to latest control that scrolls to the latest event and disappears when used or when the reader returns to the bottom.
-
-### CONTEXT-29.x
-
-**CONTEXT-29** When the mobile Context drawer timeline is scrolled farther from the latest event than half the panel height or the chosen summary height, whichever is greater, the application shall collapse the pinned brief to a one-line bar showing the title with the next step, or the pending question when one is waiting, shall expand the full brief when the bar is tapped, and shall restore the full brief only when the bar is tapped or the reader returns to the bottom, so that the brief changing size cannot toggle it back.
 
 ### CONTEXT-30.x
 
@@ -5534,10 +5534,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-45** When provider input contains background task notifications, the application shall omit those generated envelopes from the Mac and mobile timeline, including previously saved user inputs, while preserving surrounding human text and fenced examples.
 
-### CONTEXT-46.x
-
-**CONTEXT-46** When the user drags the divider between the Context summary and timeline on Mac or mobile, the application shall resize those sections independently, reserve 96 points for each when space permits, retain the chosen height during content updates, and restore automatic sizing when switching worktrees.
-
 ### CONTEXT-47.x
 
 **CONTEXT-47** While an agent turn is running on Mac or mobile, the timeline shall preview its first text response, retain that text through intermediate updates and summary generation, and generate an AI summary from the first and final responses only after the turn completes.
@@ -5566,13 +5562,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-53** While Context is visible on Mac or mobile, the application shall use an opaque inspector background blended from the Ghostty background toward its foreground, with greater separation for dark themes than light themes, and a fine foreground-derived edge.
 
-### CONTEXT-54.x
-
-**CONTEXT-54** When Context shows an empty or populated brief on Mac or mobile, the application shall align its content to the top of its allocated area and let a short brief use its natural height by default.
-
 ### CONTEXT-55.x
 
-**CONTEXT-55** While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.
+**CONTEXT-55** While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, and below the tab row beside a workspace, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.
 
 ### CONTEXT-56.x
 
@@ -5581,6 +5573,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-57.x
 
 **CONTEXT-57** While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the displayed geometry for navigation throughout the animation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.
+
+### CONTEXT-58.x
+
+**CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its completed sentence above a dimmer Next line, after the timeline, followed by any waiting question and a status line.
+
+### CONTEXT-59.x
+
+**CONTEXT-59** When the user activates the Context title on Mac or mobile, the application shall show or hide the worktree path, purpose, decisions and completed agents above the timeline, hidden by default.
+
+### CONTEXT-60.x
+
+**CONTEXT-60** While Context history shows a history entry on Mac or mobile, the application shall show its headline on one row with its time and reveal its detail and decisions only when the row is activated.
+
+### CONTEXT-61.x
+
+**CONTEXT-61** While an agent has stopped with a question, Context on Mac and mobile shall end with the question under a Waiting for you label, one row per reported option showing its cost and marking the suggested one, a Why this is being asked disclosure for the catch-up, and a reply field, and shall offer only Answer in the agent's terminal for a prompt the harness owns or when the host cannot be answered from here.
+
+### CONTEXT-62.x
+
+**CONTEXT-62** When the user picks an option or sends a reply in Context, the application shall send it to the asking agent, disable the question while sending, show Sent until the question changes, and show the host's message and re-enable on failure.
 
 ## MEM — MEM
 
