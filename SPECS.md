@@ -5438,7 +5438,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-34.x
 
-**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.
+**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks closer than 3 points in the displayed strip merged into one, and a box showing the current viewport, and shall hide the card while no message is located.
 
 ### CONTEXT-35.x
 
@@ -5498,7 +5498,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-49.x
 
-**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge, retain a fixed 44-point touch target, expand the card inward while held, dragged, or hovered, and collapse it when interaction ends or is cancelled without changing its vertical scrub coordinates.
+**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge. While the map is visible, the application shall retain a 44-point-wide touch target. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.
 
 ### CONTEXT-50.x
 
@@ -5527,6 +5527,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-56.x
 
 **CONTEXT-56** When the mobile Context drawer uses a different color scheme from its enclosing screen, the application shall apply the Ghostty-derived scheme only inside the drawer and preserve the enclosing screen's appearance when opening or closing it.
+
+### CONTEXT-57.x
+
+**CONTEXT-57** While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the magnified geometry for navigation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.
 
 ## MEM — MEM
 

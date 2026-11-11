@@ -58,7 +58,8 @@ final class ScrollbackMapPointerView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let pointerTracking { removeTrackingArea(pointerTracking) }
+        // AppKit updates an in-visible-rect area as the card grows and shrinks.
+        guard pointerTracking == nil else { return }
         let tracking = NSTrackingArea(rect: bounds,
             options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved], owner: self)
         addTrackingArea(tracking)
@@ -102,6 +103,7 @@ final class ScrollbackMapPointerView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         if dragged { onDrag?(point.y) } else { onClick?(point.y) }
         press = nil
+        onHover?(bounds.contains(point) ? point.y : nil)
         onScrub?(nil)
     }
 }
