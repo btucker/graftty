@@ -32,6 +32,53 @@ struct AttentionExplainDeliveryTests {
         #expect(platform.platformRequests.count == 1)
     }
 
+    @Test("@spec AGENT-3.50: When a client answers a stopped agent's question, the host shall type the answer as one line into that agent's pane and submit it, and shall refuse when the question has changed or cleared, the answer is empty, the pane is gone, or the pane is waiting at its harness's own prompt.")
+    func typesTheAnswerIntoTheAskingPane() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
+        platform.state.repos[0].worktrees[0].ensurePaneSession(for: slot)
+        let session = ZmxLauncher.sessionName(for: try #require(platform.state.repos[0].worktrees[0].paneSessions[slot]))
+        let stop = SidebarAgentStop(agentName: "Claude", stoppedAt: Date(timeIntervalSinceReferenceDate: 500),
+            recap: AttentionRecap(title: "Release", completed: "Found it.", next: "Decide.", need: "Hold or ship?"),
+            paneSlotID: slot.id.uuidString, providerSessionKey: "agent")
+        platform.state.repos[0].worktrees[0].unseenAgentStop = stop
+        func answer(_ text: String, occurrence: SidebarAttentionOccurrence? = nil, pane: String? = nil) async -> WorktreeManagementResponse {
+            await AttentionAnswerDelivery.deliver(worktreeID: "/repo", paneID: pane ?? session,
+                occurrence: occurrence ?? stop.occurrence, text: text, platform: platform)
+        }
+
+        #expect(await answer("Hold") == .ok)
+        #expect(await answer("Hold,\nthen ship\r\n") == .ok)
+        #expect(platform.platformRequests == [
+            .sendPane(path: "/repo", index: 1, text: "Hold", pressEnter: true),
+            .sendPane(path: "/repo", index: 1, text: "Hold, then ship", pressEnter: true),
+        ])
+
+        var stale = stop.occurrence
+        stale.text = "An earlier question?"
+        let changed = await answer("Hold", occurrence: stale)
+        #expect(changed == .error(code: "occurrence-changed", message: "This request has changed or already cleared.",
+                                  forceAllowed: false, shortStatus: nil))
+        guard case .error = await answer("  \n "), case .error = await answer("Hold", pane: "gone") else {
+            Issue.record("expected errors for an empty answer and a missing pane"); return
+        }
+        platform.state.repos[0].worktrees[0].paneAttention[slot] = Attention(
+            text: "Claude needs your permission", timestamp: Date(), source: .agentStop)
+        guard case .error = await answer("Hold") else { Issue.record("expected a harness-prompt refusal"); return }
+        platform.state.repos[0].worktrees[0].paneAttention[slot] = nil
+        platform.state.repos[0].worktrees[0].unseenAgentStop = nil
+        #expect(await answer("Hold") == changed, "A cleared question refuses as a changed one")
+        #expect(platform.platformRequests.count == 2)
+    }
+
+    @Test func answerRequestRoundTripsOnTheWire() throws {
+        let occurrence = SidebarAttentionOccurrence(timestamp: Date(timeIntervalSinceReferenceDate: 7), text: "Q?", source: .agentStop)
+        let request = WorktreeManagementRequest.answerRequest(worktreeID: "/repo", paneID: "pane-1", occurrence: occurrence, text: "Hold")
+        let data = try JSONEncoder().encode(request)
+        #expect(String(decoding: data, as: UTF8.self).contains("\"answer_request\""))
+        #expect(try JSONDecoder().decode(WorktreeManagementRequest.self, from: data) == request)
+    }
+
     @Test func requestRoundTripsOnTheWire() throws {
         let request = WorktreeManagementRequest.explainRequest(worktreeID: "/repo", paneID: "pane-1")
         let data = try JSONEncoder().encode(request)
