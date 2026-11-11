@@ -8,6 +8,8 @@ import GrafttyProtocol
 public protocol ControlPlatform: ControlTeamPlatform {
     var attentionRecaps: AttentionRecapCoordinator { get }
     var instructionsDirectory: URL { get }
+    /// Providers that ended before this moment ended while no host was observing them.
+    var hostStart: Date { get }
 
     /// Called after the core mutates `state`. The Mac schedules a coalesced
     /// save here, since no window may be observing state; the headless host
@@ -41,6 +43,7 @@ public protocol ControlPlatform: ControlTeamPlatform {
 }
 
 public extension ControlPlatform {
+    var hostStart: Date { ProcessIdentityReader.currentProcessStart }
     var agentArchives: AgentArchiveStore {
         AgentArchiveStore(directory: worktreeCreation.agentPromptDirectory.appendingPathComponent("archives", isDirectory: true))
     }

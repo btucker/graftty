@@ -30,13 +30,16 @@ public struct WorktreeCreationDetailView: View {
     private let foreground: Color
     private let background: Color
     private let onOpenTerminal: (() -> Void)?
+    private let onRetryAgent: (() -> Void)?
 
     public init(progress: WorktreeCreationProgress, foreground: Color = .primary,
-                background: Color = .clear, onOpenTerminal: (() -> Void)? = nil) {
+                background: Color = .clear, onOpenTerminal: (() -> Void)? = nil,
+                onRetryAgent: (() -> Void)? = nil) {
         self.progress = progress
         self.foreground = foreground
         self.background = background
         self.onOpenTerminal = onOpenTerminal
+        self.onRetryAgent = onRetryAgent
     }
 
     public var body: some View {
@@ -55,14 +58,17 @@ public struct WorktreeCreationDetailView: View {
                     .font(.callout)
             }
             if let error = progress.error { Text(error).font(.callout).textSelection(.enabled) }
-            if !progress.isPending, let onOpenTerminal {
-                Button("Open terminal", action: onOpenTerminal)
+            if !progress.isPending, onOpenTerminal != nil || onRetryAgent != nil {
+                HStack(spacing: 12) {
+                    if let onRetryAgent { Button("Retry agent launch", action: onRetryAgent) }
+                    if let onOpenTerminal { Button("Open terminal", action: onOpenTerminal) }
+                }
             }
             if progress.outputTruncated {
                 Text("Earlier output omitted. Showing recent output.")
                     .font(.caption).foregroundStyle(foreground.opacity(0.65))
             }
-            ScrollView([.vertical, .horizontal]) {
+            ScrollView(.vertical) {
                 Text(progress.output.isEmpty ? "No Git or hook output yet." : progress.output)
                     .font(.system(size: 13, design: .monospaced))
                     .textSelection(.enabled)

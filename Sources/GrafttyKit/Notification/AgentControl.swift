@@ -21,6 +21,9 @@ public enum AgentControl {
     // active effects suppress overlapping teardown of the same stable agent.
     private static var closingAgents: Set<String> = []
     private static var outboxDrains: Set<String> = []
+    /// Agent terminals this process has listed as live. One that ends later ended on this
+    /// host's watch, not with an earlier host stop. Bounded by the agent sessions it observes.
+    private static var sessionsSeenLive: Set<String> = []
     private struct DetailSnapshot {
         let repo: String
         let agentID: String
@@ -273,53 +276,10 @@ public enum AgentControl {
                     try save(agent, path: path, platform: platform)
                 }
             case .resume:
-                guard closingAgents.insert(agent.id).inserted else { throw ManagedAgent.LifecycleError.invalidState }
-                defer { closingAgents.remove(agent.id) }
-                await consumeExitEvents(agentID: agent.id, platform: platform)
-                agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
-                guard platform.controlCapabilities.contains(.paneAgent) else { throw AgentControlError.unavailable }
-                guard agent.providerSessionID?.isEmpty == false else {
-                    return .error("The provider conversation ID was not saved. This transcript cannot resume a conversation.")
-                }
-                guard let currentRepo = platform.state.repos.first(where: { $0.path == repoPath }) else { throw AgentControlError.unknownAgent }
-                guard !hasOpenChildren(of: agent, in: currentRepo) else { throw AgentControlError.activeChildren }
-                agent.isPrimary = platform.state.worktree(forPath: path)?.isPrimaryAgent(agent)
-                // A fresh provider invocation receives the new assignment through its
-                // environment and hook context, without a synthetic user prompt.
-                if agent.status != .closed {
-                    guard let completion = agent.completion else { throw ManagedAgent.LifecycleError.invalidState }
-                    try agent.beginClose(completion: completion.id)
-                    try save(agent, path: path, platform: platform)
-                    do {
-                        if let slot = agent.paneSlotID { try await platform.closeAgentSession(worktree: path, slot: slot) }
-                        agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
-                        agent.didClose()
-                        try save(agent, path: path, platform: platform)
-                    } catch {
-                        agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
-                        agent.closeFailed(reason: error.localizedDescription)
-                        try save(agent, path: path, platform: platform)
-                        throw error
-                    }
-                }
-                let completed = agent
-                try agent.restartConversation()
-                if request.callerAgentID == nil { agent.parent = nil; agent.parentManagedAgentID = nil }
-                try save(agent, path: path, platform: platform)
-                let response = await platform.handlePlatformRequest(.addPane(.init(path: path, direction: .right,
-                    command: nil, agentRuntime: agent.provider, agentPrompt: nil, managedAgent: agent)))
-                if response != .ok {
-                    let reason: String
-                    if case .error(let message) = response { reason = message } else { reason = "Could not resume the provider conversation." }
-                    var restored = completed
-                    if let current = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }),
-                       let slot = current.paneSlotID, platform.state.worktree(forPath: path)?.paneSessions[slot] != nil {
-                        restored = current
-                        restored.launchFailed(reason: reason)
-                    }
-                    restored.recordFailure(reason)
-                    try save(restored, path: path, platform: platform)
-                    return .error(reason)
+                if let refusal = try await restartConversation(agentID: agent.id, path: path,
+                    detachParent: request.callerAgentID == nil, hostRecovery: false, selectTab: request.selectTab,
+                    platform: platform) {
+                    return .error(refusal)
                 }
             case .add, .list, .capability: break
             }
@@ -387,14 +347,7 @@ public enum AgentControl {
             let response = await platform.handlePlatformRequest(.addPane(.init(path: target, direction: .right, command: nil,
                 agentRuntime: provider, agentPrompt: request.prompt, managedAgent: agent, selectTab: request.selectTab ?? false)))
             guard response == .ok else {
-                agent = platform.state.worktree(forPath: target)?.agents.first(where: { $0.id == agent.id }) ?? agent
-                let reason = { if case .error(let reason) = response { return reason }; return "Agent launch failed." }()
-                agent.launchFailed(reason: reason)
-                agent.recordFailure(reason)
-                if let slot = agent.paneSlotID, platform.state.worktree(forPath: target)?.paneSessions[slot] == nil {
-                    agent.paneSlotID = nil
-                }
-                try save(agent, path: target, platform: platform)
+                _ = try recordLaunchFailure(response, agent: agent, path: target, platform: platform)
                 return response ?? .error("Agent launch failed.")
             }
             let current = platform.state.worktree(forPath: target)?.agents.first(where: { $0.id == agent.id }) ?? agent
@@ -436,11 +389,15 @@ public enum AgentControl {
 
     /// Called only for confirmed session destruction, not renderer eviction or disconnect.
     public static func sessionEnded(path: String, slot: PaneSlotID, reason: String, preserveView: Bool = false,
-                                    platform: any ControlPlatform) throws {
+                                    hostStopped: Bool = false, platform: any ControlPlatform) throws {
         guard var agent = platform.state.worktree(forPath: path)?.agents.first(where: {
             $0.paneSlotID == slot && $0.status != .closed
         }) else { return }
-        agent.sessionEnded(reason: reason)
+        // A host stop can only have ended a terminal that this process never saw alive.
+        let seenLive = platform.state.worktree(forPath: path)?.paneSessions[slot]
+            .map { sessionsSeenLive.contains(ZmxLauncher.sessionName(for: $0)) } ?? false
+        agent.sessionEnded(reason: reason,
+            hostStopped: hostStopped && !seenLive && agent.launchedBefore(platform.hostStart))
         if !preserveView { agent.paneSlotID = nil }
         try save(agent, path: path, platform: platform)
     }
@@ -528,6 +485,130 @@ public enum AgentControl {
         await refreshProcessObservations(platform: platform)
     }
 
+    /// @spec AGENT-6.157
+    /// When a host starts after a shutdown ended an ongoing agent's provider, the application shall restart that agent's saved conversation without user action, leaving bounded assignments and closed tabs unchanged.
+    public static func resumeHostStoppedConversations(platform: any ControlPlatform) async {
+        for worktree in platform.state.repos.flatMap(\.worktrees) where worktree.state != .stale {
+            for candidate in worktree.agents where candidate.awaitsHostRestart && !closingAgents.contains(candidate.id) {
+                // Earlier restarts suspend; the mark is cleared before this one can.
+                guard var agent = platform.state.worktree(forPath: worktree.path)?.agents.first(where: { $0.id == candidate.id }),
+                      agent.awaitsHostRestart else { continue }
+                agent.hostRestartAttempted()
+                guard (try? save(agent, path: worktree.path, platform: platform)) != nil else { continue }
+                let refusal: String?
+                do {
+                    refusal = try await restartConversation(agentID: agent.id, path: worktree.path,
+                        detachParent: false, hostRecovery: true, platform: platform)
+                } catch { refusal = error.localizedDescription }
+                // The agent stays resumable by hand; the log is the only record of why it did not restart.
+                if let refusal { NSLog("[Graftty] Agent %@ did not restart after a host stop: %@", agent.id, refusal) }
+            }
+        }
+    }
+
+    /// Returns a refusal message, or nil once the provider launch was accepted.
+    private static func restartConversation(agentID: String, path: String, detachParent: Bool, hostRecovery: Bool,
+                                            selectTab: Bool? = nil, platform: any ControlPlatform) async throws -> String? {
+        guard closingAgents.insert(agentID).inserted else { throw ManagedAgent.LifecycleError.invalidState }
+        defer { closingAgents.remove(agentID) }
+        await consumeExitEvents(agentID: agentID, platform: platform)
+        guard var agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agentID }) else {
+            throw AgentControlError.unknownAgent
+        }
+        guard platform.controlCapabilities.contains(.paneAgent) else { throw AgentControlError.unavailable }
+        if agent.canRetryLaunch { return try await retryLaunch(agent, path: path, selectTab: selectTab, platform: platform) }
+        guard agent.providerSessionID?.isEmpty == false else {
+            return "The provider conversation ID was not saved. This transcript cannot resume a conversation."
+        }
+        guard let currentRepo = platform.state.repo(forWorktreePath: path) else { throw AgentControlError.unknownAgent }
+        // The stop that ended this agent ended its children too; its new session context lists their pending cleanup.
+        guard hostRecovery || !hasOpenChildren(of: agent, in: currentRepo) else { throw AgentControlError.activeChildren }
+        agent.isPrimary = platform.state.worktree(forPath: path)?.isPrimaryAgent(agent)
+        // A fresh provider invocation receives the new assignment through its
+        // environment and hook context, without a synthetic user prompt.
+        if agent.status != .closed {
+            guard let completion = agent.completion else { throw ManagedAgent.LifecycleError.invalidState }
+            try agent.beginClose(completion: completion.id)
+            try save(agent, path: path, platform: platform)
+            do {
+                if let slot = agent.paneSlotID { try await platform.closeAgentSession(worktree: path, slot: slot) }
+                agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
+                agent.didClose()
+                try save(agent, path: path, platform: platform)
+            } catch {
+                agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
+                agent.closeFailed(reason: error.localizedDescription)
+                try save(agent, path: path, platform: platform)
+                throw error
+            }
+        }
+        let completed = agent
+        try agent.restartConversation()
+        if detachParent { agent.parent = nil; agent.parentManagedAgentID = nil }
+        try save(agent, path: path, platform: platform)
+        let response = await platform.handlePlatformRequest(.addPane(.init(path: path, direction: .right,
+            command: nil, agentRuntime: agent.provider, agentPrompt: nil, managedAgent: agent)))
+        guard response != .ok else { return nil }
+        let reason: String
+        if case .error(let message) = response { reason = message } else { reason = "Could not resume the provider conversation." }
+        var restored = completed
+        if let current = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }),
+           let slot = current.paneSlotID, platform.state.worktree(forPath: path)?.paneSessions[slot] != nil {
+            restored = current
+            restored.launchFailed(reason: reason)
+        }
+        restored.recordFailure(reason)
+        try save(restored, path: path, platform: platform)
+        return reason
+    }
+
+    /// @spec AGENT-6.160
+    /// When a user retries an agent launch that failed before its provider started, the application shall start that agent again in its worktree with its original task under a new assignment.
+    private static func retryLaunch(_ failed: ManagedAgent, path: String, selectTab: Bool?,
+                                    platform: any ControlPlatform) async throws -> String? {
+        // A creation that never produced its worktree leaves this record with its creator.
+        guard failed.launchTargetWorktree == nil || failed.launchTargetWorktree == path else {
+            return "This agent's worktree was never created, so its launch cannot be retried. Add the agent again."
+        }
+        guard let state = platform.state.worktree(forPath: path)?.state, [.running, .closed].contains(state) else {
+            return "This worktree is unavailable, so its agent cannot start."
+        }
+        // A provider that failed to start can leave its shell open in the pane the retry reuses.
+        if let slot = failed.paneSlotID { try await platform.closeAgentSession(worktree: path, slot: slot) }
+        // Closing suspends and rewrites the record's terminal binding.
+        guard let index = platform.state.indices(forWorktreePath: path),
+              var agent = platform.state.repos[index.repo].worktrees[index.worktree].agents.first(where: { $0.id == failed.id }) else {
+            throw AgentControlError.unknownAgent
+        }
+        try agent.retryLaunch()
+        platform.state.repos[index.repo].worktrees[index.worktree].ensureWorkspaceLayout()
+        try save(agent, path: path, platform: platform)
+        let response = await platform.handlePlatformRequest(.addPane(.init(path: path, direction: .right, command: nil,
+            agentRuntime: agent.provider, agentPrompt: agent.initialPrompt, managedAgent: agent, selectTab: selectTab)))
+        guard response != .ok else {
+            // The agent now owns this worktree's content; a stale failure would replace it again once the pane closes.
+            if platform.state.worktree(forPath: path)?.creationProgress?.phase == .failed {
+                platform.state.transitionCreation(at: path, to: .ready)
+                try? platform.stateDidChange()
+            }
+            return nil
+        }
+        return try recordLaunchFailure(response, agent: agent, path: path, platform: platform)
+    }
+
+    /// Records a refused pane launch on the agent's current record and returns its reason.
+    private static func recordLaunchFailure(_ response: ResponseMessage?, agent: ManagedAgent, path: String,
+                                            platform: any ControlPlatform) throws -> String {
+        let reason: String
+        if case .error(let message) = response { reason = message } else { reason = "Agent launch failed." }
+        var agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
+        agent.launchFailed(reason: reason)
+        agent.recordFailure(reason)
+        if let slot = agent.paneSlotID, platform.state.worktree(forPath: path)?.paneSessions[slot] == nil { agent.paneSlotID = nil }
+        try save(agent, path: path, platform: platform)
+        return reason
+    }
+
     private static func consumeExitEvents(agentID: String? = nil, platform: any ControlPlatform) async {
         let handoff = AgentLifecycleHandoff(directory: platform.worktreeCreation.agentPromptDirectory.appendingPathComponent("lifecycle"))
         for (file, event) in (try? await OffMainIO.run { try handoff.pending() }) ?? [] {
@@ -555,7 +636,8 @@ public enum AgentControl {
                       agent.status != .closed, agent.status != .starting,
                       !closingAgents.contains(agent.id), let slot = agent.paneSlotID,
                       let session = current.paneSessions[slot] else { continue }
-                if !live.contains(ZmxLauncher.sessionName(for: session)) {
+                let sessionName = ZmxLauncher.sessionName(for: session)
+                if !live.contains(sessionName) {
                     do {
                         guard try await !platform.agentSessionIsAlive(worktree: worktree.path, slot: slot),
                               !closingAgents.contains(agent.id),
@@ -568,15 +650,20 @@ public enum AgentControl {
                             try await platform.closeAgentSession(worktree: worktree.path, slot: slot)
                             try sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited", platform: platform)
                         } else if agent.processObservation != .exited {
+                            // No exit report means the provider's wrapper was killed with its terminal. Only a
+                            // terminal this process never saw alive can have ended with an earlier host stop.
                             try sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited",
-                                preserveView: true, platform: platform)
+                                preserveView: true, hostStopped: true, platform: platform)
                         }
                     } catch { /* Inventory/teardown failure is retried on the next maintenance pass. */ }
-                } else if agent.processObservation != .exited, let native = agent.nativeAgentID {
-                    let observation: AgentProcessObservation = reachable.contains(native) ? .reachable : .disconnected
-                    if agent.processObservation != observation {
-                        agent.processObservation = observation
-                        try? save(agent, path: worktree.path, platform: platform)
+                } else {
+                    sessionsSeenLive.insert(sessionName)
+                    if agent.processObservation != .exited, let native = agent.nativeAgentID {
+                        let observation: AgentProcessObservation = reachable.contains(native) ? .reachable : .disconnected
+                        if agent.processObservation != observation {
+                            agent.processObservation = observation
+                            try? save(agent, path: worktree.path, platform: platform)
+                        }
                     }
                 }
             }
@@ -592,8 +679,11 @@ public enum AgentControl {
               agent.paneSessionID == event.sessionID, agent.status != .closed else { return true }
         if let exited = event.recordedAt, let replacementStarted = agent.nativeBindingDate,
            exited < replacementStarted { return true }
+        // An exit that precedes a later binding returned above, so one from before this host
+        // started belongs to a provider that an earlier host launched.
         agent.sessionEnded(reason: "\(agent.provider.displayName) exited with status \(event.exitCode).",
-                           failedLaunch: event.exitCode == 126 || event.exitCode == 127 || agent.status == .starting)
+                           failedLaunch: event.exitCode == 126 || event.exitCode == 127 || agent.status == .starting,
+                           hostStopped: event.recordedAt.map { $0 < platform.hostStart } ?? false)
         try save(agent, path: worktree.path, platform: platform)
         return true
     }

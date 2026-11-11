@@ -30,6 +30,7 @@ struct ControlRequestCoreTests {
         var remoteTeamRouting: (any ControlRemoteTeamRouting)? { routing }
         var instructionsDirectory: URL { root }
         var stateChanges = 0
+        var hostStart = ProcessIdentityReader.currentProcessStart
         var liveness: [(TeamHookEvent, String)] = []
         var notifications: [AgentStopNotificationContent] = []
         var platformRequests: [NotificationMessage] = []

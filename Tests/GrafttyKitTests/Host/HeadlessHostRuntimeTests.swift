@@ -300,6 +300,51 @@ struct HeadlessHostRuntimeTests {
         #expect(runtime.state.repos[0].worktrees[0].agents[0].status == .interrupted)
         #expect(runtime.state.repos[0].worktrees[0].agents[0].paneSlotID == nil)
     }
+    @Test func ongoingConversationRestartsWhenItsSessionIsAbsentOnRestore() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let name = try await runtime.openWorktree(root.path)
+        let slot = try #require(runtime.state.worktree(forPath: root.path)?.splitTree.allLeaves.first)
+        var agent = ManagedAgent(name: "Primary", provider: .codex, parent: nil, launchOrigin: .userInterface, isPrimary: true)
+        agent.paneSlotID = slot
+        agent.providerSessionID = "saved-conversation"
+        runtime.state.repos[0].worktrees[0].agents = [agent]
+        terminal.live.remove(name)
+        let starts = terminal.starts.count
+        try await runtime.restore()
+        #expect(runtime.state.repos[0].worktrees[0].agents.first?.status == .interrupted)
+        await runtime.resumeHostStoppedConversations()
+        let restarted = try #require(runtime.state.repos[0].worktrees[0].agents.first)
+        #expect(restarted.results.map(\.result) == ["Terminal process was absent after restart"])
+        #expect(restarted.completion == nil)
+        #expect(restarted.assignmentID != agent.assignmentID)
+        #expect(terminal.starts.count == starts + 1)
+    }
+    @Test("@spec AGENT-6.158: If a host is draining when it starts, then the application shall leave conversations ended by a shutdown interrupted rather than restart them.")
+    func drainingHostLeavesEndedConversationsInterrupted() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let name = try await runtime.openWorktree(root.path)
+        let slot = try #require(runtime.state.worktree(forPath: root.path)?.splitTree.allLeaves.first)
+        var agent = ManagedAgent(name: "Primary", provider: .codex, parent: nil, launchOrigin: .userInterface, isPrimary: true)
+        agent.paneSlotID = slot
+        agent.providerSessionID = "saved-conversation"
+        runtime.state.repos[0].worktrees[0].agents = [agent]
+        try runtime.beginDrain(.init(provider: "test-cloud", eventID: "notice", action: .terminate, deadline: Date().addingTimeInterval(120)))
+        terminal.live.remove(name)
+        let starts = terminal.starts.count
+        try await runtime.restore()
+        await runtime.resumeHostStoppedConversations()
+        let retained = try #require(runtime.state.repos[0].worktrees[0].agents.first)
+        #expect(retained.status == .interrupted)
+        #expect(retained.paneSlotID == slot)
+        #expect(retained.assignmentID == agent.assignmentID)
+        #expect(terminal.starts.count == starts)
+    }
     @Test("@spec AGENT-6.94: When a provider sends its first session hook during headless startup, the application shall already expose its exact reserved session binding.")
     func managedBindingExistsDuringStart() async throws {
         let (root, config, state) = try fixture()
