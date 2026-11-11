@@ -24,8 +24,16 @@ struct FilePreviewWindowConstraintTests {
         child.environment = environment
         child.standardOutput = output
         child.standardError = output
+        var succeeded = false
+        defer {
+            if child.isRunning { kill(child.processIdentifier, SIGKILL) }
+            if succeeded {
+                try? FileManager.default.removeItem(at: directory)
+            } else if let diagnostics = try? String(contentsOf: log, encoding: .utf8) {
+                Attachment.record(diagnostics, named: "preview-constraints-child.log")
+            }
+        }
         try child.run()
-        defer { if child.isRunning { kill(child.processIdentifier, SIGKILL) } }
         let deadline = ContinuousClock.now + .seconds(20)
         while child.isRunning, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         if child.isRunning {
@@ -34,9 +42,8 @@ struct FilePreviewWindowConstraintTests {
             return
         }
         let completed = FileManager.default.fileExists(atPath: result.path)
-        let succeeded = child.terminationReason == .exit && child.terminationStatus == 0 && completed
-        #expect(succeeded, "Preview sizing child exited with \(child.terminationStatus), completed=\(completed); log: \(log.path)")
-        if succeeded { try? FileManager.default.removeItem(at: directory) }
+        succeeded = child.terminationReason == .exit && child.terminationStatus == 0 && completed
+        #expect(succeeded, "Preview sizing child \(child.processIdentifier) exited with \(child.terminationStatus), completed=\(completed); log: \(log.path)")
     }
 }
 
