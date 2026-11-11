@@ -48,6 +48,7 @@ final class NativeFilePreviewTray: NSView {
     private let openFile: (URL) async throws -> Void
     private var isOpening = false
     private var isTornDown = false
+    private var preferredPickerWidth: CGFloat = 0
     private(set) var openErrorMessage: String?
     let close = FilePreviewButton(title: "", target: nil, action: nil)
     let popOut = FilePreviewButton(title: "", target: nil, action: nil)
@@ -264,6 +265,12 @@ final class NativeFilePreviewTray: NSView {
                 picker.menu?.addItem(item)
             }
         }
+        // AppKit sizes the attributed title from the selected item only. Keep
+        // its native arrow/padding, but allow every menu title to contribute.
+        let textAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12)]
+        let widestTitle = picker.itemArray.map { ($0.title as NSString).size(withAttributes: textAttributes).width }.max() ?? 0
+        let chromeWidth = max(0, picker.intrinsicContentSize.width - picker.attributedTitle.size().width)
+        preferredPickerWidth = ceil(widestTitle + chromeWidth)
         picker.isHidden = preview.files.count == 1 && choices.isEmpty
         filenameLabel.isHidden = !picker.isHidden
         previous.isHidden = preview.files.count == 1
@@ -387,8 +394,10 @@ final class NativeFilePreviewTray: NSView {
             place(previous, width: 20, y: twoRows ? 4 : y)
         }
         let fileWidth = max(0, (twoRows ? fileRight : right) - left)
-        picker.frame = NSRect(x: left, y: y, width: fileWidth, height: 24)
-        filenameLabel.frame = picker.frame
+        // Leave unused header width with the drag handle instead of the menu.
+        let pickerWidth = min(fileWidth, min(360, preferredPickerWidth))
+        picker.frame = NSRect(x: left, y: y, width: pickerWidth, height: 24)
+        filenameLabel.frame = NSRect(x: left, y: y, width: fileWidth, height: 24)
         for label in [filenameLabel, worktreeLabel, separatorLabel, countLabel] where !label.isHidden {
             label.frame.origin.y += 3
             label.frame.size.height = 18

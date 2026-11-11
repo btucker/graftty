@@ -27,7 +27,6 @@ struct MainWindowDetailLayoutTests {
             }
         }
         let host = NSHostingView(rootView: layout(open: false))
-        host.sizingOptions = []
         let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 1000, height: 700),
             styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
@@ -102,7 +101,6 @@ struct MainWindowDetailLayoutTests {
                 .background(FrameProbe(view: contentProbe))
         }
         let hosting = NSHostingView(rootView: layout)
-        hosting.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 900, height: 600),
             styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = hosting
@@ -150,7 +148,6 @@ struct MainWindowDetailLayoutTests {
         }
         .environment(\.colorScheme, .dark)
         let hosting = NSHostingView(rootView: root)
-        hosting.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
@@ -244,7 +241,6 @@ struct MainWindowDetailLayoutTests {
             paneContent: { id in AnyView(Color.clear.background(FrameProbe(view: probes[id == left ? "leftContent" : "rightContent"]!))) },
             leadingContentInset: 6)
         let host = NSHostingView(rootView: view)
-        host.sizingOptions = []
         let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 800, height: 400),
             styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host

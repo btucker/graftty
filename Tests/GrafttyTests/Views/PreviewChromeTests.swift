@@ -106,6 +106,62 @@ struct PreviewChromeTests {
         #expect(tray.selectedIndex == 1)
     }
 
+    @Test("@spec PREVIEW-1.23: While a macOS preview file menu is visible, the application shall fit its width to its menu items up to 360 points and the available header space, leaving unused header space available for dragging.", arguments: [false, true])
+    func fileMenuLeavesUnusedHeaderDraggable(isWindowed: Bool) throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory()
+        let pane = PaneSlotID()
+        let files = try ["plan.html", "implementation-notes.html"].map {
+            try FilePreviewFile(.init(filename: $0, bytes: Data()))
+        }
+        let longFile = try FilePreviewFile(.init(filename: String(repeating: "long-name-", count: 20) + ".html", bytes: Data()))
+        let older = history.record(files: [longFile], pane: pane, worktreePath: "/synthetic")
+        let current = history.record(files: files, pane: pane, worktreePath: "/synthetic")
+        var navigation = FilePreviewNavigation(worktreePath: "/synthetic", entries: [current])
+        let tray = NativeFilePreviewTray(preview: current.preview, onDismiss: {}, onInteraction: { _ in },
+                                        isWindowed: isWindowed, navigation: navigation)
+        defer { tray.tearDown() }
+        func layout(width: CGFloat) {
+            tray.frame = .init(x: 0, y: 0, width: width, height: 400)
+            tray.layoutSubtreeIfNeeded()
+        }
+        func expectDragSpace() {
+            let controls: [NSView] = [tray.previous, tray.next, tray.countLabel, tray.open, tray.showInTerminal, tray.close, tray.popOut]
+            let controlsLeft = controls.filter { !$0.isHidden }.map(\.frame.minX).min() ?? tray.bounds.maxX
+            #expect(controlsLeft - tray.picker.frame.maxX >= 80)
+            let point = NSPoint(x: (tray.picker.frame.maxX + controlsLeft) / 2, y: tray.picker.frame.midY)
+            let hit = tray.header.hitTest(tray.header.convert(point, to: tray))
+            #expect(hit === tray.header, "Unused menu width must reach the drag handle")
+            #expect(tray.header.movesWindow == isWindowed)
+        }
+        layout(width: 900)
+        let compactWidth = tray.picker.frame.width
+        let longestTitle = (files[1].url.lastPathComponent as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width
+        #expect(compactWidth >= longestTitle)
+        #expect(compactWidth < 300, "Short filenames must not consume the entire header")
+        expectDragSpace()
+        layout(width: 1400)
+        #expect(abs(tray.picker.frame.width - compactWidth) < 1)
+        expectDragSpace()
+
+        // A long, unselected history item must affect the menu's preferred width.
+        navigation.entries = [current, older]
+        tray.configure(theme: .fallback, navigation: navigation)
+        layout(width: 1400)
+        #expect(tray.picker.frame.width > compactWidth)
+        #expect(tray.picker.frame.width <= 360)
+        expectDragSpace()
+        for width: CGFloat in isWindowed ? [480] : [180, 480] {
+            layout(width: width)
+            #expect(tray.picker.frame.maxX <= tray.open.frame.minX)
+            #expect(tray.picker.frame.width <= 360)
+        }
+        navigation.entries = [current]
+        tray.configure(theme: .fallback, navigation: navigation)
+        layout(width: 1400)
+        #expect(abs(tray.picker.frame.width - compactWidth) < 1)
+    }
+
     @Test("A library download cannot replace a newer user selection or append discarded history.")
     func staleLibraryDownloadDoesNotOverrideSelection() async throws {
         let history = FilePreviewHistory()
