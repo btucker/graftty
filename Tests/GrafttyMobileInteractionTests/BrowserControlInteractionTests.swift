@@ -324,7 +324,10 @@ final class ScrollbackInteractionTests: XCTestCase {
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
         let row = Int(requestedRow.label) ?? -1
         XCTAssertTrue((875...905).contains(row), "Expected a row in the expanded map, got \(row)")
-        XCTAssertEqual(map.frame.height, idleHeight, accuracy: 1)
+        let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            abs(map.frame.height - idleHeight) <= 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 3), .completed)
     }
 
     private func exerciseScrollback(follower: Bool) throws {

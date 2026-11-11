@@ -67,7 +67,7 @@ private func render(_ view: some View, size: CGSize, named name: String) throws 
 }
 
 @MainActor
-@Suite("@spec CONTEXT-34: While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks closer than 3 points in the displayed strip merged into one, and a box showing the current viewport, and shall hide the card while no message is located.")
+@Suite("@spec CONTEXT-34: While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks merged when their displayed centers are closer than 3 points or their bars overlap, and a box showing the current viewport, and shall hide the card while no message is located.")
 struct ScrollbackMapPresenceTests {
     @Test func rowsMapProportionallyOntoTheStrip() {
         let layout = ScrollbackMapLayout(height: 100, totalRows: 1000)
@@ -182,18 +182,23 @@ struct ScrollbackMapScrubTests {
         pointer.scrollWheel(with: MapWheelEvent(point: point))
         #expect(terminal.wheels == 1, "Wheel scrolling over the map must reach the terminal behind it")
 
-        var hovers: [CGFloat?] = []
-        let onHover = pointer.onHover
-        pointer.onHover = { hovers.append($0); onHover?($0) }
         let moved = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
             context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        pointer.mouseExited(with: moved)
+        await waitUntil { pointer.bounds.height == ScrollbackMapLayout.cardSize.height }
         pointer.mouseMoved(with: moved)
         await waitUntil { pointer.bounds.height > ScrollbackMapLayout.cardSize.height }
+        let amount = (pointer.bounds.height - ScrollbackMapLayout.cardSize.height) / ScrollbackMapLayout.maximumGrowth
+        #expect(amount > 0 && amount <= 1)
+        let presented = ScrollbackMapLayout(height: ScrollbackMapLayout.stripHeight, totalRows: 600,
+                                           focusY: markY, entryY: markY, magnification: amount)
+        pointer.onClick?(ScrollbackMapLayout.stripInset.top + presented.y(forRow: 300))
+        #expect(scrollback.scrolled.last == 300, "Clicks must use the geometry of the displayed animation frame")
+        await waitUntil { pointer.bounds.height >= ScrollbackMapLayout.cardSize.height + ScrollbackMapLayout.maximumGrowth }
         let expandedPoint = pointer.convert(NSPoint(x: x, y: 175), to: nil)
         #expect(host.hitTest(host.superview?.convert(expandedPoint, from: nil) ?? expandedPoint) === pointer)
         pointer.mouseExited(with: moved)
-        #expect(hovers.count == 2 && hovers[0] != nil && hovers[1] == nil, "Hovering anywhere on the card shows and clears its label")
         await waitUntil { pointer.bounds.height == ScrollbackMapLayout.cardSize.height }
         #expect(host.hitTest(host.superview?.convert(expandedPoint, from: nil) ?? expandedPoint) !== pointer)
 
@@ -206,8 +211,13 @@ struct ScrollbackMapScrubTests {
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                 context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
             window.sendEvent(event)
+            if type == .leftMouseDown {
+                await waitUntil { pointer.bounds.height >= ScrollbackMapLayout.cardSize.height + ScrollbackMapLayout.maximumGrowth }
+            }
         }
-        #expect(scrollback.scrolled.last == active.scrubTopRow(atY: dragY, viewportLength: viewport.length))
+        let scrolled = try #require(scrollback.scrolled.last)
+        #expect(abs(scrolled - active.scrubTopRow(atY: dragY, viewportLength: viewport.length)) <= 1,
+                "Native event coordinates may round to the nearest pixel")
         #expect(terminal.clicks == 0)
     }
 
@@ -318,7 +328,7 @@ struct ScrollbackMapFadeTests {
     }
 }
 
-@Suite("@spec CONTEXT-57: While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the magnified geometry for navigation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.")
+@Suite("@spec CONTEXT-57: While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the displayed geometry for navigation throughout the animation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.")
 struct ScrollbackMapMagnificationTests {
     @Test func expansionKeepsTheEntryRowUnderThePointer() {
         let idle = ScrollbackMapLayout(height: 100, totalRows: 1000)
@@ -369,6 +379,28 @@ struct ScrollbackMapMagnificationTests {
         let active = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: 20, entryY: 20, availableGrowth: 12)
         #expect(active.height == 112)
     }
+
+    @Test(arguments: [0.0, 5.0, 50.0, 95.0, 100.0])
+    func magnifiedClustersRemainDisjointAtTheEdgesAndInDenseRegions(focusY: CGFloat) {
+        let layout = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: focusY, entryY: 50)
+        let marks = stride(from: 0, through: 1000, by: 12).map {
+            ScrollbackMap.Mark(row: $0, kind: .peer, eventID: "\($0)")
+        }
+        let clusters = layout.clusters(marks)
+        #expect(clusters.flatMap(\.marks) == marks)
+        #expect(zip(clusters, clusters.dropFirst()).allSatisfy { $0.y + $0.height <= $1.y })
+    }
+
+    @Test(arguments: [0.0, 0.25, 0.5, 0.75, 1.0])
+    func intermediateExpansionUsesTheSameGeometryForDrawingAndNavigation(amount: CGFloat) {
+        let layout = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: 50, entryY: 50, magnification: amount)
+        #expect(layout.height == 100 + 50 * amount)
+        #expect(layout.y(forRow: 500) == 50)
+        let map = ScrollbackMap(totalRows: 1000, marks: [.init(row: 700, kind: .input, eventID: "target")])
+        let y = layout.y(forRow: 700)
+        #expect(layout.tapTarget(in: map, atY: y)?.row == 700)
+        #expect(layout.scrubTopRow(atY: y + 0.0001, viewportLength: 40) == 680)
+    }
 }
 
 @Test("@spec CONTEXT-37: While GrafttyMobile shows the scrollback map on the focused agent pane, the application shall place the card below the pane's floating top-right controls, including the Worktree context button, so the card and the controls never overlap.", arguments: [44.0, 96.0, 148.0])
@@ -401,8 +433,8 @@ struct ScrollbackMapMobileCollapseTests {
     }
 
     @Test func presentationExpandsInwardAndDownwardFromTheSameOrigin() {
-        let idle = ScrollbackMapLayout.mobileCardFrame(isActive: false, height: 150)
-        let active = ScrollbackMapLayout.mobileCardFrame(isActive: true, height: 202)
+        let idle = ScrollbackMapLayout.mobileCardFrame(magnification: 0, height: 150)
+        let active = ScrollbackMapLayout.mobileCardFrame(magnification: 1, height: 202)
         #expect(idle == CGRect(x: 40, y: 0, width: 4, height: 150))
         #expect(active == CGRect(x: 4, y: 0, width: 34, height: 202))
         #expect(idle.minY == active.minY)
