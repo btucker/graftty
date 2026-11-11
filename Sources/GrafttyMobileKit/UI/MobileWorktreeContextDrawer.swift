@@ -96,7 +96,7 @@ struct MobileWorktreeContextDrawer: ViewModifier {
                     close()
                     return true
                 }
-            })
+            }, answerQuestion: actions.answerQuestion)
         }
     }
 

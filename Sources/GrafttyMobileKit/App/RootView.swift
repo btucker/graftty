@@ -121,6 +121,16 @@ public struct RootView: View {
         }, revealInTerminal: { request in
             guard let pane = MobileTerminalRegistry.shared.container(for: request.paneID) else { return false }
             return await pane.reveal(eventID: request.eventID, messages: request.messages)
+        }, answerQuestion: { [feed] answer in
+            guard let host = feed.host(for: answer.worktree) else { return "This host isn't connected." }
+            do {
+                return AttentionAnswer.failureMessage(for: try await RelayedWorktreeManagementClient.send(
+                    .answerRequest(worktreeID: answer.worktree.path, paneID: answer.paneID,
+                                   occurrence: answer.occurrence, text: answer.text),
+                    using: feed.provider(for: host)))
+            } catch {
+                return "Couldn't reach the host to answer."
+            }
         }))
         .alert("Could not open worktree", isPresented: Binding(
             get: { contextWorktreeError != nil }, set: { if !$0 { contextWorktreeError = nil } }
