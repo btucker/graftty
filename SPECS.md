@@ -4756,6 +4756,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.22** When a macOS preview window is resized, hidden, or updated, the application shall preserve its requested size without repeated titlebar-height growth or constraint exceptions.
 
+**PREVIEW-1.23** While a macOS preview file menu is visible, the application shall fit its width to its menu items up to 360 points and the available header space, leaving unused header space available for dragging.
+
 ### PREVIEW-2.x
 
 **PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.
