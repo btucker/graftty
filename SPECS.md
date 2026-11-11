@@ -5598,6 +5598,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-62** When the user picks an option or sends a reply in Context, the application shall send it to the asking agent, disable the question while sending, show Sent until the question changes, and show the host's message and re-enable on failure.
 
+### CONTEXT-63.x
+
+**CONTEXT-63** While Context starts below a workspace's tab row on desktop, the application shall paint the space above it with the tab row's background and header wash, so the tab strip continues across the window instead of leaving a blank band.
+
 ## MEM — MEM
 
 ### MEM-1.x

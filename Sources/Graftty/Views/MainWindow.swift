@@ -199,7 +199,8 @@ struct MainWindow: View {
             MainWindowDetailLayout(headerWash: WorktreeHeaderWash(
                 identity: selectedIdentity,
                 project: selectedIdentityProject, iconData: selectedIdentityImageData,
-                background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
+                background: terminalManager.theme.background, isDark: terminalManager.theme.isDark),
+                chromeBackground: terminalManager.theme.background) {
                 breadcrumbBar
             } content: {
                 if let wakeFlow {

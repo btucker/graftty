@@ -11,6 +11,8 @@ struct WorkspaceTabRowHeightKey: PreferenceKey {
 /// The selected worktree detail keeps the breadcrumb above its content row.
 struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: View {
     var headerWash: WorktreeHeaderWash? = nil
+    /// The tab row's background, continued above Context so no blank band shows (CONTEXT-63).
+    var chromeBackground: Color? = nil
     @ViewBuilder var header: Header
     @ViewBuilder var content: Content
     @ViewBuilder var inspector: Inspector
@@ -31,6 +33,11 @@ struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: Vie
                 // Starts below the content's tab row, when the content has one (CONTEXT-55).
                 inspector
                     .padding(.top, tabRowHeight)
+                    .background(alignment: .top) {
+                        if tabRowHeight > 0, let chromeBackground {
+                            chromeBackground.worktreeHeaderWash().frame(height: tabRowHeight)
+                        }
+                    }
             }
             .contentShape(Rectangle())
             // Keep workspace backgrounds and hit targets below the window header.

@@ -47,6 +47,32 @@ struct MainWindowDetailLayoutTests {
         }
     }
 
+    @Test("@spec CONTEXT-63: While Context starts below a workspace's tab row on desktop, the application shall paint the space above it with the tab row's background and header wash, so the tab strip continues across the window instead of leaving a blank band.")
+    func tabRowBandAboveContextIsPainted() async throws {
+        let fill = NSColor(srgbRed: 0.9, green: 0.2, blue: 0.1, alpha: 1)
+        let layout = MainWindowDetailLayout(chromeBackground: Color(nsColor: fill)) {
+            Color.gray.frame(height: 30)
+        } content: {
+            Color.black.preference(key: WorkspaceTabRowHeightKey.self, value: 36)
+        } inspector: {
+            Color.gray.frame(width: 360)
+        }
+        let host = NSHostingView(rootView: layout.background(Color.black))
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 1000, height: 700),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let scale = Double(bitmap.pixelsWide) / 1000
+        // Midway through the 36-point band beside the tab row, above the inspector.
+        let band = try #require(bitmap.colorAt(x: Int(820 * scale), y: Int((30 + 18) * scale))?.usingColorSpace(.sRGB))
+        #expect(band.redComponent > 0.8 && band.greenComponent < 0.4, "The band carries the tab row's background, not a blank: \(band)")
+    }
+
     /// The workspace reports its own tab row, so one without agents leaves no gap above Context.
     @Test(arguments: [true, false])
     func contextClearsOnlyARenderedTabRow(hasAgents: Bool) async throws {
