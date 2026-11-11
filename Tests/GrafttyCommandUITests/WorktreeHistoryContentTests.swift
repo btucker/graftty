@@ -228,6 +228,29 @@ struct WorktreeHistoryContentTests {
         try capture(host, named: "agent-reply-\(Int(width))-\(scheme == .dark ? "dark" : "light")")
     }
 
+    @Test("@spec CONTEXT-60: While Context history shows a history entry on Mac or mobile, the application shall show its headline on one row with its time and reveal its detail and decisions only when the row is activated.")
+    func historyEntryShowsHeadlineUntilActivated() throws {
+        var recap = AttentionRecap(title: "Crash investigation", completed: "Read the log.", next: "Reproduce.",
+            decisions: ["Keep diagnostics outside the repository."])
+        recap.checkpoint = "Recovered the crash log"
+        recap.completed = "The log shows a 56-view window limit."
+        let brief = WorktreeBrief(recap: recap, at: Date(timeIntervalSinceReferenceDate: 100))
+        let event = try #require(WorktreeTimeline(history: nil, brief: brief).events.first)
+        #expect(event.title == "Recovered the crash log")
+        let collapsed = WorktreeHistoryContent.entryDetail(event, expanded: false)
+        #expect(collapsed.detail == nil)
+        #expect(collapsed.decisions.isEmpty)
+        #expect(collapsed.hasMore)
+        let expanded = WorktreeHistoryContent.entryDetail(event, expanded: true)
+        #expect(expanded.detail == "The log shows a 56-view window limit.")
+        #expect(expanded.decisions.isEmpty, "Legacy checkpoints keep decisions in the brief, not the entry")
+        var shipped = AttentionRecap(title: "Release", completed: "Shipped.", next: "Watch.")
+        shipped.historyEntry = .init(headline: "Shipped")
+        let bare = try #require(WorktreeTimeline(history: nil,
+            brief: WorktreeBrief(recap: shipped, at: Date(timeIntervalSinceReferenceDate: 100))).events.first)
+        #expect(!WorktreeHistoryContent.entryDetail(bare, expanded: false).hasMore)
+    }
+
     @Test func earlierControlCountsHiddenMessagesIncludingRepeats() throws {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
         var history = WorktreeHistory()
@@ -315,7 +338,8 @@ struct WorktreeHistoryContentTests {
                 .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
             let size = host.fittingSize
             #expect(abs(size.width - width) < 1)
-            #expect(size.height > short.fittingSize.height + 90)
+            // Two history entries add two headline rows; their details stay closed (CONTEXT-60).
+            #expect(size.height > short.fittingSize.height + 60)
             if let path = ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_RENDER_DIR"] {
                 let directory = URL(fileURLWithPath: path, isDirectory: true)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

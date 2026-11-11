@@ -1,7 +1,8 @@
 import GrafttyProtocol
 import SwiftUI
 
-/// A pinned brief above an independently scrolling, bottom-anchored timeline.
+/// The worktree's title pinned above one bottom-anchored scroll: optional
+/// details, the timeline, where things stand, any waiting question, and status.
 public struct WorktreeContextPanel: View {
     public let context: SidebarWorktreeContext
     private let theme: GhosttyThemeColors
@@ -11,16 +12,14 @@ public struct WorktreeContextPanel: View {
     private let showAgent: ((String) -> Void)?
     private let readTranscript: (@MainActor (String) async -> String?)?
     @State private var archivedTranscript: String?
-    @State private var follow: TimelineFollow
-    @State private var requestedBriefHeight: CGFloat?
-    @State private var renderedBriefHeight: CGFloat = 0
-    @State private var dragStartBriefHeight: CGFloat?
+    @State private var follow = TimelineFollow()
+    @State private var showsDetails = false
 
     private static let latestID = "worktree.context.timeline.latest"
     private let hostLabel: String?
 
     public init(context: SidebarWorktreeContext, theme: GhosttyThemeColors = .fallback, hostLabel: String? = nil, foreground: Color? = nil,
-                secondary: Color? = nil, collapsesBrief: Bool = false,
+                secondary: Color? = nil,
                 readTranscript: (@MainActor (String) async -> String?)? = nil, showAgent: ((String) -> Void)? = nil, onClose: @escaping () -> Void) {
         self.context = context
         self.theme = theme
@@ -30,65 +29,13 @@ public struct WorktreeContextPanel: View {
         self.onClose = onClose
         self.readTranscript = readTranscript
         self.showAgent = showAgent
-        _follow = State(initialValue: TimelineFollow(collapsesBrief: collapsesBrief))
     }
 
     public var body: some View {
         VStack(spacing: 0) {
             header
             theme.contextSeparator.frame(height: 1)
-            if let agents = context.worktree.agents?.filter({ ($0.resultCount ?? 0) > 0 || $0.result != nil || !($0.previousResults ?? []).isEmpty }), !agents.isEmpty {
-                DisclosureGroup("Completed agents · \(agents.count)") {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(agents) { agent in
-                                VStack(alignment: .leading, spacing: 5) {
-                                    HStack {
-                                        AgentProviderIcon(provider: agent.provider)
-                                        Text(agent.name).fontWeight(.medium)
-                                        Spacer()
-                                        Text(agent.status == "closed" ? "Closed" : agent.status == "awaiting-cleanup" ? "Awaiting cleanup" : agent.status.capitalized).foregroundStyle(secondary)
-                                    }
-                                    if agent.resultsAreSummaries == true {
-                                        Text("Result previews · \(agent.resultCount ?? 0) retained assignments").foregroundStyle(secondary)
-                                    }
-                                    if let showAgent { Button("Open agent tab") { showAgent(agent.id) } }
-                                    if let result = agent.result { Text(result).textSelection(.enabled) }
-                                    if let readTranscript, agent.status == "closed" {
-                                        Button("Read transcript") {
-                                            Task { archivedTranscript = await readTranscript(agent.id) ?? "No transcript was available when this session closed." }
-                                        }
-                                    }
-                                    if let previous = agent.previousResults, !previous.isEmpty {
-                                        DisclosureGroup("Previous assignments") {
-                                            ForEach(Array(previous.enumerated()), id: \.offset) { _, result in
-                                                Text(result).textSelection(.enabled).padding(.vertical, 4)
-                                            }
-                                        }
-                                    }
-                                }.font(.caption)
-                            }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }.frame(maxHeight: 220)
-                }.padding(.horizontal, 20).padding(.vertical, 8)
-                theme.contextSeparator.frame(height: 1)
-            }
-            GeometryReader { geometry in
-                let limit = max(0, geometry.size.height - HorizontalResizeDivider.thickness - 96)
-                let chosenHeight = requestedBriefHeight.map { min(limit, max(min(96, limit), $0)) }
-                let cap = chosenHeight ?? min(geometry.size.height / 2, limit)
-                VStack(spacing: 0) {
-                    pinnedBrief(cap: cap)
-                        .frame(height: follow.showsCollapsedBrief ? nil : chosenHeight, alignment: .top)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { renderedBriefHeight = $0 }
-                    HorizontalResizeDivider(label: "Resize context summary", onResize: { translation in
-                        if dragStartBriefHeight == nil { dragStartBriefHeight = renderedBriefHeight }
-                        follow.expandBrief()
-                        requestedBriefHeight = min(limit, max(min(96, limit), (dragStartBriefHeight ?? renderedBriefHeight) + translation))
-                    }, onResizeEnd: { dragStartBriefHeight = nil })
-                    timeline(panelHeight: geometry.size.height, briefHeight: cap)
-                }
-            }
+            scroll
         }
         .foregroundStyle(foreground)
         .background(theme.contextBackground)
@@ -104,92 +51,78 @@ public struct WorktreeContextPanel: View {
             }.frame(minWidth: 320, idealWidth: 720, minHeight: 320, idealHeight: 600)
         }
         .onChange(of: context.item.worktreeIdentity) { _, _ in
-            follow = TimelineFollow(collapsesBrief: follow.collapsesBrief)
-            requestedBriefHeight = nil
-            dragStartBriefHeight = nil
+            follow = TimelineFollow()
+            showsDetails = false
         }
     }
 
     private var header: some View {
-        HStack {
-            Label("Context", systemImage: "sidebar.right")
-                .font(.callout).fontWeight(.semibold)
+        HStack(alignment: .center, spacing: 8) {
+            Button {
+                showsDetails.toggle()
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(Self.headerTitle(for: context)).font(.headline).lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Image(systemName: showsDetails ? "chevron.up" : "chevron.down")
+                        .font(.caption2).foregroundStyle(secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(showsDetails ? "Hides the purpose and decisions" : "Shows the purpose and decisions")
+            .accessibilityIdentifier("worktree.context.title")
             if let hostLabel {
                 Text(hostLabel).font(.callout).foregroundStyle(secondary).lineLimit(1)
             }
-            Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close context")
             .accessibilityIdentifier("worktree.context.close")
-        }.padding(.horizontal, 20).padding(.vertical, 3)
-    }
-
-    @ViewBuilder private func pinnedBrief(cap: CGFloat) -> some View {
-        if follow.showsCollapsedBrief {
-            collapsedBrief
-        } else {
-            let brief = WorktreeBriefContent(context: context, foreground: foreground, secondary: secondary,
-                includesHistory: false)
-                .padding(.horizontal, 24).padding(.vertical, 20)
-                .fixedSize(horizontal: false, vertical: true)
-            // The brief scrolls on its own only when it is taller than its cap.
-            CappedBriefLayout(maxHeight: max(0, cap)) {
-                ViewThatFits(in: .vertical) {
-                    brief
-                    ScrollView { brief }
-                }
-            }
-            .accessibilityIdentifier("worktree.context.brief")
         }
+        .padding(.leading, 20).padding(.trailing, 8).padding(.vertical, 3)
     }
 
-    private var collapsedBrief: some View {
-        let summary = TimelineFollow.collapsedSummary(title: context.brief?.title ?? context.worktree.displayName,
-            next: context.brief?.next, question: context.question)
-        return Button {
-            follow.expandBrief()
-        } label: {
-            HStack(spacing: 8) {
-                Text(summary.title).fontWeight(.semibold).layoutPriority(1)
-                if let detail = summary.detail {
-                    Text(detail).foregroundStyle(summary.isQuestion ? AnyShapeStyle(.orange) : AnyShapeStyle(secondary))
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.down").font(.caption).foregroundStyle(secondary)
-            }
-            .font(.callout)
-            .lineLimit(1)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .padding(.horizontal, 20)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel([summary.title, summary.detail].compactMap { $0 }.joined(separator: ", "))
-        .accessibilityHint("Shows the full brief")
-        .accessibilityIdentifier("worktree.context.brief.collapsed")
-    }
-
-    private func timeline(panelHeight: CGFloat, briefHeight: CGFloat) -> some View {
+    private var scroll: some View {
         let timeline = WorktreeTimeline(context)
+        let sections = Self.sections(for: context, showsDetails: showsDetails)
         return ScrollViewReader { proxy in
             ScrollView {
-                VStack(spacing: 0) {
-                    if !timeline.events.isEmpty {
-                        WorktreeContextHistory(context: context, timeline: timeline, secondary: secondary)
-                            .padding(24)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .foregroundStyle(foreground)
-                            .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 24) {
+                    ForEach(sections, id: \.self) { section in
+                        switch section {
+                        case .details:
+                            WorktreeContextDetails(context: context, secondary: secondary) { completedAgents }
+                        case .timeline:
+                            WorktreeContextHistory(context: context, timeline: timeline, secondary: secondary)
+                        case .now:
+                            if let brief = context.brief {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    theme.contextSeparator.frame(height: 1)
+                                    WorktreeContextNow(brief: brief, secondary: secondary)
+                                }
+                            }
+                        case .empty:
+                            WorktreeContextEmpty(context: context, secondary: secondary)
+                        case .ask:
+                            WorktreeContextAsk(context: context, secondary: secondary)
+                        case .status:
+                            WorktreeContextStatus(context: context, secondary: secondary)
+                        }
                     }
-                    // After the padding, so scrolling to it reaches the true end rather than the at-bottom tolerance edge.
-                    Color.clear.frame(height: 1).id(Self.latestID)
                 }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+                // After the padding, so scrolling to it reaches the true end rather than the at-bottom tolerance edge.
+                Color.clear.frame(height: 1).id(Self.latestID)
             }
-            .modifier(TimelineFollowTracking(follow: $follow, panelHeight: panelHeight, briefHeight: briefHeight))
-            .onChange(of: timeline.events.last?.id) { _, _ in
+            .modifier(TimelineFollowTracking(follow: $follow))
+            .onChange(of: FollowKey(context: context, lastEvent: timeline.events.last?.id)) { _, _ in
                 if follow.receivedEvent() { proxy.scrollTo(Self.latestID, anchor: .bottom) }
             }
             .overlay(alignment: .bottom) {
@@ -211,32 +144,61 @@ public struct WorktreeContextPanel: View {
                 }
             }
         }
-        // Another worktree gets a fresh scroll view, so it opens at its own latest event.
+        // Another worktree gets a fresh scroll view, so it opens at its own latest content.
         .id(context.item.worktreeIdentity)
     }
-}
 
-/// Measures before placement so the timeline opens with its final viewport height.
-private struct CappedBriefLayout: Layout {
-    let maxHeight: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let ideal = subviews[0].sizeThatFits(.init(width: proposal.width, height: nil))
-        return CGSize(width: proposal.width ?? ideal.width,
-            height: min(ideal.height, maxHeight, proposal.height ?? maxHeight))
+    /// Anything that changes the end of the scroll: a new event, a new brief, or a new question.
+    private struct FollowKey: Equatable {
+        let lastEvent: String?
+        let updatedAt: Double?
+        let question: String?
+        init(context: SidebarWorktreeContext, lastEvent: String?) {
+            self.lastEvent = lastEvent
+            updatedAt = context.brief?.updatedAt
+            question = context.question
+        }
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews[0].place(at: bounds.origin, anchor: .topLeading,
-            proposal: .init(width: bounds.width, height: bounds.height))
+    @ViewBuilder private var completedAgents: some View {
+        if let agents = context.worktree.agents?.filter({ ($0.resultCount ?? 0) > 0 || $0.result != nil || !($0.previousResults ?? []).isEmpty }), !agents.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Completed agents · \(agents.count)").font(.caption).fontWeight(.medium).foregroundStyle(secondary)
+                ForEach(agents) { agent in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            AgentProviderIcon(provider: agent.provider)
+                            Text(agent.name).fontWeight(.medium)
+                            Spacer()
+                            Text(agent.status == "closed" ? "Closed" : agent.status == "awaiting-cleanup" ? "Awaiting cleanup" : agent.status.capitalized).foregroundStyle(secondary)
+                        }
+                        if agent.resultsAreSummaries == true {
+                            Text("Result previews · \(agent.resultCount ?? 0) retained assignments").foregroundStyle(secondary)
+                        }
+                        if let showAgent { Button("Open agent tab") { showAgent(agent.id) } }
+                        if let result = agent.result { Text(result).textSelection(.enabled) }
+                        if let readTranscript, agent.status == "closed" {
+                            Button("Read transcript") {
+                                Task { archivedTranscript = await readTranscript(agent.id) ?? "No transcript was available when this session closed." }
+                            }
+                        }
+                        if let previous = agent.previousResults, !previous.isEmpty {
+                            DisclosureGroup("Previous assignments") {
+                                ForEach(Array(previous.enumerated()), id: \.offset) { _, result in
+                                    Text(result).textSelection(.enabled).padding(.vertical, 4)
+                                }
+                            }
+                        }
+                    }.font(.caption)
+                }
+            }
+        }
     }
 }
 
 /// Opens the timeline at its latest event and reports whether the reader is at its bottom.
 private struct TimelineFollowTracking: ViewModifier {
     @Binding var follow: TimelineFollow
-    let panelHeight: CGFloat
-    let briefHeight: CGFloat
 
     func body(content: Content) -> some View {
         if #available(macOS 15, iOS 18, *) {
@@ -249,7 +211,7 @@ private struct TimelineFollowTracking: ViewModifier {
                 } action: { _, distance in
                     // The distance changes every scrolled point; write only when the follow state changes.
                     var next = follow
-                    next.scrolled(distanceFromBottom: distance, panelHeight: panelHeight, briefHeight: briefHeight)
+                    next.scrolled(distanceFromBottom: distance)
                     if next != follow { follow = next }
                 }
         } else {

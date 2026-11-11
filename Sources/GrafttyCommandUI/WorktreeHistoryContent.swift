@@ -98,7 +98,7 @@ struct WorktreeHistoryContent: View {
         }
     }
 
-    private func railed<Content: View>(_ events: [WorktreeTimeline.Event], title: String? = nil,
+    private func railed<Content: View>(_ events: [WorktreeTimeline.Event], title: String? = nil, headline: Bool = false,
                                       @ViewBuilder content: () -> Content) -> some View {
         let first = events[0]
         let last = events.last?.id == timeline.events.last?.id
@@ -110,7 +110,13 @@ struct WorktreeHistoryContent: View {
             .frame(width: 8)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    sender(first, title: title ?? first.title)
+                    if headline {
+                        Text(first.title).font(.callout).fontWeight(.medium)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        sender(first, title: title ?? first.title)
+                    }
                     Spacer(minLength: 0)
                     if let timestamp = first.timestamp {
                         Text(Self.time(timestamp)).font(.caption2).foregroundStyle(secondary).fixedSize()
@@ -126,7 +132,45 @@ struct WorktreeHistoryContent: View {
         .accessibilityIdentifier("worktree.context.history.event.\(first.id)")
     }
 
+    /// A history entry's detail and decisions, shown only once its row is activated (CONTEXT-60).
+    static func entryDetail(_ event: WorktreeTimeline.Event, expanded: Bool)
+        -> (detail: String?, decisions: [String], hasMore: Bool) {
+        let detail = event.completed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasMore = !detail.isEmpty || !event.decisions.isEmpty
+        guard expanded else { return (nil, [], hasMore) }
+        return (detail.isEmpty ? nil : detail, event.decisions, hasMore)
+    }
+
+    @ViewBuilder
     private func eventRow(_ event: WorktreeTimeline.Event) -> some View {
+        if event.kind == .checkpoint, event.presentation == nil {
+            entryRow(event)
+        } else {
+            detailedEventRow(event)
+        }
+    }
+
+    /// A headline on one row with its time; the detail opens in place.
+    private func entryRow(_ event: WorktreeTimeline.Event) -> some View {
+        let expanded = expandedGroups.contains(event.id)
+        let shown = Self.entryDetail(event, expanded: expanded)
+        return railed([event], headline: true) {
+            if let detail = shown.detail {
+                Text(detail).font(.callout).foregroundStyle(secondary).lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(Array(shown.decisions.enumerated()), id: \.offset) { _, decision in
+                Text(decision).font(.caption).foregroundStyle(secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { if shown.hasMore { toggle(event.id) } }
+        .accessibilityAddTraits(shown.hasMore ? .isButton : [])
+        .accessibilityValue(shown.hasMore ? (expanded ? "Expanded" : "Collapsed") : "")
+    }
+
+    private func detailedEventRow(_ event: WorktreeTimeline.Event) -> some View {
         railed([event]) {
             if let presentation = event.presentation {
                 HarnessTimelineContent(presentation: presentation, secondary: secondary, wasTruncated: event.wasTruncated)
