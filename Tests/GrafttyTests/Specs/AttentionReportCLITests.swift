@@ -41,4 +41,17 @@ struct AttentionReportCLITests {
         recap.icon = "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"9\" fill=\"primary\"/></svg>"
         #expect(try AttentionReport.decodeRecap(JSONEncoder().encode(recap)).icon == recap.icon)
     }
+
+    @Test func rejectsInvalidOptionsWithTheirOwnReason() throws {
+        var recap = AttentionRecap(title: "Release", completed: "Found it.", next: "Decide.", emoji: "🚦")
+        recap.options = [.init(label: "Hold"), .init(label: "Ship")]
+        do {
+            _ = try AttentionReport.decodeRecap(JSONEncoder().encode(recap))
+            Issue.record("Options without a question were accepted")
+        } catch {
+            #expect(String(describing: error).contains("\"options\""))
+        }
+        recap.need = "Hold or ship?"
+        #expect(try AttentionReport.decodeRecap(JSONEncoder().encode(recap)).options?.count == 2)
+    }
 }
