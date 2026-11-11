@@ -27,7 +27,10 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: aarch64
     runs-on: ${{ matrix.runner }}
-    container: swift:6.4.1-noble
+    container:
+      image: swift:6.4.1-noble
+      # Resolve public package hosts independently of the runner's DNS servers.
+      options: --dns 1.1.1.1 --dns 8.8.8.8
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
