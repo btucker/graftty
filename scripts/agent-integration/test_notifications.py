@@ -243,17 +243,17 @@ class NotificationEvidenceTests(unittest.TestCase):
     def event(self, timestamp=10):
         return {'runtime': 'codex', 'worktree': '/fixture/worktree', 'agentID': 'codex-fixture',
                 'sessionID': 'session', 'paneSessionName': 'pane', 'stoppedAt': timestamp,
-                'recap': {'title': 'Fixture purpose', 'completed': 'Completed fixture turn'}}
+                'recap': {'title': 'Fixture purpose', 'completed': 'Completed fixture turn', 'need': 'Open the fixture?'}}
 
     def observation(self, events):
         attempts = [{'identifier': 'agent-attention:/fixture/worktree', 'title': e['recap']['title'],
-                     'body': e['recap']['completed'], 'userInfo': {'runtime': e['runtime'],
+                     'body': e['recap']['need'], 'userInfo': {'runtime': e['runtime'],
                      'worktree_path': e['worktree'], 'session_id': e.get('sessionID'),
                      'pane_session_name': e.get('paneSessionName')}} for e in events]
         return {'events': json.dumps(events), 'attempts': json.dumps(attempts),
                 'postedCount': str(len(attempts))}
 
-    def test_requires_actual_provider_identity_recap_and_one_delivery_per_stop(self):
+    def test_requires_actual_provider_identity_and_one_delivery_per_question(self):
         observation = self.observation([self.event(), self.event(20)])
         assert_notification_evidence(observation, 'codex', '/fixture/worktree', 2)
         for field in ('agentID', 'sessionID', 'paneSessionName', 'recap'):

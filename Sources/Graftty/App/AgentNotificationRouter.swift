@@ -23,7 +23,8 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
     func post(_ notification: AgentStopNotificationContent,
               resolving: @escaping @MainActor (AgentStopNotificationContent) async -> AgentStopNotificationContent = {
                   await ProjectNotificationIdentity.resolved($0)
-              }) {
+              },
+              isCurrent: @escaping @MainActor () -> Bool = { true }) {
         let center = UNUserNotificationCenter.current()
         let reservation = delivery.reserve(notification)
         Task {
@@ -35,7 +36,7 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
                     return (try? await center.requestAuthorization(options: [.alert, .sound])) == true
                 default: return false
                 }
-            }, resolving: resolving, deliver: { request in
+            }, resolving: resolving, isCurrent: isCurrent, deliver: { request in
                 try? await center.add(request.request)
             })
         }
@@ -43,7 +44,8 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
 
     @MainActor
     func post(_ event: RemoteNotificationEvent,
-              resolvingIdentity: @escaping @MainActor () async -> Data? = { nil }) {
+              resolvingIdentity: @escaping @MainActor () async -> Data? = { nil },
+              isCurrent: @escaping @MainActor () -> Bool = { true }) {
         guard let data = try? JSONEncoder().encode(event) else { return }
         post(AgentStopNotificationContent(
             title: event.title,
@@ -60,7 +62,7 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
             var resolved = notification
             resolved.identityImage = await resolvingIdentity()
             return resolved
-        })
+        }, isCurrent: isCurrent)
     }
 
     static func request(for notification: AgentStopNotificationContent) -> UNNotificationRequest {

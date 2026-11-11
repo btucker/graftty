@@ -14,13 +14,13 @@ struct AgentRecapNotificationTests {
         #expect(AgentNotificationRouter.foregroundPresentationOptions(kind: nil).isEmpty)
     }
 
-    @Test("@spec NOTIF-1.7: When a stopped turn reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.")
+    @Test("@spec NOTIF-1.7: When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once if it requests input. The application shall ignore duplicate deliveries and stops older than a recorded stop or that provider's progress.")
     func recordingAStoppedRecapPostsOnce() {
         var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo",
             worktrees: [WorktreeEntry(path: "/repo/sidebar", branch: "sidebar")])])
         let binding = Binding<AppState>(get: { state }, set: { state = $0 })
         let manager = TerminalManager(socketPath: "/tmp/graftty-recap-notification-test.sock")
-        let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.", emoji: "📥")
+        let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.", need: "Approve the queue?", emoji: "📥")
         var notifications: [AgentStopNotificationContent] = []
         func record(_ time: Double, recap: AttentionRecap?) {
             GrafttyApp.recordStoppedTurn(callerPath: "/repo/sidebar", runtime: .codex,
@@ -37,7 +37,7 @@ struct AgentRecapNotificationTests {
             #expect(request.identifier == notification.identifier)
             #expect(request.content.title == recap.title)
             #expect(request.content.subtitle == "📥 sidebar")
-            #expect(request.content.body == recap.completed)
+            #expect(request.content.body == recap.need)
             #expect(request.content.sound != nil)
             #expect(request.content.userInfo["worktree_path"] as? String == "/repo/sidebar")
         }
@@ -45,14 +45,22 @@ struct AgentRecapNotificationTests {
         record(200, recap: recap)
         #expect(notifications.count == 2)
         #expect(notifications[0].identifier == notifications[1].identifier)
+        var routineRecap = recap
+        routineRecap.need = nil
+        routineRecap.completed = "A teammate finished."
+        record(250, recap: routineRecap)
+        #expect(notifications.count == 2)
+        #expect(state.repos[0].worktrees[0].unseenAgentStop?.recap == routineRecap)
+        #expect(state.repos[0].worktrees[0].brief?.completed == routineRecap.completed)
         record(300, recap: nil)
-        #expect(notifications.count == 3)
+        #expect(notifications.count == 2)
+        #expect(state.repos[0].worktrees[0].lastAgentStop?.stoppedAt == Date(timeIntervalSince1970: 300))
         state.repos[0].worktrees[0].clearAgentStopAttention(
             providerSessionKey: "codex:session:session", progressedAt: Date(timeIntervalSince1970: 400))
         record(350, recap: recap)
-        #expect(notifications.count == 3)
+        #expect(notifications.count == 2)
         #expect(state.repos[0].worktrees[0].unseenAgentStop == nil)
         record(450, recap: recap)
-        #expect(notifications.count == 4)
+        #expect(notifications.count == 3)
     }
 }

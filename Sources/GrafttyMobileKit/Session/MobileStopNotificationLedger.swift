@@ -132,19 +132,15 @@ struct MobileStopNotificationLedger: Codable, Equatable {
                         worktreeID: row.sidebar?.id, originDeviceID: row.origin?.deviceID, paneID: paneID,
                         paneSlotID: paneSlotID ?? paneID.flatMap { row.sidebar?.paneIDs?[$0] }))
             }
-            if let stop, stop.timestamp == timestamps[identity] {
-                // An older saved ledger has watermarks but no receipts. Seeing
-                // its exact known stop teaches the cross-route identity silently.
-                _ = rememberStop(stop, row: row)
-            }
-            if let stop, stop.timestamp > (timestamps[identity] ?? -.infinity) {
-                let previous = timestamps[identity]
+            if let stop, stop.timestamp >= (timestamps[identity] ?? -.infinity) {
+                let isNew = stop.timestamp != timestamps[identity]
                 timestamps[identity] = stop.timestamp
-                // Do not announce read history when a device is paired for the first time.
-                if (previous != nil || row.sidebar?.unseenAgentStop?.occurrence == stop.occurrence),
-                   rememberStop(stop, row: row) {
+                // Remember acknowledged questions too, so stale snapshots on
+                // another route cannot announce them as new.
+                if let question = stop.question, rememberStop(stop, row: row),
+                   isNew, row.sidebar?.unseenAgentStop?.occurrence == stop.occurrence {
                     notifications.append(notification(title: stop.recap?.title,
-                        body: stop.recap?.need ?? stop.recap?.completed ?? "\(stop.agentName) stopped.", paneID: stopPane,
+                        body: question, paneID: stopPane,
                         paneSlotID: stop.paneSlotID))
                 }
             }

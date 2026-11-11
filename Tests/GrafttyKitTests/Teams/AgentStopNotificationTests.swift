@@ -5,7 +5,7 @@ import GrafttyProtocol
 
 @Suite("Agent Stop Notification")
 struct AgentStopNotificationTests {
-    @Test("@spec NOTIF-1.4: When any agent turn stops, the application shall send a native notification using its stable purpose title, worktree identity, and question or completed result, with a fallback for stops without a report.")
+    @Test("@spec NOTIF-1.4: When a stopped turn includes a nonblank request for the user, the application shall send a native notification with the request, stable purpose title, and worktree identity. If the turn has no such request, then the application shall suppress the notification.")
     func stoppedRecapUsesAttentionContent() throws {
         let recap = AttentionRecap(title: "Attention queue", completed: "Queue and banner tests pass.",
                                    next: "Review the sidebar.", need: "Does the banner look right?")
@@ -19,12 +19,15 @@ struct AgentStopNotificationTests {
         let payload = try AgentStopNotification.payload(from: content.userInfo)
         #expect(payload.worktreePath == "/repo/sidebar")
         #expect(payload.paneSessionName == "pane")
-        stop.recap?.need = nil
-        #expect(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
-            worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil)?.body == recap.completed)
+        for need in [nil, "", "  "] as [String?] {
+            stop.recap?.need = need
+            #expect(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
+                worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil) == nil)
+        }
         stop.recap = nil
         #expect(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
-            worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil)?.body == "Codex stopped.")
+            worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil) == nil)
+        stop.recap = recap
         #expect(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
             worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil,
             purposeTitle: "Worktree context")?.title == "Worktree context")
@@ -33,7 +36,7 @@ struct AgentStopNotificationTests {
     @Test("@spec NOTIF-1.5: When another agent Attention notification is sent for the same worktree, the application shall replace its existing macOS notification while keeping other worktrees' notifications distinct.")
     func requestsShareWorktreeIdentity() throws {
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
-            recap: .init(title: "Sidebar", completed: "Done.", next: "Review."))
+            recap: .init(title: "Sidebar", completed: "Done.", next: "Review.", need: "Approve the change?"))
         func content(_ path: String) throws -> AgentStopNotificationContent {
             try #require(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
                 worktreePath: path, sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil))

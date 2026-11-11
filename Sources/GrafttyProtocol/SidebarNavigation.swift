@@ -220,6 +220,10 @@ public struct SidebarAgentStop: Codable, Sendable, Hashable {
     }
     public var stoppedAt: Date { Date(timeIntervalSinceReferenceDate: timestamp) }
     public var title: String { "\(agentName) stopped" }
+    public var question: String? {
+        guard let need = recap?.need, !need.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return need
+    }
     public var occurrence: SidebarAttentionOccurrence {
         .init(timestamp: stoppedAt, text: title, source: .agentStop)
     }
@@ -387,7 +391,7 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     }
     public var needsAttention: Bool {
         guard occurrence != nil, occurrence?.source != .commandFinished else { return false }
-        if let agentStop { return agentStop.recap?.need?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+        if let agentStop { return agentStop.question != nil }
         return true
     }
 

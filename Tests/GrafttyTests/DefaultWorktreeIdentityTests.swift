@@ -97,7 +97,7 @@ struct DefaultWorktreeIdentityTests {
         var notifications: [AgentStopNotificationContent] = []
         GrafttyApp.recordStoppedTurn(callerPath: "/repo", runtime: .codex, callerAgentID: "agent",
             sessionID: "session", paneSessionName: nil,
-            recap: .init(title: "Review", completed: "Done", next: "Review", emoji: "🧩"),
+            recap: .init(title: "Review", completed: "Done", next: "Review", need: "Approve the result?", emoji: "🧩"),
             stoppedAt: Date().addingTimeInterval(1), appState: binding, terminalManager: manager,
             postNotification: { notifications.append($0) })
         #expect(notifications.count == 1)

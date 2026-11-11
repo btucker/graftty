@@ -1470,15 +1470,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.3** If the user has denied notification authorization, the application shall silently skip the notification rather than surfacing an error.
 
-**NOTIF-1.4** When any agent turn stops, the application shall send a native notification using its stable purpose title, worktree identity, and question or completed result, with a fallback for stops without a report.
+**NOTIF-1.4** When a stopped turn includes a nonblank request for the user, the application shall send a native notification with the request, stable purpose title, and worktree identity. If the turn has no such request, then the application shall suppress the notification.
 
 **NOTIF-1.5** When another agent Attention notification is sent for the same worktree, the application shall replace its existing macOS notification while keeping other worktrees' notifications distinct.
 
 **NOTIF-1.6** While Graftty is active, agent Attention notifications shall display native banners and sounds using the user's macOS notification settings.
 
-**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
+**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once if it requests input. The application shall ignore duplicate deliveries and stops older than a recorded stop or that provider's progress.
 
-**NOTIF-1.8** When a connected Remote Mac records any new stopped turn, the application shall send one macOS notification with its stable purpose title and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
+**NOTIF-1.8** When a connected Remote Mac records a stopped turn that requests input, the application shall send one macOS notification with its stable purpose title and worktree identity. The application shall keep routine completions, repeated snapshots, initial snapshots, and superseded prompts at the same target silent.
 
 **NOTIF-1.9** When a native Attention notification represents the home checkout, the application shall use the current project icon and fallback instead of its stored worktree emoji while preserving linked worktree identities and notification activation routes.
 
@@ -1486,9 +1486,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.11** When the user activates a local agent notification, the application shall retain the request until a window can open its worktree through the normal selection path, restoring terminal surfaces and the originating pane without changing selection or acknowledging attention if the worktree cannot wake.
 
-**NOTIF-1.12** When a mobile client receives a new stopped turn, the application shall create a native notification for stops with or without reports, deduplicate repeated and older snapshots across reconnects and relaunches, and keep hosts distinct.
+**NOTIF-1.12** When a mobile client receives a new, unacknowledged stopped turn that requests input, the application shall notify once with the request, deduplicate repeated and older snapshots across reconnects and relaunches, and keep hosts distinct. Routine and acknowledged stops shall remain silent.
 
-**NOTIF-1.13** When an agent stops while GrafttyMobile is suspended or terminated, the application shall receive a native push notification through Graftty-server and APNs and route activation to its authenticated host and worktree.
+**NOTIF-1.13** When an agent requests input while GrafttyMobile is suspended or terminated, the application shall receive a native push notification through Graftty-server and APNs and route activation to its authenticated host and worktree.
 
 **NOTIF-1.14** When an agent requests permission or input on mobile, the application shall deliver a native notification once per new request, suppress command-finished markers, and suppress an older prompt superseded by a stop at the same pane.
 
@@ -1508,7 +1508,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.22** When the mobile application initializes, the application shall install its notification delegate before constructing the root view so launch notification responses can be received.
 
-**NOTIF-1.23** When mobile receives the same originating stop through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.
+**NOTIF-1.23** When mobile receives the same originating stopped-turn question through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.
 
 **NOTIF-1.24** If a mobile notification lacks a pane identity and its worktree has multiple panes, then the application shall report that the pane cannot be identified instead of opening an unrelated pane.
 
@@ -1519,6 +1519,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **NOTIF-1.27** When a notification reopens a retained mobile pane whose pending history has expired, the application shall refresh its checkpoint and load older history on scroll demand while preserving the retained client and usable live output and input.
 
 **NOTIF-1.28** When a resolved notification attaches its mobile pane, the application shall consume recovery intent once within that window for the matching host and pane, preserve its in-flight recovery task identity, and discard intent superseded by newer navigation.
+
+**NOTIF-1.29** When an agent request is dismissed or superseded while native notification authorization or identity lookup is pending, the application shall suppress its obsolete notification before submission.
 
 ### NOTIF-2.x — Attention Badge Auto-Population
 

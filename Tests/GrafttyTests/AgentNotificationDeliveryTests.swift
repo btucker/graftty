@@ -55,4 +55,53 @@ struct AgentNotificationDeliveryTests {
         #expect(sourceURL != nil)
         #expect(sourceURL.map { FileManager.default.fileExists(atPath: $0.path) } == false)
     }
+
+    @Test("@spec NOTIF-1.29: When an agent request is dismissed or superseded while native notification authorization or identity lookup is pending, the application shall suppress its obsolete notification before submission.", arguments: [false, true], [false, true])
+    func obsoleteQuestionDoesNotPost(waitForAuthorization: Bool, providerPrompt: Bool) async throws {
+        let delivery = AgentNotificationDelivery()
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+            recap: .init(title: "Review", completed: "Ready.", next: "Review.", need: "Approve?"))
+        var worktree = WorktreeEntry(path: "/repo/task", branch: "task")
+        worktree.recordAgentStop(stop)
+        let prompt = Attention(text: "Codex needs permission", timestamp: stop.stoppedAt,
+            source: .agentStop, providerSessionKey: "codex:session:session")
+        if providerPrompt { worktree.attention = prompt }
+        let stoppedNotification = try #require(AgentStopNotification.stoppedTurnContent(runtime: .codex,
+            worktreeName: "task", worktreePath: worktree.path, sessionID: "session", paneSessionName: nil,
+            stop: stop, emoji: nil))
+        let notification = providerPrompt ? AgentStopNotification.content(runtime: .codex,
+            worktreeName: "task", worktreePath: worktree.path, sessionID: "session", paneSessionName: nil,
+            reason: .permission, timestamp: stop.stoppedAt) : stoppedNotification
+        let started = AsyncStream<Void>.makeStream()
+        let resume = AsyncStream<Void>.makeStream()
+        var delivered = false
+        let task = Task {
+            await delivery.post(notification, reservation: delivery.reserve(notification), authorized: {
+                if waitForAuthorization {
+                    started.continuation.yield()
+                    _ = await resume.stream.first { _ in true }
+                }
+                return true
+            }, resolving: {
+                if !waitForAuthorization {
+                    started.continuation.yield()
+                    _ = await resume.stream.first { _ in true }
+                }
+                return $0
+            }, isCurrent: {
+                providerPrompt ? worktree.attention == prompt : worktree.unseenAgentStop == stop
+            }, deliver: { _ in delivered = true })
+        }
+        _ = await started.stream.first { _ in true }
+        worktree.clearAgentStopAttention(providerSessionKey: "codex:session:session",
+            progressedAt: Date(timeIntervalSince1970: 150))
+        if waitForAuthorization {
+            worktree.acknowledgeAttention()
+        } else {
+            worktree.recordAgentStop(.init(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 200)))
+        }
+        resume.continuation.yield()
+        await task.value
+        #expect(!delivered)
+    }
 }
