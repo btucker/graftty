@@ -8,11 +8,11 @@ import GrafttyProtocol
 @MainActor
 @Suite("Main window detail layout")
 struct MainWindowDetailLayoutTests {
-    @Test("@spec CONTEXT-55: While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.")
-    func contextReservesTerminalWidth() async throws {
+    @Test("@spec CONTEXT-55: While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, and below the tab row beside a workspace, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.", arguments: [0.0, 36.0])
+    func contextReservesTerminalWidth(inset: Double) async throws {
         let terminalProbe = NSView(), inspectorProbe = NSView()
         func layout(open: Bool) -> some View {
-            MainWindowDetailLayout {
+            MainWindowDetailLayout(inspectorTopInset: inset) {
                 Color.gray.frame(height: 30)
             } content: {
                 Color.black.ignoresSafeArea()
@@ -40,8 +40,8 @@ struct MainWindowDetailLayoutTests {
                 let inspector = inspectorProbe.convert(inspectorProbe.bounds, to: host)
                 #expect(terminal.maxX <= inspector.minX)
                 #expect(abs(inspector.maxX - host.bounds.maxX) < 1)
-                #expect(inspector.minY >= 30)
-                #expect(abs(inspector.height - 670) < 1)
+                #expect(abs(inspector.minY - (30 + inset)) < 1, "The panel starts below the breadcrumb and any tab row")
+                #expect(abs(inspector.height - (670 - inset)) < 1)
             }
         }
     }

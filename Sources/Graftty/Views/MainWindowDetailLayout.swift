@@ -4,6 +4,8 @@ import SwiftUI
 /// The selected worktree detail keeps the breadcrumb above its content row.
 struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: View {
     var headerWash: WorktreeHeaderWash? = nil
+    /// Starts the inspector below the content's tab row, when the content has one (CONTEXT-55).
+    var inspectorTopInset: CGFloat = 0
     @ViewBuilder var header: Header
     @ViewBuilder var content: Content
     @ViewBuilder var inspector: Inspector
@@ -20,6 +22,7 @@ struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: Vie
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay { WorktreeHeaderWashSpill() }
                 inspector
+                    .padding(.top, inspectorTopInset)
             }
             .contentShape(Rectangle())
             // Keep workspace backgrounds and hit targets below the window header.
