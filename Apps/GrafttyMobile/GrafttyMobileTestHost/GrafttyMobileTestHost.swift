@@ -35,6 +35,8 @@ struct GrafttyMobileTestHost: App {
                 WorktreeContextFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--scrollback-fixture") {
                 ScrollbackFixture().ignoresSafeArea(.keyboard)
+            } else if ProcessInfo.processInfo.arguments.contains("--transcript-map-fixture") {
+                TranscriptMapFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--image-controls-fixture") {
                 ImageControlsFixture()
             } else {
@@ -51,7 +53,7 @@ struct GrafttyMobileTestHost: App {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--agent-integration-url"),
               arguments.indices.contains(index + 1) else {
-            if arguments.contains(where: ["--ipad-workspace-fixture", "--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture",
+            if arguments.contains(where: ["--ipad-workspace-fixture", "--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture", "--transcript-map-fixture",
                 "--image-controls-fixture", "--browser-control-fixture", "--agent-menu-delay-fixture"].contains) { return nil }
             // A notification launches the executable through Springboard,
             // which does not retain XCUIApplication's launch arguments.
@@ -220,6 +222,27 @@ private struct WorktreeContextFixture: View {
 private struct ScrollbackFixture: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> ScrollbackFixtureController { .init() }
     func updateUIViewController(_ controller: ScrollbackFixtureController, context: Context) {}
+}
+
+private struct TranscriptMapFixture: View {
+    @State private var requestedRow = -1
+
+    var body: some View {
+        ScrollbackFixture()
+            .overlay(alignment: .topTrailing) {
+                ScrollbackMapOverlay(map: ScrollbackMap(totalRows: 1000, marks: [
+                    .init(row: 230, kind: .input, eventID: "first"),
+                    .init(row: 500, kind: .peer, eventID: "middle"),
+                    .init(row: 800, kind: .input, eventID: "last"),
+                ]), viewport: .init(offset: 960, length: 40, total: 1000), entries: [:]) {
+                    requestedRow = $0
+                }
+                .padding(.top, 110)
+            }
+            .overlay(alignment: .bottomLeading) {
+                Text("\(requestedRow)").accessibilityIdentifier("transcript-map.requested-row")
+            }
+    }
 }
 
 private final class ScrollbackFixtureController: UIViewController {

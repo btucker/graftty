@@ -305,6 +305,31 @@ final class ScrollbackInteractionTests: XCTestCase {
     func testLeaderScrollbackGestures() throws { try exerciseScrollback(follower: false) }
     func testFollowerScrollbackGestures() throws { try exerciseScrollback(follower: true) }
 
+    func testTranscriptMapTapAndDragIntoExpandedArea() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--transcript-map-fixture"]
+        app.launch()
+        defer { app.terminate() }
+
+        let map = app.descendants(matching: .any)["terminal.scrollbackMap"]
+        let requestedRow = app.staticTexts["transcript-map.requested-row"]
+        XCTAssertTrue(map.waitForExistence(timeout: 5))
+        let idleHeight = map.frame.height
+        XCTAssertEqual(idleHeight, 150, accuracy: 1)
+        let start = map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+        start.tap()
+        XCTAssertEqual(requestedRow.label, "230")
+
+        let end = start.withOffset(CGVector(dx: 0, dy: 140))
+        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        let row = Int(requestedRow.label) ?? -1
+        XCTAssertTrue((875...905).contains(row), "Expected a row in the expanded map, got \(row)")
+        let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            abs(map.frame.height - idleHeight) <= 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 3), .completed)
+    }
+
     private func exerciseScrollback(follower: Bool) throws {
         let app = XCUIApplication()
         app.launchArguments = ["--scrollback-fixture"] + (follower ? ["--follower"] : [])

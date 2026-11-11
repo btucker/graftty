@@ -875,9 +875,11 @@ struct ProjectAddPersistenceTests {
             #expect(router.worktreeMonitor.liveFdCountForTesting > 0)
             _ = try await GitRunner.run(args: ["worktree", "add", "-b", "feature", root.appendingPathComponent("linked").path], at: root.path)
             let deadline = ContinuousClock.now + .seconds(3)
-            while box.state.repos.first?.worktrees.count != 2 && ContinuousClock.now < deadline {
+            while box.state.repos.first?.worktrees.map(\.branch).contains("feature") != true,
+                  ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(10))
             }
+            #expect(box.state.repos.first?.worktrees.count == 2)
             #expect(box.state.repos.first?.worktrees.map(\.branch).contains("feature") == true)
         }
     }
