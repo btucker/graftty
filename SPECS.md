@@ -4808,6 +4808,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.9** When provider activity arrives through the durable file handoff, the application shall update the tracked pane's busy state using the original hook event and attention reason while leaving legacy progress without hook metadata unchanged.
 
+**AGENT-2.10** While a registered Codex session has a live app-server and an observed active thread, the application shall include its pane in sidebar working activity even when provider hooks are absent, and shall discard polled activity when the provider no longer confirms it.
+
 ### AGENT-3.x
 
 **AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.

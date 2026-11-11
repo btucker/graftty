@@ -16,6 +16,58 @@ private struct FakeExecutor: CLIExecutor {
 @MainActor
 @Suite("ClaudeSessionRegistry refresh populates liveness and survives failure (AGENT-2.3 refresh-level).")
 struct ClaudeSessionRegistryTests {
+    @Test func newerStopWinsOverAnInFlightNativePoll() async {
+        actor Provider {
+            var started = false
+            var continuation: CheckedContinuation<Void, Never>?
+            func poll() async -> [String: [String: AgentLiveness]] {
+                started = true
+                await withCheckedContinuation { continuation = $0 }
+                return ["pane": ["codex:session": .busy]]
+            }
+            func release() { continuation?.resume(); continuation = nil }
+        }
+        let provider = Provider()
+        let registry = ClaudeSessionRegistry(executor: FakeExecutor(outputs: [:]),
+                                             additionalLiveness: { await provider.poll() })
+        let refresh = Task { await registry.refresh() }
+        while !(await provider.started) { await Task.yield() }
+        registry.recordHook(runtime: .codex, event: .stop, sessionID: "session",
+                            paneSessionName: "pane", attentionReason: nil)
+        await provider.release()
+        await refresh.value
+        #expect(registry.livenessBySession["pane"] == .idle)
+    }
+
+    @Test func nativeProviderActivityAppearsWithoutHooksAndExpiresOnRefresh() async {
+        actor Provider {
+            var activity: [String: [String: AgentLiveness]] = ["codex-pane": ["codex:session": .busy]]
+            func poll() -> [String: [String: AgentLiveness]] { activity }
+            func finish() { activity = ["codex-pane": ["codex:session": .idle]] }
+            func disconnect() { activity = [:] }
+        }
+        let provider = Provider()
+        let registry = ClaudeSessionRegistry(executor: FakeExecutor(outputs: [:]),
+                                             additionalLiveness: { await provider.poll() })
+        registry.recordHook(runtime: .codex, event: .postToolUse, sessionID: "session",
+                            paneSessionName: "codex-pane", attentionReason: nil)
+        await registry.refresh()
+        #expect(registry.livenessBySession["codex-pane"] == .busy)
+        await provider.finish()
+        await registry.refresh()
+        #expect(registry.livenessBySession["codex-pane"] == .idle)
+        await provider.disconnect()
+        await registry.refresh()
+        #expect(registry.livenessBySession["codex-pane"] == .idle)
+        registry.recordHook(runtime: .claude, event: .userPromptSubmit, sessionID: "another",
+                            paneSessionName: "codex-pane", attentionReason: nil)
+        await registry.refresh()
+        #expect(registry.livenessBySession["codex-pane"] == .busy)
+        registry.recordHook(runtime: .claude, event: .stop, sessionID: "another",
+                            paneSessionName: "codex-pane", attentionReason: nil)
+        #expect(registry.livenessBySession["codex-pane"] == .idle)
+    }
+
     @Test("@spec AGENT-2.5: When Codex or Claude hooks report turn activity, the application shall include their working panes in Running and project working counts, remove stopped or waiting panes, and clear activity when the pane's command ends.")
     func providerHooksPopulateRunningActivity() async {
         let r = registry(json: "[]", ps: "")
