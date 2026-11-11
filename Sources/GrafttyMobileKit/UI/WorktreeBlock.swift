@@ -107,7 +107,9 @@ struct WorktreeBlock: View {
                     // A 44-point target that takes only the heading's height, so the
                     // row doesn't grow (IOS-13.18); taps above and below still reach it.
                     Button(action: onRemove) {
-                        Image(systemName: "trash").frame(width: 44, height: 44).contentShape(Rectangle())
+                        Image(systemName: "trash")
+                            .frame(width: 44, height: 44, alignment: .trailing)
+                            .contentShape(Rectangle())
                     }.buttonStyle(.borderless)
                         .padding(.vertical, -10)
                         .foregroundStyle(theme?.sidebarSecondaryText ?? .secondary)

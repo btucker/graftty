@@ -2748,7 +2748,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.8** While a mobile ask card has a known time, the application shall state how long ago it asked or was last active in one compact unit, and otherwise shall show no time.
 
-**IOS-13.9** While the compact Projects screen has worktrees needing the user for something other than a question, the application shall list them between the ask deck and the project list, showing two with a control for the rest until it is used.
+**IOS-13.9** While the compact Projects screen previews worktrees with unread updates, the application shall show up to two with a control for the rest until it is used.
 
 **IOS-13.10** While a finger is on a mobile worktree list, the application shall report it held without claiming the touch, so scrolling, tapping, and swiping keep working.
 
@@ -2775,6 +2775,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-13.21** While an agent waits at its harness's own prompt rather than a stopped turn, its ask card shall open that prompt's pane, and its Explain more shall open it without typing into it.
 
 **IOS-13.22** While a mobile worktree row shows a status line, the application shall place it directly under the name, with no padding between them.
+
+**IOS-13.23** While iPhone Projects has questions or unread updates, the application shall show one Needs you section with a combined count and keep updates accessible from that section.
+
+**IOS-13.24** While agents are working across projects on iPhone, the application shall list them in a Working section above All projects, including agents in pinned worktrees and multiple working agents in one worktree.
+
+**IOS-13.25** While the iPhone picker displays pinned agents, the application shall use wider tiles with four across at typical phone widths and at most five across on wider layouts.
+
+**IOS-13.26** When the user swipes an iPhone question card to open an identified agent pane, the application shall open that pane and request control when the terminal connects.
+
+**IOS-13.27** When a question-card drag ends with more vertical than horizontal displacement or its projected endpoint crosses the origin, the application shall leave the card in place and preserve terminal control.
+
+**IOS-13.28** While a mobile worktree row offers removal, the application shall align the trash icon to the trailing edge of the row.
 
 ## IPAD — iPad Layout
 

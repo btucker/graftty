@@ -1,3 +1,4 @@
+import Foundation
 import GrafttyCommandUI
 import GrafttyProtocol
 import Observation
@@ -20,6 +21,14 @@ enum MobilePaneAttention {
 
     static func openTarget(for context: SidebarWorktreeContext) -> SidebarActivityItem {
         context.pending.first ?? context.item
+    }
+
+    /// A legacy report can open the sole remaining pane without identifying it.
+    /// Only an identified pane can take control on the user's behalf.
+    static func canTakeControl(of resolvedPaneID: String?, for item: SidebarActivityItem) -> Bool {
+        guard resolvedPaneID != nil else { return false }
+        return item.paneID != nil || item.agentStop?.paneSlotID != nil
+            || item.agentStop?.paneTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     static func pendingCount(worktrees: [WorktreePanes], currentWorktree: String?, navigation: SidebarNavigationState) -> Int {
