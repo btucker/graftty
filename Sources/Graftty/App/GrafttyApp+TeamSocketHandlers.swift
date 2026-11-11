@@ -79,10 +79,26 @@ extension GrafttyApp {
         var notification = content
         ProjectNotificationIdentity.apply(to: &notification, worktree: worktree, repo: repo)
         if let post { return post(notification) }
+        let stoppedTurn = worktree.unseenAgentStop
+        let target = AgentStopAttentionTarget.resolve(worktree: worktree,
+            paneSessionName: content.userInfo["pane_session_name"])
+        func promptAttention(in worktree: WorktreeEntry?) -> Attention? {
+            switch target {
+            case .pane(let slot): return worktree?.paneAttention[slot]
+            case .worktree: return worktree?.attention
+            }
+        }
+        let originalPrompt = promptAttention(in: worktree)
         AgentNotificationRouter.shared.post(notification, resolving: { notification in
             await ProjectNotificationIdentity.resolved(notification, currentRepo: {
                 appState.wrappedValue.repo(forWorktreePath: worktreePath)
             })
+        }, isCurrent: {
+            let current = appState.wrappedValue.worktree(forPath: worktreePath)
+            if content.userInfo["attention_reason"] != nil {
+                return originalPrompt?.source == .agentStop && promptAttention(in: current) == originalPrompt
+            }
+            return stoppedTurn?.question != nil && current?.unseenAgentStop == stoppedTurn
         })
     }
 

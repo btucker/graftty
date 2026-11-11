@@ -575,7 +575,7 @@ struct RemoteMacsModelTests {
         await model.loadSavedRemotes()
         let identity = RemoteMacIdentity(remote)
         var events: [RemoteNotificationEvent] = []
-        model.onRemoteNotification = { events.append($0) }
+        model.onRemoteNotification = { event, _ in events.append(event) }
         func snapshot(attention: String?) -> [WorktreePanes] {
             [WorktreePanes(path: "/repo", displayName: "root", repoDisplayName: "Repo",
                 displayBranch: "release", state: .closed, isMainCheckout: true, prBadge: nil,
@@ -1915,7 +1915,7 @@ struct RemoteMacsModelTests {
         await model.loadSavedRemotes()
         let identity = RemoteMacIdentity(remote)
         var events: [RemoteNotificationEvent] = []
-        model.onRemoteNotification = { events.append($0) }
+        model.onRemoteNotification = { event, _ in events.append(event) }
 
         func snapshot(
             worktreeAttention: String? = nil,
@@ -2051,7 +2051,11 @@ struct RemoteMacsModelTests {
         await model.loadSavedRemotes()
         let identity = RemoteMacIdentity(remote)
         var events: [RemoteNotificationEvent] = []
-        model.onRemoteNotification = { events.append($0) }
+        var eligibility: [() -> Bool] = []
+        model.onRemoteNotification = { event, isCurrent in
+            events.append(event)
+            eligibility.append(isCurrent)
+        }
         let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.",
                                    need: "Does this look right?")
         func snapshot(time: Double?, userNotification: Bool = false,
@@ -2079,6 +2083,7 @@ struct RemoteMacsModelTests {
         registry.onPaneSnapshot(identity, snapshot(time: nil))
         registry.onPaneSnapshot(identity, snapshot(time: 100))
         #expect(events.count == 1)
+        #expect(eligibility.last?() == true)
         let event = try #require(events.first)
         #expect(event.title == recap.title)
         #expect(event.body.contains("📥 sidebar"))
@@ -2114,12 +2119,16 @@ struct RemoteMacsModelTests {
         registry.onPaneSnapshot(identity, snapshot(time: 600, bare: true))
         registry.onPaneSnapshot(identity, snapshot(time: 700, routine: true))
         #expect(events.count == count)
+        #expect(eligibility.last?() == false)
         model.disconnect(identity: identity)
         registry.onPaneSnapshot(identity, snapshot(time: 800, routine: true))
         #expect(events.count == count)
         registry.onPaneSnapshot(identity, snapshot(time: 900))
         #expect(events.count == count + 1)
         #expect(events.last?.body.contains(recap.need!) == true)
+        #expect(eligibility.last?() == true)
+        registry.onPaneSnapshot(identity, snapshot(time: nil))
+        #expect(eligibility.last?() == false)
     }
 
     @Test("""
@@ -2151,7 +2160,7 @@ struct RemoteMacsModelTests {
         await model.loadSavedRemotes()
         let identity = RemoteMacIdentity(remote)
         var events: [RemoteNotificationEvent] = []
-        model.onRemoteNotification = { events.append($0) }
+        model.onRemoteNotification = { event, _ in events.append(event) }
 
         func snapshot(
             worktreeAttention: String? = nil,

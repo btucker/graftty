@@ -50,7 +50,7 @@ final class RemoteMacsModel: ObservableObject {
     private let store: RemoteMacStore
     private let connectionRegistry: RemoteMacConnectionRegistry
     let relayRouter: RemoteWorktreeRelayRouter
-    var onRemoteNotification: ((RemoteNotificationEvent) -> Void)?
+    var onRemoteNotification: ((RemoteNotificationEvent, @escaping () -> Bool) -> Void)?
     @Published private var connectionStates: [RemoteMacIdentity: RemoteMacConnectionState] = [:]
     @Published private var paneFeedFailures: [RemoteMacIdentity: String] = [:]
     private struct PaneFeedRecovery {
@@ -1529,14 +1529,18 @@ final class RemoteMacsModel: ObservableObject {
                 for: additions.map(\.event),
                 from: identity
             ) {
-                onRemoteNotification?(summary)
+                onRemoteNotification?(summary, { [weak self] in
+                    additions.contains { self?.activeAttentionByRemote[identity]?.contains($0.key) == true }
+                })
             }
             return
         }
         let previous = activeAttentionByRemote[identity] ?? []
         activeAttentionByRemote[identity] = currentKeys
         for item in current where !previous.contains(item.key) {
-            onRemoteNotification?(item.event)
+            onRemoteNotification?(item.event, { [weak self] in
+                self?.activeAttentionByRemote[identity]?.contains(item.key) == true
+            })
         }
     }
 

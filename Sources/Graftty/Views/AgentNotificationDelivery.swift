@@ -22,6 +22,7 @@ final class AgentNotificationDelivery {
         _ notification: AgentStopNotificationContent, reservation: Reservation,
         authorized: () async -> Bool,
         resolving: (AgentStopNotificationContent) async -> AgentStopNotificationContent,
+        isCurrent: () -> Bool = { true },
         deliver: ((request: UNNotificationRequest, sourceURL: URL?)) async -> Void
     ) async {
         let token = reservation.token
@@ -31,7 +32,7 @@ final class AgentNotificationDelivery {
         guard reservation.identifier.map({ pending[$0] == token }) ?? true else { return }
         guard await authorized() else { return }
         let resolved = await resolving(notification)
-        guard notification.identifier.map({ pending[$0] == token }) ?? true else { return }
+        guard notification.identifier.map({ pending[$0] == token }) ?? true, isCurrent() else { return }
         let prepared = AgentNotificationRouter.prepareRequest(for: resolved)
         defer {
             // Capture the source path, since attachment.url may be system-owned.

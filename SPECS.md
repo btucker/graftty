@@ -1520,6 +1520,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.28** When a resolved notification attaches its mobile pane, the application shall consume recovery intent once within that window for the matching host and pane, preserve its in-flight recovery task identity, and discard intent superseded by newer navigation.
 
+**NOTIF-1.29** When an agent request is dismissed or superseded while native notification authorization or identity lookup is pending, the application shall suppress its obsolete notification before submission.
+
 ### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.
