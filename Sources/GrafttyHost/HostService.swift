@@ -228,6 +228,7 @@ final class HostService {
             runtime.startMaintenance()
             try socket.start()
             try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: configuration.socketPath)
+            await runtime.resumeHostStoppedConversations()
             let mcpBridge = self.mcpBridge
             await ssh.setMCPControl(.init(handler: { _, bytes in
                 if bytes == MCPProxyControl.ready { return bytes }

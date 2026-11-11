@@ -8,6 +8,9 @@ import Foundation
 /// Kernel-backed process identity used to distinguish a reused PID from
 /// the long-running runtime process that originally registered presence.
 public enum ProcessIdentityReader {
+    public static let currentProcessStart: Date = startTimeMicroseconds(ofPID: getpid())
+        .map { Date(timeIntervalSince1970: Double($0) / 1_000_000) } ?? Date()
+
     public static func startTimeMicroseconds(ofPID pid: Int32) -> Int64? {
         #if os(Linux)
         guard let info = LinuxProcessStat.read(pid: pid) else { return nil }

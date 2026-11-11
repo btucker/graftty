@@ -1080,6 +1080,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.41** If Apple Intelligence is unavailable, fails, exceeds an eight-second generation budget, returns no usable name, or proposes a name already known in the repository, then the application shall use a brief unique kebab-case fallback; if name generation is cancelled, then the application shall stop submission.
 
+**GIT-5.42** When creation fails with an error that its captured output already contains, the application shall record a short failure summary instead of repeating that output.
+
+**GIT-5.43** When creation diagnostics contain carriage-return progress updates, the application shall place each update on its own line.
+
+**GIT-5.44** When the user opens a terminal from a failed creation whose worktree exists, the application shall start a shell there even when a failed agent launch is recorded.
+
 ### GIT-6.x — Auto-tracking Pinned Agents
 
 **GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.
@@ -5297,6 +5303,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.155** When a mobile client creates a pane and a provider starts there, the host shall treat the observed additional session as ongoing without bounded finish instructions or parent cleanup eligibility.
 
 **AGENT-6.156** While an iPhone agent launch awaits the host's response, the application shall keep existing-agent selection and Terminal available in the agent dropdown and disable additional launches.
+
+**AGENT-6.157** When a host starts after a shutdown ended an ongoing agent's provider, the application shall restart that agent's saved conversation without user action, leaving bounded assignments and closed tabs unchanged.
+
+**AGENT-6.158** If a host is draining when it starts, then the application shall leave conversations ended by a shutdown interrupted rather than restart them.
+
+**AGENT-6.159** When a provider exit recorded before the host started is applied, the application shall mark that ongoing conversation for restart, and shall leave an exit recorded while the host was running interrupted.
+
+**AGENT-6.160** When a user retries an agent launch that failed before its provider started, the application shall start that agent again in its worktree with its original task under a new assignment.
 
 ## CLI — CLI
 

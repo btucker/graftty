@@ -50,9 +50,16 @@ public struct WorktreeCreationProgress: Codable, Sendable, Hashable {
         max(0, (finishedAt ?? now).timeIntervalSince(startedAt))
     }
 
+    public static let outputFailureSummary = "Git or one of its hooks reported an error. The output below has the details."
+
     public mutating func transition(to phase: Phase, error: String? = nil, now: Date = Date()) {
         self.phase = phase
         self.error = error.map(Self.plainText)
+        // Git's error text is the output already captured; a shortened copy ends in an ellipsis.
+        if phase == .failed, let reported = self.error?.trimmingCharacters(in: .whitespacesAndNewlines), !reported.isEmpty,
+           output.contains(String(reported.prefix(256)).trimmingCharacters(in: CharacterSet(charactersIn: ".…"))) {
+            self.error = Self.outputFailureSummary
+        }
         if !isPending { finishedAt = now }
     }
 
@@ -62,7 +69,9 @@ public struct WorktreeCreationProgress: Codable, Sendable, Hashable {
             with: "", options: .regularExpression)
         let withoutCSI = withoutOSC.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]",
             with: "", options: .regularExpression)
-        let scalars = withoutCSI.unicodeScalars.filter {
+        // Progress meters redraw one line with carriage returns; each update reads as its own line.
+        let lines = withoutCSI.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let scalars = lines.unicodeScalars.filter {
             !CharacterSet.controlCharacters.contains($0) || $0 == "\n" || $0 == "\t"
         }
         return String(String.UnicodeScalarView(scalars))

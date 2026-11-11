@@ -29,6 +29,88 @@ struct AgentConversationResumeTests {
         #expect(platform.platformRequests.isEmpty)
     }
 
+    @Test("@spec AGENT-6.157: When a host starts after a shutdown ended an ongoing agent's provider, the application shall restart that agent's saved conversation without user action, leaving bounded assignments and closed tabs unchanged.")
+    func hostStartResumesConversationsEndedByShutdown() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.controlCapabilities.insert(.paneAgent)
+        let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
+        let creator = TeamInboxEndpoint(member: "lead", worktree: "/repo", runtime: "codex")
+        func ended(_ name: String, origin: ManagedAgent.LaunchOrigin, primary: Bool, slot: PaneSlotID?,
+                   hostStopped: Bool = true) -> ManagedAgent {
+            var agent = ManagedAgent(name: name, provider: .codex, parent: creator, launchOrigin: origin, isPrimary: primary)
+            agent.paneSlotID = slot
+            agent.paneSessionID = slot.flatMap { platform.state.repos[0].worktrees[0].paneSessions[$0] }
+            agent.providerSessionID = "conversation-\(name)"
+            agent.sessionEnded(reason: "Terminal process exited", hostStopped: hostStopped)
+            return agent
+        }
+        let ongoing = ended("ongoing", origin: .userInterface, primary: true, slot: slot)
+        // The same stop ended this child; its pending cleanup must not strand the parent.
+        var bounded = ended("bounded", origin: .cliAgentAdd, primary: false, slot: PaneSlotID())
+        bounded.parentManagedAgentID = ongoing.id
+        // Closing a tab clears its pane slot, so the user's choice survives the next start.
+        let closedTab = ended("closed-tab", origin: .userInterface, primary: false, slot: nil)
+        let quitByUser = ended("quit", origin: .userInterface, primary: false, slot: PaneSlotID(), hostStopped: false)
+        platform.state.repos[0].worktrees[0].agents = [ongoing, bounded, closedTab, quitByUser]
+
+        await AgentControl.resumeHostStoppedConversations(platform: platform)
+        await AgentControl.resumeHostStoppedConversations(platform: platform)
+        let agents = platform.state.repos[0].worktrees[0].agents
+        #expect(platform.platformRequests.count == 1)
+        #expect(agents[0].status == .starting)
+        #expect(agents[0].resumingSessionID == "conversation-ongoing")
+        #expect(agents[0].results == ongoing.results)
+        #expect(agents[0].parent == creator)
+        #expect(agents.dropFirst().map(\.status) == [.interrupted, .interrupted, .interrupted])
+    }
+
+    @Test("@spec AGENT-6.159: When a provider exit recorded before the host started is applied, the application shall mark that ongoing conversation for restart, and shall leave an exit recorded while the host was running interrupted.")
+    func onlyExitsFromBeforeHostStartAreRestarted() async throws {
+        for (startedAfterExit, expected) in [(true, ManagedAgent.Status.starting), (false, .interrupted)] {
+            let platform = try ControlRequestCoreTests.RecordingPlatform()
+            platform.controlCapabilities.insert(.paneAgent)
+            let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
+            var agent = ManagedAgent(name: "Primary", provider: .codex, parent: nil, launchOrigin: .userInterface, isPrimary: true)
+            agent.paneSlotID = slot
+            agent.paneSessionID = platform.state.repos[0].worktrees[0].paneSessions[slot]
+            agent.providerSessionID = "conversation"
+            platform.state.repos[0].worktrees[0].agents = [agent]
+            platform.hostStart = Date().addingTimeInterval(startedAfterExit ? 60 : -60)
+            try AgentLifecycleHandoff(directory: platform.agentPromptDirectory.appendingPathComponent("lifecycle"))
+                .publish(.init(agentID: agent.id, assignmentID: agent.assignmentID, sessionID: #require(agent.paneSessionID), exitCode: 0))
+            await AgentControl.reconcileOutbox(platform: platform)
+            #expect(platform.state.repos[0].worktrees[0].agents[0].status == .interrupted)
+            await AgentControl.resumeHostStoppedConversations(platform: platform)
+            #expect(platform.state.repos[0].worktrees[0].agents[0].status == expected)
+        }
+    }
+
+    @Test("@spec AGENT-6.160: When a user retries an agent launch that failed before its provider started, the application shall start that agent again in its worktree with its original task under a new assignment.")
+    func failedLaunchRetriesWithItsOriginalTask() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.controlCapabilities.insert(.paneAgent)
+        var agent = ManagedAgent(name: "Delegate", provider: .codex, parent: nil, status: .starting,
+            launchOrigin: .cliAgentAdd, isPrimary: true)
+        agent.initialPrompt = "Fix the employer timeouts"
+        agent.launchTargetWorktree = "/repo"
+        agent.launchFailed(reason: "git worktree add failed")
+        #expect(agent.canRetryLaunch)
+        platform.state.repos[0].worktrees[0].agents = [agent]
+        let response = await AgentControl.handle(.init(action: .resume, callerWorktree: "/repo", agentID: agent.id), platform: platform)
+        guard case .agents = response else { Issue.record("Expected retry: \(response)"); return }
+        let retried = try #require(platform.state.repos[0].worktrees[0].agents.first)
+        #expect(retried.status == .starting)
+        #expect(retried.assignmentID != agent.assignmentID)
+        #expect(retried.results == agent.results)
+        #expect(retried.completion == nil)
+        #expect(!retried.canRetryLaunch)
+        guard case .addPane(let pane)? = platform.platformRequests.first else { Issue.record("Expected a pane launch"); return }
+        #expect(platform.platformRequests.count == 1)
+        #expect(pane.path == "/repo")
+        #expect(pane.agentPrompt == "Fix the employer timeouts")
+        #expect(pane.managedAgent?.id == agent.id)
+    }
+
     @Test("@spec AGENT-6.139: When a paired viewer requests a saved conversation, the host shall return bounded content for the exact worktree and reject an agent addressed through a different worktree.")
     func remoteConversationUsesExactWorktree() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()

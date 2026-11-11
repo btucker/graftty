@@ -120,7 +120,7 @@ public final class HeadlessHostRuntime {
                     // clients will attach when they choose this pane.
                     if !live.contains(name), let agent = state.repos[ri].worktrees[wi].agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) {
                         state.repos[ri].worktrees[wi].recordManagedSessionEnd(slot: slot, reason: "Terminal process was absent after restart",
-                            preserveView: !agent.isBoundedAssignment)
+                            preserveView: !agent.isBoundedAssignment, hostStopped: true)
                         if !agent.isBoundedAssignment { continue }
                         state.repos[ri].worktrees[wi].splitTree = state.repos[ri].worktrees[wi].splitTree.removing(slot)
                         state.repos[ri].worktrees[wi].clearPaneSession(for: slot)
@@ -137,6 +137,13 @@ public final class HeadlessHostRuntime {
         try save()
         await AgentControl.reconcileOutbox(platform: controlPlatform)
         await refreshPortBindings()
+    }
+
+    /// Runs once the control socket accepts provider hooks. A draining host refuses new panes,
+    /// so a restart there could only close the retained session.
+    public func resumeHostStoppedConversations() async {
+        guard drain == nil else { return }
+        await AgentControl.resumeHostStoppedConversations(platform: controlPlatform)
     }
 
     public func openWorktree(_ path: String, command: String? = nil, selectTab: Bool = true) async throws -> String {
