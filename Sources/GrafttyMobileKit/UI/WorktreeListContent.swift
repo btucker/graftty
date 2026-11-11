@@ -59,6 +59,7 @@ public struct WorktreeListContent: View {
     /// Holds rows still while someone is reaching for one, so a row doesn't
     /// move out from under a finger or a report when activity arrives.
     @State private var rowHold: WorktreeActivitySections.Hold?
+    @State private var heldWorkingAgents: [WorkingAgent]?
     @State private var isTouchingList = false
     @State private var showsAllProjectsNeedingYou = false
     /// Asks whose Explain more prompt is on its way, so a second tap doesn't type it twice.
@@ -283,7 +284,11 @@ public struct WorktreeListContent: View {
                 rememberWorktree(worktree)
             }
         }
-        .onChange(of: isHoldingRows) { _, holding in rowHold = holding ? activitySections(merged, holding: nil).hold : nil }
+        .onChange(of: isHoldingRows) { _, holding in
+            rowHold = holding ? activitySections(merged, holding: nil).hold : nil
+            heldWorkingAgents = holding && isPhone && !isSidebar && showsProjectRail && destinationProjectID(in: merged) == nil
+                ? workingAgents(in: feed.state.liveRows) : nil
+        }
         .onChange(of: navigation.query) { _, _ in closeReport() }
         .onChange(of: navigation.selectedProjectID) { _, _ in closeReport() }
         .onDisappear {
@@ -538,9 +543,10 @@ public struct WorktreeListContent: View {
                     .frame(minWidth: 220, maxWidth: .infinity)
             }
         } else {
-            let runningAgents = isPhone ? live.flatMap { worktree in
-                SidebarProjection.activity([worktree]).filter(\.isBusy).map { WorkingAgent(item: $0, worktree: worktree) }
-            } : []
+            let runningAgents = isPhone ? (heldWorkingAgents ?? workingAgents(in: live)) : []
+            let projectWorking = isPhone
+                ? merged.rekeyed(Dictionary(grouping: runningAgents, by: \.item.projectID).mapValues(\.count))
+                : working
             List {
                 pendingCreationRows()
                 let needingYou = activitySections(merged, holding: rowHold).needsYou
@@ -592,7 +598,7 @@ public struct WorktreeListContent: View {
                                 Spacer()
                                 if let status = project.ownerSubtitle(localDeviceID: nil) { Text(status).font(.caption) }
                                 HStack(spacing: 4) {
-                                    SidebarActivityBadge(working[project.id, default: 0], kind: .working)
+                                    SidebarActivityBadge(projectWorking[project.id, default: 0], kind: .working)
                                     SidebarActivityBadge(counts[project.id, default: 0])
                                 }
                             }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
@@ -624,6 +630,27 @@ public struct WorktreeListContent: View {
             .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
+    }
+
+    private func workingAgents(in rows: [WorktreePanes]) -> [WorkingAgent] {
+        rows.filter { $0.state == .running }.flatMap { worktree -> [WorkingAgent] in
+            let items = SidebarProjection.activity([worktree]).filter(\.isBusy)
+            guard !items.isEmpty else { return [] }
+            // A stop can arrive before pane liveness catches up. Other panes can still be busy.
+            let stoppedPane = worktree.sidebar?.unseenAgentStop.flatMap { _ in
+                let context = navigation.worktreeContext(worktree)
+                return context.isRunning ? nil : context.agentPaneID
+            }
+            let leaves = worktree.layout?.leaves ?? []
+            return items.compactMap { item in
+                guard let paneID = item.paneID, paneID != stoppedPane,
+                      let leaf = leaves.first(where: { $0.sessionName == paneID }) else { return nil }
+                var target = item
+                target.title = leaf.displayTitle
+                target.occurrence = nil
+                return WorkingAgent(item: target, worktree: worktree)
+            }
+        }
     }
 
     private func workingAgentRow(_ agent: WorkingAgent) -> some View {
@@ -877,8 +904,8 @@ public struct WorktreeListContent: View {
             guard generation == selectionIntentGeneration, target.layout != nil else { return false }
             var currentItem = item
             currentItem.worktreeID = target.path
-            let paneID = SidebarProjection.attentionPaneRoute(for: item, in: target)
-                ?? (item.paneID == nil ? target.layout?.leaves.first?.sessionName : nil)
+            let resolvedPaneID = SidebarProjection.attentionPaneRoute(for: item, in: target)
+            let paneID = resolvedPaneID ?? (item.paneID == nil ? target.layout?.leaves.first?.sessionName : nil)
             let leaf = target.layout?.leaves.first { $0.sessionName == paneID }
             guard item.paneID == nil || leaf != nil else {
                 showErrorToast("This pane is no longer available."); return false
@@ -889,8 +916,11 @@ public struct WorktreeListContent: View {
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
             guard generation == selectionIntentGeneration else { return false }
             if let leaf {
-                let selectPane = takesControl ? (onSelectPaneTakingControl ?? onSelectPane) : onSelectPane
-                selectPane(host, target, leaf)
+                if takesControl, MobilePaneAttention.canTakeControl(of: resolvedPaneID, for: item), let onSelectPaneTakingControl {
+                    onSelectPaneTakingControl(host, target, leaf)
+                } else {
+                    onSelectPane(host, target, leaf)
+                }
             } else if let onSelectWorktreeDetail { onSelectWorktreeDetail(host, target) }
             else { onSelect(host, target) }
             // The visit has occurred. A delayed acknowledgement must not consume

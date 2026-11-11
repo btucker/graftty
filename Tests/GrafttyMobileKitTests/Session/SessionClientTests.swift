@@ -2291,7 +2291,7 @@ struct SessionClientTests {
         #expect(takeovers.first?.3 == 40)
     }
 
-    @Test("@spec IOS-13.26: When the user swipes an iPhone question card to open its agent, the application shall open that pane and request control when the terminal connects.", .timeLimit(.minutes(1)))
+    @Test("@spec IOS-13.26: When the user swipes an iPhone question card to open an identified agent pane, the application shall open that pane and request control when the terminal connects.", .timeLimit(.minutes(1)))
     func terminalOpenedBySwipeClaimsControlAfterOwnershipArrives() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "swipe-open", webSocketFactory: { ws })

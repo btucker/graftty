@@ -106,6 +106,32 @@ struct MobileAttentionPaneTests {
         #expect(height(onRemove: {}) == height(onRemove: nil))
     }
 
+    @Test("@spec IOS-13.28: While a mobile worktree row offers removal, the application shall align the trash icon to the trailing edge of the row.")
+    func removeGlyphSitsAtTheTrailingEdge() throws {
+        let row = WorktreePanes(path: "/repo/done", displayName: "done", repoDisplayName: "graftty",
+            displayBranch: "done", state: .running, isMainCheckout: false,
+            prBadge: .init(number: 833, state: .merged, checks: .success,
+                url: URL(string: "https://github.com/btucker/graftty/pull/833")!),
+            stats: nil, attentionText: nil, layout: nil)
+        let width = 390
+        let renderer = ImageRenderer(content: WorktreeBlock(worktree: row, theme: nil, isActive: false, isOpening: false,
+            projectColumn: true, context: SidebarWorktreeContext(worktree: row), onSelect: {}, onReport: {}, onRemove: {})
+            .frame(width: CGFloat(width)).background(Color.white).environment(\.colorScheme, .light))
+        renderer.scale = 1
+        let image = try #require(renderer.cgImage)
+        // Isolate the 44-point button, inside the row's eight-point padding.
+        let button = try #require(image.cropping(to: CGRect(x: width - 52, y: 0, width: 44, height: image.height)))
+        let pixels = try #require(CGContext(data: nil, width: button.width, height: button.height, bitsPerComponent: 8,
+            bytesPerRow: button.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        pixels.draw(button, in: CGRect(x: 0, y: 0, width: button.width, height: button.height))
+        let bytes = try #require(pixels.data).assumingMemoryBound(to: UInt8.self)
+        let rightmostInk = (0..<button.width).last { column in
+            (0..<button.height).contains { bytes[$0 * pixels.bytesPerRow + column * 4] < 230 }
+        }
+        #expect((rightmostInk ?? 0) >= button.width - 4)
+    }
+
     @Test("@spec IOS-13.15: While the Projects screen lists worktrees needing the user for something other than a question, the application shall name each one's project on its own line above the worktree, so a long worktree name can't crowd it out.")
     func projectNameSitsAboveALongWorktreeName() async throws {
         let row = WorktreePanes(path: "/repo/long", displayName: "merge-recent-activity-attention-and-unified-worktree-reports",
@@ -174,7 +200,7 @@ struct MobileAttentionPaneTests {
                                                         projectIsOnSeveralHosts: false).temporary.first)
         func labels(time: Date?) async throws -> [String] {
             let deck = MobileAskDeck(entries: [.init(row: row, context: context, card: card, source: "graftty · push", time: time)],
-                                     onExplain: { _ in }, onOpen: { _ in }, onDismiss: { _ in })
+                                     onExplain: { _ in }, onOpen: { _, _ in }, onDismiss: { _ in })
             let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
             window.rootViewController = UIHostingController(rootView: deck.frame(width: 390)
                 .accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))

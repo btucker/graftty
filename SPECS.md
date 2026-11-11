@@ -2782,7 +2782,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.25** While the iPhone picker displays pinned agents, the application shall use wider tiles with four across at typical phone widths and at most five across on wider layouts.
 
-**IOS-13.26** When the user swipes an iPhone question card to open its agent, the application shall open that pane and request control when the terminal connects.
+**IOS-13.26** When the user swipes an iPhone question card to open an identified agent pane, the application shall open that pane and request control when the terminal connects.
+
+**IOS-13.27** When a question-card drag ends with more vertical than horizontal displacement or its projected endpoint crosses the origin, the application shall leave the card in place and preserve terminal control.
+
+**IOS-13.28** While a mobile worktree row offers removal, the application shall align the trash icon to the trailing edge of the row.
 
 ## IPAD — iPad Layout
 

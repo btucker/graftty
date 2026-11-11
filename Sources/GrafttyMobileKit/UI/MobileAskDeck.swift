@@ -99,15 +99,23 @@ struct MobileAskDeck: View {
                 dragX = entries.count > 1 || value.translation.width > 0 ? value.translation.width : value.translation.width / 4
             }
             .onEnded { value in
-                let far = abs(value.translation.width) > Self.swipeDistance
-                    || abs(value.predictedEndTranslation.width) > 2 * Self.swipeDistance
-                let direction = dragX
+                let action = Self.swipeAction(translation: value.translation, predicted: value.predictedEndTranslation)
                 withAnimation(.snappy) {
-                    if far, direction < 0 { advance() }
+                    if action == .later { advance() }
                     dragX = 0
                 }
-                if far, direction > 0 { onOpen(front, true) }
+                if action == .open { onOpen(front, true) }
             }
+    }
+
+    enum SwipeAction: Equatable { case open, later }
+
+    static func swipeAction(translation: CGSize, predicted: CGSize) -> SwipeAction? {
+        let width = translation.width
+        guard abs(width) > abs(translation.height),
+              predicted.width != 0, width.sign == predicted.width.sign,
+              abs(width) > swipeDistance || abs(predicted.width) > 2 * swipeDistance else { return nil }
+        return width > 0 ? .open : .later
     }
 
     private static let swipeDistance: CGFloat = 90
