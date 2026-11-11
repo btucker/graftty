@@ -66,6 +66,9 @@ public enum RoutableEvent: Sendable, Equatable {
         case .prStateChanged, .prMerged:
             return "PR #\(prNum) state changed: \(from) → \(to)"
         case .ciConclusionChanged:
+            if from == to, let head = attrs["head_sha"] {
+                return "CI on PR #\(prNum) at \(head.prefix(8)): \(to)"
+            }
             return "CI on PR #\(prNum): \(from) → \(to)"
         case .mergabilityChanged:
             // No producer fires `mergabilityChanged` yet; merge-state polling

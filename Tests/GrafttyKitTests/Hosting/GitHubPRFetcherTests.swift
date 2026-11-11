@@ -16,7 +16,7 @@ struct GitHubPRFetcherTests {
         "--repo", "btucker/graftty",
         "--state", "all",
         "--limit", "100",
-        "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable",
+        "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable,headRefOid",
     ]
 
     func loadFixture(_ name: String) -> String {
@@ -39,6 +39,7 @@ struct GitHubPRFetcherTests {
         #expect(pr?.number == 412)
         #expect(pr?.state == .open)
         #expect(pr?.checks == .success)
+        #expect(pr?.headSHA == "github-head")
         #expect(pr?.mergeable == .mergeable)
         #expect(pr?.title == "Add PR/MR status button to breadcrumb")
         #expect(pr?.url.absoluteString == "https://github.com/btucker/graftty/pull/412")
@@ -87,7 +88,7 @@ struct GitHubPRFetcherTests {
             "--repo", "BTucker/graftty",
             "--state", "all",
             "--limit", "100",
-            "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable",
+            "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable,headRefOid",
         ]
         let fake = FakeCLIExecutor()
         fake.stub(

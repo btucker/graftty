@@ -2280,7 +2280,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.23** When a worktree's local branch name differs from the remote branch it tracks (via `branch.<name>.merge` / `git push -u`), the application shall associate the worktree with the PR/MR whose head ref equals the tracked remote branch name, not the local branch name. PR fetchers key snapshots by the remote-side head ref (`headRefName` for GitHub, `source_branch` for GitLab), so the previous `prsByBranch[localBranch]` lookup silently dropped the badge whenever the worktree's branch was renamed locally only or its upstream was bound to a differently-named ref.
 
-**PR-8.24** While polling a tracked PR or MR, the application shall preserve raw `checks == .none` and `mergeable == .unknown` values for the UI but shall retain only meaningful checks and mergeability conclusions as notification baselines. When a meaningful conclusion follows transient absence for the same PR identity, the application shall notify only if it differs from the last meaningful conclusion. When the PR disappears, the worktree cache is cleared, or PR identity changes, the application shall seed a new baseline without comparing distinct PR observations.
+**PR-8.24** While polling a tracked PR or MR, the application shall preserve raw `checks == .none` and `mergeable == .unknown` values for the UI but shall retain only meaningful checks and mergeability conclusions as notification baselines. When a meaningful conclusion follows transient absence for the same PR identity, the application shall notify only if it differs from the last meaningful conclusion or reports terminal CI for a new known head commit. When the PR disappears, the worktree cache is cleared, or PR identity changes, the application shall seed a new baseline without comparing distinct PR observations.
 
 **PR-8.25** When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.
 
@@ -2291,6 +2291,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PR-8.28** When a remote-branch snapshot gains refs for one repository, the application shall force PR polling only for that repository rather than bypass the cadence gate for every repository in the workspace.
 
 **PR-8.29** When displaying a PR/MR number in the breadcrumb or branch picker, the application shall use ungrouped decimal digits regardless of locale.
+
+**PR-8.30** When polling observes a terminal CI conclusion for a new head commit of a tracked PR or MR, the application shall emit one Forge event even if the conclusion matches the prior commit and polling missed the pending state.
 
 ## IOS — iOS App
 

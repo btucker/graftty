@@ -58,13 +58,15 @@ public final class PRStatusStore {
     /// UI but shall retain only meaningful checks and mergeability conclusions as
     /// notification baselines. When a meaningful conclusion follows transient
     /// absence for the same PR identity, the application shall notify only if it
-    /// differs from the last meaningful conclusion. When the PR disappears, the
+    /// differs from the last meaningful conclusion or reports terminal CI for a new
+    /// known head commit. When the PR disappears, the
     /// worktree cache is cleared, or PR identity changes, the application shall
     /// seed a new baseline without comparing distinct PR observations.
     private struct MeaningfulTransitionBaseline {
         let identity: PRTransitionIdentity
         var state: PRInfo.State
         var checks: PRInfo.Checks?
+        var checksHeadSHA: String?
         var mergeable: PRInfo.Mergeable?
 
         init(origin: HostingOrigin, info: PRInfo) {
@@ -74,6 +76,7 @@ public final class PRStatusStore {
             )
             self.state = info.state
             self.checks = info.checks == .none ? nil : info.checks
+            self.checksHeadSHA = info.headSHA
             self.mergeable = info.mergeable == .unknown ? nil : info.mergeable
         }
     }
@@ -430,14 +433,18 @@ public final class PRStatusStore {
         let previousChecks = baseline.checks
         let previousMergeable = baseline.mergeable
         let stateChanged = previousState != current.state
+        let newChecksHead = baseline.checksHeadSHA != nil && current.headSHA != nil
+            && baseline.checksHeadSHA != current.headSHA
+        let newTerminalChecks = newChecksHead && (current.checks == .failure || current.checks == .success)
         let checksChanged = current.checks != .none
-            && previousChecks.map { $0 != current.checks } == true
+            && previousChecks.map { $0 != current.checks || newTerminalChecks } == true
         let mergeableChanged = current.mergeable != .unknown
             && previousMergeable.map { $0 != current.mergeable } == true
 
         baseline.state = current.state
         if current.checks != .none {
             baseline.checks = current.checks
+            if let headSHA = current.headSHA { baseline.checksHeadSHA = headSHA }
         }
         if current.mergeable != .unknown {
             baseline.mergeable = current.mergeable
@@ -467,6 +474,7 @@ public final class PRStatusStore {
             var attrs = common
             attrs["from"] = previousChecks.rawValue
             attrs["to"] = current.checks.rawValue
+            attrs["head_sha"] = current.headSHA
             onTransition(.ciConclusionChanged, worktreePath, attrs)
         }
         if mergeableChanged, let previousMergeable {
