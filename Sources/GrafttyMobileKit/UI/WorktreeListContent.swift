@@ -76,6 +76,14 @@ public struct WorktreeListContent: View {
     // when RootView chose the iPad layout. Follow the navigation container.
     private let isSidebar: Bool
     private var navigationWindowWidth: Double
+    private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+
+    private struct WorkingAgent: Identifiable {
+        let item: SidebarActivityItem
+        let worktree: WorktreePanes
+
+        var id: String { MergedWorktreeList.identity(worktree) + "\u{0}" + item.id }
+    }
 
     private struct PendingDelete: Identifiable, Equatable {
         let id = UUID()
@@ -115,6 +123,7 @@ public struct WorktreeListContent: View {
     public let onSelect: (Host, WorktreePanes) -> Void
     public let onSelectPane: (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)?
+    private let onSelectPaneTakingControl: ((Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void)?
 
     public init(
         feed: MultiHostFeed,
@@ -127,7 +136,8 @@ public struct WorktreeListContent: View {
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
         project: SidebarProject? = nil,
-        onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)? = nil
+        onSelectWorktreeDetail: ((Host, WorktreePanes) -> Void)? = nil,
+        onSelectPaneTakingControl: ((Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void)? = nil
     ) {
         self.feed = feed
         self.isSidebar = isSidebar
@@ -138,6 +148,7 @@ public struct WorktreeListContent: View {
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail
+        self.onSelectPaneTakingControl = onSelectPaneTakingControl
         self.navigation = navigation ?? SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
         self.navigationWindowWidth = navigationWindowWidth
     }
@@ -210,8 +221,11 @@ public struct WorktreeListContent: View {
         }
     }
 
-    private func openAsk(_ entry: MobileAskDeck.Entry) {
-        Task { await openReportTarget(entry.card.openTarget, worktrees: feed.state.rows) }
+    private func openAsk(_ entry: MobileAskDeck.Entry, takesControl: Bool = false) {
+        Task {
+            await openReportTarget(entry.card.openTarget, worktrees: feed.state.rows,
+                                   takesControl: isPhone && takesControl)
+        }
     }
 
     /// Types the catch-up prompt into a stopped agent, then opens its terminal
@@ -524,38 +538,49 @@ public struct WorktreeListContent: View {
                     .frame(minWidth: 220, maxWidth: .infinity)
             }
         } else {
+            let runningAgents = isPhone ? live.flatMap { worktree in
+                SidebarProjection.activity([worktree]).filter(\.isBusy).map { WorkingAgent(item: $0, worktree: worktree) }
+            } : []
             List {
                 pendingCreationRows()
                 let needingYou = activitySections(merged, holding: rowHold).needsYou
                 let askEntries = askDeckEntries(needingYou, merged: merged)
-                if !askEntries.isEmpty {
+                if !isPhone, !askEntries.isEmpty {
                     Section {
-                        MobileAskDeck(entries: askEntries, onExplain: explainAsk, onOpen: openAsk,
-                                      onDismiss: { dismissRequest($0.row.row) })
-                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                        projectAskDeck(askEntries)
                     } header: {
                         WorktreeListSectionTitle("Waiting on you", count: askEntries.count, tone: .attention).padding(.bottom, 4)
                     }
                 }
-                // Requests without a question, such as `graftty notify`, stay rows.
                 let askIDs = Set(askEntries.map(\.id))
                 let notices = needingYou.filter { !askIDs.contains($0.id) }
-                if !notices.isEmpty {
-                    let preview = WorktreeActivitySections.preview(notices, showsAll: showsAllProjectsNeedingYou)
+                let showsDeckInSection = isPhone && !askEntries.isEmpty
+                if showsDeckInSection || !notices.isEmpty {
+                    let preview = WorktreeActivitySections.preview(notices, showsAll: showsAllProjectsNeedingYou,
+                                                                    limit: showsDeckInSection ? 0 : 2)
                     Section {
+                        if showsDeckInSection { projectAskDeck(askEntries) }
                         ForEach(preview.rows) { row in worktreeRow(row, merged: merged, namesProject: true) }
                         if preview.hidden > 0 {
-                            Button("\(preview.hidden) more") { showsAllProjectsNeedingYou = true }
+                            let title = showsDeckInSection
+                                ? (preview.hidden == 1 ? "Show 1 update" : "Show \(preview.hidden) updates")
+                                : "\(preview.hidden) more"
+                            Button(title) { showsAllProjectsNeedingYou = true }
                                 .font(.caption).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                 .listRowInsets(Self.projectsCardRowInsets)
                         }
                     } header: {
-                        // A header, not a row: this list's rows sit in a card that
-                        // only rounds the corners of its first and last rows.
-                        WorktreeListSectionTitle("Needs you", count: notices.count, tone: .attention).padding(.bottom, 4)
+                        WorktreeListSectionTitle("Needs you", count: isPhone ? needingYou.count : notices.count,
+                                                 tone: .attention).padding(.bottom, 4)
+                    }
+                }
+                if !runningAgents.isEmpty {
+                    Section {
+                        ForEach(runningAgents) { agent in workingAgentRow(agent) }
+                    } header: {
+                        WorktreeListSectionTitle("Working", count: runningAgents.count,
+                                                 tone: .standard(sectionTitleColor)).padding(.bottom, 4)
                     }
                 }
                 Section {
@@ -580,7 +605,9 @@ public struct WorktreeListContent: View {
                         moveProject(projects[source].id, projects[target].id, destination > source)
                     }.moveDisabled(orderMutationInFlight)
                 } header: {
-                    if !needingYou.isEmpty { WorktreeListSectionTitle("All projects", tone: .standard(sectionTitleColor)).padding(.bottom, 4) }
+                    if !needingYou.isEmpty || !runningAgents.isEmpty {
+                        WorktreeListSectionTitle("All projects", tone: .standard(sectionTitleColor)).padding(.bottom, 4)
+                    }
                 }
             }
             .background(ListTouchTracker(isTouching: $isTouchingList))
@@ -589,6 +616,35 @@ public struct WorktreeListContent: View {
             // filter the next list opened, with that list's search field hidden.
             .onAppear { if !navigation.query.isEmpty { navigation.query = "" } }
         }
+    }
+
+    private func projectAskDeck(_ entries: [MobileAskDeck.Entry]) -> some View {
+        MobileAskDeck(entries: entries, onExplain: explainAsk, onOpen: openAsk,
+                      onDismiss: { dismissRequest($0.row.row) })
+            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+    }
+
+    private func workingAgentRow(_ agent: WorkingAgent) -> some View {
+        let item = agent.item
+        let source = [item.projectName, item.worktreeName, agent.worktree.origin?.deviceLabel]
+            .compactMap { $0 }.joined(separator: " · ")
+        return Button {
+            Task { await openReportTarget(item, worktrees: [agent.worktree]) }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                Text(source).font(.caption).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel(item.title)
+        .accessibilityValue(source)
+        .listRowInsets(Self.projectsCardRowInsets)
+        .moveDisabled(true)
     }
 
     private func sectionTitle(_ title: String, count: Int? = nil, tone: WorktreeListSectionTitle.Tone) -> some View {
@@ -752,9 +808,10 @@ public struct WorktreeListContent: View {
         reportWorktreeID = nil
     }
 
-    private func openReportTarget(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) async -> Bool {
+    private func openReportTarget(_ item: SidebarActivityItem, worktrees: [WorktreePanes],
+                                  takesControl: Bool = false) async -> Bool {
         let token = navigation.beginOpening(item)
-        let succeeded = await openAttention(item, worktrees: worktrees)
+        let succeeded = await openAttention(item, worktrees: worktrees, takesControl: takesControl)
         navigation.finishOpening(token, succeeded: succeeded, navigateToProject: true)
         return succeeded
     }
@@ -780,7 +837,7 @@ public struct WorktreeListContent: View {
         navigation.showProject(project.id)
     }
 
-    private func openAttention(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) async -> Bool {
+    private func openAttention(_ item: SidebarActivityItem, worktrees: [WorktreePanes], takesControl: Bool = false) async -> Bool {
         // The project tells apart worktrees at the same path on different hosts.
         guard let listed = worktrees.first(where: { $0.path == item.worktreeID && SidebarProjection.projectID($0) == item.projectID }),
               listed.state.hasOnDiskWorktree else {
@@ -832,7 +889,8 @@ public struct WorktreeListContent: View {
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
             guard generation == selectionIntentGeneration else { return false }
             if let leaf {
-                onSelectPane(host, target, leaf)
+                let selectPane = takesControl ? (onSelectPaneTakingControl ?? onSelectPane) : onSelectPane
+                selectPane(host, target, leaf)
             } else if let onSelectWorktreeDetail { onSelectWorktreeDetail(host, target) }
             else { onSelect(host, target) }
             // The visit has occurred. A delayed acknowledgement must not consume
@@ -986,7 +1044,11 @@ public struct WorktreeListContent: View {
         let words = Dictionary(zip(rows.map(\.id), PinnedTile.words(for: rows.map {
             PinnedTile.Name(name: $0.relativeName, isMainCheckout: $0.row.isMainCheckout, branch: $0.row.displayBranch)
         })), uniquingKeysWith: { first, _ in first })
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: PinnedTile.minimumWidth), spacing: 8)], spacing: 8) {
+        let spacing: CGFloat = 8
+        let minimumWidth: CGFloat = isPhone ? 72 : PinnedTile.minimumWidth
+        // Limit the available width to five columns even on a landscape phone.
+        let maximumWidth: CGFloat = isPhone ? 5 * 86 + 4 * spacing : .infinity
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumWidth), spacing: spacing)], spacing: spacing) {
             ForEach(rows) { row in
                 pinnedTile(row, word: words[row.id] ?? row.relativeName)
                     .draggable(row.id)
@@ -999,6 +1061,8 @@ public struct WorktreeListContent: View {
                     }
             }
         }
+        .frame(maxWidth: maximumWidth)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)
         .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
         .listRowSeparator(.hidden)

@@ -169,6 +169,83 @@ struct WorktreeListContentTests {
         #expect(navigation.query.isEmpty)
     }
 
+    @Test("@spec IOS-13.23: While iPhone Projects has questions or unread updates, the application shall show one Needs you section with a combined count and keep updates accessible from that section.", .timeLimit(.minutes(1)))
+    func projectsShowOneAttentionSection() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let rows = [
+            activityWorktree("asking", layout: .leaf(sessionName: "ask", title: "Agent", attentionText: "Which branch?", isBusy: false, attentionSource: .agentStop)),
+            activityWorktree("notifying", notice: "Ready to review"),
+        ]
+        let window = try hostProjects(rows)
+        defer { window.isHidden = true }
+        try await waitUntilRendered(window, ["Needs you · 2", "Which branch?", "Show 1 update"])
+        let objects = renderedObjects(in: window)
+        #expect(!objects.keys.contains { $0.hasPrefix("Waiting on you") })
+        #expect(objects["Ready to review"] == nil)
+        let updates = try #require(objects["Show 1 update"])
+        try #require(updates.accessibilityActivate())
+        try await waitUntilRendered(window, ["Ready to review"])
+    }
+
+    @Test("@spec IOS-13.24: While agents are working across projects on iPhone, the application shall list them in a Working section above All projects, including agents in pinned worktrees and multiple working agents in one worktree.", .timeLimit(.minutes(1)))
+    func projectsListWorkingAgents() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let pinned = activityWorktree("pinned", pinned: true, layout: .split(direction: .horizontal, ratio: 0.5,
+            left: .leaf(sessionName: "build", title: "Build agent", attentionText: nil, isBusy: true, attentionSource: nil),
+            right: .leaf(sessionName: "test", title: "Test agent", attentionText: nil, isBusy: true, attentionSource: nil)))
+        let temporary = activityWorktree("temporary", project: "other", layout: .leaf(sessionName: "release", title: "Release agent", attentionText: nil, isBusy: true, attentionSource: nil))
+        let idle = activityWorktree("idle", layout: .leaf(sessionName: "idle", title: "Idle agent", attentionText: nil, isBusy: false, attentionSource: nil))
+        var selectedPane: String?
+        let window = try hostProjects([pinned, temporary, idle], onSelectPane: { _, _, pane in
+            selectedPane = pane.sessionName
+        })
+        defer { window.isHidden = true }
+        try await waitUntilRendered(window, ["Working · 3", "Build agent", "Test agent", "Release agent", "All projects"])
+        let objects = renderedObjects(in: window)
+        #expect(objects["Idle agent"] == nil)
+        let testAgent = try #require(objects["Test agent"])
+        try #require(testAgent.accessibilityActivate())
+        for _ in 0..<100 where selectedPane == nil { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(selectedPane == "test")
+    }
+
+    @Test("@spec IOS-13.25: While the iPhone picker displays pinned agents, the application shall use wider tiles with four across at typical phone widths and at most five across on wider layouts.", .timeLimit(.minutes(1)), arguments: [(400.0, 4), (440.0, 5), (700.0, 5)])
+    func phonePinnedTilesWrap(width: Double, columns: Int) async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let rows = (1...6).map { activityWorktree("pin\($0)", pinned: true) }
+        let window = try hostProjects(rows, project: SidebarProjection.projects(rows).first, width: width)
+        defer { window.isHidden = true }
+        let names = rows.map { PinnedTile.accessibilityLabel(name: $0.displayName, host: nil, state: .idle) }
+        try await waitUntilRendered(window, names)
+        let objects = renderedObjects(in: window)
+        let frames = try names.map { try #require(objects[$0]).accessibilityFrame }
+        let top = try #require(frames.map(\.minY).min())
+        #expect(frames.filter { abs($0.minY - top) < 1 }.count == columns)
+        #expect(frames.allSatisfy { $0.width >= 71 })
+    }
+
+    private func hostProjects(_ rows: [WorktreePanes], project: SidebarProject? = nil, width: Double = 400,
+                              onSelectPane: @escaping (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void = { _, _, _ in }) throws -> UIWindow {
+        let defaults = try #require(UserDefaults(suiteName: "worktree-projects-\(UUID())"))
+        defaults.set(true, forKey: SidebarLayoutPolicy.projectRailSettingKey)
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        frames.continuation.yield(.frame(.snapshot(rows)))
+        frames.continuation.finish()
+        let list = WorktreeListContent(feed: makeFeed(frames.stream), onSelect: { _, _ in }, onSelectPane: onSelectPane,
+            navigation: SidebarNavigationState(prefix: "test", defaults: defaults), project: project)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 700))
+        window.rootViewController = UIHostingController(rootView: rendered(list, defaults: defaults))
+        window.makeKeyAndVisible()
+        return window
+    }
+
+    private func activityWorktree(_ name: String, project: String = "repo", pinned: Bool = false,
+                                  notice: String? = nil, layout: PaneLayoutNode? = nil) -> WorktreePanes {
+        .init(path: "/\(project)/\(name)", displayName: name, repoDisplayName: project, displayBranch: name, state: .running,
+              isMainCheckout: false, prBadge: nil, stats: nil, attentionText: notice, attentionSource: notice == nil ? nil : .userNotify,
+              layout: layout, sidebar: .init(id: "\(project):\(name)", projectID: project, isPinned: pinned))
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func aProjectListKeepsItsSearch() async throws {
         let suite = "worktree-project-search-\(UUID())"
@@ -351,27 +428,28 @@ struct WorktreeListContentTests {
     }
 
     /// Worktree display names the hosted list currently renders.
-    private func renderedNames(in window: UIWindow) -> Set<String> {
-        guard let root = window.rootViewController?.view else { return [] }
+    private func renderedObjects(in window: UIWindow) -> [String: NSObject] {
+        guard let root = window.rootViewController?.view else { return [:] }
         root.layoutIfNeeded()
-        var names: Set<String> = [], pending: [NSObject] = [root], seen: Set<ObjectIdentifier> = []
+        var labels: [String: NSObject] = [:], pending: [NSObject] = [root], seen: Set<ObjectIdentifier> = []
         while let object = pending.popLast(), seen.count < 4096 {
             guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
-            if let label = object.accessibilityLabel { names.insert(label) }
+            if let label = object.accessibilityLabel { labels[label] = object }
             if let view = object as? UIView { pending.append(contentsOf: view.subviews) }
             pending.append(contentsOf: (object.accessibilityElements ?? []).compactMap { $0 as? NSObject })
             for index in 0..<max(0, min(object.accessibilityElementCount(), 128)) {
                 if let child = object.accessibilityElement(at: index) as? NSObject { pending.append(child) }
             }
         }
-        return names
+        return labels
     }
 
     /// Hosted rendering is asynchronous; wait a bounded time for the rows.
     private func waitUntilRendered(_ window: UIWindow, _ names: [String],
                                    sourceLocation: SourceLocation = #_sourceLocation) async throws {
         for _ in 0..<150 {
-            if renderedNames(in: window).isSuperset(of: names) { return }
+            let rendered = renderedObjects(in: window)
+            if names.allSatisfy({ rendered[$0] != nil }) { return }
             try await Task.sleep(for: .milliseconds(20))
         }
         Issue.record("Rows \(names) were not rendered", sourceLocation: sourceLocation)

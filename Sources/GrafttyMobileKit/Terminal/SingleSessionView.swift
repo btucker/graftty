@@ -125,6 +125,12 @@ struct SingleSessionView: View {
     private let sidebarNavigation: SidebarNavigationState?
     @Environment(\.recentPaneActions) private var recentPaneActions
     @State private var recordedRecentVisit = false
+    @State private var handledControlOnOpen = false
+    private var canHandleControlOnOpen: Bool {
+        guard step.takesControl, !handledControlOnOpen, isPaneFocused, let client,
+              client.connectionState == .live else { return false }
+        return client.isOwner || client.canTakeControl
+    }
     private let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
     private let remoteConnectionProvider: RemoteConnectionProvider?
     private let previewManagementTransport: ((WorktreeManagementRequest, Host) async throws -> WorktreeManagementResponse)?
@@ -819,6 +825,11 @@ struct SingleSessionView: View {
                 connection = .ended
             }
             .onChange(of: connection) { _, _ in recordRecentVisit() }
+            .onChange(of: canHandleControlOnOpen, initial: true) { _, ready in
+                guard ready, canHandleControlOnOpen, let client else { return }
+                handledControlOnOpen = true
+                client.takeControl()
+            }
             .onChange(of: isPaneFocused) { _, isFocused in
                 recordedRecentVisit = false
                 recordRecentVisit()

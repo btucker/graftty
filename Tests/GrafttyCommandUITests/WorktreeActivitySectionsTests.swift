@@ -142,7 +142,7 @@ struct WorktreeActivitySectionsTests {
         #expect(!text.isEmpty)
     }
 
-    @Test("@spec IOS-13.9: While the compact Projects screen has worktrees needing the user for something other than a question, the application shall list them between the ask deck and the project list, showing two with a control for the rest until it is used.")
+    @Test("@spec IOS-13.9: While the compact Projects screen previews worktrees with unread updates, the application shall show up to two with a control for the rest until it is used.")
     func projectsScreenPreview() {
         let rows = ["a", "b", "c"].map { row(worktree($0)) }
         #expect(WorktreeActivitySections.preview(rows, showsAll: false).rows.count == 2)

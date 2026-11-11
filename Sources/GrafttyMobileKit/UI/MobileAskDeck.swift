@@ -18,7 +18,7 @@ struct MobileAskDeck: View {
 
     let entries: [Entry]
     let onExplain: (Entry) -> Void
-    let onOpen: (Entry) -> Void
+    let onOpen: (_ entry: Entry, _ takesControl: Bool) -> Void
     let onDismiss: (Entry) -> Void
 
     @State private var frontID: String?
@@ -40,7 +40,7 @@ struct MobileAskDeck: View {
                     let front = entries[frontIndex]
                     MobileAskCardView(entry: front,
                                       onExplain: { onExplain(front) },
-                                      onOpen: { onOpen(front) },
+                                      onOpen: { onOpen(front, false) },
                                       onDismiss: { onDismiss(front) })
                         .fixedSize(horizontal: false, vertical: true)
                         .overlay(alignment: dragX > 0 ? .topLeading : .topTrailing) { swipeHint }
@@ -106,7 +106,7 @@ struct MobileAskDeck: View {
                     if far, direction < 0 { advance() }
                     dragX = 0
                 }
-                if far, direction > 0 { onOpen(front) }
+                if far, direction > 0 { onOpen(front, true) }
             }
     }
 
