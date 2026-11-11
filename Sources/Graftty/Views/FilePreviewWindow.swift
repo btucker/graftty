@@ -251,7 +251,9 @@ private final class FilePreviewWindowController: NSWindowController, NSWindowDel
         window.delegate = self
         let host = NSHostingView(rootView: FilePreviewWindowContent(model: model, history: history, windows: windows,
             onClose: { [weak self] in self?.close() }).ignoresSafeArea())
-        host.safeAreaRegions = []
+        // Keep AppKit's titlebar safe area in the host's sizing calculations.
+        // The root ignores it for drawing; disabling it here makes animated
+        // window sizing repeatedly add the titlebar height on macOS 27.
         window.contentView = host
         applyTheme(windows.theme)
     }
