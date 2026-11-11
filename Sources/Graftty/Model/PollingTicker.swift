@@ -34,6 +34,11 @@ final class PollingTicker: PollingTickerLike {
         self.pauseWhenInactive = pauseWhenInactive
     }
 
+    /// Agent activity also supplies Mobile snapshots while the Mac is inactive.
+    static func agentLiveness(interval: Duration = .seconds(2)) -> PollingTicker {
+        PollingTicker(interval: interval, pauseWhenInactive: { false })
+    }
+
     func start(onTick: @MainActor @escaping () async -> Void) {
         guard task == nil else { return }
         installObservers()

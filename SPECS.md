@@ -4810,6 +4810,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.10** While a registered Codex session has a live app-server and an observed active thread, the application shall include its pane in sidebar working activity even when provider hooks are absent, and shall discard polled activity when the provider no longer confirms it.
 
+**AGENT-2.11** While the Mac application is inactive, the application shall continue polling provider activity so Mobile receives current Working status.
+
 ### AGENT-3.x
 
 **AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.
