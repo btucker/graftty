@@ -125,9 +125,7 @@ public struct RootView: View {
             guard let host = feed.host(for: answer.worktree) else { return "This host isn't connected." }
             do {
                 return AttentionAnswer.failureMessage(for: try await RelayedWorktreeManagementClient.send(
-                    .answerRequest(worktreeID: answer.worktree.path, paneID: answer.paneID,
-                                   occurrence: answer.occurrence, text: answer.text),
-                    using: feed.provider(for: host)))
+                    answer.request, using: feed.provider(for: host)))
             } catch {
                 return "Couldn't reach the host to answer."
             }

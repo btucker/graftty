@@ -32,7 +32,7 @@ struct AttentionExplainDeliveryTests {
         #expect(platform.platformRequests.count == 1)
     }
 
-    @Test("@spec AGENT-3.50: When a client answers a stopped agent's question, the host shall type the answer as one line into that agent's pane and submit it, and shall refuse when the question has changed or cleared, the answer is empty, the pane is gone, or the pane is waiting at its harness's own prompt.")
+    @Test("@spec AGENT-3.50: When a client answers a stopped agent's question, the host shall type the answer as one line without control characters into that agent's pane and submit it, and shall refuse when the question has changed or cleared, the answer is empty, the pane is gone or belongs to another agent or shell, or the pane is waiting at its harness's own prompt.")
     func typesTheAnswerIntoTheAskingPane() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
@@ -49,10 +49,24 @@ struct AttentionExplainDeliveryTests {
 
         #expect(await answer("Hold") == .ok)
         #expect(await answer("Hold,\nthen ship\r\n") == .ok)
+        // Tab, Escape and Ctrl-C would act on the agent's input rather than read as text.
+        #expect(await answer("Hold\tthen\u{1B}ship\u{03} 👨‍👩‍👧") == .ok)
         #expect(platform.platformRequests == [
             .sendPane(path: "/repo", index: 1, text: "Hold", pressEnter: true),
             .sendPane(path: "/repo", index: 1, text: "Hold, then ship", pressEnter: true),
+            .sendPane(path: "/repo", index: 1, text: "Hold then ship 👨‍👩‍👧", pressEnter: true),
         ])
+
+        // Another pane in the worktree may be a shell: the answer goes only to the agent that asked.
+        let shell = PaneSlotID()
+        platform.state.repos[0].worktrees[0].splitTree = platform.state.repos[0].worktrees[0].splitTree
+            .inserting(shell, at: slot, direction: .horizontal)
+        platform.state.repos[0].worktrees[0].ensurePaneSession(for: shell)
+        let shellSession = ZmxLauncher.sessionName(for: try #require(platform.state.repos[0].worktrees[0].paneSessions[shell]))
+        guard case .error = await answer("rm -rf build", pane: shellSession) else {
+            Issue.record("expected a refusal for a pane other than the asking agent's"); return
+        }
+        #expect(platform.platformRequests.count == 3)
 
         var stale = stop.occurrence
         stale.text = "An earlier question?"
@@ -68,7 +82,7 @@ struct AttentionExplainDeliveryTests {
         platform.state.repos[0].worktrees[0].paneAttention[slot] = nil
         platform.state.repos[0].worktrees[0].unseenAgentStop = nil
         #expect(await answer("Hold") == changed, "A cleared question refuses as a changed one")
-        #expect(platform.platformRequests.count == 2)
+        #expect(platform.platformRequests.count == 3)
     }
 
     @Test func answerRequestRoundTripsOnTheWire() throws {

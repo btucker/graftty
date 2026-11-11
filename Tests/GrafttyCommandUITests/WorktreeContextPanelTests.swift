@@ -41,6 +41,22 @@ struct WorktreeContextPanelTests {
         #expect(!WorktreeContextPanel.sections(for: context, showsDetails: false).contains(.details))
     }
 
+    /// The scroll opens at its end, so details inserted at its top must be brought into view.
+    @Test func activatingTheTitleRevealsTheDetails() async throws {
+        let (window, host) = try await Self.host(WorktreeContextPanel(context: Self.context(path: "/task"), onClose: {})
+            .frame(width: 320, height: 700).environment(\.accessibilityEnabled, true), height: 700)
+        defer { window.close() }
+        let scroll = try #require(Self.find(NSScrollView.self, in: host).first)
+        #expect(try Self.distanceFromBottom(scroll) < 2)
+        #expect(accessibilityPress("worktree.context.title", in: host))
+        try await Self.settle(host)
+        let document = try #require(scroll.documentView)
+        let visible = scroll.contentView.documentVisibleRect
+        let fromTop = document.isFlipped ? visible.minY - document.bounds.minY : document.bounds.maxY - visible.maxY
+        // Only the scroll's 24-point padding may sit above the details.
+        #expect(fromTop < 26, "The details at the top of the scroll are visible, not \(fromTop) points below them")
+    }
+
     @Test func contextUsesOpaqueThemeSurface() async throws {
         let themes: [(String, GhosttyThemeColors)] = [
             ("dark", .init(backgroundRGB: .init(r: 0.145, g: 0.161, b: 0.184),

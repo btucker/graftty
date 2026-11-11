@@ -199,8 +199,7 @@ struct MainWindow: View {
             MainWindowDetailLayout(headerWash: WorktreeHeaderWash(
                 identity: selectedIdentity,
                 project: selectedIdentityProject, iconData: selectedIdentityImageData,
-                background: terminalManager.theme.background, isDark: terminalManager.theme.isDark),
-                inspectorTopInset: showsWorkspaceTabs ? WorktreeHeaderWash.tabRowHeight : 0) {
+                background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
                 breadcrumbBar
             } content: {
                 if let wakeFlow {
@@ -585,25 +584,13 @@ struct MainWindow: View {
         }
     }
 
-    /// Mirrors the detail content's branches: only a local or remote workspace has a tab row.
-    private var showsWorkspaceTabs: Bool {
-        guard wakeFlow == nil else { return false }
-        if selectedRemoteMac != nil {
-            guard let row = selectedRemoteWorktreeSnapshot, selectedRemoteWorktreePath != nil else { return false }
-            return !(row.showsCreationProgress && row.creationProgress != nil)
-        }
-        if let row = selectedWorktree, row.showsCreationProgress, row.creationProgress != nil { return false }
-        return selectedWorktreeBinding != nil
-    }
-
     /// Answers go to this Mac's own pane, or through the selected remote Mac.
     private var contextAnswer: (@MainActor (AttentionAnswer) async -> String?)? {
         if let identity = selectedRemoteIdentity {
             return { [remoteMacsModel] answer in
                 do {
                     return AttentionAnswer.failureMessage(for: try await remoteMacsModel.sendWorktreeManagement(identity: identity,
-                        request: .answerRequest(worktreeID: answer.worktree.path, paneID: answer.paneID,
-                                                occurrence: answer.occurrence, text: answer.text)))
+                        request: answer.request))
                 } catch {
                     return "Couldn't reach that Mac to answer."
                 }

@@ -2,6 +2,10 @@ import Foundation
 import Testing
 import GrafttyProtocol
 @testable import GrafttyCommandUI
+#if os(macOS)
+import AppKit
+import SwiftUI
+#endif
 
 @MainActor
 struct WorktreeContextAskTests {
@@ -104,4 +108,50 @@ struct WorktreeContextAskTests {
             forceAllowed: false, shortStatus: nil)) == "This request has changed or already cleared.")
         #expect(AttentionAnswer.failureMessage(for: .icon(nil)) == "The host couldn't deliver this answer.")
     }
+
+    @Test func answerBecomesTheHostRequest() {
+        let occurrence = stop(options).occurrence
+        let answer = AttentionAnswer(worktree: worktree(stop: stop(options)), paneID: "pane-1", occurrence: occurrence, text: "Hold")
+        #expect(answer.request == .answerRequest(worktreeID: "/wt", paneID: "pane-1", occurrence: occurrence, text: "Hold"))
+    }
+
+    #if os(macOS)
+    /// Snapshots refresh while a question waits; an answer goes to the pane the latest one names.
+    @Test func answersFollowTheAskingPaneAcrossSnapshots() async throws {
+        let asked = stop(options)
+        let moved = WorktreePanes(path: "/wt", displayName: "task", repoDisplayName: "app", displayBranch: "task", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "pane-2", title: "claude", attentionText: nil, isBusy: false, attentionSource: nil),
+            sidebar: .init(id: "/wt", projectID: "p", paneIDs: ["pane-2": "slot"], unseenAgentStop: asked, lastAgentStop: asked))
+        var sent: [AttentionAnswer] = []
+        let actions = WorktreeContextActions(openWorktree: { _, _ in false }, answerQuestion: { answer in
+            sent.append(answer)
+            return nil
+        })
+        func view(_ worktree: WorktreePanes) -> some View {
+            WorktreeContextAsk(context: context(worktree), secondary: .secondary)
+                .environment(\.worktreeContextActions, actions)
+                .frame(width: 320).fixedSize(horizontal: false, vertical: true)
+                .environment(\.accessibilityEnabled, true)
+        }
+        let host = NSHostingView(rootView: view(worktree(stop: asked)))
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 320, height: 600),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        func settle() async throws {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+        }
+        try await settle()
+        host.rootView = view(moved)
+        try await settle()
+        #expect(accessibilityPress("worktree.context.ask.option.Hold", in: host))
+        try await settle()
+        #expect(sent.map(\.paneID) == ["pane-2"])
+    }
+    #endif
 }

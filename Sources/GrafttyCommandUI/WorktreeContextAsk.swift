@@ -11,6 +11,11 @@ public struct AttentionAnswer: Sendable {
     public let occurrence: SidebarAttentionOccurrence
     public let text: String
 
+    /// The management request that delivers this answer on the asking agent's host.
+    public var request: WorktreeManagementRequest {
+        .answerRequest(worktreeID: worktree.path, paneID: paneID, occurrence: occurrence, text: text)
+    }
+
     /// nil when the host accepted the answer; otherwise what to tell the user.
     public static func failureMessage(for response: WorktreeManagementResponse) -> String? {
         switch response {
@@ -115,7 +120,8 @@ struct WorktreeContextAsk: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("worktree.context.ask")
-            .task(id: ask.target?.occurrence) { model.sync(ask.target) }
+            // Keyed by the whole target, so a re-resolved pane for the same question is used.
+            .task(id: ask.target) { model.sync(ask.target) }
         }
     }
 

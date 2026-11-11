@@ -16,6 +16,7 @@ public struct WorktreeContextPanel: View {
     @State private var showsDetails = false
 
     private static let latestID = "worktree.context.timeline.latest"
+    private static let detailsID = "worktree.context.details.top"
     private let hostLabel: String?
 
     public init(context: SidebarWorktreeContext, theme: GhosttyThemeColors = .fallback, hostLabel: String? = nil, foreground: Color? = nil,
@@ -89,7 +90,7 @@ public struct WorktreeContextPanel: View {
 
     private var scroll: some View {
         let timeline = WorktreeTimeline(context)
-        let sections = Self.sections(for: context, showsDetails: showsDetails)
+        let sections = Self.sections(for: context, showsDetails: showsDetails, timeline: timeline)
         return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -97,6 +98,7 @@ public struct WorktreeContextPanel: View {
                         switch section {
                         case .details:
                             WorktreeContextDetails(context: context, secondary: secondary) { completedAgents }
+                                .id(Self.detailsID)
                         case .timeline:
                             WorktreeContextHistory(context: context, timeline: timeline, secondary: secondary)
                         case .now:
@@ -124,6 +126,11 @@ public struct WorktreeContextPanel: View {
             .modifier(TimelineFollowTracking(follow: $follow))
             .onChange(of: FollowKey(context: context, lastEvent: timeline.events.last?.id)) { _, _ in
                 if follow.receivedEvent() { proxy.scrollTo(Self.latestID, anchor: .bottom) }
+            }
+            // The scroll opens at its end, but details appear at its top. Scroll once
+            // they are laid out; in this update they do not exist yet.
+            .onChange(of: showsDetails) { _, shows in
+                if shows { Task { @MainActor in proxy.scrollTo(Self.detailsID, anchor: .top) } }
             }
             .overlay(alignment: .bottom) {
                 if follow.showsJumpToLatest {

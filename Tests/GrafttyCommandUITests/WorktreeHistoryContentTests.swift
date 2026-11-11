@@ -251,6 +251,49 @@ struct WorktreeHistoryContentTests {
         #expect(!WorktreeHistoryContent.entryDetail(bare, expanded: false).hasMore)
     }
 
+    /// A fold's id is its first entry's id, so the two must not share expansion state.
+    @Test func foldedEntriesExpandIndependentlyOfTheirFold() async throws {
+        var recap = AttentionRecap(title: "Crash investigation", completed: "Step 0 detail.", next: "Reproduce.")
+        recap.checkpoint = "Step 0"
+        var brief = WorktreeBrief(recap: recap, at: Date(timeIntervalSinceReferenceDate: 100))
+        for index in 1..<10 {
+            recap.checkpoint = "Step \(index)"
+            recap.completed = "Step \(index) detail."
+            brief.update(recap, at: Date(timeIntervalSinceReferenceDate: 100 + Double(index) * 60))
+        }
+        let timeline = WorktreeTimeline(history: nil, brief: brief)
+        let folds = timeline.rows(showAll: false).filter { $0.isGroup }
+        let fold = try #require(folds.first)
+        let first = fold.events[0]
+        try #require(fold.id == first.id && first.title == "Step 1")
+        let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: timeline, secondary: .secondary)
+            .padding(20).frame(width: 320).fixedSize(horizontal: false, vertical: true)
+            .environment(\.accessibilityEnabled, true))
+        let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        func settle() async throws {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+        }
+        func shows(_ text: String) -> Bool { accessibilityLabels(in: host).contains { $0.contains(text) } }
+        try await settle()
+
+        #expect(accessibilityPress("worktree.context.history.group.\(fold.id)", in: host))
+        try await settle()
+        #expect(shows("Step 2"), "The fold opened")
+        #expect(!shows("Step 1 detail."), "Opening a fold keeps its first entry's detail closed")
+
+        #expect(accessibilityPress("worktree.context.history.event.\(first.id)", in: host))
+        try await settle()
+        #expect(shows("Step 1 detail."), "Activating the entry opens its own detail")
+        #expect(shows("Step 2"), "Activating an entry must not close its fold")
+    }
+
     @Test func earlierControlCountsHiddenMessagesIncludingRepeats() throws {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
         var history = WorktreeHistory()

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+import GrafttyCommandUI
 import GrafttyKit
 import GrafttyProtocol
 @testable import Graftty
@@ -12,10 +13,11 @@ struct MainWindowDetailLayoutTests {
     func contextReservesTerminalWidth(inset: Double) async throws {
         let terminalProbe = NSView(), inspectorProbe = NSView()
         func layout(open: Bool) -> some View {
-            MainWindowDetailLayout(inspectorTopInset: inset) {
+            MainWindowDetailLayout {
                 Color.gray.frame(height: 30)
             } content: {
                 Color.black.ignoresSafeArea()
+                    .preference(key: WorkspaceTabRowHeightKey.self, value: inset)
                     .background(FrameProbe(view: terminalProbe))
             } inspector: {
                 if open {
@@ -44,6 +46,37 @@ struct MainWindowDetailLayoutTests {
                 #expect(abs(inspector.height - (670 - inset)) < 1)
             }
         }
+    }
+
+    /// The workspace reports its own tab row, so one without agents leaves no gap above Context.
+    @Test(arguments: [true, false])
+    func contextClearsOnlyARenderedTabRow(hasAgents: Bool) async throws {
+        _ = NSApplication.shared
+        let inspectorProbe = NSView()
+        let manager = TerminalManager(socketPath: "/tmp/detail-layout-tab-row-test-unused.sock")
+        let idle = WorktreeEntry(path: "/repo/idle", branch: "idle", state: .running, splitTree: SplitTree(root: nil))
+        let layout = MainWindowDetailLayout {
+            Color.gray.frame(height: 30)
+        } content: {
+            if hasAgents {
+                content(state: .workspace, manager: manager)
+            } else {
+                WorkspaceContentView(terminalManager: manager, worktree: .constant(idle),
+                    onFocusTerminal: { _ in }, onNewTerminal: {}, onCloseTerminal: { _ in })
+            }
+        } inspector: {
+            Color.gray.frame(width: 360).background(FrameProbe(view: inspectorProbe))
+        }
+        let host = NSHostingView(rootView: layout)
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 1000, height: 700),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        let inspector = inspectorProbe.convert(inspectorProbe.bounds, to: host)
+        #expect(abs(inspector.minY - (30 + (hasAgents ? WorktreeHeaderWash.tabRowHeight : 0))) < 1)
     }
 
     enum ContentState: CaseIterable, Sendable {

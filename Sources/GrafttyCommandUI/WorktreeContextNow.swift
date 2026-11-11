@@ -21,9 +21,11 @@ extension WorktreeContextPanel {
         context.brief?.title ?? context.worktree.displayName
     }
 
-    public static func sections(for context: SidebarWorktreeContext, showsDetails: Bool) -> [WorktreeContextSection] {
+    /// Pass the timeline the caller already built; building one sorts all history.
+    public static func sections(for context: SidebarWorktreeContext, showsDetails: Bool,
+                                timeline: WorktreeTimeline? = nil) -> [WorktreeContextSection] {
         var sections: [WorktreeContextSection] = showsDetails ? [.details] : []
-        if !WorktreeTimeline(context).events.isEmpty { sections.append(.timeline) }
+        if !(timeline ?? WorktreeTimeline(context)).events.isEmpty { sections.append(.timeline) }
         sections.append(context.brief == nil ? .empty : .now)
         if context.question != nil { sections.append(.ask) }
         if context.brief != nil || context.isRunning { sections.append(.status) }

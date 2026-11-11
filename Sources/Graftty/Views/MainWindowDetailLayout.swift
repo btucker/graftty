@@ -1,16 +1,22 @@
 import GrafttyCommandUI
 import SwiftUI
 
+/// The height of the tab row a detail view draws at its top. Only content that
+/// renders one reports it, so every other state leaves the default of zero.
+struct WorkspaceTabRowHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 /// The selected worktree detail keeps the breadcrumb above its content row.
 struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: View {
     var headerWash: WorktreeHeaderWash? = nil
-    /// Starts the inspector below the content's tab row, when the content has one (CONTEXT-55).
-    var inspectorTopInset: CGFloat = 0
     @ViewBuilder var header: Header
     @ViewBuilder var content: Content
     @ViewBuilder var inspector: Inspector
     @State private var width: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
+    @State private var tabRowHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,8 +27,10 @@ struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: Vie
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay { WorktreeHeaderWashSpill() }
+                    .onPreferenceChange(WorkspaceTabRowHeightKey.self) { tabRowHeight = $0 }
+                // Starts below the content's tab row, when the content has one (CONTEXT-55).
                 inspector
-                    .padding(.top, inspectorTopInset)
+                    .padding(.top, tabRowHeight)
             }
             .contentShape(Rectangle())
             // Keep workspace backgrounds and hit targets below the window header.

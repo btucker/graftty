@@ -13,6 +13,8 @@ struct WorktreeHistoryContent: View {
     /// The message whose last reveal found nothing, shown briefly beneath it.
     @State private var missingInTerminal: String?
     @State private var expandedGroups: Set<String> = []
+    /// Separate from `expandedGroups`: a fold's id is its first entry's id.
+    @State private var expandedEntries: Set<String> = []
     @State private var unavailableWorktree = false
 
     var body: some View {
@@ -150,11 +152,13 @@ struct WorktreeHistoryContent: View {
         }
     }
 
-    /// A headline on one row with its time; the detail opens in place.
+    /// A headline on one row with its time; the detail opens in place. A button,
+    /// like the other toggles here, so selectable text and VoiceOver activate it.
+    @ViewBuilder
     private func entryRow(_ event: WorktreeTimeline.Event) -> some View {
-        let expanded = expandedGroups.contains(event.id)
+        let expanded = expandedEntries.contains(event.id)
         let shown = Self.entryDetail(event, expanded: expanded)
-        return railed([event], headline: true) {
+        let row = railed([event], headline: true) {
             if let detail = shown.detail {
                 Text(detail).font(.callout).foregroundStyle(secondary).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -164,10 +168,18 @@ struct WorktreeHistoryContent: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { if shown.hasMore { toggle(event.id) } }
-        .accessibilityAddTraits(shown.hasMore ? .isButton : [])
-        .accessibilityValue(shown.hasMore ? (expanded ? "Expanded" : "Collapsed") : "")
+        if shown.hasMore {
+            Button {
+                expandedEntries.formSymmetricDifference([event.id])
+            } label: {
+                row.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("worktree.context.history.event.\(event.id)")
+        } else {
+            row
+        }
     }
 
     private func detailedEventRow(_ event: WorktreeTimeline.Event) -> some View {

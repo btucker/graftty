@@ -20,15 +20,28 @@ public enum AttentionExplainDelivery {
 public enum AttentionAnswerDelivery {
     public static let maxLength = 2000
 
+    /// A line break would submit early and other control keys (Tab, Escape,
+    /// Ctrl-C) would act on the agent's input, so each becomes a word break.
+    /// Format characters such as an emoji's zero-width joiner are kept.
+    private static let breaks: CharacterSet = {
+        var set = CharacterSet.newlines
+        set.insert(charactersIn: Unicode.Scalar(UInt8(0x00))...Unicode.Scalar(UInt8(0x1F)))
+        set.insert(charactersIn: Unicode.Scalar(UInt8(0x7F))...Unicode.Scalar(UInt8(0x9F)))
+        return set
+    }()
+
     @MainActor
     public static func deliver(worktreeID: String, paneID: String, occurrence: SidebarAttentionOccurrence, text: String,
                                platform: any ControlPlatform) async -> WorktreeManagementResponse {
-        let stop = platform.state.worktree(forPath: worktreeID)?.unseenAgentStop
-        guard let stop, stop.question != nil, stop.occurrence == occurrence else {
+        let worktree = platform.state.worktree(forPath: worktreeID)
+        guard let stop = worktree?.unseenAgentStop, stop.question != nil, stop.occurrence == occurrence else {
             return .error(code: "occurrence-changed", message: "This request has changed or already cleared.", forceAllowed: false, shortStatus: nil)
         }
-        // A line break would submit early, so the answer travels as one line.
-        let line = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
+        // Only the agent that asked reads the answer; another pane may be a shell that would run it.
+        if let asker = stop.paneSlotID, worktree?.paneSlot(forSessionName: paneID)?.id.uuidString != asker {
+            return .error(code: "not-found", message: "This agent's pane is no longer open.", forceAllowed: false, shortStatus: nil)
+        }
+        let line = text.components(separatedBy: breaks).map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }.joined(separator: " ")
         guard !line.isEmpty else {
             return .error(code: "empty-answer", message: "Type an answer first.", forceAllowed: false, shortStatus: nil)

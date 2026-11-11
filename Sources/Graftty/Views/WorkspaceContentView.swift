@@ -72,6 +72,7 @@ struct WorkspaceContentView: View {
                         },
                         paneDropTarget: { slot, content in AnyView(dropDestination(slot, content: content)) },
                         leadingContentInset: Self.leadingContentInset)
+                    .preference(key: WorkspaceTabRowHeightKey.self, value: WorktreeHeaderWash.tabRowHeight)
                 } else {
                     VStack(spacing: 12) {
                         Text("No active agents").font(.headline)

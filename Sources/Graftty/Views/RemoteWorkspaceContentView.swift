@@ -48,6 +48,7 @@ struct RemoteWorkspaceContentView: View {
             VStack(spacing: 0) {
                 if let visible = layout.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                     surface(visible, headers: true)
+                        .preference(key: WorkspaceTabRowHeightKey.self, value: WorktreeHeaderWash.tabRowHeight)
                 } else {
                     VStack(spacing: 12) {
                         Text("No active agents").font(.headline)
