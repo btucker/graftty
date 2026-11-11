@@ -21,7 +21,7 @@ private func repos() -> [RepoEntry] {
     ])]
 }
 
-@Suite("@spec AGENT-3.34: When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only when the same recap sets purposeChanged, keep its assigned hue across redraws, and ignore drawings for the home checkout.")
+@Suite("@spec AGENT-3.34: When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only for a purpose change or a one-time redraw, keep its assigned hue across redraws, and ignore drawings for the home checkout.")
 struct WorktreeDrawingAdoptionTests {
     @Test func staleRecapKeepsNewerDrawing() {
         var state = AppState(repos: repos())
@@ -161,6 +161,40 @@ struct WorktreeWideRedrawTests {
         // Once wide, the usual rule applies again.
         SidebarHostNavigation.adoptReportedDrawing(recap(icon: otherWideDrawing), worktreePath: "/repo/parser-cache", projectHue: nil, in: &repos)
         #expect(repos[0].worktrees[1].drawing?.svg == wideDrawing)
+    }
+}
+
+@Suite("@spec AGENT-3.47: When a linked worktree has a saved wide drawing from before varied compositions, the application shall request a new composition at turn start and adopt the first different wide drawing from a valid recap while keeping the worktree's assigned hue.")
+struct WorktreeCompositionRedrawTests {
+    @Test func savedWideDrawingTakesOneDifferentWideRedraw() throws {
+        var repos = repos()
+        let path = "/repo/parser-cache"
+        let legacy = try legacyWideDrawing()
+        repos[0].worktrees[1].drawing = legacy
+        repos[0].worktrees[1].drawingHue = 197
+
+        let prompt = try TeamHookRenderer.userPromptSubmit(drawingRedraw: legacy.redraw)
+        #expect(prompt.contains("new composition"))
+        for icon in [wideDrawing, firstDrawing, "<svg><script/></svg>"] {
+            SidebarHostNavigation.adoptReportedDrawing(recap(icon: icon), worktreePath: path, projectHue: nil, in: &repos)
+            #expect(repos[0].worktrees[1].drawing == legacy)
+        }
+
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: otherWideDrawing), worktreePath: path, projectHue: nil, in: &repos)
+        let updated = try #require(repos[0].worktrees[1].drawing)
+        #expect(updated.svg == otherWideDrawing)
+        #expect(repos[0].worktrees[1].drawingHue == 197)
+        #expect(updated.revision.hasSuffix(":197"))
+        let restored = try JSONDecoder().decode(WorktreeDrawing.self, from: JSONEncoder().encode(updated))
+        #expect(restored.redraw == nil)
+        #expect(!(try TeamHookRenderer.userPromptSubmit(drawingRedraw: restored.redraw)).contains("new composition"))
+        SidebarHostNavigation.adoptReportedDrawing(recap(icon: wideDrawing), worktreePath: path, projectHue: nil, in: &repos)
+        #expect(repos[0].worktrees[1].drawing == updated)
+    }
+
+    private func legacyWideDrawing() throws -> WorktreeDrawing {
+        let legacy = ["svg": wideDrawing, "revision": "old:197", "description": "a subject beside a detail"]
+        return try JSONDecoder().decode(WorktreeDrawing.self, from: JSONEncoder().encode(legacy))
     }
 }
 

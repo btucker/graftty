@@ -2,6 +2,14 @@ import Foundation
 import GhosttyKit
 
 enum GhosttyPresentationConfig {
+    static func drawingContext(config: ghostty_config_t) -> String {
+        // The drawing reference needs background, foreground, and ANSI 0 through 15.
+        render(config: config, text: "").split(separator: "\n")
+            .filter { !$0.hasPrefix("unfocused-split-fill =") }
+            .prefix(2 + 16)
+            .joined(separator: "\n")
+    }
+
     static func render(config: ghostty_config_t, text: String) -> String {
         var lines = text.components(separatedBy: .newlines).filter { line in
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)

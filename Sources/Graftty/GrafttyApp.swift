@@ -887,11 +887,9 @@ struct GrafttyApp: App {
             getRepos: { binding.wrappedValue.repos }
         )
 
-        // Poll `claude agents --json` on a fast cadence to derive per-pane
-        // busy/idle liveness. The registry retains this ticker internally
-        // (like prStatusStore), so the local var is sufficient — the
-        // registry itself outlives startup() via AppServices.
-        let claudeAgentsTicker = PollingTicker(interval: .seconds(2))
+        // Keep provider activity current for Mobile while the Mac is inactive.
+        // The registry retains this ticker for AppServices' lifetime.
+        let claudeAgentsTicker = PollingTicker.agentLiveness()
         services.claudeSessionRegistry.start(ticker: claudeAgentsTicker)
 
         let nativeTeamDelivery = NativeTeamDelivery(

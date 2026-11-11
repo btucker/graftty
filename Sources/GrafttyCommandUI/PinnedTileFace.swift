@@ -8,7 +8,7 @@ public struct PinnedTileFace: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public static let height: CGFloat = 50
+    public static let height: CGFloat = 56
     static let cornerRadius: CGFloat = 10
     /// The working ring, a quiet blue that reads as in progress, not as an alarm.
     static let working = Color(.sRGB, red: 0.48, green: 0.66, blue: 1, opacity: 1)

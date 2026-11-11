@@ -9,12 +9,43 @@ import GrafttyKitTestSupport
 /// UI but shall retain only meaningful checks and mergeability conclusions as
 /// notification baselines. When a meaningful conclusion follows transient
 /// absence for the same PR identity, the application shall notify only if it
-/// differs from the last meaningful conclusion. When the PR disappears, the
+/// differs from the last meaningful conclusion or reports terminal CI for a new
+/// known head commit. When the PR disappears, the
 /// worktree cache is cleared, or PR identity changes, the application shall
 /// seed a new baseline without comparing distinct PR observations.
 @MainActor
 @Suite
 struct PRStatusStoreAbsenceTransitionTests {
+    @Test("@spec PR-8.30: When polling observes a terminal CI conclusion for a new head commit of a tracked PR or MR, the application shall emit one Forge event even if the conclusion matches the prior commit and polling missed the pending state.")
+    func repeatedConclusionOnNewCommitIsNotLost() async throws {
+        for checks in [PRInfo.Checks.failure, .success] {
+            for intermediate: [PRInfo.Checks] in [[], [.none], [.pending]] {
+                let observations = [info(checks: checks, headSHA: "old-head")]
+                    + intermediate.map { info(checks: $0, headSHA: "new-head") }
+                    + [info(checks: checks, headSHA: "new-head"), info(checks: checks, headSHA: "new-head")]
+                let harness = makeStore(snapshots: observations.map(snapshot))
+                defer { harness.store.stop() }
+                var events: [CapturedTransition] = []
+                harness.store.onTransition = { event, _, attrs in
+                    events.append(CapturedTransition(event: event, attrs: attrs))
+                }
+                for count in 1...observations.count {
+                    try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: count)
+                }
+                let terminal = events.filter { $0.attrs["to"] == checks.rawValue }
+                #expect(terminal.count == 1)
+                #expect(events.count == (intermediate.contains(.pending) ? 2 : 1))
+                let event = try #require(terminal.first)
+                #expect(event.event == .ciConclusionChanged)
+                #expect(event.attrs["head_sha"] == "new-head")
+                #expect(event.attrs["to"] == checks.rawValue)
+                if !intermediate.contains(.pending) {
+                    #expect(event.event.defaultBody(attrs: event.attrs) == "CI on PR #5 at new-head: \(checks.rawValue)")
+                }
+            }
+        }
+    }
+
     private struct CapturedTransition {
         let event: RoutableEvent
         let attrs: [String: String]
@@ -32,7 +63,8 @@ struct PRStatusStoreAbsenceTransitionTests {
         url: URL? = nil,
         checks: PRInfo.Checks,
         mergeable: PRInfo.Mergeable = .unknown,
-        state: PRInfo.State = .open
+        state: PRInfo.State = .open,
+        headSHA: String? = nil
     ) -> PRInfo {
         PRInfo(
             number: number,
@@ -41,6 +73,7 @@ struct PRStatusStoreAbsenceTransitionTests {
             state: state,
             checks: checks,
             mergeable: mergeable,
+            headSHA: headSHA,
             fetchedAt: Date()
         )
     }

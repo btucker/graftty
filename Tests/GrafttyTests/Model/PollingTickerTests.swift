@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Testing
 @testable import Graftty
 
@@ -16,6 +17,26 @@ PollingTicker liveness
 @spec PR-8.10: The polling ticker shall keep firing `onTick` on its configured interval indefinitely, without stalling after one or more sleep / pulse cycles. `pulse()` shall cause the next tick to fire ahead of schedule, with bounded latency, rather than waiting for the full interval.
 """, .serialized)
 struct PollingTickerTests {
+
+    @Test("@spec AGENT-2.11: While the Mac application is inactive, the application shall continue polling provider activity so Mobile receives current Working status.")
+    func agentActivityContinuesWhileMacIsInactive() async throws {
+        let ticker = PollingTicker.agentLiveness(interval: .milliseconds(20))
+        var ticks = 0
+        ticker.start { ticks += 1 }
+        defer {
+            ticker.stop()
+            NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        }
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: nil)
+        // Let the notification's actor hop and any initial tick finish.
+        try await Task.sleep(for: .milliseconds(100))
+        let before = ticks
+        let deadline = Date().addingTimeInterval(60)
+        while ticks == before && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(ticks > before, "Agent activity must refresh after the Mac becomes inactive")
+    }
 
     /// Multiple ticks must fire over time without external pulses —
     /// the loop has to keep itself alive between sleep cycles.

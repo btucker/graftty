@@ -436,6 +436,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.240** When a host identifies a launched agent after its pane already appeared as a terminal, the application shall move that session from the terminal drawer into the agent tabs, leaving agents the user started by hand in a shell in place.
 
+**LAYOUT-2.241** While a worktree sidebar row is shown on Mac or Mobile, the application shall add six points of top padding above its icon and text.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2288,7 +2290,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.23** When a worktree's local branch name differs from the remote branch it tracks (via `branch.<name>.merge` / `git push -u`), the application shall associate the worktree with the PR/MR whose head ref equals the tracked remote branch name, not the local branch name. PR fetchers key snapshots by the remote-side head ref (`headRefName` for GitHub, `source_branch` for GitLab), so the previous `prsByBranch[localBranch]` lookup silently dropped the badge whenever the worktree's branch was renamed locally only or its upstream was bound to a differently-named ref.
 
-**PR-8.24** While polling a tracked PR or MR, the application shall preserve raw `checks == .none` and `mergeable == .unknown` values for the UI but shall retain only meaningful checks and mergeability conclusions as notification baselines. When a meaningful conclusion follows transient absence for the same PR identity, the application shall notify only if it differs from the last meaningful conclusion. When the PR disappears, the worktree cache is cleared, or PR identity changes, the application shall seed a new baseline without comparing distinct PR observations.
+**PR-8.24** While polling a tracked PR or MR, the application shall preserve raw `checks == .none` and `mergeable == .unknown` values for the UI but shall retain only meaningful checks and mergeability conclusions as notification baselines. When a meaningful conclusion follows transient absence for the same PR identity, the application shall notify only if it differs from the last meaningful conclusion or reports terminal CI for a new known head commit. When the PR disappears, the worktree cache is cleared, or PR identity changes, the application shall seed a new baseline without comparing distinct PR observations.
 
 **PR-8.25** When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.
 
@@ -2299,6 +2301,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PR-8.28** When a remote-branch snapshot gains refs for one repository, the application shall force PR polling only for that repository rather than bypass the cadence gate for every repository in the workspace.
 
 **PR-8.29** When displaying a PR/MR number in the breadcrumb or branch picker, the application shall use ungrouped decimal digits regardless of locale.
+
+**PR-8.30** When polling observes a terminal CI conclusion for a new head commit of a tracked PR or MR, the application shall emit one Forge event even if the conclusion matches the prior commit and polling missed the pending state.
 
 ## IOS — iOS App
 
@@ -4828,6 +4832,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.9** When provider activity arrives through the durable file handoff, the application shall update the tracked pane's busy state using the original hook event and attention reason while leaving legacy progress without hook metadata unchanged.
 
+**AGENT-2.10** While a registered Codex session has a live app-server and an observed active thread, the application shall include its pane in sidebar working activity even when provider hooks are absent, and shall discard polled activity when the provider no longer confirms it.
+
+**AGENT-2.11** While the Mac application is inactive, the application shall continue polling provider activity so Mobile receives current Working status.
+
 ### AGENT-3.x
 
 **AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.
@@ -4894,11 +4902,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.33** When an agent submits a worktree drawing, the application shall accept only a 96-by-64 or 64-unit SVG of at most 16384 bytes built from allowlisted shapes, gradients and text whose paints are palette tokens or local gradient references, and reject scripts, event handlers, external references, embedded images and foreign content.
 
-**AGENT-3.34** When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only when the same recap sets purposeChanged, keep its assigned hue across redraws, and ignore drawings for the home checkout.
+**AGENT-3.34** When a valid recap newer than the worktree's brief carries a drawing for a linked worktree, the application shall adopt it if the worktree has none, replace it only for a purpose change or a one-time redraw, keep its assigned hue across redraws, and ignore drawings for the home checkout.
 
 **AGENT-3.35** When the application records a recap that carried a drawing, it shall store and broadcast that recap without the drawing.
 
-**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, its palette tokens and the redraw rule while still requiring an emoji.
+**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, varied compositions, its palette tokens and the redraw rule while still requiring an emoji.
 
 **AGENT-3.37** When an Attention report carries a drawing that fails validation, the CLI shall reject the report with the specific reason before staging it.
 
@@ -4914,11 +4922,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.43** When a worktree's adopted drawing uses the older square canvas, the application shall replace it with the first wide drawing a valid recap carries, even without purposeChanged, and keep its hue.
 
-**AGENT-3.44** While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start for one wide redraw, and shall not ask once the drawing is wide or absent.
+**AGENT-3.44** While a worktree's drawing uses the older square canvas, the application shall ask that worktree's agent at turn start to redraw it on the wide canvas.
 
 **AGENT-3.45** When the application adopts a recap's drawing, it shall store the recap's iconDescription of at most 120 characters with that drawing, keep the description of a drawing it does not adopt out of the worktree, keep saved drawings without a description decodable, and reject a recap whose iconDescription is longer.
 
-**AGENT-3.46** While a linked worktree has no wide drawing, the application shall list at turn start the descriptions of up to eight of the most recently adopted other drawings in its repository and ask for a different subject, and shall list none once the worktree's drawing is wide.
+**AGENT-3.46** While a linked worktree needs a first drawing or a one-time redraw, the application shall list at turn start the descriptions of up to eight of the most recently adopted other drawings in its repository and ask for a different subject and composition.
+
+**AGENT-3.47** When a linked worktree has a saved wide drawing from before varied compositions, the application shall request a new composition at turn start and adopt the first different wide drawing from a valid recap while keeping the worktree's assigned hue.
+
+**AGENT-3.48** When a host supplies resolved Ghostty theme colors, the application shall include them in each agent turn's drawing guidance as a contrast reference while requiring SVG palette tokens.
 
 ### AGENT-4.x
 

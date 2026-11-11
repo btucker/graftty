@@ -69,18 +69,18 @@ public enum SidebarHostNavigation {
     }
 
     /// @spec AGENT-3.34
-    /// A linked worktree adopts its first valid drawing. A later drawing
-    /// replaces it only when the same recap says the purpose changed, so
-    /// icons stay stable enough to remember. The hue is assigned once.
+    /// When a valid recap newer than the worktree's brief carries a drawing for a linked worktree,
+    /// the application shall adopt it if the worktree has none, replace it only for a purpose change
+    /// or a one-time redraw, keep its assigned hue across redraws, and ignore drawings for the home checkout.
     public static func adoptReportedDrawing(_ recap: AttentionRecap?, worktreePath: String, projectHue: Double?, in repos: inout [RepoEntry]) {
         guard let recap, recap.isValid, let icon = recap.icon, let svg = try? WorktreeDrawingSVG.validate(icon) else { return }
         for repoIndex in repos.indices {
             guard worktreePath != repos[repoIndex].path,
                   let index = repos[repoIndex].worktrees.firstIndex(where: { $0.path == worktreePath }) else { continue }
             let current = repos[repoIndex].worktrees[index]
-            // AGENT-3.43: a square drawing from before takes one wide redraw.
-            let widens = current.drawing?.canvas == .square && WorktreeDrawingSVG.canvas(of: svg) == .wide
-            guard current.drawing == nil || recap.purposeChanged == true || widens else { return }
+            let completesRedraw = current.drawing?.redraw != nil
+                && current.drawing?.svg != svg && WorktreeDrawingSVG.canvas(of: svg) == .wide
+            guard current.drawing == nil || recap.purposeChanged == true || completesRedraw else { return }
             let hue = current.drawingHue ?? WorktreeColorAssignment.hue(
                 avoiding: repos[repoIndex].worktrees.compactMap(\.drawingHue) + [projectHue].compactMap { $0 })
             repos[repoIndex].worktrees[index].drawingHue = hue

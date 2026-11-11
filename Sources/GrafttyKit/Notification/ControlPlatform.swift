@@ -8,6 +8,8 @@ import GrafttyProtocol
 public protocol ControlPlatform: ControlTeamPlatform {
     var attentionRecaps: AttentionRecapCoordinator { get }
     var instructionsDirectory: URL { get }
+    /// Resolved terminal colors for the drawing agent's contrast reference.
+    var drawingThemeContext: String? { get }
     /// Providers that ended before this moment ended while no host was observing them.
     var hostStart: Date { get }
 
@@ -43,6 +45,7 @@ public protocol ControlPlatform: ControlTeamPlatform {
 }
 
 public extension ControlPlatform {
+    var drawingThemeContext: String? { nil }
     var hostStart: Date { ProcessIdentityReader.currentProcessStart }
     var agentArchives: AgentArchiveStore {
         AgentArchiveStore(directory: worktreeCreation.agentPromptDirectory.appendingPathComponent("archives", isDirectory: true))

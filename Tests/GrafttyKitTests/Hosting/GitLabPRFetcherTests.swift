@@ -60,6 +60,7 @@ struct GitLabPRFetcherTests {
         #expect(mr?.number == 512)
         #expect(mr?.state == .open)
         #expect(mr?.checks == .success)
+        #expect(mr?.headSHA == "gitlab-head")
         #expect(mr?.mergeable == .mergeable)
     }
 

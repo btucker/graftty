@@ -55,6 +55,8 @@ public struct PRInfo: Codable, Sendable, Equatable, Identifiable {
     public let state: State
     public let checks: Checks
     public let mergeable: Mergeable
+    /// The provider's head commit, when available, for distinguishing CI results.
+    public let headSHA: String?
     public let fetchedAt: Date
 
     public var id: Int { number }
@@ -66,6 +68,7 @@ public struct PRInfo: Codable, Sendable, Equatable, Identifiable {
         state: State,
         checks: Checks,
         mergeable: Mergeable = .unknown,
+        headSHA: String? = nil,
         fetchedAt: Date
     ) {
         self.number = number
@@ -74,11 +77,12 @@ public struct PRInfo: Codable, Sendable, Equatable, Identifiable {
         self.state = state
         self.checks = checks
         self.mergeable = mergeable
+        self.headSHA = headSHA
         self.fetchedAt = fetchedAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case number, title, url, state, checks, mergeable, fetchedAt
+        case number, title, url, state, checks, mergeable, headSHA, fetchedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -90,6 +94,7 @@ public struct PRInfo: Codable, Sendable, Equatable, Identifiable {
         self.checks = try c.decode(Checks.self, forKey: .checks)
         // Old persisted blobs predate this field; default to .unknown.
         self.mergeable = try c.decodeIfPresent(Mergeable.self, forKey: .mergeable) ?? .unknown
+        self.headSHA = try c.decodeIfPresent(String.self, forKey: .headSHA)
         self.fetchedAt = try c.decode(Date.self, forKey: .fetchedAt)
     }
 
@@ -102,6 +107,7 @@ public struct PRInfo: Codable, Sendable, Equatable, Identifiable {
         lhs.url == rhs.url &&
         lhs.state == rhs.state &&
         lhs.checks == rhs.checks &&
-        lhs.mergeable == rhs.mergeable
+        lhs.mergeable == rhs.mergeable &&
+        lhs.headSHA == rhs.headSHA
     }
 }

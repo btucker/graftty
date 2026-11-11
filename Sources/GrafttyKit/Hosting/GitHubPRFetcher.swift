@@ -47,6 +47,7 @@ public struct GitHubPRFetcher: PRFetcher {
                 state: state,
                 checks: state.isTerminal ? .none : Self.rollup(pr.statusCheckRollup ?? []),
                 mergeable: state.isTerminal ? .unknown : Self.mapMergeable(pr.mergeable),
+                headSHA: pr.headRefOid,
                 fetchedAt: fetched
             )
 
@@ -81,6 +82,7 @@ public struct GitHubPRFetcher: PRFetcher {
         let url: URL
         let state: String
         let headRefName: String
+        let headRefOid: String?
         let headRepositoryOwner: HeadOwner?
         let statusCheckRollup: [RawCheck]?
         let mergeable: String?
@@ -92,7 +94,7 @@ public struct GitHubPRFetcher: PRFetcher {
             "--repo", origin.slug,
             "--state", "all",
             "--limit", "100",
-            "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable",
+            "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable,headRefOid",
         ]
         let output = try await executor.run(
             command: "gh",

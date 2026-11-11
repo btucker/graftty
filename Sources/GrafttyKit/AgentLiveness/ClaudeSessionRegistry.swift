@@ -13,20 +13,24 @@ import os
 public final class ClaudeSessionRegistry {
     public private(set) var livenessBySession: [String: AgentLiveness] = [:]
     @ObservationIgnored private var polledLiveness: [String: AgentLiveness] = [:]
+    @ObservationIgnored private var additionalStates: [String: [String: AgentLiveness]] = [:]
     @ObservationIgnored private var hookLiveness: [String: [String: AgentLiveness]] = [:]
     @ObservationIgnored private var hookTimes: [String: [String: Date]] = [:]
     @ObservationIgnored private var paneClearedAt: [String: Date] = [:]
 
     @ObservationIgnored private let executor: CLIExecutor
     @ObservationIgnored private let claudePath: String
+    @ObservationIgnored private let additionalLiveness: @Sendable () async -> [String: [String: AgentLiveness]]
     @ObservationIgnored private var ticker: PollingTickerLike?
     @ObservationIgnored internal var generation = 0
     @ObservationIgnored private let logger =
         Logger(subsystem: "com.btucker.graftty", category: "ClaudeSessionRegistry")
 
-    public init(executor: CLIExecutor = CLIRunner(), claudePath: String = "claude") {
+    public init(executor: CLIExecutor = CLIRunner(), claudePath: String = "claude",
+                additionalLiveness: @escaping @Sendable () async -> [String: [String: AgentLiveness]] = { [:] }) {
         self.executor = executor
         self.claudePath = claudePath
+        self.additionalLiveness = additionalLiveness
     }
 
     /// Begin polling on the supplied ticker (the app wires the real
@@ -45,9 +49,22 @@ public final class ClaudeSessionRegistry {
     public func refresh() async {
         generation += 1
         let mine = generation
-        let map = await Self.poll(executor: executor, claudePath: claudePath, logger: logger)
+        let startedAt = Date()
+        async let claude = Self.poll(executor: executor, claudePath: claudePath, logger: logger)
+        async let additional = additionalLiveness()
+        let (map, providerMap) = await (claude, additional)
         guard mine == generation else { return }
         polledLiveness = map
+        additionalStates = providerMap
+        for (pane, states) in providerMap {
+            additionalStates[pane] = states.filter { key, _ in
+                (hookTimes[pane]?[key] ?? .distantPast) <= startedAt
+            }
+            for (key, state) in additionalStates[pane] ?? [:] where state == .idle {
+                hookLiveness[pane]?[key] = nil
+                hookTimes[pane, default: [:]][key] = startedAt
+            }
+        }
         publishLiveness()
     }
 
@@ -68,6 +85,7 @@ public final class ClaudeSessionRegistry {
         guard occurredAt > (hookTimes[paneSessionName]?[key] ?? .distantPast),
               occurredAt > (paneClearedAt[paneSessionName] ?? .distantPast) else { return }
         hookTimes[paneSessionName, default: [:]][key] = occurredAt
+        additionalStates[paneSessionName]?[key] = nil
         hookLiveness[paneSessionName, default: [:]][key] = state == .busy ? .busy : nil
         publishLiveness()
     }
@@ -108,12 +126,17 @@ public final class ClaudeSessionRegistry {
         hookTimes[sessionName] = nil
         hookLiveness[sessionName] = nil
         polledLiveness[sessionName] = nil
+        additionalStates[sessionName] = nil
         publishLiveness()
     }
 
     private func publishLiveness() {
         var merged = polledLiveness
-        for (pane, agents) in hookLiveness {
+        var states = hookLiveness
+        for (pane, observations) in additionalStates {
+            states[pane, default: [:]].merge(observations) { _, observed in observed }
+        }
+        for (pane, agents) in states {
             if agents.values.contains(.busy) { merged[pane] = .busy }
             else if merged[pane] == nil { merged[pane] = .idle }
         }

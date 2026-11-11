@@ -4,6 +4,29 @@ import Testing
 
 @Suite("CodexAppServerClient", .serialized)
 struct CodexAppServerClientTests {
+    @Test func turnLivenessReadsOnlyTheExactCurrentThreadAndRecognizesWaiting() async throws {
+        let statuses: [([String: Any], AgentLiveness?)] = [
+            (["type": "active", "activeFlags": []], .busy),
+            (["type": "active", "activeFlags": ["waitingOnApproval"]], .idle),
+            (["type": "active", "activeFlags": ["waitingOnUserInput"]], .idle),
+            (["type": "idle"], .idle), (["type": "notLoaded"], .idle),
+            (["type": "systemError"], nil),
+        ]
+        for (status, expected) in statuses {
+            let rpc = SleepRPC(responses: [
+                "thread/read": ["result": ["thread": ["id": "exact", "cwd": "/same", "status": status]]],
+            ])
+            var client = CodexAppServerClient(timeout: 0.3)
+            client.sleepRPC = .init(request: { try rpc.request($0, $1) }, notify: { rpc.notify($0) })
+            #expect(await client.turnLiveness(binaryPath: "/unused", socketPath: "/unused",
+                expectedCWD: "/same", target: .init(threadID: "exact", activeTurnID: nil)) == expected)
+            #expect(try methods(in: rpc.requests) == ["initialize", "initialized", "thread/read"])
+            let read = try #require(rpc.requests.last?["params"] as? [String: Any])
+            #expect(read["threadId"] as? String == "exact")
+            #expect(read["includeTurns"] as? Bool == false)
+        }
+    }
+
     @Test("@spec SLEEP-26: When querying Codex sleep activity, the application shall enable experimental API access, validate the exact thread and cwd, and issue only read requests for that target.")
     func sleepQueryPreservesExactTarget() async throws {
         let fake = SleepRPC(responses: sleepResponses())

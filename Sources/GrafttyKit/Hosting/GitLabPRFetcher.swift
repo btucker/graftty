@@ -102,6 +102,7 @@ public struct GitLabPRFetcher: PRFetcher {
                 state: state,
                 checks: checks,
                 mergeable: mergeable,
+                headSHA: detail?.sha ?? mr.sha,
                 fetchedAt: fetched
             )
         }
@@ -116,11 +117,13 @@ public struct GitLabPRFetcher: PRFetcher {
         let web_url: URL
         let state: String
         let source_branch: String
+        let sha: String?
         let source_project_id: Int?
         let target_project_id: Int?
     }
 
     private struct RawMRDetail: Decodable {
+        let sha: String?
         let head_pipeline: RawPipeline?
         let has_conflicts: Bool?
         let merge_status: String?

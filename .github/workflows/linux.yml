@@ -36,8 +36,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install build tools
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends python3 curl ca-certificates xz-utils git file netcat-openbsd
+          # Retry transient mirror/DNS failures and stop if any package index
+          # remains unavailable. Bound each command, as in the smoke test.
+          apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=20)
+          timeout -k 10 180 apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
+          timeout -k 10 180 apt-get "${apt_options[@]}" install -y --no-install-recommends python3 curl ca-certificates xz-utils git file netcat-openbsd
           scripts/linux/install-zig.sh /opt/zig
           echo /opt/zig >> "$GITHUB_PATH"
       - name: Verify toolchain and architecture

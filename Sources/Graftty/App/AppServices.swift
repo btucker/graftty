@@ -156,7 +156,11 @@ final class AppServices {
             remoteBranchStore: remoteBranchStore,
             backgroundProcessLimiter: backgroundProcessLimiter
         )
-        self.claudeSessionRegistry = ClaudeSessionRegistry()
+        self.claudeSessionRegistry = ClaudeSessionRegistry(additionalLiveness: {
+            let storage = CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
+            let records = (try? await OffMainIO.run { try storage.listAll() }) ?? []
+            return await CodexSessionLiveness.poll(records: records, client: CodexAppServerClient(timeout: 2))
+        })
         self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
         self.displayOwnershipStore = SessionDisplayOwnershipStore()
         self.cliWorktreeCreations = CLIWorktreeCreationStore()

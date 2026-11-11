@@ -25,6 +25,7 @@ public struct SidebarWorktreeRowLayout<Identity: View, Content: View>: View {
             VStack(alignment: .leading, spacing: 1) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.top, 6)
     }
 }
 

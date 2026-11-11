@@ -10,7 +10,7 @@ struct PRStatusStoreIntegrationTests {
     private static let listArgs = [
         "pr", "list", "--repo", "foo/bar",
         "--state", "all", "--limit", "100",
-        "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable",
+        "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable,headRefOid",
     ]
     private static let origin = HostingOrigin(
         provider: .github, host: "github.com", owner: "foo", repo: "bar"

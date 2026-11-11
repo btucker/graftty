@@ -29,6 +29,7 @@ struct ControlRequestCoreTests {
         var routing: RecordingRouting? = RecordingRouting()
         var remoteTeamRouting: (any ControlRemoteTeamRouting)? { routing }
         var instructionsDirectory: URL { root }
+        var drawingThemeContext: String?
         var stateChanges = 0
         var hostStart = ProcessIdentityReader.currentProcessStart
         var liveness: [(TeamHookEvent, String)] = []

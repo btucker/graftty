@@ -25,6 +25,9 @@ public struct CodexAppServerTarget: Sendable, Equatable {
 }
 
 public protocol CodexAppServerClienting: Sendable {
+    func turnLiveness(binaryPath: String, socketPath: String, expectedCWD: String,
+                      target: CodexAppServerTarget) async -> AgentLiveness?
+
     func sleepActivity(
         binaryPath: String,
         socketPath: String,
@@ -49,6 +52,9 @@ public protocol CodexAppServerClienting: Sendable {
 }
 
 public extension CodexAppServerClienting {
+    func turnLiveness(binaryPath: String, socketPath: String, expectedCWD: String,
+                      target: CodexAppServerTarget) async -> AgentLiveness? { nil }
+
     func sleepActivity(
         binaryPath: String,
         socketPath: String,
@@ -144,13 +150,30 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         expectedCWD: String,
         target: CodexAppServerTarget
     ) async -> ProviderSleepActivity {
+        await activity(binaryPath: binaryPath, socketPath: socketPath, expectedCWD: expectedCWD,
+                       target: target, currentTurnOnly: false)
+    }
+
+    /// Reads only the bound thread's current turn, including whether it waits for input.
+    public func turnLiveness(binaryPath: String, socketPath: String, expectedCWD: String,
+                             target: CodexAppServerTarget) async -> AgentLiveness? {
+        switch await activity(binaryPath: binaryPath, socketPath: socketPath, expectedCWD: expectedCWD,
+                              target: target, currentTurnOnly: true) {
+        case .busy: .busy
+        case .idle: .idle
+        case .unknown: nil
+        }
+    }
+
+    private func activity(binaryPath: String, socketPath: String, expectedCWD: String,
+                          target: CodexAppServerTarget, currentTurnOnly: Bool) async -> ProviderSleepActivity {
         guard !target.threadID.isEmpty, !expectedCWD.isEmpty else { return .unknown }
         #if os(macOS)
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
-                let activity = try? sleepActivityOnMacOS(
+                let activity = try? readActivityOnMacOS(
                     binaryPath: binaryPath, socketPath: socketPath,
-                    expectedCWD: expectedCWD, target: target
+                    expectedCWD: expectedCWD, target: target, currentTurnOnly: currentTurnOnly
                 )
                 continuation.resume(returning: activity ?? .unknown)
             }
@@ -161,14 +184,16 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
     }
 
     #if os(macOS)
-    private func sleepActivityOnMacOS(
+    private func readActivityOnMacOS(
         binaryPath: String,
         socketPath: String,
         expectedCWD: String,
-        target: CodexAppServerTarget
+        target: CodexAppServerTarget,
+        currentTurnOnly: Bool
     ) throws -> ProviderSleepActivity {
         if let sleepRPC {
-            return try sleepActivity(expectedCWD: expectedCWD, target: target,
+            return try readActivity(expectedCWD: expectedCWD, target: target,
+                                     currentTurnOnly: currentTurnOnly,
                                      request: sleepRPC.request, notify: sleepRPC.notify)
         }
         let process = Process()
@@ -199,16 +224,18 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
                 method: method
             )
         }
-        return try sleepActivity(expectedCWD: expectedCWD, target: target, request: request) { method in
+        return try readActivity(expectedCWD: expectedCWD, target: target,
+                                 currentTurnOnly: currentTurnOnly, request: request) { method in
             try sendRequest(["method": method], to: connection, deadline: deadline)
         }
     }
 
     /// Runs the read-only activity exchange independently of process startup
     /// and WebSocket I/O. Tests supply synchronous, recorded RPC replies.
-    private func sleepActivity(
+    private func readActivity(
         expectedCWD: String,
         target: CodexAppServerTarget,
+        currentTurnOnly: Bool,
         request: (_ method: String, _ params: [String: Any]) throws -> [String: Any],
         notify: (_ method: String) throws -> Void
     ) throws -> ProviderSleepActivity {
@@ -217,12 +244,21 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
             "capabilities": ["experimentalApi": true],
         ])
         try notify("initialized")
-        let result = try request("thread/read", ["threadId": target.threadID, "includeTurns": true])
+        let result = try request("thread/read", ["threadId": target.threadID, "includeTurns": !currentTurnOnly])
         guard let thread = result["thread"] as? [String: Any],
               thread["id"] as? String == target.threadID,
               thread["cwd"] as? String == expectedCWD else { return .unknown }
 
         let status = (thread["status"] as? [String: Any])?["type"] as? String
+        if currentTurnOnly {
+            switch status {
+            case "active":
+                guard let flags = (thread["status"] as? [String: Any])?["activeFlags"] as? [String] else { return .unknown }
+                return flags.isEmpty ? .busy : .idle
+            case "idle", "notLoaded": return .idle
+            default: return .unknown
+            }
+        }
         let turns = thread["turns"] as? [[String: Any]] ?? []
         if status == "active" || turns.contains(where: { $0["status"] as? String == "inProgress" }) {
             return .busy
