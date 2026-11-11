@@ -101,6 +101,8 @@ struct SidebarView: View {
     @State private var rankRepairs = ProjectRankRepairTracker()
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
+    // A non-observable cache: filling it during body evaluation must not publish.
+    @State private var localMetadata = SidebarLocalWorktreeMetadataCache()
     @State private var navigationError: String?
     @State private var remoteProjectOperationInProgress = false
     @State private var showsRemoteManagement = false
@@ -111,6 +113,7 @@ struct SidebarView: View {
     private var localWorktrees: [WorktreePanes] {
         sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles,
             liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
+            metadataCache: localMetadata,
             defaultBranch: { remoteBranchStore.resolvedDefaultBranch(forRepoAt: $0.path, hint: $0.defaultBranchHint) })
     }
     /// Working agents per project. Waiting counts come from `SidebarWaitingCounts`.
@@ -197,10 +200,11 @@ struct SidebarView: View {
             .union(remote.projects.filter {
                 $0.owner.map { remote.authoritativeOwnerIDs.contains($0.deviceID) } == true
             }.map(\.id))
-        navigation.reconcile(worktrees: localWorktrees + remote.worktrees, projects: projects,
+        let local = localWorktrees
+        navigation.reconcile(worktrees: local + remote.worktrees, projects: projects,
             authoritativeProjectIDs: authoritativeProjects)
         // Store the merged id, so the selection outlives whichever host set it.
-        let merged = mergedSidebar
+        let merged = makeMerged(local: local)
         let selected = merged.selectedProjectID(for: navigation.selectedProjectID)
         let fallback = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } })
             .map { merged.mergedID(forMember: localProjectID($0)) } ?? merged.projects.first?.id
@@ -617,8 +621,8 @@ struct SidebarView: View {
         } else {
             remoteSection(contexts: remoteContexts, projectFilter: nil, query: navigation.query)
             ForEach(appState.repos) { repo in
-                let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
-                    defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
+                let labels = localMetadata.metadata(for: repo,
+                    defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint)).labels
                 ForEach(displayedWorktrees(in: repo).filter {
                     contextForLocalWorktree($0, repo: repo, displayName: labels[$0.id] ?? $0.branch).matches(query: navigation.query)
                 }) { worktree in

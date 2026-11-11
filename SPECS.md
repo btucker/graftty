@@ -5624,6 +5624,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERF-1.26** When the recurring branch scan reads commit dates, the application shall request integer Unix seconds from Git and convert them directly to dates without calendar or locale parsing.
 
+**PERF-1.27** While local sidebar repository paths, worktree identities, paths, branches, pins, membership, order, and resolved default branches are unchanged, the application shall reuse folder ancestry and labels while projecting current row content and display order.
+
+**PERF-1.28** When local sidebar metadata inputs change or a repository is removed, the application shall invalidate the affected cached metadata and preserve the uncached projection's labels, folders, identities, membership, and ordering.
+
 ## PORTS — PORTS
 
 ### PORTS-1.x

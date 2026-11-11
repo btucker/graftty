@@ -7,7 +7,8 @@ case "$archive" in
     *-x86_64.tar.gz) platform=linux/amd64 ;;
     *) echo 'Archive name must include its supported architecture' >&2; exit 64 ;;
 esac
-docker run --platform "$platform" --rm -i --mount "type=bind,source=$archive,target=/artifact.tar.gz,readonly" ubuntu:24.04 bash -s <<'SMOKE'
+# Match the build container's public DNS instead of inheriting runner resolvers.
+docker run --platform "$platform" --dns 1.1.1.1 --dns 8.8.8.8 --rm -i --mount "type=bind,source=$archive,target=/artifact.tar.gz,readonly" ubuntu:24.04 bash -s <<'SMOKE'
 set -euo pipefail
 # The stock Ubuntu image has no Swift installation.
 if command -v swift; then echo "smoke image unexpectedly has swift" >&2; exit 1; fi
@@ -39,7 +40,7 @@ apt_bounded() {
         return "$status"
     fi
 }
-apt_bounded apt-get update
+apt_bounded apt-get -o APT::Update::Error-Mode=any update
 apt_bounded apt-get install -y --no-install-recommends git
 mkdir /tmp/fixture
 git -C /tmp/fixture init -q -b main
