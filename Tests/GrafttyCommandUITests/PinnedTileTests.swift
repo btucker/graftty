@@ -21,9 +21,9 @@ struct PinnedTileTests {
         #expect(PinnedTileState.idle.pip == nil)
     }
 
-    @Test("@spec LAYOUT-2.226: While a pinned agent is shown as a tile, the application shall caption it with the first part of its worktree name, split at hyphens, underscores, slashes, and spaces, or with the branch name for the default checkout.", arguments: [
-        ("crash-report", false, "x", "crash"), ("ci_watch", false, "x", "ci"), ("research/notes", false, "x", "research"),
-        ("release loop", false, "x", "release"), ("triage", false, "x", "triage"), ("-odd", false, "x", "odd"),
+    @Test("@spec LAYOUT-2.226: While a pinned agent is shown as a tile, the application shall caption it with its whole worktree name, or the branch name for the default checkout, on one line, ending in an ellipsis only when the name is wider than the tile.", arguments: [
+        ("crash-report", false, "x", "crash-report"), ("ci_watch", false, "x", "ci_watch"), ("research/notes", false, "x", "research/notes"),
+        ("release loop", false, "x", "release loop"), ("triage", false, "x", "triage"),
         ("graftty", true, "main", "main"),
     ] as [(String, Bool, String, String)])
     func tileWord(name: String, isMainCheckout: Bool, branch: String, expected: String) {
@@ -40,15 +40,14 @@ struct PinnedTileTests {
 
     /// Two tiles must not show the same word: the clashing ones use the first
     /// part of their names that differs.
-    @Test func clashingWordsUseTheFirstPartThatDiffers() {
+    @Test func captionsKeepWholeNamesSoOnlyTrueDuplicatesClash() {
         let words = PinnedTile.words(for: [
             .init(name: "analytics-dashboard", isMainCheckout: false, branch: "x"),
             .init(name: "analytics-api", isMainCheckout: false, branch: "x"),
-            .init(name: "crash-report", isMainCheckout: false, branch: "x"),
             .init(name: "app", isMainCheckout: true, branch: "main"),
-            .init(name: "analytics", isMainCheckout: false, branch: "x"),
+            .init(name: "app", isMainCheckout: true, branch: "main"),
         ])
-        #expect(words == ["dashboard", "api", "crash", "main", "analytics"])
+        #expect(words == ["analytics-dashboard", "analytics-api", "main", "main"])
     }
 
     @Test func accessibilityLabelNamesHostAndState() {

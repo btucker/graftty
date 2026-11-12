@@ -51,9 +51,10 @@ public enum PinnedTile {
     /// @spec LAYOUT-2.226
     /// The word on a tile's caption band: the first part of the worktree's
     /// name, or the branch for the default checkout.
+    /// The whole worktree name, or the branch for the default checkout; the tile
+    /// truncates it with an ellipsis only when it is wider than the tile (LAYOUT-2.226).
     public static func word(name: String, isMainCheckout: Bool, branch: String) -> String {
-        let source = isMainCheckout ? branch : name
-        return segments(source).first ?? source
+        isMainCheckout ? branch : name
     }
 
     public struct Name: Equatable, Sendable {
@@ -66,8 +67,6 @@ public enum PinnedTile {
         }
     }
 
-    /// The words for one grid. Tiles whose first word clashes use the first
-    /// later part of their name that differs, so no two read the same.
     /// The host under each tile: only where another tile shows the same caption,
     /// such as two hosts' default checkouts (LAYOUT-2.242).
     public static func hostBadges(words: [String], hosts: [String?]) -> [String?] {
@@ -75,17 +74,10 @@ public enum PinnedTile {
         return zip(words, hosts).map { word, host in (counts[word] ?? 0) > 1 ? host : nil }
     }
 
+    /// The captions for one grid. Whole names only clash when they are truly the
+    /// same, such as two hosts' default checkouts, which the host badge resolves.
     public static func words(for names: [Name]) -> [String] {
-        let words = names.map { word(name: $0.name, isMainCheckout: $0.isMainCheckout, branch: $0.branch) }
-        let counts = Dictionary(words.map { ($0, 1) }, uniquingKeysWith: +)
-        return zip(names, words).map { name, word in
-            guard (counts[word] ?? 0) > 1, !name.isMainCheckout else { return word }
-            return segments(name.name).first { $0 != word } ?? word
-        }
-    }
-
-    private static func segments(_ text: String) -> [String] {
-        text.components(separatedBy: CharacterSet(charactersIn: "-_/ ")).filter { !$0.isEmpty }
+        names.map { word(name: $0.name, isMainCheckout: $0.isMainCheckout, branch: $0.branch) }
     }
 
     /// What hovering a tile on Mac says. A native tooltip never takes focus

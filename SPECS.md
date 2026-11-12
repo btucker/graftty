@@ -418,7 +418,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall show an orange dot before its name while it asks a question or carries a notification, a pulsing blue dot while an agent works, fade it while its host sleeps, and draw no mark otherwise, including after a turn stops.
 
-**LAYOUT-2.226** While a pinned agent is shown as a tile, the application shall caption it with the first part of its worktree name, split at hyphens, underscores, slashes, and spaces, or with the branch name for the default checkout.
+**LAYOUT-2.226** While a pinned agent is shown as a tile, the application shall caption it with its whole worktree name, or the branch name for the default checkout, on one line, ending in an ellipsis only when the name is wider than the tile.
 
 **LAYOUT-2.227** While the sidebar shows a project that can add worktrees, the application shall offer New worktree as a line directly below the pinned tiles and above Needs you, Working, and Recent, in both macOS sidebar modes.
 
