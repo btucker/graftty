@@ -13,6 +13,13 @@ from harness import Action, Broker, InvariantFailure
 from run import Run, execute, main, prepare_home
 
 
+def required_arguments():
+    arguments = ['run.py']
+    for option in ('--codex', '--claude', '--cli', '--zmx'):
+        arguments.extend((option, '/bin/echo'))
+    return arguments
+
+
 class RunnerLifecycleTests(unittest.TestCase):
     def test_mobile_recovery_approves_only_the_visible_known_tool_on_mobile(self):
         runner = Run.__new__(Run)
@@ -33,10 +40,7 @@ class RunnerLifecycleTests(unittest.TestCase):
         self.assertEqual(1, runner.act.call_count)
 
     def test_history_and_creation_cannot_silently_select_one_scenario(self):
-        arguments = ['run.py']
-        for option in ('--codex', '--claude', '--cli', '--zmx', '--ghostty-package'):
-            arguments.extend((option, '/bin/echo'))
-        with patch('run.sys.argv', arguments + ['--history', '--worktree-creation']), \
+        with patch('run.sys.argv', required_arguments() + ['--history', '--worktree-creation']), \
              patch('run.sys.stderr'), patch('run.Run') as runner, \
              patch('worktree_creation.WorktreeCreationRun') as creation:
             with self.assertRaises(SystemExit) as error:
@@ -44,6 +48,24 @@ class RunnerLifecycleTests(unittest.TestCase):
             self.assertEqual(2, error.exception.code)
             runner.assert_not_called()
             creation.assert_not_called()
+
+    def test_runs_with_only_the_provider_and_graftty_binaries(self):
+        # The nightly workflow passes no Ghostty package: every build links the
+        # libghostty that scripts/deps prepares in .deps/ (#860).
+        with patch('run.sys.argv', required_arguments() + ['--seed', '1', '--actions', '30']), \
+             patch('run.Run') as runner:
+            main()
+        runner.return_value.run.assert_called_once_with()
+
+    def test_rejects_the_removed_ghostty_package_override(self):
+        # Package.swift no longer reads GRAFTTY_GHOSTTY_PACKAGE_PATH (#860), so
+        # accepting the option would silently test .deps/ instead.
+        with patch('run.sys.argv', required_arguments() + ['--ghostty-package', '/bin/echo']), \
+             patch('run.sys.stderr'), patch('run.Run') as runner:
+            with self.assertRaises(SystemExit) as error:
+                main()
+        self.assertEqual(2, error.exception.code)
+        runner.assert_not_called()
 
     def test_history_dispatch_preserves_its_dedicated_scenario(self):
         runner = Run.__new__(Run)
@@ -67,7 +89,7 @@ class RunnerLifecycleTests(unittest.TestCase):
                     binaries[name] = root / name
                     binaries[name].write_bytes((name + '-fixture').encode())
                 options = SimpleNamespace(**binaries, rows=100, seed=7, mac_only=False,
-                    cache=root / 'cache', ios_cache=root / 'ios', ghostty_package=None,
+                    cache=root / 'cache', ios_cache=root / 'ios',
                     simulator='fixture-device', worktree_creation=True,
                     worktree_creation_source='app-flow', worktree_creation_viewport_only=False)
                 server = Mock(endpoint='http://127.0.0.1:1234', broker=Broker())
@@ -224,15 +246,13 @@ class RunnerLifecycleTests(unittest.TestCase):
                 products = derived / 'Build/Products'
                 products.mkdir(parents=True)
                 (products / 'Fixture.xctestrun').write_bytes(plistlib.dumps({}))
-                renderer = runner.root / 'libghostty-spm'
-                runner.options = SimpleNamespace(simulator='fixture-device', ios_cache=derived, ghostty_package=renderer, preview=preview)
+                runner.options = SimpleNamespace(simulator='fixture-device', ios_cache=derived, preview=preview)
                 runner.server = Mock(endpoint='http://127.0.0.1:1234')
 
                 def execute_fixture(command, **kwargs):
                     if command[:4] == ['xcrun', 'simctl', 'list', 'devices']:
                         return json.dumps({'devices': {'fixture': [{'udid': 'fixture-device', 'name': 'Fixture phone', 'state': 'Booted'}]}})
                     if any('compiler-context.py' in str(argument) for argument in command):
-                        self.assertEqual(str(renderer), kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
                         return '-DGRAFTTY_RENDERER_fixture'
                     return ''
 
@@ -248,7 +268,6 @@ class RunnerLifecycleTests(unittest.TestCase):
                     expected_flags += ' -D GRAFTTY_PAGED_HISTORY'
                 self.assertEqual(str(derived), runner.mobile_command[runner.mobile_command.index('-derivedDataPath') + 1])
                 self.assertIn(expected_flags, build.args[0])
-                self.assertEqual(str(renderer), build.kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
                 self.assertEqual({'udid': 'fixture-device', 'name': 'Fixture phone', 'runtime': 'fixture'},
                                  runner.summary['simulator'])
 
@@ -256,7 +275,7 @@ class RunnerLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             options = SimpleNamespace(cli=Path('/bin/echo'), codex=Path('/bin/echo'), claude=Path('/bin/echo'),
-                zmx=Path('/bin/echo'), rows=100, seed=1, mac_only=False, cache=root / 'cache', ghostty_package=None)
+                zmx=Path('/bin/echo'), rows=100, seed=1, mac_only=False, cache=root / 'cache')
             server = Mock(endpoint='http://127.0.0.1:1234', broker=Broker())
             with patch('run.tempfile.mkdtemp', return_value=directory), patch('run.IntegrationServer', return_value=server):
                 runner = Run(options)

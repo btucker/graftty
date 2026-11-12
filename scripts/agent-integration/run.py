@@ -185,8 +185,6 @@ class Run:
         self.ios_lock = (derived.parent / (derived.name + '.lock')).open('a')
         fcntl.flock(self.ios_lock, fcntl.LOCK_EX)
         build_env = dict(os.environ)
-        if options.ghostty_package:
-            build_env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(options.ghostty_package)
         renderer_context = execute([sys.executable, str(REPO / 'scripts/ghostty-paging/compiler-context.py'),
             str(REPO), str(derived / 'manifest')], env=build_env)
         swift_flags = 'OTHER_SWIFT_FLAGS=$(inherited) -Xcc ' + renderer_context
@@ -554,8 +552,6 @@ class Run:
             for name in ('claude', 'codex'):
                 self.summary['providerVersions'][name] = execute([str(getattr(self.options, name)), '--version'], env=self.env)
             self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
-            if self.options.ghostty_package:
-                self.env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(self.options.ghostty_package)
             manifest = {'endpoint': self.server.endpoint, 'root': str(self.root), 'cli': str(self.options.cli),
                         'zmx': str(self.options.zmx), 'codex': str(self.options.codex), 'claude': str(self.options.claude),
                         'seed': self.options.seed}
@@ -654,7 +650,6 @@ def main():
     parser.add_argument('--claude', type=Path, required=True, help='Native Claude CLI')
     parser.add_argument('--cli', type=Path, required=True, help='Built graftty-cli executable')
     parser.add_argument('--zmx', type=Path, required=True)
-    parser.add_argument('--ghostty-package', type=Path, required=True, help='Snapshot-enabled local Ghostty package')
     parser.add_argument('--simulator', help='Use this test device without deleting it; default creates a private device')
     parser.add_argument('--mac-only', action='store_true', help='Debug the native Mac and messaging paths without claiming mobile coverage')
     parser.add_argument('--worktree-creation', action='store_true', help='Create provider worktrees through the CLI without mounting Mac panes, then verify mobile viewport stability')
@@ -680,7 +675,7 @@ def main():
     parser.add_argument('--replay', type=Path, help='actions.json from a previous run')
     parser.add_argument('--shrink', action='store_true', help='Replay fresh native runs to minimize a failing generated action list')
     options = parser.parse_args()
-    for name in ('codex', 'claude', 'cli', 'zmx', 'ghostty_package'):
+    for name in ('codex', 'claude', 'cli', 'zmx'):
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')

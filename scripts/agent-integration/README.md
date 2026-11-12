@@ -6,20 +6,21 @@ provider tool calls. No model API credentials or inference are needed.
 
 ## Run locally
 
-Use macOS with Xcode, an installed iOS Simulator runtime, Python 3.11 or newer, and the
-snapshot-enabled Ghostty package used by the paging tests. The `python3` command
-below must select that interpreter; CI uses Python 3.12. Build the CLI first:
+Use macOS with Xcode, an installed iOS Simulator runtime, and Python 3.11 or newer.
+The `python3` command below must select that interpreter; CI uses Python 3.12.
+The native hosts link the libghostty that `scripts/deps` prepares in `.deps/`
+(see `deps/README.md`); the mobile host needs its iOS slices. Prepare both
+platforms and build the CLI first:
 
 ```sh
-GRAFTTY_GHOSTTY_PACKAGE_PATH=/absolute/path/to/libghostty-spm \
-  scripts/swiftpm build --build-system native --product graftty-cli
+scripts/deps prepare --platforms macos,ios
+scripts/swiftpm build --build-system native --product graftty-cli
 
 python3 -B scripts/agent-integration/run.py \
   --codex /absolute/path/to/unwrapped/codex \
   --claude /absolute/path/to/claude \
   --cli "$HOME/Library/Caches/Graftty/SwiftPM/build/arm64-apple-macosx/debug/graftty-cli" \
-  --zmx "$PWD/Resources/zmx-binary/zmx" \
-  --ghostty-package /absolute/path/to/libghostty-spm \
+  --zmx "$PWD/.deps/zmx/zmx" \
   --seed 17 --actions 60
 ```
 
@@ -269,8 +270,7 @@ run's private zmx sessions and owned simulator. Artifacts remain for diagnosis.
 ```sh
 python3 -B -m unittest discover -s scripts/agent-integration -p 'test_*.py'
 python3 -B -m unittest discover -s scripts/agent-endpoint-spike -p 'test_*.py'
-GRAFTTY_GHOSTTY_PACKAGE_PATH=/absolute/path/to/libghostty-spm \
-  scripts/swiftpm test --build-system native --filter AgentIntegrationProtocolTests
+scripts/swiftpm test --build-system native --filter AgentIntegrationProtocolTests
 python3 scripts/generate-specs.py --check
 ```
 
