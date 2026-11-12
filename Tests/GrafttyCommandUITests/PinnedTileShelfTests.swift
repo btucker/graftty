@@ -89,6 +89,54 @@ struct PinnedTileShelfTests {
         #expect(sidebar - niche > 0.05, "The niche is \(niche) inside a \(sidebar) sidebar")
     }
 
+    /// Dots keep their meaning in light mode: a true orange, and a blue strong enough to read.
+    @Test func lightModeDotsStayOrangeAndBlue() throws {
+        let size = CGSize(width: 80, height: PinnedTileFace.height)
+        func count(_ state: PinnedTileState, _ match: (NSColor) -> Bool) throws -> Int {
+            let host = NSHostingView(rootView: PinnedTileFace(identity: .none, project: SidebarProject(id: "p", repositoryID: "p", name: "app"),
+                word: "data", hostBadge: nil, state: state, isSelected: false)
+                .frame(width: size.width, height: size.height).background(Color(white: 0.9)).environment(\.colorScheme, .light))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            var n = 0
+            for y in 0..<bitmap.pixelsHigh { for x in 0..<bitmap.pixelsWide {
+                if let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), match(c) { n += 1 }
+            } }
+            return n
+        }
+        let orange = try count(.waiting) { $0.redComponent > 0.85 && $0.greenComponent > 0.4 && $0.greenComponent < 0.75 && $0.blueComponent < 0.25 }
+        #expect(orange > 10, "A waiting tile draws an orange dot in light mode")
+        // Strong blue: at its dimmest pulse it still darkens the light background toward blue.
+        let blue = try count(.working) { $0.blueComponent > 0.8 && $0.redComponent < 0.6 && $0.blueComponent - $0.redComponent > 0.3 }
+        #expect(blue > 10, "A working tile draws a readable blue dot in light mode")
+    }
+
+    /// In light mode the selected pad is a white pill, brighter than the niche around it.
+    @Test func lightSelectedPadIsBrighterThanTheNiche() throws {
+        let size = CGSize(width: 120, height: PinnedTileFace.height + 2 * PinnedTileShelf.inset)
+        let host = NSHostingView(rootView: HStack(spacing: 0) {
+            face(selected: true).frame(width: 60)
+            face(selected: false).frame(width: 60)
+        }
+        .pinnedTileShelf()
+        .frame(width: size.width, height: size.height)
+        .background(Color(white: 0.95)).environment(\.colorScheme, .light))
+        host.frame = CGRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let scale = Double(bitmap.pixelsWide) / size.width
+        func brightness(_ x: Double, _ y: Double) throws -> CGFloat {
+            try #require(bitmap.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB)).brightnessComponent
+        }
+        // Just inside each tile's top-left corner, clear of icons and text.
+        let pad = try brightness(PinnedTileShelf.inset + 10, PinnedTileShelf.inset + 10)
+        let niche = try brightness(60 + PinnedTileShelf.inset + 10, PinnedTileShelf.inset + 10)
+        #expect(pad - niche > 0.04, "Selected pad \(pad) vs niche \(niche) in light mode")
+    }
+
     @Test("@spec LAYOUT-2.242: While pinned agents are shown as tiles on Mac or mobile, the application shall place them in one shared niche, darker than the sidebar and inset into it, and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.")
     func tilesAreBareOnOneShelf() throws {
         func same(_ a: NSColor, _ b: NSColor) -> Bool {

@@ -12,8 +12,13 @@ public struct PinnedTileFace: View {
     public static let height: CGFloat = 64
     /// Concentric with the shelf, like a selected item in a glass toolbar.
     static let cornerRadius: CGFloat = PinnedTileShelf.cornerRadius - PinnedTileShelf.inset
-    /// The working dot, a quiet blue that reads as in progress, not as an alarm.
-    static let working = Color(.sRGB, red: 0.48, green: 0.66, blue: 1, opacity: 1)
+    /// The working dot, a quiet blue that reads as in progress, not as an alarm;
+    /// deeper in light mode so it still reads on a pale niche.
+    static func working(isDark: Bool) -> Color {
+        isDark ? Color(.sRGB, red: 0.48, green: 0.66, blue: 1, opacity: 1) : Color(.sRGB, red: 0, green: 0.45, blue: 0.95, opacity: 1)
+    }
+    /// The attention dot: plain orange in both modes (the attention text colour darkens in light mode for legibility).
+    static let attention = Color(.sRGB, red: 1, green: 0.58, blue: 0.05, opacity: 1)
 
     let identity: WorktreeIconIdentity
     let project: SidebarProject
@@ -61,7 +66,15 @@ public struct PinnedTileFace: View {
         .frame(maxWidth: .infinity, minHeight: Self.height)
         .background {
             // A plain fill: the shelf's glass edge is the only outline, so borders never nest.
-            if isSelected { shape.fill(isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.08)) }
+            // Dark: a light pill. Light: a white pill lifted by a hairline shadow, like a
+            // selected segment, so it reads brighter than the niche in both.
+            if isSelected {
+                if isDark {
+                    shape.fill(Color.white.opacity(0.16))
+                } else {
+                    shape.fill(Color.white).shadow(color: .black.opacity(0.12), radius: 1.5, y: 0.5)
+                }
+            }
         }
         .overlay(alignment: .topTrailing) {
             if state == .asleep {
@@ -73,17 +86,17 @@ public struct PinnedTileFace: View {
     }
 
     @ViewBuilder private var pip: some View {
-        let attention = SidebarAttentionStyle.text(isDark: isDark)
+        let working = Self.working(isDark: isDark)
         switch state.pip {
         case .filled?:
-            Circle().fill(attention).frame(width: 7, height: 7)
+            Circle().fill(Self.attention).frame(width: 7, height: 7)
         case .pulse? where reduceMotion:
-            Circle().fill(Self.working).frame(width: 7, height: 7)
+            Circle().fill(working).frame(width: 7, height: 7)
         case .pulse?:
             // A slow pulse needs no more than 30 frames a second, and agents work for hours.
             TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
                 let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
-                Circle().fill(Self.working).frame(width: 7, height: 7)
+                Circle().fill(working).frame(width: 7, height: 7)
                     .opacity(0.35 + 0.65 * abs(cos(phase * .pi)))
             }
         case nil:
