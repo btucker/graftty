@@ -61,11 +61,8 @@ public struct PinnedTileFace: View {
         .padding(.horizontal, 3).padding(.vertical, 5)
         .frame(maxWidth: .infinity, minHeight: Self.height)
         .background {
-            if isSelected {
-                shape.fill(selectedFill)
-                    .overlay(shape.strokeBorder(.white.opacity(isDark ? 0.22 : 0.5), lineWidth: 0.5))
-                    .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
-            }
+            // A plain fill: the shelf's glass edge is the only outline, so borders never nest.
+            if isSelected { shape.fill(selectedFill) }
         }
         .overlay(alignment: .topTrailing) {
             if state == .asleep {
