@@ -3,9 +3,9 @@ import Foundation
 /// @spec LAYOUT-2.225
 /// What a pinned agent's tile shows. A tile never moves: it lights up in place.
 public enum PinnedTileState: Sendable, Equatable {
-    /// A question or a notification: thick orange border.
+    /// A question or a notification: a filled amber pip.
     case waiting
-    /// A finished turn the person hasn't opened: thin orange border.
+    /// A finished turn the person hasn't opened: an amber ring pip.
     case finished
     case working
     /// The host is asleep, so its last report says nothing about now.
@@ -20,12 +20,16 @@ public enum PinnedTileState: Sendable, Equatable {
         return .idle
     }
 
-    /// How heavy the orange border is: the more it asks of the person, the heavier.
-    public var borderWidth: CGFloat {
+    /// The one small mark before a tile's name (LAYOUT-2.225).
+    public enum Pip: Sendable, Equatable { case filled, ring, pulse }
+
+    /// Nil draws no mark: idle tiles carry nothing, and a sleeping host's tile fades instead.
+    public var pip: Pip? {
         switch self {
-        case .waiting: return 3
-        case .finished: return 1.25
-        case .working, .asleep, .idle: return 0
+        case .waiting: return .filled
+        case .finished: return .ring
+        case .working: return .pulse
+        case .asleep, .idle: return nil
         }
     }
 
@@ -64,6 +68,13 @@ public enum PinnedTile {
 
     /// The words for one grid. Tiles whose first word clashes use the first
     /// later part of their name that differs, so no two read the same.
+    /// The host under each tile: only where another tile shows the same caption,
+    /// such as two hosts' default checkouts (LAYOUT-2.242).
+    public static func hostBadges(words: [String], hosts: [String?]) -> [String?] {
+        let counts = Dictionary(words.map { ($0, 1) }, uniquingKeysWith: +)
+        return zip(words, hosts).map { word, host in (counts[word] ?? 0) > 1 ? host : nil }
+    }
+
     public static func words(for names: [Name]) -> [String] {
         let words = names.map { word(name: $0.name, isMainCheckout: $0.isMainCheckout, branch: $0.branch) }
         let counts = Dictionary(words.map { ($0, 1) }, uniquingKeysWith: +)

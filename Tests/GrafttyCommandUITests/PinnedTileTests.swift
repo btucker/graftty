@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyCommandUI
 
 struct PinnedTileTests {
-    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall mark it with a thick orange border while it asks a question or carries a notification, a thin orange border while it has a finished turn the user has not opened, a moving ring while an agent works, faded while its host sleeps, and as idle otherwise.")
+    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall mark it with a filled amber pip before its name while it asks a question or carries a notification, an amber ring pip while it has a finished turn the user has not opened, a pulsing blue pip while an agent works, fade it while its host sleeps, and draw no mark otherwise.")
     func tileStates() {
         #expect(PinnedTileState.resolve(status: .question("q", paneID: nil), isCached: false) == .waiting)
         #expect(PinnedTileState.resolve(status: .notification("n", paneID: nil), isCached: false) == .waiting)
@@ -13,10 +13,12 @@ struct PinnedTileTests {
         #expect(PinnedTileState.resolve(status: .none, isCached: false) == .idle)
         // A sleeping host's report is old news, even if it once asked.
         #expect(PinnedTileState.resolve(status: .whereWeAre("done", isUnread: true), isCached: true) == .asleep)
-        // The border's weight says how urgent it is.
-        #expect(PinnedTileState.waiting.borderWidth > PinnedTileState.finished.borderWidth)
-        #expect(PinnedTileState.finished.borderWidth > 0)
-        #expect(PinnedTileState.idle.borderWidth == 0)
+        // One small cue per tile, never a frame.
+        #expect(PinnedTileState.waiting.pip == .filled)
+        #expect(PinnedTileState.finished.pip == .ring)
+        #expect(PinnedTileState.working.pip == .pulse)
+        #expect(PinnedTileState.asleep.pip == nil)
+        #expect(PinnedTileState.idle.pip == nil)
     }
 
     @Test("@spec LAYOUT-2.226: While a pinned agent is shown as a tile, the application shall caption it with the first part of its worktree name, split at hyphens, underscores, slashes, and spaces, or with the branch name for the default checkout.", arguments: [

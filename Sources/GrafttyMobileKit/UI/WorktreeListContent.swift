@@ -1083,19 +1083,21 @@ public struct WorktreeListContent: View {
         Task { _ = try? await RelayedWorktreeManagementClient.send(request, using: provider) }
     }
 
-    /// Pinned agents as tiles that light up in place (LAYOUT-2.225): tap opens,
+    /// Pinned agents as bare tiles on one glass shelf (LAYOUT-2.242, LAYOUT-2.225): tap opens,
     /// a long press offers the row's menu, and dragging one onto another reorders.
     private func pinnedTiles(_ rows: [MergedWorktreeRow], projectID: String) -> some View {
         let words = Dictionary(zip(rows.map(\.id), PinnedTile.words(for: rows.map {
             PinnedTile.Name(name: $0.relativeName, isMainCheckout: $0.row.isMainCheckout, branch: $0.row.displayBranch)
         })), uniquingKeysWith: { first, _ in first })
+        let badges = Dictionary(zip(rows.map(\.id), PinnedTile.hostBadges(words: rows.map { words[$0.id] ?? $0.relativeName },
+            hosts: rows.map { $0.hostLabel.isEmpty ? nil : $0.hostLabel })), uniquingKeysWith: { first, _ in first })
         let spacing: CGFloat = 8
         let minimumWidth: CGFloat = isPhone ? 72 : PinnedTile.minimumWidth
         // Limit the available width to five columns even on a landscape phone.
         let maximumWidth: CGFloat = isPhone ? 5 * 86 + 4 * spacing : .infinity
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumWidth), spacing: spacing)], spacing: spacing) {
             ForEach(rows) { row in
-                pinnedTile(row, word: words[row.id] ?? row.relativeName)
+                pinnedTile(row, word: words[row.id] ?? row.relativeName, badge: badges[row.id] ?? nil)
                     .draggable(row.id)
                     .dropDestination(for: String.self) { ids, _ in
                         guard let source = ids.first, source != row.id, !orderMutationInFlight,
@@ -1106,6 +1108,7 @@ public struct WorktreeListContent: View {
                     }
             }
         }
+        .pinnedTileShelf()
         .frame(maxWidth: maximumWidth)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)
@@ -1115,7 +1118,7 @@ public struct WorktreeListContent: View {
         .moveDisabled(true)
     }
 
-    private func pinnedTile(_ row: MergedWorktreeRow, word: String) -> some View {
+    private func pinnedTile(_ row: MergedWorktreeRow, word: String, badge: String?) -> some View {
         let wt = row.row
         let context = navigation.worktreeContext(wt)
         let isCached = row.availability == .wakeable
@@ -1128,8 +1131,7 @@ public struct WorktreeListContent: View {
         return PinnedTileFace(identity: wt.iconIdentity, project: project,
                               imageData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
                               word: word,
-                              hostBadge: host, state: state, isSelected: isSelected(wt),
-                              fill: theme?.foreground.opacity(0.07) ?? Color.primary.opacity(0.06),
+                              hostBadge: badge, state: state, isSelected: isSelected(wt),
                               selectedFill: theme?.foreground.opacity(0.16) ?? Color.primary.opacity(0.12))
             .onTapGesture { beginSelectingWorktree(wt) }
             .contextMenu {

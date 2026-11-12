@@ -416,7 +416,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.224** When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.
 
-**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall mark it with a thick orange border while it asks a question or carries a notification, a thin orange border while it has a finished turn the user has not opened, a moving ring while an agent works, faded while its host sleeps, and as idle otherwise.
+**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall mark it with a filled amber pip before its name while it asks a question or carries a notification, an amber ring pip while it has a finished turn the user has not opened, a pulsing blue pip while an agent works, fade it while its host sleeps, and draw no mark otherwise.
 
 **LAYOUT-2.226** While a pinned agent is shown as a tile, the application shall caption it with the first part of its worktree name, split at hyphens, underscores, slashes, and spaces, or with the branch name for the default checkout.
 
@@ -437,6 +437,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.240** When a host identifies a launched agent after its pane already appeared as a terminal, the application shall move that session from the terminal drawer into the agent tabs, leaving agents the user started by hand in a shell in place.
 
 **LAYOUT-2.241** While a worktree sidebar row is shown on Mac or Mobile, the application shall add six points of top padding above its icon and text.
+
+**LAYOUT-2.242** While pinned agents are shown as tiles on Mac or mobile, the application shall place them on one shared glass surface and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on its own pad and naming a tile's host only when another tile shows the same caption.
 
 ### LAYOUT-3.x — Adding Repositories
 
