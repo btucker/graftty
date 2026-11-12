@@ -5338,6 +5338,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.164** When a failed launch is retried, the application shall select the new agent tab only if the request asks for it.
 
+**AGENT-6.165** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 in that shell's environment, replacing any inherited value, so Claude Code saves its session for later resume.
+
 ## CLI — CLI
 
 ### CLI-1.x

@@ -148,6 +148,8 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         // fullscreen mode keeps the transcript in the alternate screen, so
         // it never reaches the scrollback that history and jumps depend on.
         env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1"
+        // AGENT-6.165: always save Claude's session, so a pane's agent can be resumed.
+        env["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
         let terminfoDir = ghosttyResourcesDir.flatMap(availableGhosttyTerminfoDir)
         setDefault("TERM", in: &env, to: terminfoDir == nil ? "xterm-256color" : "xterm-ghostty")
         setDefault("COLORTERM", in: &env, to: "truecolor")
