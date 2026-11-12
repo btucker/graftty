@@ -25,7 +25,7 @@ struct AttentionReport: ParsableCommand {
         abstract: "Publish an agent recap before finishing its turn"
     )
 
-    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, catchUp (what the user needs to answer need), emojiAlternatives, icon (an SVG worktree drawing), iconDescription (a few words naming the drawing), purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, catchUp (what the user needs to answer need), options (2 to 4 choices answering need, each with label, optional cost, and optional suggested), emojiAlternatives, icon (an SVG worktree drawing), iconDescription (a few words naming the drawing), purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
     var stdin = false
 
     func run() throws {
@@ -46,13 +46,16 @@ struct AttentionReport: ParsableCommand {
         do {
             recap = try JSONDecoder().decode(AttentionRecap.self, from: data)
         } catch {
-            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, catchUp, emojiAlternatives, icon, iconDescription, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
+            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, catchUp, options, emojiAlternatives, icon, iconDescription, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
         }
         // Checked first so an oversized drawing reports its own reason, not the brief-text error.
         if let icon = recap.icon {
             do { recap.icon = try WorktreeDrawingSVG.validate(icon) } catch {
                 throw ValidationError("the worktree drawing in \"icon\" was rejected: \(error)")
             }
+        }
+        guard recap.hasValidOptions else {
+            throw ValidationError("\"options\" needs a \"need\" and 2 to 4 choices, each with a distinct label of at most 40 characters that does not start with ! or /, an optional cost of at most 80, and at most one suggested")
         }
         guard recap.isValid else {
             throw ValidationError("recap fields must be brief text, and emoji choices must be single glyphs")

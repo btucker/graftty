@@ -188,13 +188,16 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     case acknowledgeOccurrence(worktreeID: String, paneID: String?, occurrence: SidebarAttentionOccurrence)
     /// Types `AttentionExplainPrompt` into the pane of an agent that stopped with a question.
     case explainRequest(worktreeID: String, paneID: String)
+    /// Types `text` into the pane of an agent stopped on `occurrence`'s question
+    /// and submits it; refused once that question changed or cleared.
+    case answerRequest(worktreeID: String, paneID: String, occurrence: SidebarAttentionOccurrence, text: String)
 }
 
 extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case openResource, placement, agentSkills, agentID, action, conversation, provider, operationID, launchDefaultAgent, agent
         case type, repositoryID, worktreeID, worktreeName, branchName,
-             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode, rank, changedAt
+             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode, rank, changedAt, text
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -262,6 +265,12 @@ extension WorktreeManagementRequest: Codable {
             try c.encode("explain_request", forKey: .type)
             try c.encode(worktreeID, forKey: .worktreeID)
             try c.encode(paneID, forKey: .paneID)
+        case let .answerRequest(worktreeID, paneID, occurrence, text):
+            try c.encode("answer_request", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
+            try c.encode(paneID, forKey: .paneID)
+            try c.encode(occurrence, forKey: .occurrence)
+            try c.encode(text, forKey: .text)
         case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
             try c.encode("acknowledge_occurrence", forKey: .type)
             try c.encode(worktreeID, forKey: .worktreeID)
@@ -341,6 +350,11 @@ extension WorktreeManagementRequest: Codable {
         case "explain_request":
             self = .explainRequest(worktreeID: try c.decode(String.self, forKey: .worktreeID),
                                    paneID: try c.decode(String.self, forKey: .paneID))
+        case "answer_request":
+            self = .answerRequest(worktreeID: try c.decode(String.self, forKey: .worktreeID),
+                                  paneID: try c.decode(String.self, forKey: .paneID),
+                                  occurrence: try c.decode(SidebarAttentionOccurrence.self, forKey: .occurrence),
+                                  text: try c.decode(String.self, forKey: .text))
         case "host_presentation":
             self = .hostPresentation
         case "list_repositories":

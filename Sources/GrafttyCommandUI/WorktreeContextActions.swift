@@ -7,11 +7,16 @@ public struct WorktreeContextActions {
     /// Scrolls the worktree's agent terminal to a timeline message. False when the
     /// pane is unavailable or the message is not in its loaded scrollback.
     public let revealInTerminal: (@MainActor (TerminalRevealRequest) async -> Bool)?
+    /// Types an answer into the asking agent's pane on its host. Returns nil once
+    /// the host accepts it, else the message to show; nil when this client can't answer.
+    public let answerQuestion: (@MainActor (AttentionAnswer) async -> String?)?
 
     public init(openWorktree: @escaping (String, WorktreePanes) -> Bool,
-                revealInTerminal: (@MainActor (TerminalRevealRequest) async -> Bool)? = nil) {
+                revealInTerminal: (@MainActor (TerminalRevealRequest) async -> Bool)? = nil,
+                answerQuestion: (@MainActor (AttentionAnswer) async -> String?)? = nil) {
         self.openWorktree = openWorktree
         self.revealInTerminal = revealInTerminal
+        self.answerQuestion = answerQuestion
     }
 
     /// A path from another Mac must never select a same-named local worktree.

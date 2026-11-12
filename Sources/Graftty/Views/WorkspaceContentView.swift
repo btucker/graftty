@@ -14,6 +14,17 @@ extension EnvironmentValues {
     }
 }
 
+private struct LocalAttentionAnswerKey: EnvironmentKey {
+    static let defaultValue: (@MainActor (AttentionAnswer) async -> WorktreeManagementResponse)? = nil
+}
+extension EnvironmentValues {
+    /// Types a Context answer into an agent pane on this Mac (AGENT-3.50).
+    var localAttentionAnswer: (@MainActor (AttentionAnswer) async -> WorktreeManagementResponse)? {
+        get { self[LocalAttentionAnswerKey.self] }
+        set { self[LocalAttentionAnswerKey.self] = newValue }
+    }
+}
+
 struct WorkspaceContentView: View {
     @ObservedObject var terminalManager: TerminalManager
     @Binding var worktree: WorktreeEntry
@@ -61,6 +72,7 @@ struct WorkspaceContentView: View {
                         },
                         paneDropTarget: { slot, content in AnyView(dropDestination(slot, content: content)) },
                         leadingContentInset: Self.leadingContentInset)
+                    .preference(key: WorkspaceTabRowHeightKey.self, value: WorktreeHeaderWash.tabRowHeight)
                 } else {
                     VStack(spacing: 12) {
                         Text("No active agents").font(.headline)

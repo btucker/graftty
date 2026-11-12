@@ -2,21 +2,18 @@ import GrafttyProtocol
 import SwiftUI
 
 /// The same current brief and chronological history on both platforms.
-/// The Context panel omits the history here and places `WorktreeContextHistory` itself.
 public struct WorktreeBriefContent: View {
     public let context: SidebarWorktreeContext
     private let foreground: Color
     private let secondary: Color
     private let compact: Bool
-    private let includesHistory: Bool
 
     public init(context: SidebarWorktreeContext, foreground: Color = .primary, secondary: Color = .secondary,
-                compact: Bool = false, includesHistory: Bool = true) {
+                compact: Bool = false) {
         self.context = context
         self.foreground = foreground
         self.secondary = secondary
         self.compact = compact
-        self.includesHistory = includesHistory
     }
 
     public var body: some View {
@@ -71,12 +68,10 @@ public struct WorktreeBriefContent: View {
                     .font(.callout).foregroundStyle(secondary)
                 if let question = context.question { section("Waiting for you", text: question) }
             }
-            if includesHistory {
-                let timeline = WorktreeTimeline(context)
-                if !timeline.events.isEmpty {
-                    Divider()
-                    WorktreeContextHistory(context: context, timeline: timeline, secondary: secondary)
-                }
+            let timeline = WorktreeTimeline(context)
+            if !timeline.events.isEmpty {
+                Divider()
+                WorktreeContextHistory(context: context, timeline: timeline, secondary: secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

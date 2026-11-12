@@ -32,6 +32,7 @@ struct MainWindow: View {
 
     @EnvironmentObject private var updaterController: UpdaterController
     @Environment(\.agentWorkspaceRequest) private var agentWorkspaceRequest
+    @Environment(\.localAttentionAnswer) private var localAttentionAnswer
 
     @State private var showsWorktreeContext = false
     @State private var requestedRemoteAgent: String?
@@ -198,7 +199,8 @@ struct MainWindow: View {
             MainWindowDetailLayout(headerWash: WorktreeHeaderWash(
                 identity: selectedIdentity,
                 project: selectedIdentityProject, iconData: selectedIdentityImageData,
-                background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
+                background: terminalManager.theme.background, isDark: terminalManager.theme.isDark),
+                chromeBackground: terminalManager.theme.background) {
                 breadcrumbBar
             } content: {
                 if let wakeFlow {
@@ -295,7 +297,7 @@ struct MainWindow: View {
                             openContextWorktree(path, remoteIdentity: identity)
                         }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
                             await revealInTerminal(request, remoteIdentity: identity)
-                        }))
+                        }, answerQuestion: contextAnswer))
                         .frame(width: 360)
                 }
             }
@@ -581,6 +583,22 @@ struct MainWindow: View {
             if worktree.wrappedValue.hasCompletedContent(in: slot) { terminalManager.clearFocus() }
             else { terminalManager.setFocus(slot) }
         }
+    }
+
+    /// Answers go to this Mac's own pane, or through the selected remote Mac.
+    private var contextAnswer: (@MainActor (AttentionAnswer) async -> String?)? {
+        if let identity = selectedRemoteIdentity {
+            return { [remoteMacsModel] answer in
+                do {
+                    return AttentionAnswer.failureMessage(for: try await remoteMacsModel.sendWorktreeManagement(identity: identity,
+                        request: answer.request))
+                } catch {
+                    return "Couldn't reach that Mac to answer."
+                }
+            }
+        }
+        guard let localAttentionAnswer else { return nil }
+        return { answer in AttentionAnswer.failureMessage(for: await localAttentionAnswer(answer)) }
     }
 
     private var transcriptReader: (@MainActor (String) async -> String?)? {

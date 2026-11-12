@@ -118,6 +118,23 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
         }
     }
 
+    /// One answer the user can pick for `need` (AGENT-3.49).
+    public struct Option: Codable, Sendable, Hashable {
+        public var label: String
+        /// What choosing it costs, in a few words.
+        public var cost: String?
+        public var suggested: Bool?
+
+        public init(label: String, cost: String? = nil, suggested: Bool? = nil) {
+            self.label = label
+            self.cost = cost
+            self.suggested = suggested
+        }
+    }
+    public static let optionCount = 2...4
+    public static let maxOptionLabelLength = 40
+    public static let maxOptionCostLength = 80
+
     public var title: String
     public var context: String?
     public var completed: String
@@ -127,6 +144,8 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     /// the situation, the choices, and the agent's recommendation.
     public var catchUp: String?
     public static let maxCatchUpLength = 600
+    /// Choices the user can pick to answer `need`; only valid with it.
+    public var options: [Option]?
     public var emoji: String?
     public var emojiAlternatives: [String]?
     /// Rename the worktree's purpose only when the task itself changes.
@@ -171,31 +190,49 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
 
     public var proposedEmojis: [String] { [emoji].compactMap { $0 } + (emojiAlternatives ?? []) }
 
+    private static func validText(_ text: String, limit: Int) -> Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && text.count <= limit
+            && !text.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+
+    /// True when `options` is absent, or holds 2 to 4 distinct, brief choices
+    /// with at most one suggested, for a report that asks a question.
+    public var hasValidOptions: Bool {
+        guard let options else { return true }
+        let labels = options.map { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        // A picked label is typed into the agent's input, where a leading ! or / runs a command.
+        guard !labels.contains(where: { $0.hasPrefix("!") || $0.hasPrefix("/") }) else { return false }
+        return need.map { Self.validText($0, limit: 300) } == true
+            && Self.optionCount.contains(options.count)
+            && Set(labels).count == labels.count
+            && options.filter { $0.suggested == true }.count <= 1
+            && options.allSatisfy {
+                Self.validText($0.label, limit: Self.maxOptionLabelLength)
+                    && ($0.cost.map { Self.validText($0, limit: Self.maxOptionCostLength) } ?? true)
+            }
+    }
+
     public var isValid: Bool {
-        func validText(_ text: String, limit: Int) -> Bool {
-            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && text.count <= limit
-                && !text.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
-        }
-        let requiredValid = [(title, 100), (completed, 300), (next, 300)].allSatisfy { text, limit in validText(text, limit: limit) }
-        let contextValid = context.map { validText($0, limit: 200) } ?? true
-        let needValid = need.map { validText($0, limit: 300) } ?? true
+        let requiredValid = [(title, 100), (completed, 300), (next, 300)].allSatisfy { text, limit in Self.validText(text, limit: limit) }
+        let contextValid = context.map { Self.validText($0, limit: 200) } ?? true
+        let needValid = need.map { Self.validText($0, limit: 300) } ?? true
         // A catch-up lays out choices, so a line break must not reject the whole report.
-        let catchUpValid = catchUp.map { validText($0.replacingOccurrences(of: "\n", with: " "), limit: Self.maxCatchUpLength) } ?? true
+        let catchUpValid = catchUp.map { Self.validText($0.replacingOccurrences(of: "\n", with: " "), limit: Self.maxCatchUpLength) } ?? true
         let candidates = proposedEmojis
         let emojiValid = (emojiAlternatives == nil || emoji != nil)
             && candidates.count <= 4
             && Set(candidates).count == candidates.count
             && candidates.allSatisfy(Self.isSingleEmoji)
-        let checkpointValid = checkpoint.map { validText($0, limit: 100) } ?? true
-        let decisionsValid = decisions.map { $0.count <= 8 && $0.allSatisfy { validText($0, limit: 200) } } ?? true
+        let checkpointValid = checkpoint.map { Self.validText($0, limit: 100) } ?? true
+        let decisionsValid = decisions.map { $0.count <= 8 && $0.allSatisfy { Self.validText($0, limit: 200) } } ?? true
         let historyValid = historyEntry.map {
-            validText($0.headline, limit: 160) && ($0.detail.map { validText($0, limit: 300) } ?? true)
+            Self.validText($0.headline, limit: 160) && ($0.detail.map { Self.validText($0, limit: 300) } ?? true)
         } ?? true
         let iconValid = icon.map { $0.utf8.count <= Self.maxIconBytes } ?? true
-        let iconDescriptionValid = iconDescription.map { validText($0, limit: Self.maxIconDescriptionLength) } ?? true
+        let iconDescriptionValid = iconDescription.map { Self.validText($0, limit: Self.maxIconDescriptionLength) } ?? true
         return requiredValid && contextValid && needValid && catchUpValid && emojiValid && checkpointValid && decisionsValid && historyValid
-            && iconValid && iconDescriptionValid
+            && iconValid && iconDescriptionValid && hasValidOptions
     }
 }
 

@@ -13,6 +13,8 @@ struct WorktreeHistoryContent: View {
     /// The message whose last reveal found nothing, shown briefly beneath it.
     @State private var missingInTerminal: String?
     @State private var expandedGroups: Set<String> = []
+    /// Separate from `expandedGroups`: a fold's id is its first entry's id.
+    @State private var expandedEntries: Set<String> = []
     @State private var unavailableWorktree = false
 
     var body: some View {
@@ -21,12 +23,6 @@ struct WorktreeHistoryContent: View {
         let rows = showsAll ? timeline.rows(showAll: true) : focused
         let days = Self.dayLabels(rows)
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("How we got here").font(.callout).fontWeight(.semibold)
-                Spacer(minLength: 8)
-                Text("Oldest first ↓").font(.caption2).foregroundStyle(secondary)
-            }
-            .accessibilityIdentifier("worktree.context.history")
             if hasGroups {
                 Button(showsAll ? "Show highlights" : "Show all \(timeline.events.count) steps") {
                     showsAll.toggle()
@@ -47,13 +43,14 @@ struct WorktreeHistoryContent: View {
                     switch row.kind {
                     case .folded: group(row)
                     case .event: eventRow(row.events[0])
-                    case .inputs: railed(row.events, title: "You") { inputs(row) }
+                    case .inputs: railed(row.events, sender: "You") { inputs(row) } below: { EmptyView() }
                     case .peerMessages:
-                        railed(row.events, title: row.events[0].sourceWorktreeName ?? row.events[0].title) { peerMessages(row) }
+                        railed(row.events, sender: row.events[0].sourceWorktreeName ?? row.events[0].title) { peerMessages(row) } below: { EmptyView() }
                     case .agentTurn:
                         railed(row.events) {
                             TimelineMessageLine(event: row.events[0], turn: row, secondary: secondary, gists: gists,
                                 reveal: revealInTerminal == nil ? nil : { reveal(row.id) })
+                        } below: {
                             missingNote(row.id)
                         }
                     }
@@ -98,8 +95,11 @@ struct WorktreeHistoryContent: View {
         }
     }
 
-    private func railed<Content: View>(_ events: [WorktreeTimeline.Event], title: String? = nil,
-                                      @ViewBuilder content: () -> Content) -> some View {
+    /// One quiet row: rail dot, an optional sender, the row's line, and its time
+    /// on the same baseline, with anything opened from it below (CONTEXT-19).
+    private func railed<Line: View, Below: View>(_ events: [WorktreeTimeline.Event], sender: String? = nil,
+                                               @ViewBuilder line: () -> Line,
+                                               @ViewBuilder below: () -> Below) -> some View {
         let first = events[0]
         let last = events.last?.id == timeline.events.last?.id
         return HStack(alignment: .top, spacing: 10) {
@@ -109,31 +109,94 @@ struct WorktreeHistoryContent: View {
             }
             .frame(width: 8)
             VStack(alignment: .leading, spacing: 6) {
+                // The time overlays a reserved margin rather than sharing the row, so the
+                // line always wraps at one definite width and the row's height never shifts.
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    sender(first, title: title ?? first.title)
-                    Spacer(minLength: 0)
+                    if let sender { self.sender(first, title: sender) }
+                    line().frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.trailing, first.timestamp == nil ? 0 : Self.timeWidth)
+                .overlay(alignment: .topTrailing) {
                     if let timestamp = first.timestamp {
-                        Text(Self.time(timestamp)).font(.caption2).foregroundStyle(secondary).fixedSize()
+                        Text(Self.time(timestamp)).font(.caption2).foregroundStyle(secondary)
+                            .lineLimit(1).padding(.top, 3)
                     }
                 }
-                content()
-                if last { Text("Latest").font(.caption2).foregroundStyle(secondary) }
+                below()
             }
-            .padding(.bottom, last ? 0 : 22)
+            .padding(.bottom, last ? 0 : 12)
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: first.presentation != nil || first.kind == .agentMessage || first.kind == .agentResponse || (first.sourceWorktreePath != nil && openWorktree != nil) ? .contain : .combine)
         .accessibilityIdentifier("worktree.context.history.event.\(first.id)")
     }
 
+    /// A history entry's detail and decisions, shown only once its row is activated (CONTEXT-60).
+    static func entryDetail(_ event: WorktreeTimeline.Event, expanded: Bool)
+        -> (detail: String?, decisions: [String], hasMore: Bool) {
+        let detail = event.completed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasMore = !detail.isEmpty || !event.decisions.isEmpty
+        guard expanded else { return (nil, [], hasMore) }
+        return (detail.isEmpty ? nil : detail, event.decisions, hasMore)
+    }
+
+    @ViewBuilder
     private func eventRow(_ event: WorktreeTimeline.Event) -> some View {
-        railed([event]) {
+        if event.kind == .checkpoint, event.presentation == nil {
+            entryRow(event)
+        } else {
+            detailedEventRow(event)
+        }
+    }
+
+    /// A headline on one row with its time; the detail opens in place. A button,
+    /// like the other toggles here, so selectable text and VoiceOver activate it.
+    @ViewBuilder
+    private func entryRow(_ event: WorktreeTimeline.Event) -> some View {
+        let expanded = expandedEntries.contains(event.id)
+        let shown = Self.entryDetail(event, expanded: expanded)
+        let row = railed([event]) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                // Only a row that opens may cut its headline short.
+                Text(event.title).font(.callout).fontWeight(.medium).lineLimit(expanded || !shown.hasMore ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if shown.hasMore {
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption2).foregroundStyle(secondary)
+                }
+            }
+        } below: {
+            if let detail = shown.detail {
+                Text(detail).font(.callout).foregroundStyle(secondary).lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(Array(shown.decisions.enumerated()), id: \.offset) { _, decision in
+                Text(decision).font(.caption).foregroundStyle(secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        if shown.hasMore {
+            Button {
+                expandedEntries.formSymmetricDifference([event.id])
+            } label: {
+                row.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("worktree.context.history.event.\(event.id)")
+        } else {
+            row
+        }
+    }
+
+    private func detailedEventRow(_ event: WorktreeTimeline.Event) -> some View {
+        railed([event], sender: event.title) {
             if let presentation = event.presentation {
                 HarnessTimelineContent(presentation: presentation, secondary: secondary, wasTruncated: event.wasTruncated)
             } else if !event.completed.isEmpty {
                 Text(event.completed).font(.callout).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        } below: {
             ForEach(Array(event.decisions.enumerated()), id: \.offset) { _, decision in
                 Text(decision).font(.caption).foregroundStyle(secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -205,9 +268,8 @@ struct WorktreeHistoryContent: View {
             Button {
                 unavailableWorktree = !openWorktree(path)
             } label: {
-                Text(title).font(.caption).fontWeight(.semibold)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // One truncating line: a long name gives way to the message beside it.
+                Text(title).font(.caption).fontWeight(.semibold).lineLimit(1)
                     #if os(iOS)
                     .frame(minHeight: 44, alignment: .topLeading)
                     #endif
@@ -223,8 +285,7 @@ struct WorktreeHistoryContent: View {
                 .font(.caption).fontWeight(.semibold)
                 .foregroundStyle(event.kind == .user ? Color.orange : .primary)
                 .help(event.title)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
         }
     }
 
@@ -291,6 +352,9 @@ struct WorktreeHistoryContent: View {
         return date.formatted(date: .abbreviated, time: .omitted)
     }
 
+    /// Room reserved for a short local time such as 12:59 PM.
+    static let timeWidth: CGFloat = 64
+
     static func time(_ timestamp: Double) -> String {
         date(timestamp).formatted(date: .omitted, time: .shortened)
     }
@@ -298,7 +362,7 @@ struct WorktreeHistoryContent: View {
     private static func date(_ timestamp: Double) -> Date { Date(timeIntervalSinceReferenceDate: timestamp) }
 }
 
-/// Fixed preview space keeps generation from moving the rest of the timeline.
+/// One line per message, so a summary arriving never moves the rows after it.
 struct TimelineMessageLine: View {
     let event: WorktreeTimeline.Event
     var turn: WorktreeTimeline.Row? = nil
@@ -320,46 +384,29 @@ struct TimelineMessageLine: View {
         let fallback = turn?.events.last?.completed ?? text
         let firstResponse = turn.map { PeerMessageGist(text: $0.events[0].completed, isGenerated: false) }
         let shown = gist ?? firstResponse ?? PeerMessageGist.verbatim(request.text)
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Button { expanded.toggle() } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .top, spacing: 6) {
-                        // Lay out four actual lines once. Text and skeleton are overlays,
-                        // so differing glyph metrics cannot change the row's height.
-                        Text("Ag\nAg\nAg\nAg").font(.callout).lineSpacing(2).hidden()
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                            .overlay(alignment: .topLeading) {
-                                if let shown {
-                                    Text(shown.text).font(.callout).lineSpacing(2)
-                                        .lineLimit(4).truncationMode(.tail)
-                                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                                } else {
-                                    skeleton
-                                }
-                            }
-                        if count > 1 {
-                            Text("×\(count)").font(.caption).foregroundStyle(secondary).fixedSize()
-                        }
+                // One line whatever the text, so a summary arriving never moves later rows.
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if shown?.isGenerated == true {
+                        Image(systemName: "sparkles").font(.caption2).foregroundStyle(secondary)
+                            .accessibilityLabel("AI summary")
                     }
-                    // Reserve the same footer before and after the generated label arrives.
-                    HStack {
-                        Label("AI summary", systemImage: "sparkles").hidden().fixedSize()
-                            .overlay(alignment: .leading) {
-                                if !request.isReady {
-                                    Text("Working…")
-                                } else if gist == nil, PeerMessageGist.verbatim(request.text) == nil {
-                                    Text("Summarizing…")
-                                } else if shown?.isGenerated == true {
-                                    Label("AI summary", systemImage: "sparkles").fixedSize()
-                                }
-                            }
-                        Spacer(minLength: 8)
-                        Text(expanded ? "Show less" : "Show more")
+                    if let shown {
+                        Text(shown.text).font(.callout).foregroundStyle(secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                    } else {
+                        Text("Ag").font(.callout).hidden().frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(alignment: .leading) { skeleton }
                     }
-                    .font(.caption2).foregroundStyle(secondary)
+                    if !request.isReady {
+                        Text("Working…").font(.caption).italic().foregroundStyle(secondary).fixedSize()
+                    }
+                    if count > 1 {
+                        Text("×\(count)").font(.caption).foregroundStyle(secondary).fixedSize()
+                    }
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -394,14 +441,10 @@ struct TimelineMessageLine: View {
 
     private var skeleton: some View {
         GeometryReader { geometry in
-            VStack(alignment: .leading, spacing: 9) {
-                ForEach(Array([0.94, 0.83, 0.91, 0.58].enumerated()), id: \.offset) { _, fraction in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(secondary.opacity(0.16))
-                        .frame(width: geometry.size.width * fraction, height: 8)
-                }
-            }
-            .padding(.top, 4)
+            RoundedRectangle(cornerRadius: 3)
+                .fill(secondary.opacity(0.16))
+                .frame(width: geometry.size.width * 0.8, height: 8)
+                .frame(maxHeight: .infinity)
         }
         .accessibilityHidden(true)
     }

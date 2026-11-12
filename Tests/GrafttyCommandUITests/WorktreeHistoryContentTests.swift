@@ -35,7 +35,7 @@ struct WorktreeHistoryContentTests {
         try capture(host, named: "harness-reply-\(Int(width))-\(scheme == .dark ? "dark" : "light")")
     }
 
-    @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall align sender and time beside a quiet timeline rail with message text on one reading edge, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two multiline gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0])
+    @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall put the sender, the message line and the time on one baseline beside a quiet timeline rail, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two one-line gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0])
     func humanInputAndPeerMessages(width: Double) async throws {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
         let firstPeer = UUID(), longPeer = UUID()
@@ -68,8 +68,9 @@ struct WorktreeHistoryContentTests {
         try await Task.sleep(for: .milliseconds(200))
         host.layoutSubtreeIfNeeded()
         try capture(host, named: "messages-collapsed-\(Int(width))")
-        // The rail's latest label sits below the messages; sender navigation is a separate header.
         let collapsedHeight = host.fittingSize.height
+        // Rows are one line each, so controls sit at fixed offsets above the collapsed bottom;
+        // nothing above an expanded message moves.
         func click(x: Double, fromBottom offset: Double) async throws {
             let top = collapsedHeight - offset
             let point = host.convert(NSPoint(x: x, y: host.isFlipped ? top : host.bounds.height - top), to: nil)
@@ -81,24 +82,24 @@ struct WorktreeHistoryContentTests {
             try await Task.sleep(for: .milliseconds(100))
             host.layoutSubtreeIfNeeded()
         }
-        try await click(x: width / 2, fromBottom: 284)
+        try await click(x: 53, fromBottom: 114)
         #expect(openedPaths == ["/repo/layout"])
-        #expect(abs(host.fittingSize.height - collapsedHeight) < 3, "Opening the worktree must not toggle the card")
-        try await click(x: width / 2, fromBottom: 202)
+        #expect(abs(host.fittingSize.height - collapsedHeight) < 3, "Opening the worktree must not toggle the message")
+        try await click(x: 150, fromBottom: 51)
         #expect(host.fittingSize.height > collapsedHeight + 400, "Tapping a message must reveal its complete text")
         #expect(openedPaths.count == 1, "Expanding must not navigate to the worktree")
         let expandedHeight = host.fittingSize.height
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
-        try await click(x: 62, fromBottom: 234)
-        #expect(host.fittingSize.height > expandedHeight + 25, "The earlier control must reveal the older message")
+        try await click(x: 100, fromBottom: 83)
+        #expect(host.fittingSize.height > expandedHeight + 15, "The earlier control must reveal the older message")
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
         try capture(host, named: "messages-expanded-\(Int(width))")
     }
 
-    @Test("@spec CONTEXT-43: While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.")
-    func summariesReserveFourLinesRegardlessOfTextLength() {
+    @Test("@spec CONTEXT-43: While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall show it as one line, the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on activation without shifting later rows when generation finishes.")
+    func summariesTakeOneLineRegardlessOfTextLength() {
         for width in [260.0, 390.0] {
             #expect(abs(summaryHeight("Updated the workflows.", width: width) - summaryHeight(String(repeating: "Long summary with enough words to wrap ", count: 20), width: width)) < 1)
         }
@@ -224,8 +225,113 @@ struct WorktreeHistoryContentTests {
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
         #expect(abs(host.fittingSize.width - width) < 1)
-        #expect(host.fittingSize.height > 200)
+        #expect(host.fittingSize.height < 110, "A collapsed reply takes one line beside the input above it")
         try capture(host, named: "agent-reply-\(Int(width))-\(scheme == .dark ? "dark" : "light")")
+    }
+
+    @Test("@spec CONTEXT-60: While Context history shows a history entry on Mac or mobile, the application shall show its headline on one row with its time and reveal its detail and decisions only when the row is activated.")
+    func historyEntryShowsHeadlineUntilActivated() throws {
+        var recap = AttentionRecap(title: "Crash investigation", completed: "Read the log.", next: "Reproduce.",
+            decisions: ["Keep diagnostics outside the repository."])
+        recap.checkpoint = "Recovered the crash log"
+        recap.completed = "The log shows a 56-view window limit."
+        let brief = WorktreeBrief(recap: recap, at: Date(timeIntervalSinceReferenceDate: 100))
+        let event = try #require(WorktreeTimeline(history: nil, brief: brief).events.first)
+        #expect(event.title == "Recovered the crash log")
+        let collapsed = WorktreeHistoryContent.entryDetail(event, expanded: false)
+        #expect(collapsed.detail == nil)
+        #expect(collapsed.decisions.isEmpty)
+        #expect(collapsed.hasMore)
+        let expanded = WorktreeHistoryContent.entryDetail(event, expanded: true)
+        #expect(expanded.detail == "The log shows a 56-view window limit.")
+        #expect(expanded.decisions.isEmpty, "Legacy checkpoints keep decisions in the brief, not the entry")
+        var shipped = AttentionRecap(title: "Release", completed: "Shipped.", next: "Watch.")
+        shipped.historyEntry = .init(headline: "Shipped")
+        let bare = try #require(WorktreeTimeline(history: nil,
+            brief: WorktreeBrief(recap: shipped, at: Date(timeIntervalSinceReferenceDate: 100))).events.first)
+        #expect(!WorktreeHistoryContent.entryDetail(bare, expanded: false).hasMore)
+    }
+
+    /// An entry with nothing to reveal cannot be activated, so its headline must not be cut short.
+    @Test func headlineWithoutDetailShowsInFull() {
+        func height(_ headline: String) -> CGFloat {
+            var recap = AttentionRecap(title: "Release", completed: "Shipped.", next: "Watch.")
+            recap.historyEntry = .init(headline: headline)
+            let timeline = WorktreeTimeline(history: nil,
+                brief: WorktreeBrief(recap: recap, at: Date(timeIntervalSinceReferenceDate: 100)))
+            return NSHostingView(rootView: WorktreeHistoryContent(timeline: timeline, secondary: .secondary)
+                .padding(24).frame(width: 260).fixedSize(horizontal: false, vertical: true)).fittingSize.height
+        }
+        let long = String(String(repeating: "Moved the window limit check ahead of the restore path and ", count: 3).prefix(160))
+        #expect(height(long) > height("Shipped") + 50, "A long headline with no detail wraps in full")
+    }
+
+    /// A long sender name truncates instead of pushing the message and its time out of the row.
+    @Test func longSenderNameStaysWithinTheRow() async throws {
+        let id = UUID(), width = 260.0
+        var history = WorktreeHistory()
+        history.record(.init(id: id, text: "<graftty-peer-message agent=\"/repo/investigate-the-sidebar-scroll-glitch-on-ipad-pro#claude\">Checked the layout.</graftty-peer-message>",
+            at: Date(timeIntervalSince1970: 1_792_411_200)))
+        let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary,
+            openWorktree: { _ in true }, gists: PeerMessageGistProvider { _ in "Checked the layout." })
+            .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true)
+            .environment(\.accessibilityEnabled, true))
+        let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        let link = try #require(accessibilityFrame("worktree.context.history.link.\(id.uuidString)", in: host))
+        let message = try #require(accessibilityFrame("worktree.context.history.message.\(id.uuidString)", in: host))
+        #expect(link.maxX <= window.frame.maxX - 20 + 1, "The sender stays inside the row, not out to \(link.maxX - window.frame.minX)")
+        #expect(message.width > 40, "The message keeps room beside the sender, not \(message.width) points")
+    }
+
+    /// A fold's id is its first entry's id, so the two must not share expansion state.
+    @Test func foldedEntriesExpandIndependentlyOfTheirFold() async throws {
+        var recap = AttentionRecap(title: "Crash investigation", completed: "Step 0 detail.", next: "Reproduce.")
+        recap.checkpoint = "Step 0"
+        var brief = WorktreeBrief(recap: recap, at: Date(timeIntervalSinceReferenceDate: 100))
+        for index in 1..<10 {
+            recap.checkpoint = "Step \(index)"
+            recap.completed = "Step \(index) detail."
+            brief.update(recap, at: Date(timeIntervalSinceReferenceDate: 100 + Double(index) * 60))
+        }
+        let timeline = WorktreeTimeline(history: nil, brief: brief)
+        let folds = timeline.rows(showAll: false).filter { $0.isGroup }
+        let fold = try #require(folds.first)
+        let first = fold.events[0]
+        try #require(fold.id == first.id && first.title == "Step 1")
+        let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: timeline, secondary: .secondary)
+            .padding(20).frame(width: 320).fixedSize(horizontal: false, vertical: true)
+            .environment(\.accessibilityEnabled, true))
+        let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        func settle() async throws {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+        }
+        func shows(_ text: String) -> Bool { accessibilityLabels(in: host).contains { $0.contains(text) } }
+        try await settle()
+
+        #expect(accessibilityPress("worktree.context.history.group.\(fold.id)", in: host))
+        try await settle()
+        #expect(shows("Step 2"), "The fold opened")
+        #expect(!shows("Step 1 detail."), "Opening a fold keeps its first entry's detail closed")
+
+        #expect(accessibilityPress("worktree.context.history.event.\(first.id)", in: host))
+        try await settle()
+        #expect(shows("Step 1 detail."), "Activating the entry opens its own detail")
+        #expect(shows("Step 2"), "Activating an entry must not close its fold")
     }
 
     @Test func earlierControlCountsHiddenMessagesIncludingRepeats() throws {
@@ -315,7 +421,8 @@ struct WorktreeHistoryContentTests {
                 .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
             let size = host.fittingSize
             #expect(abs(size.width - width) < 1)
-            #expect(size.height > short.fittingSize.height + 90)
+            // Two history entries add two headline rows; their details stay closed (CONTEXT-60).
+            #expect(size.height > short.fittingSize.height + 60)
             if let path = ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_RENDER_DIR"] {
                 let directory = URL(fileURLWithPath: path, isDirectory: true)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

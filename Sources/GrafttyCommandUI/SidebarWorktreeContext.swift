@@ -12,6 +12,10 @@ public struct SidebarWorktreeContext: Equatable {
     public let questionItem: SidebarActivityItem?
     /// The agent's catch-up for `question`, when it stopped with one.
     public let questionCatchUp: String?
+    /// The choices the agent offered for `question`; empty unless it stopped with them.
+    public let questionOptions: [AttentionRecap.Option]
+    /// The request an answer targets, so the host can refuse a stale one.
+    public var questionOccurrence: SidebarAttentionOccurrence? { question == nil ? nil : questionItem?.occurrence }
     /// True when `question` came from a stopped turn, so the agent is at its
     /// own input; false for a harness prompt such as a permission request.
     public var questionIsStoppedTurn: Bool { questionItem?.agentStop != nil }
@@ -74,6 +78,7 @@ public struct SidebarWorktreeContext: Equatable {
         self.questionPaneID = stoppedQuestion != nil ? route : providerRequest?.paneID
         self.questionItem = stoppedQuestion != nil ? stopRequest : providerRequest
         self.questionCatchUp = stoppedQuestion != nil ? stop?.recap?.catchUp : nil
+        self.questionOptions = stoppedQuestion != nil ? stop?.recap?.options ?? [] : []
     }
 
     /// The sidebar and workspace tabs derive input state from the same live requests.

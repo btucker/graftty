@@ -57,6 +57,20 @@ struct AttentionAskCardTests {
         #expect(AttentionAskCard(context: navigation.worktreeContext(worktree(stop: stop(need: nil)))) == nil)
     }
 
+    @Test func contextExposesOptionsOnlyForAStoppedQuestion() throws {
+        let navigation = SidebarNavigationState(prefix: "ask-options.\(UUID())")
+        var asked = stop(need: "Hold or ship?")
+        asked.recap?.options = [.init(label: "Hold", suggested: true), .init(label: "Ship")]
+        let context = navigation.worktreeContext(worktree(stop: asked,
+            layout: .leaf(sessionName: "pane-1", title: "claude", attentionText: nil, isBusy: false, attentionSource: nil)))
+        #expect(context.questionOptions.map(\.label) == ["Hold", "Ship"])
+        #expect(context.questionOccurrence == asked.occurrence)
+
+        let quiet = navigation.worktreeContext(worktree(stop: stop(need: nil)))
+        #expect(quiet.questionOptions.isEmpty)
+        #expect(quiet.questionOccurrence == nil)
+    }
+
     @Test("@spec IOS-13.21: While an agent waits at its harness's own prompt rather than a stopped turn, its ask card shall open that prompt's pane, and its Explain more shall open it without typing into it.")
     func harnessPromptOnlyOpens() throws {
         let navigation = SidebarNavigationState(prefix: "ask-card.\(UUID())")
