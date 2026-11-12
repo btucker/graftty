@@ -68,7 +68,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # run.py builds the iOS interaction host, which links libghostty's iOS slices.
       - uses: ./.github/actions/native-deps
+        with:
+          platforms: macos,ios
       - name: Install pinned provider CLIs
         run: |
           npm install --prefix "$RUNNER_TEMP/agent-clients" \
