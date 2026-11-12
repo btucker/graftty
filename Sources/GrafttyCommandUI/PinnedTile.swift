@@ -21,14 +21,14 @@ public enum PinnedTileState: Sendable, Equatable {
     }
 
     /// The one small mark before a tile's name (LAYOUT-2.225).
-    public enum Pip: Sendable, Equatable { case filled, ring, pulse }
+    public enum Pip: Sendable, Equatable { case filled, ring, dots }
 
     /// Nil draws no mark: idle tiles carry nothing, and a sleeping host's tile fades instead.
     public var pip: Pip? {
         switch self {
         case .waiting: return .filled
         case .finished: return .ring
-        case .working: return .pulse
+        case .working: return .dots
         case .asleep, .idle: return nil
         }
     }

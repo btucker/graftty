@@ -989,8 +989,8 @@ struct SidebarView: View {
            let project = addWorktreeTarget(in: merged),
            canAddWorktree(to: project, merged: merged) {
             let repo = appState.repos.first { localProjectID($0) == project.id }
+            // The glass shelf above already ends the pinned group, so no rule (LAYOUT-2.242).
             VStack(spacing: 0) {
-                Divider().padding(.horizontal, 10)
                 newWorktreeLine(merged.project(id: merged.mergedID(forMember: project.id))?.name ?? project.name,
                                 action: addWorktreeToSelectedProject)
                     .disabled(repo == nil && remoteProjectOperationInProgress)

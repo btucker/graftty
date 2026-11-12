@@ -9,9 +9,9 @@ public struct PinnedTileFace: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public static let height: CGFloat = 58
+    public static let height: CGFloat = 64
     static let cornerRadius: CGFloat = 12
-    /// The working pip, a quiet blue that reads as in progress, not as an alarm.
+    /// The working dots, a quiet blue that reads as in progress, not as an alarm.
     static let working = Color(.sRGB, red: 0.48, green: 0.66, blue: 1, opacity: 1)
 
     let identity: WorktreeIconIdentity
@@ -40,11 +40,11 @@ public struct PinnedTileFace: View {
                 if identity == .none {
                     Image(systemName: "arrow.triangle.branch").font(.system(size: 17)).foregroundStyle(.secondary)
                 } else {
-                    WorktreeIdentityView(identity: identity, project: project, imageData: imageData, size: 30, maxWidth: 46)
+                    WorktreeIdentityView(identity: identity, project: project, imageData: imageData, size: 36, maxWidth: 54)
                 }
             }
-            .frame(height: 30)
-            .opacity(state == .idle ? (isDark ? 0.55 : 0.6) : 1)
+            // Full colour whatever the state: on a bare shelf a faded drawing just looks washed out.
+            .frame(height: 36)
             HStack(spacing: 4) {
                 pip
                 Text(word)
@@ -76,6 +76,17 @@ public struct PinnedTileFace: View {
         .contentShape(shape)
     }
 
+    /// Three small dots; `lit` brightens one of them, nil keeps all three steady.
+    private func workingDots(lit: Int?) -> some View {
+        HStack(spacing: 2) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle().fill(Self.working).frame(width: 4, height: 4)
+                    .opacity(lit.map { $0 == index ? 1 : 0.35 } ?? 1)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
     @ViewBuilder private var pip: some View {
         let attention = SidebarAttentionStyle.text(isDark: isDark)
         switch state.pip {
@@ -83,14 +94,13 @@ public struct PinnedTileFace: View {
             Circle().fill(attention).frame(width: 7, height: 7)
         case .ring?:
             Circle().strokeBorder(attention, lineWidth: 1.5).frame(width: 7, height: 7)
-        case .pulse? where reduceMotion:
-            Circle().fill(Self.working).frame(width: 7, height: 7)
-        case .pulse?:
-            // A slow pulse needs no more than 30 frames a second, and agents work for hours.
-            TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
-                let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
-                Circle().fill(Self.working).frame(width: 7, height: 7)
-                    .opacity(0.35 + 0.65 * abs(cos(phase * .pi)))
+        case .dots? where reduceMotion:
+            workingDots(lit: nil)
+        case .dots?:
+            // Three dots light in turn; 15 frames a second is plenty, and agents work for hours.
+            TimelineView(.animation(minimumInterval: 1.0 / 15)) { timeline in
+                let step = Int(timeline.date.timeIntervalSinceReferenceDate / 0.35) % 3
+                workingDots(lit: step)
             }
         case nil:
             EmptyView()
