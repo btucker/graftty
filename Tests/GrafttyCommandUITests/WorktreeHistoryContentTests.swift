@@ -68,7 +68,6 @@ struct WorktreeHistoryContentTests {
         try await Task.sleep(for: .milliseconds(200))
         host.layoutSubtreeIfNeeded()
         try capture(host, named: "messages-collapsed-\(Int(width))")
-        // The rail's latest label sits below the messages; sender navigation is a separate header.
         let collapsedHeight = host.fittingSize.height
         // Rows are one line each, so controls sit at fixed offsets above the collapsed bottom;
         // nothing above an expanded message moves.
@@ -251,6 +250,45 @@ struct WorktreeHistoryContentTests {
         let bare = try #require(WorktreeTimeline(history: nil,
             brief: WorktreeBrief(recap: shipped, at: Date(timeIntervalSinceReferenceDate: 100))).events.first)
         #expect(!WorktreeHistoryContent.entryDetail(bare, expanded: false).hasMore)
+    }
+
+    /// An entry with nothing to reveal cannot be activated, so its headline must not be cut short.
+    @Test func headlineWithoutDetailShowsInFull() {
+        func height(_ headline: String) -> CGFloat {
+            var recap = AttentionRecap(title: "Release", completed: "Shipped.", next: "Watch.")
+            recap.historyEntry = .init(headline: headline)
+            let timeline = WorktreeTimeline(history: nil,
+                brief: WorktreeBrief(recap: recap, at: Date(timeIntervalSinceReferenceDate: 100)))
+            return NSHostingView(rootView: WorktreeHistoryContent(timeline: timeline, secondary: .secondary)
+                .padding(24).frame(width: 260).fixedSize(horizontal: false, vertical: true)).fittingSize.height
+        }
+        let long = String(String(repeating: "Moved the window limit check ahead of the restore path and ", count: 3).prefix(160))
+        #expect(height(long) > height("Shipped") + 50, "A long headline with no detail wraps in full")
+    }
+
+    /// A long sender name truncates instead of pushing the message and its time out of the row.
+    @Test func longSenderNameStaysWithinTheRow() async throws {
+        let id = UUID(), width = 260.0
+        var history = WorktreeHistory()
+        history.record(.init(id: id, text: "<graftty-peer-message agent=\"/repo/investigate-the-sidebar-scroll-glitch-on-ipad-pro#claude\">Checked the layout.</graftty-peer-message>",
+            at: Date(timeIntervalSince1970: 1_792_411_200)))
+        let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary,
+            openWorktree: { _ in true }, gists: PeerMessageGistProvider { _ in "Checked the layout." })
+            .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true)
+            .environment(\.accessibilityEnabled, true))
+        let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        let link = try #require(accessibilityFrame("worktree.context.history.link.\(id.uuidString)", in: host))
+        let message = try #require(accessibilityFrame("worktree.context.history.message.\(id.uuidString)", in: host))
+        #expect(link.maxX <= window.frame.maxX - 20 + 1, "The sender stays inside the row, not out to \(link.maxX - window.frame.minX)")
+        #expect(message.width > 40, "The message keeps room beside the sender, not \(message.width) points")
     }
 
     /// A fold's id is its first entry's id, so the two must not share expansion state.

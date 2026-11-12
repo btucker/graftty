@@ -38,7 +38,11 @@ public enum AttentionAnswerDelivery {
             return .error(code: "occurrence-changed", message: "This request has changed or already cleared.", forceAllowed: false, shortStatus: nil)
         }
         // Only the agent that asked reads the answer; another pane may be a shell that would run it.
-        if let asker = stop.paneSlotID, worktree?.paneSlot(forSessionName: paneID)?.id.uuidString != asker {
+        // An agent that stopped outside any Graftty pane has no pane to verify, so it is refused too.
+        guard let asker = stop.paneSlotID else {
+            return .error(code: "not-found", message: "This agent isn't in a Graftty pane. Answer in its terminal.", forceAllowed: false, shortStatus: nil)
+        }
+        guard worktree?.paneSlot(forSessionName: paneID)?.id.uuidString == asker else {
             return .error(code: "not-found", message: "This agent's pane is no longer open.", forceAllowed: false, shortStatus: nil)
         }
         let line = text.components(separatedBy: breaks).map { $0.trimmingCharacters(in: .whitespaces) }

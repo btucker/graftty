@@ -85,6 +85,23 @@ struct AttentionExplainDeliveryTests {
         #expect(platform.platformRequests.count == 3)
     }
 
+    /// An agent outside any Graftty pane stops with no recorded pane; the worktree's
+    /// only pane may then be a shell, which would run the answer as a command.
+    @Test func answerRefusesWhenTheAskingPaneIsUnknown() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let slot = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
+        platform.state.repos[0].worktrees[0].ensurePaneSession(for: slot)
+        let shell = ZmxLauncher.sessionName(for: try #require(platform.state.repos[0].worktrees[0].paneSessions[slot]))
+        let stop = SidebarAgentStop(agentName: "Claude", stoppedAt: Date(timeIntervalSinceReferenceDate: 500),
+            recap: AttentionRecap(title: "Release", completed: "Found it.", next: "Decide.", need: "Hold or ship?"),
+            paneSlotID: nil, providerSessionKey: "agent")
+        platform.state.repos[0].worktrees[0].unseenAgentStop = stop
+        let response = await AttentionAnswerDelivery.deliver(worktreeID: "/repo", paneID: shell,
+            occurrence: stop.occurrence, text: "rm -rf build", platform: platform)
+        guard case .error = response else { Issue.record("expected a refusal, got \(response)"); return }
+        #expect(platform.platformRequests.isEmpty)
+    }
+
     @Test func answerRequestRoundTripsOnTheWire() throws {
         let occurrence = SidebarAttentionOccurrence(timestamp: Date(timeIntervalSinceReferenceDate: 7), text: "Q?", source: .agentStop)
         let request = WorktreeManagementRequest.answerRequest(worktreeID: "/repo", paneID: "pane-1", occurrence: occurrence, text: "Hold")

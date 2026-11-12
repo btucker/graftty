@@ -36,9 +36,14 @@ struct WorktreeContextAsk: View {
         let paneID: String
         var occurrence: SidebarAttentionOccurrence
 
-        // Snapshots refresh constantly; only a different question resets the ask.
+        // Snapshots refresh constantly; only a different pane or question changes the target.
         static func == (lhs: Target, rhs: Target) -> Bool {
-            lhs.worktree.path == rhs.worktree.path && lhs.paneID == rhs.paneID && lhs.occurrence == rhs.occurrence
+            lhs.paneID == rhs.paneID && lhs.asksSameQuestion(as: rhs)
+        }
+
+        /// The same question, though a later snapshot may have re-resolved its pane.
+        func asksSameQuestion(as other: Target?) -> Bool {
+            other.map { worktree.path == $0.worktree.path && occurrence == $0.occurrence } ?? false
         }
     }
 
@@ -187,10 +192,13 @@ final class WorktreeContextAskModel {
 
     var acceptsAnswer: Bool { state != .sending && state != .sent }
 
+    /// A re-resolved pane for the same question keeps its state, so an answer
+    /// sent or in flight cannot be sent twice.
     func sync(_ target: WorktreeContextAsk.Target?) {
         guard target != self.target else { return }
+        let sameQuestion = target?.asksSameQuestion(as: self.target) == true
         self.target = target
-        state = .idle
+        if !sameQuestion { state = .idle }
     }
 
     func send(_ text: String, using send: @MainActor (AttentionAnswer) async -> String?) async {
@@ -200,7 +208,7 @@ final class WorktreeContextAskModel {
         let failure = await send(AttentionAnswer(worktree: target.worktree, paneID: target.paneID,
                                                  occurrence: target.occurrence, text: line))
         // A newer question arrived while this answer was in flight.
-        guard self.target == target else { return }
+        guard self.target?.asksSameQuestion(as: target) == true else { return }
         state = failure.map(State.failed) ?? .sent
     }
 

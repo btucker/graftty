@@ -100,6 +100,27 @@ struct WorktreeContextAskTests {
         #expect(model.state == .idle, "An empty reply is not sent")
     }
 
+    /// A snapshot that re-resolves the asking pane still asks the same question, so an
+    /// answer that was sent, or is in flight, must not reopen it for a second answer.
+    @Test func reResolvedPaneKeepsTheAnswerState() async throws {
+        let target = try #require(WorktreeContextAsk.Affordances(context(worktree(stop: stop(options))), canSend: true).target)
+        let moved = WorktreeContextAsk.Target(worktree: target.worktree, paneID: "pane-2", occurrence: target.occurrence)
+        let model = WorktreeContextAskModel()
+        model.sync(target)
+        await model.send("Hold") { _ in nil }
+        model.sync(moved)
+        #expect(model.state == .sent, "The same question stays answered when its pane re-resolves")
+        #expect(!model.acceptsAnswer)
+
+        let inFlight = WorktreeContextAskModel()
+        inFlight.sync(target)
+        await inFlight.send("Hold") { _ in
+            inFlight.sync(moved)
+            return nil
+        }
+        #expect(inFlight.state == .sent, "An answer in flight settles when its pane re-resolves")
+    }
+
     @Test func hostResponsesBecomeMessages() {
         #expect(AttentionAnswer.failureMessage(for: .ok) == nil)
         #expect(AttentionAnswer.failureMessage(for: .error(code: "malformed-request", message: "x", forceAllowed: false, shortStatus: nil))

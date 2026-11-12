@@ -157,7 +157,8 @@ struct WorktreeHistoryContent: View {
         let shown = Self.entryDetail(event, expanded: expanded)
         let row = railed([event]) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(event.title).font(.callout).fontWeight(.medium).lineLimit(expanded ? nil : 2)
+                // Only a row that opens may cut its headline short.
+                Text(event.title).font(.callout).fontWeight(.medium).lineLimit(expanded || !shown.hasMore ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
                 if shown.hasMore {
                     Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption2).foregroundStyle(secondary)
@@ -267,8 +268,8 @@ struct WorktreeHistoryContent: View {
             Button {
                 unavailableWorktree = !openWorktree(path)
             } label: {
-                // A fixed width keeps every layout pass wrapping the line beside it the same way.
-                Text(title).font(.caption).fontWeight(.semibold).lineLimit(1).fixedSize()
+                // One truncating line: a long name gives way to the message beside it.
+                Text(title).font(.caption).fontWeight(.semibold).lineLimit(1)
                     #if os(iOS)
                     .frame(minHeight: 44, alignment: .topLeading)
                     #endif
@@ -285,7 +286,6 @@ struct WorktreeHistoryContent: View {
                 .foregroundStyle(event.kind == .user ? Color.orange : .primary)
                 .help(event.title)
                 .lineLimit(1)
-                .fixedSize()
         }
     }
 
