@@ -542,18 +542,18 @@ struct MainWindow: View {
         return selectedRepo.map { iconStore.project(for: $0, owner: iconStore.owner) }
     }
 
-    /// Remote drawings fall back to their emoji; only local drawings render here.
     private var selectedIdentity: WorktreeIconIdentity {
         if let remote = selectedRemoteWorktreeSnapshot {
-            return .resolve(isMainCheckout: remote.isMainCheckout, emoji: remote.effectiveEmoji)
+            return remote.iconIdentity
         }
         if let worktree = selectedWorktree, let repo = selectedRepo { return worktree.iconIdentity(in: repo) }
         return .resolve(isMainCheckout: isHomeCheckout, emoji: selectedWorktree?.emoji)
     }
 
     private var selectedIdentityImageData: Data? {
-        guard case .drawing = selectedIdentity, let worktree = selectedWorktree else { return selectedProjectIconData }
-        return iconStore.drawingData(for: worktree)
+        guard case .drawing = selectedIdentity else { return selectedProjectIconData }
+        if let remote = selectedRemoteWorktreeSnapshot { return iconStore.remoteDrawingData(for: remote) }
+        return selectedWorktree.flatMap { iconStore.drawingData(for: $0) }
     }
 
     private var selectedProjectIconData: Data? {

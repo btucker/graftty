@@ -315,6 +315,7 @@ struct RemoteMacsSection: View {
     var editableProjectIDs: Set<String> = []
     var projects: [SidebarProject] = []
     var projectIcons: [String: Data] = [:]
+    var drawings: [String: Data] = [:]
     var section: SidebarWorktreeSection = .all
     struct SingleRow {
         let worktree: WorktreePanes
@@ -560,7 +561,8 @@ struct RemoteMacsSection: View {
             .padding(.trailing, 8).padding(.bottom, SidebarStatusLine.macBottomInset(status))
         let identityView = WorktreeRowIdentitySlot(entry: sidebarEntry(for: worktree), displayName: displayName ?? worktree.displayName,
             isMainCheckout: worktree.isMainCheckout, theme: theme, prBadge: worktree.prBadge, status: status,
-            project: project, projectIconData: projectIcons[projectID])
+            project: project, projectIconData: projectIcons[projectID],
+            drawingData: drawingData(for: worktree), identity: worktree.iconIdentity)
         let preview = AnyView(
             SidebarWorktreeRowLayout { identityView } content: {
                 heading
@@ -646,7 +648,7 @@ struct RemoteMacsSection: View {
             ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)
         let host = tile.hostLabel.flatMap { $0.isEmpty ? nil : $0 } ?? tile.remoteMac.label
         let face = PinnedTileFace(identity: worktree.iconIdentity, project: project,
-                                  imageData: worktree.isMainCheckout ? projectIcons[projectID] : nil,
+                                  imageData: worktree.isMainCheckout ? projectIcons[projectID] : drawingData(for: worktree),
                                   word: tile.tileWord ?? PinnedTile.word(name: tile.displayName, isMainCheckout: worktree.isMainCheckout, branch: worktree.displayBranch),
                                   hostBadge: host, state: state, isSelected: isActive,
                                   fill: theme.foreground.opacity(0.07), selectedFill: theme.highlightedWorktreeBackground)
@@ -692,6 +694,11 @@ struct RemoteMacsSection: View {
         let id: String
         let displayName: String
         let worktrees: [WorktreePanes]
+    }
+
+    private func drawingData(for worktree: WorktreePanes) -> Data? {
+        guard case .drawing(let revision, _) = worktree.iconIdentity else { return nil }
+        return drawings[revision]
     }
 
     private func sidebarEntry(for worktree: WorktreePanes) -> WorktreeEntry {

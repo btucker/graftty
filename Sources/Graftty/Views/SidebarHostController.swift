@@ -63,6 +63,27 @@ final class SidebarHostController: ObservableObject {
 
     let remoteIconCache = ProjectIconCache()
     var remoteIcons: [String: Data] { remoteIconCache.icons }
+    let remoteDrawingCache = WorktreeDrawingCache()
+
+    func remoteDrawingData(for worktree: WorktreePanes) -> Data? {
+        guard case .drawing(let revision, _) = worktree.iconIdentity else { return nil }
+        return remoteDrawingCache.images[revision]
+    }
+
+    /// Call with live, relay-promoted rows so requests use the delivering host's route.
+    func loadRemoteDrawings(_ worktrees: [WorktreePanes],
+                            send: (WorktreeManagementRequest) async -> WorktreeManagementResponse?) async {
+        for worktree in worktrees {
+            guard case .drawing(let revision, _) = worktree.iconIdentity else { continue }
+            await remoteDrawingCache.load(revision: revision) {
+                if case .icon(let data) = await send(.worktreeIcon(worktreeID: worktree.path, revision: revision)) {
+                    return data
+                }
+                return nil
+            }
+        }
+    }
+
     private var resolvedSignatures: [UUID: IconSignature] = [:]
     private struct IconMetadata {
         let data: Data

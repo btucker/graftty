@@ -222,6 +222,14 @@ struct SidebarView: View {
                 return nil
             }
         }
+        let availableProjects = Set(remote.projects.filter(\.isAvailable).map(\.id))
+        let worktrees = remote.worktrees.filter { availableProjects.contains(SidebarProjection.projectID($0)) }
+        // Image requests must not delay the next attention or selection update.
+        Task { [iconStore, remoteMacsModel] in
+            await iconStore.loadRemoteDrawings(worktrees) {
+                await remoteMacsModel.sendRelayedWorktreeManagement($0)
+            }
+        }
     }
     private func rememberSelection(_ path: String?) {
         guard let path, let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == path } }),
@@ -378,7 +386,8 @@ struct SidebarView: View {
                           showsMacHierarchy: false,
                           showsRepositoryHeaders: !query.isEmpty,
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)),
-                          projects: projects, projectIcons: projectIcons, section: section, singleRow: singleRow,
+                          projects: projects, projectIcons: projectIcons, drawings: iconStore.remoteDrawingCache.images,
+                          section: section, singleRow: singleRow,
                           reportController: reportController,
                           onDismissRequest: { navigation.dismissRequest(in: $0) },
                           contextForWorktree: { row in

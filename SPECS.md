@@ -438,6 +438,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.241** While a worktree sidebar row is shown on Mac or Mobile, the application shall add six points of top padding above its icon and text.
 
+**LAYOUT-2.242** When a connected remote worktree advertises a drawing, the Mac application shall fetch its matching revision through the delivering host, cache the image, and show it in sidebar rows, pinned tiles, and the selected worktree header, while preserving user-chosen emoji and home checkout icons.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
