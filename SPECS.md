@@ -438,7 +438,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.241** While a worktree sidebar row is shown on Mac or Mobile, the application shall add six points of top padding above its icon and text.
 
-**LAYOUT-2.242** While pinned agents are shown as tiles on Mac or mobile, the application shall place them on one shared glass surface and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.
+**LAYOUT-2.242** While pinned agents are shown as tiles on Mac or mobile, the application shall place them in one shared niche, darker than the sidebar and inset into it, and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.
 
 ### LAYOUT-3.x — Adding Repositories
 

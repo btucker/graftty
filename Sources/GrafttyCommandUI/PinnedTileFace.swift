@@ -92,21 +92,31 @@ public struct PinnedTileFace: View {
     }
 }
 
-/// One glass surface under a whole grid of pinned tiles (LAYOUT-2.242), with a
-/// system-material fallback on releases before Liquid Glass.
+/// One niche under a whole grid of pinned tiles (LAYOUT-2.242): darker than
+/// the sidebar, with a soft shadow along its top inner edge and a faint rim
+/// light along its bottom, so it reads as cut into the sidebar and a selected
+/// tile's light pad stands out against it.
 public struct PinnedTileShelf: ViewModifier {
     public static let cornerRadius: CGFloat = 22
     public static let inset: CGFloat = 6
+    @Environment(\.colorScheme) private var colorScheme
 
     public init() {}
 
-    @ViewBuilder public func body(content: Content) -> some View {
+    public func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-        if #available(macOS 26.0, iOS 26.0, *) {
-            content.padding(Self.inset).glassEffect(.regular, in: shape)
-        } else {
-            content.padding(Self.inset).background(.regularMaterial, in: shape)
-        }
+        let isDark = colorScheme == .dark
+        content
+            .padding(Self.inset)
+            .background {
+                shape
+                    .fill(Color.black.opacity(isDark ? 0.24 : 0.07)
+                        .shadow(.inner(color: .black.opacity(isDark ? 0.55 : 0.18), radius: 3, x: 0, y: 1.5)))
+                    .overlay {
+                        shape.strokeBorder(LinearGradient(colors: [.clear, .white.opacity(isDark ? 0.08 : 0.6)],
+                                                          startPoint: .top, endPoint: .bottom), lineWidth: 1)
+                    }
+            }
     }
 }
 

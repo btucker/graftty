@@ -72,7 +72,24 @@ struct PinnedTileShelfTests {
         #expect(selected - plain > 0.08, "Selected pad is \(selected) on a \(plain) sidebar")
     }
 
-    @Test("@spec LAYOUT-2.242: While pinned agents are shown as tiles on Mac or mobile, the application shall place them on one shared glass surface and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.")
+    @Test func shelfIsADarkerNicheThanTheSidebar() throws {
+        let size = CGSize(width: 200, height: 120)
+        func brightness<V: View>(_ view: V) throws -> CGFloat {
+            let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
+                .background(Color(white: 0.25)).environment(\.colorScheme, .dark))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let scale = Double(bitmap.pixelsWide) / size.width
+            return try #require(bitmap.colorAt(x: Int(100 * scale), y: Int(60 * scale))?.usingColorSpace(.sRGB)).brightnessComponent
+        }
+        let sidebar = try brightness(Color.clear)
+        let niche = try brightness(Color.clear.padding(-PinnedTileShelf.inset).pinnedTileShelf())
+        #expect(sidebar - niche > 0.05, "The niche is \(niche) inside a \(sidebar) sidebar")
+    }
+
+    @Test("@spec LAYOUT-2.242: While pinned agents are shown as tiles on Mac or mobile, the application shall place them in one shared niche, darker than the sidebar and inset into it, and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.")
     func tilesAreBareOnOneShelf() throws {
         func same(_ a: NSColor, _ b: NSColor) -> Bool {
             abs(a.redComponent - b.redComponent) < 0.02 && abs(a.greenComponent - b.greenComponent) < 0.02
@@ -94,8 +111,7 @@ struct PinnedTileShelfTests {
             == ["KFH6", "MacBook", nil])
         #expect(PinnedTile.hostBadges(words: ["main", "data"], hosts: [nil, "KFH6"]) == [nil, nil])
 
-        // Liquid Glass is drawn by the window compositor, which an offscreen snapshot
-        // cannot see, so check the shelf's shape: one surface around the whole grid.
+        // One surface around the whole grid.
         let grid = NSHostingView(rootView: Color.clear.frame(width: 200, height: 120).pinnedTileShelf())
         #expect(grid.fittingSize == CGSize(width: 200 + 2 * PinnedTileShelf.inset, height: 120 + 2 * PinnedTileShelf.inset))
     }
