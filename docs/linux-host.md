@@ -1,5 +1,7 @@
 # Set up a Linux host from your Mac
 
+For a container deployment, use [Run a headless host with Docker](docker-runner.md).
+
 Use Graftty on your Mac to install a headless Swift host on Linux,
 import committed projects, and open persistent remote terminals.
 

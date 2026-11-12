@@ -1850,6 +1850,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-4.10** When building Linux zmx, the release scripts shall run its complete test suite in the same ReleaseSafe mode as the shipped executable, retaining runtime safety checks for large-history tests.
 
+**DIST-4.11** When packaging graftty-runner from a Linux archive, the build script shall select the archive architecture and send only the archive and image recipe to Docker, excluding checkout files and credentials.
+
+**DIST-4.12** When graftty-runner starts with a persistent home volume, the image shall serve as a non-root user without systemd, support terminal input and output, and retain its identity and repositories after container replacement.
+
+**DIST-4.13** When publishing graftty-runner, release automation shall preserve the full release version by mapping build metadata's plus sign to an underscore and shall assign latest only to stable releases.
+
 ## WEB — Web Access
 
 ### WEB-1.x — Binding

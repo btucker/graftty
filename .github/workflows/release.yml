@@ -21,6 +21,15 @@ jobs:
     with:
       version: ${{ github.ref_name }}
 
+  runner-image:
+    needs: [release, linux-build]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/runner.yml
+    with:
+      version: ${{ github.ref_name }}
+
   linux-release-assets:
     needs: [release, linux-build]
     runs-on: ubuntu-24.04

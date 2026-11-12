@@ -1,5 +1,8 @@
 # Windows headless host
 
+For Docker Desktop with the WSL2 backend, use
+[Run a headless host with Docker](docker-runner.md).
+
 V1 targets the existing Linux headless host and Graftty-patched zmx inside
 WSL2 on Windows 11. Retain the same session ownership, detach and reattach,
 replay, history, and resize behavior as Mac and Linux. A separate Windows
