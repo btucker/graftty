@@ -11,6 +11,7 @@ struct SurfaceHandleDirectShellEnvironmentTests {
             agentHookBin: agentHookBin, zshInitDirectory: "/zsh-init")
         let env = Dictionary(pairs.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
         #expect(env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] == "1")
+        #expect(env["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] == "1", "AGENT-6.165")
         #expect(env["GRAFTTY_SOCK"] == "/tmp/graftty.sock")
         #expect(env["PATH"] == (agentHookBin.map { "\($0):/usr/bin" } ?? "/usr/bin"))
         #expect(env["ZDOTDIR"] == (agentHookBin == nil ? nil : "/zsh-init"))
