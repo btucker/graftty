@@ -10,7 +10,8 @@ public struct PinnedTileFace: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public static let height: CGFloat = 64
-    static let cornerRadius: CGFloat = 12
+    /// Concentric with the shelf, like a selected item in a glass toolbar.
+    static let cornerRadius: CGFloat = PinnedTileShelf.cornerRadius - PinnedTileShelf.inset
     /// The working dot, a quiet blue that reads as in progress, not as an alarm.
     static let working = Color(.sRGB, red: 0.48, green: 0.66, blue: 1, opacity: 1)
 
@@ -96,7 +97,7 @@ public struct PinnedTileFace: View {
 /// One glass surface under a whole grid of pinned tiles (LAYOUT-2.242), with a
 /// system-material fallback on releases before Liquid Glass.
 public struct PinnedTileShelf: ViewModifier {
-    public static let cornerRadius: CGFloat = 18
+    public static let cornerRadius: CGFloat = 22
     public static let inset: CGFloat = 6
 
     public init() {}

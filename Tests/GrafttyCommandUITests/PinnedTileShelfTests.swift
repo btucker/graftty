@@ -36,23 +36,24 @@ struct PinnedTileShelfTests {
         for y in 0..<bitmap.pixelsHigh {
             for x in 0..<bitmap.pixelsWide {
                 guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
-                if c.blueComponent > 0.7 && c.redComponent < 0.6 && c.greenComponent > 0.4 && c.greenComponent < 0.8 { count += 1 }
+                // The working blue at any point of its pulse (35–100% opacity) over black.
+                if c.blueComponent > 0.25 && c.blueComponent > c.greenComponent + 0.05 && c.greenComponent > c.redComponent { count += 1 }
             }
         }
         return count
     }
 
-    @Test func workingTileShowsItsDots() throws {
+    @Test func workingTileShowsItsDot() throws {
         let size = CGSize(width: 80, height: PinnedTileFace.height)
         func tile(_ state: PinnedTileState) -> PinnedTileFace {
             PinnedTileFace(identity: .none, project: SidebarProject(id: "p", repositoryID: "p", name: "app"), word: "data",
                            hostBadge: nil, state: state, isSelected: false, selectedFill: .clear)
         }
-        #expect(try bluePixels(tile(.working), size: size) > 10, "A working tile draws its blue dots")
+        #expect(try bluePixels(tile(.working), size: size) > 10, "A working tile draws its blue dot")
         #expect(try bluePixels(tile(.idle), size: size) == 0)
     }
 
-    @Test("@spec LAYOUT-2.242: While pinned agents are shown as tiles on Mac or mobile, the application shall place them on one shared glass surface and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on its own pad and naming a tile's host only when another tile shows the same caption.")
+    @Test("@spec LAYOUT-2.242: While pinned agents are shown as tiles on Mac or mobile, the application shall place them on one shared glass surface and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.")
     func tilesAreBareOnOneShelf() throws {
         func same(_ a: NSColor, _ b: NSColor) -> Bool {
             abs(a.redComponent - b.redComponent) < 0.02 && abs(a.greenComponent - b.greenComponent) < 0.02
@@ -65,6 +66,9 @@ struct PinnedTileShelfTests {
         #expect(same(bare, background), "An unselected tile draws nothing of its own: \(bare) vs \(background)")
         let raised = try pixel(face(selected: true), size: size, at: CGPoint(x: 8, y: 8))
         #expect(!same(raised, background), "The selected tile sits on its own pad: \(raised)")
+
+        // Like a selected toolbar item, the selected tile's pad is concentric with the shelf.
+        #expect(PinnedTileFace.cornerRadius == PinnedTileShelf.cornerRadius - PinnedTileShelf.inset)
 
         // A tile names its host only when another tile shows the same caption.
         #expect(PinnedTile.hostBadges(words: ["main", "main", "data"], hosts: ["KFH6", "MacBook", "KFH6"])
