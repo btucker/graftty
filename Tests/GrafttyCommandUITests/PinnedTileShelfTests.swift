@@ -25,6 +25,33 @@ struct PinnedTileShelfTests {
         return try #require(bitmap.colorAt(x: Int(point.x * scale), y: Int(point.y * scale))?.usingColorSpace(.sRGB))
     }
 
+    /// Counts pixels close to the working blue in a render of `view`.
+    private func bluePixels<V: View>(_ view: V, size: CGSize) throws -> Int {
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(Color.black))
+        host.frame = CGRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        var count = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                if c.blueComponent > 0.7 && c.redComponent < 0.6 && c.greenComponent > 0.4 && c.greenComponent < 0.8 { count += 1 }
+            }
+        }
+        return count
+    }
+
+    @Test func workingTileShowsItsDots() throws {
+        let size = CGSize(width: 80, height: PinnedTileFace.height)
+        func tile(_ state: PinnedTileState) -> PinnedTileFace {
+            PinnedTileFace(identity: .none, project: SidebarProject(id: "p", repositoryID: "p", name: "app"), word: "data",
+                           hostBadge: nil, state: state, isSelected: false, selectedFill: .clear)
+        }
+        #expect(try bluePixels(tile(.working), size: size) > 10, "A working tile draws its blue dots")
+        #expect(try bluePixels(tile(.idle), size: size) == 0)
+    }
+
     @Test("@spec LAYOUT-2.242: While pinned agents are shown as tiles on Mac or mobile, the application shall place them on one shared glass surface and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on its own pad and naming a tile's host only when another tile shows the same caption.")
     func tilesAreBareOnOneShelf() throws {
         func same(_ a: NSColor, _ b: NSColor) -> Bool {

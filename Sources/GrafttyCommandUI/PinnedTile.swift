@@ -3,9 +3,9 @@ import Foundation
 /// @spec LAYOUT-2.225
 /// What a pinned agent's tile shows. A tile never moves: it lights up in place.
 public enum PinnedTileState: Sendable, Equatable {
-    /// A question or a notification: a filled amber pip.
+    /// A question or a notification: an orange dot.
     case waiting
-    /// A finished turn the person hasn't opened: an amber ring pip.
+    /// A finished turn the person hasn't opened; the tile draws no mark for it.
     case finished
     case working
     /// The host is asleep, so its last report says nothing about now.
@@ -21,15 +21,15 @@ public enum PinnedTileState: Sendable, Equatable {
     }
 
     /// The one small mark before a tile's name (LAYOUT-2.225).
-    public enum Pip: Sendable, Equatable { case filled, ring, dots }
+    public enum Pip: Sendable, Equatable { case filled, pulse }
 
-    /// Nil draws no mark: idle tiles carry nothing, and a sleeping host's tile fades instead.
+    /// Nil draws no mark: stopped and idle tiles carry nothing, and a sleeping host's tile fades instead.
     public var pip: Pip? {
         switch self {
         case .waiting: return .filled
-        case .finished: return .ring
-        case .working: return .dots
-        case .asleep, .idle: return nil
+        case .working: return .pulse
+        // A stopped turn is not a request: it draws nothing.
+        case .finished, .asleep, .idle: return nil
         }
     }
 

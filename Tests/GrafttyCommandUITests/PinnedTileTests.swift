@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyCommandUI
 
 struct PinnedTileTests {
-    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall mark it with a filled amber pip before its name while it asks a question or carries a notification, an amber ring pip while it has a finished turn the user has not opened, three blue dots that light in turn while an agent works, fade it while its host sleeps, and draw no mark otherwise.")
+    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall show an orange dot before its name while it asks a question or carries a notification, a pulsing blue dot while an agent works, fade it while its host sleeps, and draw no mark otherwise, including after a turn stops.")
     func tileStates() {
         #expect(PinnedTileState.resolve(status: .question("q", paneID: nil), isCached: false) == .waiting)
         #expect(PinnedTileState.resolve(status: .notification("n", paneID: nil), isCached: false) == .waiting)
@@ -15,8 +15,8 @@ struct PinnedTileTests {
         #expect(PinnedTileState.resolve(status: .whereWeAre("done", isUnread: true), isCached: true) == .asleep)
         // One small cue per tile, never a frame.
         #expect(PinnedTileState.waiting.pip == .filled)
-        #expect(PinnedTileState.finished.pip == .ring)
-        #expect(PinnedTileState.working.pip == .dots, "Working reads as activity, not one more dot")
+        #expect(PinnedTileState.finished.pip == nil, "A stopped turn draws nothing")
+        #expect(PinnedTileState.working.pip == .pulse)
         #expect(PinnedTileState.asleep.pip == nil)
         #expect(PinnedTileState.idle.pip == nil)
     }

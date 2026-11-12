@@ -416,7 +416,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.224** When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.
 
-**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall mark it with a filled amber pip before its name while it asks a question or carries a notification, an amber ring pip while it has a finished turn the user has not opened, three blue dots that light in turn while an agent works, fade it while its host sleeps, and draw no mark otherwise.
+**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall show an orange dot before its name while it asks a question or carries a notification, a pulsing blue dot while an agent works, fade it while its host sleeps, and draw no mark otherwise, including after a turn stops.
 
 **LAYOUT-2.226** While a pinned agent is shown as a tile, the application shall caption it with the first part of its worktree name, split at hyphens, underscores, slashes, and spaces, or with the branch name for the default checkout.
 
