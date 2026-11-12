@@ -93,7 +93,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: aarch64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -104,3 +104,7 @@ jobs:
         run: |
           (cd dist && sha256sum -c ./*.sha256)
           scripts/linux/smoke-test.sh dist/*.tar.gz
+      - name: Build and exercise graftty-runner
+        run: |
+          scripts/linux/runner/build.sh dist/*.tar.gz graftty-runner:test
+          scripts/linux/runner/smoke-test.sh graftty-runner:test

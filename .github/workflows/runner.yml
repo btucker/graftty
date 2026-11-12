@@ -1,0 +1,98 @@
+name: Publish graftty-runner
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release tag for the Linux archives produced in this run.
+        required: true
+        type: string
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: graftty-linux-${{ matrix.arch }}
+          path: dist
+      - name: Build and test the release image
+        run: |
+          (cd dist && sha256sum -c ./*.sha256)
+          scripts/linux/runner/build.sh dist/*.tar.gz graftty-runner:release
+          scripts/linux/runner/smoke-test.sh graftty-runner:release
+      - uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the tested architecture and record its digest
+        env:
+          OWNER: ${{ github.repository_owner }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          image="ghcr.io/${OWNER,,}/graftty-runner:build-$RUN_ID-$ATTEMPT-$ARCH"
+          docker tag graftty-runner:release "$image"
+          docker push "$image"
+          mkdir digests
+          docker inspect --format '{{index .RepoDigests 0}}' "$image" > "digests/$ARCH.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graftty-runner-digest-${{ matrix.arch }}
+          path: digests/*.txt
+          retention-days: 1
+          if-no-files-found: error
+
+  manifest:
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: graftty-runner-digest-*
+          merge-multiple: true
+          path: digests
+      - uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the multi-platform manifest
+        env:
+          OWNER: ${{ github.repository_owner }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          versions=$(scripts/linux/runner/tags.sh "$RELEASE_VERSION")
+          tags=()
+          while IFS= read -r version; do
+            tags+=(--tag "ghcr.io/${OWNER,,}/graftty-runner:$version")
+          done <<< "$versions"
+          docker buildx imagetools create "${tags[@]}" \
+            "$(cat digests/x86_64.txt)" "$(cat digests/aarch64.txt)"
