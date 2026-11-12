@@ -50,7 +50,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native-deps:
+    # Builds or reuses libghostty and zmx on the self-hosted Mac, whose
+    # scripts/deps cache persists between runs, like ci.yml's native-deps job.
+    # A cold hosted build of both platforms takes about 40 minutes.
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build or reuse libghostty and zmx
+        run: scripts/deps prepare all --platforms macos,ios
+      - name: Package .deps
+        # Dereference the cache links; artifacts drop file modes, tar keeps them.
+        run: tar -chf "$RUNNER_TEMP/native-deps.tar" -C .deps .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-deps
+          path: ${{ runner.temp }}/native-deps.tar
+          retention-days: 3
+
   native-agents:
+    needs: native-deps
     runs-on: macos-26
     timeout-minutes: 75
     steps:
@@ -72,6 +92,7 @@ jobs:
       - uses: ./.github/actions/native-deps
         with:
           platforms: macos,ios
+          download: 'true'
       - name: Install pinned provider CLIs
         run: |
           npm install --prefix "$RUNNER_TEMP/agent-clients" \
@@ -80,6 +101,10 @@ jobs:
           "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" --version
       - name: Build Graftty CLI
         run: scripts/swiftpm build --build-system native --product graftty-cli
+      - name: Build native Mac tests
+        # run.py's registration deadline covers launching the Mac host, not
+        # compiling the whole test package on a cold runner.
+        run: scripts/swiftpm build --build-system native --build-tests
       - name: Verify history regression RED and GREEN
         if: inputs.history
         shell: bash
