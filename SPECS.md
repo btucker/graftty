@@ -4938,7 +4938,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.48** When a host supplies resolved Ghostty theme colors, the application shall include them in each agent turn's drawing guidance as a contrast reference while requiring SVG palette tokens.
 
-**AGENT-3.49** When an agent reports a question with options, the application shall accept two to four options with distinct labels of at most 40 characters, optional costs of at most 80 characters, and at most one suggested option, reject options without a question, and decode older recaps without options.
+**AGENT-3.49** When an agent reports a question with options, the application shall accept two to four options with distinct labels of at most 40 characters, optional costs of at most 80 characters, and at most one suggested option, reject options without a question or with a label that begins with an exclamation mark or a slash, which an agent's input would run as a command, and decode older recaps without options.
 
 **AGENT-3.50** When a client answers a stopped agent's question, the host shall type the answer as one line without control characters into that agent's pane and submit it, and shall refuse when the question has changed or cleared, the answer is empty, the pane is gone or belongs to another agent or shell, or the pane is waiting at its harness's own prompt.
 

@@ -201,6 +201,8 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     public var hasValidOptions: Bool {
         guard let options else { return true }
         let labels = options.map { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        // A picked label is typed into the agent's input, where a leading ! or / runs a command.
+        guard !labels.contains(where: { $0.hasPrefix("!") || $0.hasPrefix("/") }) else { return false }
         return need.map { Self.validText($0, limit: 300) } == true
             && Self.optionCount.contains(options.count)
             && Set(labels).count == labels.count

@@ -55,7 +55,7 @@ struct AttentionReport: ParsableCommand {
             }
         }
         guard recap.hasValidOptions else {
-            throw ValidationError("\"options\" needs a \"need\" and 2 to 4 choices, each with a distinct label of at most 40 characters, an optional cost of at most 80, and at most one suggested")
+            throw ValidationError("\"options\" needs a \"need\" and 2 to 4 choices, each with a distinct label of at most 40 characters that does not start with ! or /, an optional cost of at most 80, and at most one suggested")
         }
         guard recap.isValid else {
             throw ValidationError("recap fields must be brief text, and emoji choices must be single glyphs")
