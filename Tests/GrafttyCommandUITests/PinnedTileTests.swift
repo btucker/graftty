@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyCommandUI
 
 struct PinnedTileTests {
-    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall mark it with a thick orange border while it asks a question or carries a notification, a thin orange border while it has a finished turn the user has not opened, a moving ring while an agent works, faded while its host sleeps, and as idle otherwise.")
+    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall show an orange dot before its name while it asks a question or carries a notification, a pulsing blue dot while an agent works, fade it while its host sleeps, and draw no mark otherwise, including after a turn stops.")
     func tileStates() {
         #expect(PinnedTileState.resolve(status: .question("q", paneID: nil), isCached: false) == .waiting)
         #expect(PinnedTileState.resolve(status: .notification("n", paneID: nil), isCached: false) == .waiting)
@@ -13,15 +13,17 @@ struct PinnedTileTests {
         #expect(PinnedTileState.resolve(status: .none, isCached: false) == .idle)
         // A sleeping host's report is old news, even if it once asked.
         #expect(PinnedTileState.resolve(status: .whereWeAre("done", isUnread: true), isCached: true) == .asleep)
-        // The border's weight says how urgent it is.
-        #expect(PinnedTileState.waiting.borderWidth > PinnedTileState.finished.borderWidth)
-        #expect(PinnedTileState.finished.borderWidth > 0)
-        #expect(PinnedTileState.idle.borderWidth == 0)
+        // One small cue per tile, never a frame.
+        #expect(PinnedTileState.waiting.pip == .filled)
+        #expect(PinnedTileState.finished.pip == nil, "A stopped turn draws nothing")
+        #expect(PinnedTileState.working.pip == .pulse)
+        #expect(PinnedTileState.asleep.pip == nil)
+        #expect(PinnedTileState.idle.pip == nil)
     }
 
-    @Test("@spec LAYOUT-2.226: While a pinned agent is shown as a tile, the application shall caption it with the first part of its worktree name, split at hyphens, underscores, slashes, and spaces, or with the branch name for the default checkout.", arguments: [
-        ("crash-report", false, "x", "crash"), ("ci_watch", false, "x", "ci"), ("research/notes", false, "x", "research"),
-        ("release loop", false, "x", "release"), ("triage", false, "x", "triage"), ("-odd", false, "x", "odd"),
+    @Test("@spec LAYOUT-2.226: While a pinned agent is shown as a tile, the application shall caption it with its whole worktree name, or the branch name for the default checkout, on one line, ending in an ellipsis only when the name is wider than the tile.", arguments: [
+        ("crash-report", false, "x", "crash-report"), ("ci_watch", false, "x", "ci_watch"), ("research/notes", false, "x", "research/notes"),
+        ("release loop", false, "x", "release loop"), ("triage", false, "x", "triage"),
         ("graftty", true, "main", "main"),
     ] as [(String, Bool, String, String)])
     func tileWord(name: String, isMainCheckout: Bool, branch: String, expected: String) {
@@ -38,15 +40,14 @@ struct PinnedTileTests {
 
     /// Two tiles must not show the same word: the clashing ones use the first
     /// part of their names that differs.
-    @Test func clashingWordsUseTheFirstPartThatDiffers() {
+    @Test func captionsKeepWholeNamesSoOnlyTrueDuplicatesClash() {
         let words = PinnedTile.words(for: [
             .init(name: "analytics-dashboard", isMainCheckout: false, branch: "x"),
             .init(name: "analytics-api", isMainCheckout: false, branch: "x"),
-            .init(name: "crash-report", isMainCheckout: false, branch: "x"),
             .init(name: "app", isMainCheckout: true, branch: "main"),
-            .init(name: "analytics", isMainCheckout: false, branch: "x"),
+            .init(name: "app", isMainCheckout: true, branch: "main"),
         ])
-        #expect(words == ["dashboard", "api", "crash", "main", "analytics"])
+        #expect(words == ["analytics-dashboard", "analytics-api", "main", "main"])
     }
 
     @Test func accessibilityLabelNamesHostAndState() {

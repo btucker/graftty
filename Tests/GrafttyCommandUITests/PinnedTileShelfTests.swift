@@ -1,0 +1,167 @@
+#if os(macOS)
+import AppKit
+import GrafttyProtocol
+import SwiftUI
+import Testing
+@testable import GrafttyCommandUI
+
+@MainActor
+struct PinnedTileShelfTests {
+    private static let red = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+
+    private func face(selected: Bool, host: String? = nil) -> PinnedTileFace {
+        PinnedTileFace(identity: .none, project: SidebarProject(id: "p", repositoryID: "p", name: "app"), word: "data",
+                       hostBadge: host, state: .waiting, isSelected: selected)
+    }
+
+    /// Renders `view` over solid red and returns the sRGB colour at a point in points.
+    private func pixel<V: View>(_ view: V, size: CGSize, at point: CGPoint) throws -> NSColor {
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(Color(nsColor: Self.red)))
+        host.frame = CGRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let scale = Double(bitmap.pixelsWide) / size.width
+        return try #require(bitmap.colorAt(x: Int(point.x * scale), y: Int(point.y * scale))?.usingColorSpace(.sRGB))
+    }
+
+    /// Counts pixels close to the working blue in a render of `view`.
+    private func bluePixels<V: View>(_ view: V, size: CGSize) throws -> Int {
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(Color.black))
+        host.frame = CGRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        var count = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                // The working blue at any point of its pulse (35–100% opacity) over black.
+                if c.blueComponent > 0.25 && c.blueComponent > c.greenComponent + 0.05 && c.greenComponent > c.redComponent { count += 1 }
+            }
+        }
+        return count
+    }
+
+    @Test func workingTileShowsItsDot() throws {
+        let size = CGSize(width: 80, height: PinnedTileFace.height)
+        func tile(_ state: PinnedTileState) -> PinnedTileFace {
+            PinnedTileFace(identity: .none, project: SidebarProject(id: "p", repositoryID: "p", name: "app"), word: "data",
+                           hostBadge: nil, state: state, isSelected: false)
+        }
+        #expect(try bluePixels(tile(.working), size: size) > 10, "A working tile draws its blue dot")
+        #expect(try bluePixels(tile(.idle), size: size) == 0)
+    }
+
+    /// The selected pad must read on a dark glass sidebar without an outline.
+    @Test func selectedPadStandsOutOnADarkSidebar() throws {
+        let size = CGSize(width: 80, height: PinnedTileFace.height)
+        let sidebar = Color(white: 0.2)
+        func brightness<V: View>(_ view: V) throws -> CGFloat {
+            let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
+                .background(sidebar).environment(\.colorScheme, .dark))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let scale = Double(bitmap.pixelsWide) / size.width
+            return try #require(bitmap.colorAt(x: Int(8 * scale), y: Int(8 * scale))?.usingColorSpace(.sRGB)).brightnessComponent
+        }
+        let plain = try brightness(Color.clear)
+        let selected = try brightness(face(selected: true))
+        #expect(selected - plain > 0.08, "Selected pad is \(selected) on a \(plain) sidebar")
+    }
+
+    @Test func shelfIsADarkerNicheThanTheSidebar() throws {
+        let size = CGSize(width: 200, height: 120)
+        func brightness<V: View>(_ view: V) throws -> CGFloat {
+            let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
+                .background(Color(white: 0.25)).environment(\.colorScheme, .dark))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let scale = Double(bitmap.pixelsWide) / size.width
+            return try #require(bitmap.colorAt(x: Int(100 * scale), y: Int(60 * scale))?.usingColorSpace(.sRGB)).brightnessComponent
+        }
+        let sidebar = try brightness(Color.clear)
+        let niche = try brightness(Color.clear.padding(-PinnedTileShelf.inset).pinnedTileShelf())
+        #expect(sidebar - niche > 0.05, "The niche is \(niche) inside a \(sidebar) sidebar")
+    }
+
+    /// Dots keep their meaning in light mode: a true orange, and a blue strong enough to read.
+    @Test func lightModeDotsStayOrangeAndBlue() throws {
+        let size = CGSize(width: 80, height: PinnedTileFace.height)
+        func count(_ state: PinnedTileState, _ match: (NSColor) -> Bool) throws -> Int {
+            let host = NSHostingView(rootView: PinnedTileFace(identity: .none, project: SidebarProject(id: "p", repositoryID: "p", name: "app"),
+                word: "data", hostBadge: nil, state: state, isSelected: false)
+                .frame(width: size.width, height: size.height).background(Color(white: 0.9)).environment(\.colorScheme, .light))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            var n = 0
+            for y in 0..<bitmap.pixelsHigh { for x in 0..<bitmap.pixelsWide {
+                if let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), match(c) { n += 1 }
+            } }
+            return n
+        }
+        let orange = try count(.waiting) { $0.redComponent > 0.85 && $0.greenComponent > 0.4 && $0.greenComponent < 0.75 && $0.blueComponent < 0.25 }
+        #expect(orange > 10, "A waiting tile draws an orange dot in light mode")
+        // Strong blue: at its dimmest pulse it still darkens the light background toward blue.
+        let blue = try count(.working) { $0.blueComponent > 0.8 && $0.redComponent < 0.6 && $0.blueComponent - $0.redComponent > 0.3 }
+        #expect(blue > 10, "A working tile draws a readable blue dot in light mode")
+    }
+
+    /// In light mode the selected pad is a white pill, brighter than the niche around it.
+    @Test func lightSelectedPadIsBrighterThanTheNiche() throws {
+        let size = CGSize(width: 120, height: PinnedTileFace.height + 2 * PinnedTileShelf.inset)
+        let host = NSHostingView(rootView: HStack(spacing: 0) {
+            face(selected: true).frame(width: 60)
+            face(selected: false).frame(width: 60)
+        }
+        .pinnedTileShelf()
+        .frame(width: size.width, height: size.height)
+        .background(Color(white: 0.95)).environment(\.colorScheme, .light))
+        host.frame = CGRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let scale = Double(bitmap.pixelsWide) / size.width
+        func brightness(_ x: Double, _ y: Double) throws -> CGFloat {
+            try #require(bitmap.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB)).brightnessComponent
+        }
+        // Just inside each tile's top-left corner, clear of icons and text.
+        let pad = try brightness(PinnedTileShelf.inset + 10, PinnedTileShelf.inset + 10)
+        let niche = try brightness(60 + PinnedTileShelf.inset + 10, PinnedTileShelf.inset + 10)
+        #expect(pad - niche > 0.04, "Selected pad \(pad) vs niche \(niche) in light mode")
+    }
+
+    @Test("@spec LAYOUT-2.242: While pinned agents are shown as tiles on Mac or mobile, the application shall place them in one shared niche, darker than the sidebar and inset into it, and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.")
+    func tilesAreBareOnOneShelf() throws {
+        func same(_ a: NSColor, _ b: NSColor) -> Bool {
+            abs(a.redComponent - b.redComponent) < 0.02 && abs(a.greenComponent - b.greenComponent) < 0.02
+                && abs(a.blueComponent - b.blueComponent) < 0.02
+        }
+        let size = CGSize(width: 80, height: PinnedTileFace.height)
+        // The bare background, read back through the same colour conversion.
+        let background = try pixel(Color.clear, size: size, at: CGPoint(x: 3, y: 3))
+        let bare = try pixel(face(selected: false), size: size, at: CGPoint(x: 3, y: 3))
+        #expect(same(bare, background), "An unselected tile draws nothing of its own: \(bare) vs \(background)")
+        let raised = try pixel(face(selected: true), size: size, at: CGPoint(x: 8, y: 8))
+        #expect(!same(raised, background), "The selected tile sits on its own pad: \(raised)")
+
+        // Like a selected toolbar item, the selected tile's pad is concentric with the shelf.
+        #expect(PinnedTileFace.cornerRadius == PinnedTileShelf.cornerRadius - PinnedTileShelf.inset)
+
+        // A tile names its host only when another tile shows the same caption.
+        #expect(PinnedTile.hostBadges(words: ["main", "main", "data"], hosts: ["KFH6", "MacBook", "KFH6"])
+            == ["KFH6", "MacBook", nil])
+        #expect(PinnedTile.hostBadges(words: ["main", "data"], hosts: [nil, "KFH6"]) == [nil, nil])
+
+        // One surface around the whole grid.
+        let grid = NSHostingView(rootView: Color.clear.frame(width: 200, height: 120).pinnedTileShelf())
+        #expect(grid.fittingSize == CGSize(width: 200 + 2 * PinnedTileShelf.inset, height: 120 + 2 * PinnedTileShelf.inset))
+    }
+}
+#endif
