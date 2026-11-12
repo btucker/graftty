@@ -166,6 +166,15 @@ struct ZmxSpawnConfigurationTests {
         #expect(remote["COLORTERM"] == "truecolor")
     }
 
+    @Test("@spec AGENT-6.165: When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 in that shell's environment, replacing any inherited value, so Claude Code saves its session for later resume.", arguments: [false, true])
+    func claudeAlwaysPersistsSessions(agentHooksDisabled: Bool) {
+        let inherited = ["SHELL": "/bin/zsh", "PATH": "/usr/bin", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "0"]
+        #expect(makeConfig(processEnv: inherited, agentHooksDisabled: agentHooksDisabled).env["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] == "1")
+        var remote = inherited
+        ZmxSpawnConfiguration.applyTerminalCapabilities(env: &remote, ghosttyResourcesDir: nil)
+        #expect(remote["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] == "1")
+    }
+
     @Test("@spec AGENT-6.60: When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 in that shell's environment, replacing any inherited value, so Claude Code started in the pane renders inline and its transcript reaches terminal scrollback.", arguments: [false, true])
     func claudeRendersInlineInEverySpawnedShell(agentHooksDisabled: Bool) {
         let inherited = ["SHELL": "/bin/zsh", "PATH": "/usr/bin", "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN": "0"]

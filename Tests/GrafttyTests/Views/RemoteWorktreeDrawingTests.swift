@@ -7,7 +7,7 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 @MainActor
-@Suite("@spec LAYOUT-2.242: When a connected remote worktree advertises a drawing, the Mac application shall fetch its matching revision through the delivering host, cache the image, and show it in sidebar rows, pinned tiles, and the selected worktree header, while preserving user-chosen emoji and home checkout icons.")
+@Suite("@spec LAYOUT-2.243: When a connected remote worktree advertises a drawing, the Mac application shall fetch its matching revision through the delivering host, cache the image, and show it in sidebar rows, pinned tiles, and the selected worktree header, while preserving user-chosen emoji and home checkout icons.")
 struct RemoteWorktreeDrawingTests {
     private func row(revision: String = "drawing:25", isMainCheckout: Bool = false) -> WorktreePanes {
         var metadata = SidebarWorktreeMetadata(id: "worker:feature", projectID: "worker:repo", emoji: "🖼️")

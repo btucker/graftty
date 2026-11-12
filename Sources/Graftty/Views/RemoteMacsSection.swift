@@ -646,12 +646,14 @@ struct RemoteMacsSection: View {
         let projectID = SidebarProjection.projectID(worktree)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)
-        let host = tile.hostLabel.flatMap { $0.isEmpty ? nil : $0 } ?? tile.remoteMac.label
+        // The tile names its host only when told to (another agent shares its name);
+        // hover and VoiceOver always do.
+        let badge = tile.hostLabel.flatMap { $0.isEmpty ? nil : $0 }
+        let host = badge ?? tile.remoteMac.label
         let face = PinnedTileFace(identity: worktree.iconIdentity, project: project,
                                   imageData: worktree.isMainCheckout ? projectIcons[projectID] : drawingData(for: worktree),
                                   word: tile.tileWord ?? PinnedTile.word(name: tile.displayName, isMainCheckout: worktree.isMainCheckout, branch: worktree.displayBranch),
-                                  hostBadge: host, state: state, isSelected: isActive,
-                                  fill: theme.foreground.opacity(0.07), selectedFill: theme.highlightedWorktreeBackground)
+                                  hostBadge: badge, state: state, isSelected: isActive)
         return Button(action: tile.onOpen) { face }
             .buttonStyle(.plain)
             .rightClickMenu { remoteWorktreeMenu(worktree, context: context, remoteMac: tile.remoteMac) }

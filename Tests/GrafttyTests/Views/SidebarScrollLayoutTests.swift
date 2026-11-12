@@ -112,8 +112,10 @@ final class SidebarScrollLayoutTests: XCTestCase {
             })
             let searchFrame = search.convert(search.bounds, to: hosted.hosting)
             XCTAssertTrue(content.minY >= searchFrame.maxY)
-            // Without the rail, the project's disclosure row sits between them.
-            XCTAssertTrue(content.minY - searchFrame.maxY <= (rail ? 16 : 48))
+            // Without the rail, the project's disclosure row sits between them. The
+            // glass shelf's own inset sits between its edge and the tiles (LAYOUT-2.242).
+            XCTAssertTrue(content.minY - searchFrame.maxY <= (rail ? 16 : 48) + PinnedTileShelf.inset,
+                          "Tiles start \(content.minY - searchFrame.maxY) points below search")
             try hosted.captureIfRequested(name: "sidebar-tiles-\(rail ? "rail" : "single")")
         }
     }

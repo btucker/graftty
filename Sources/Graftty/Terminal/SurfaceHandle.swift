@@ -622,6 +622,8 @@ final class SurfaceHandle {
             // AGENT-6.60: like zmx-spawned shells, render Claude Code inline so
             // its transcript reaches scrollback.
             ("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1"),
+            // AGENT-6.165: always save Claude's session, so a pane's agent can be resumed.
+            ("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE", "1"),
         ]
         // Hand the wrapper bin path to the user's shell init via env so
         // the ZDOTDIR shim's `.zshrc` can re-prepend it AFTER the user's
