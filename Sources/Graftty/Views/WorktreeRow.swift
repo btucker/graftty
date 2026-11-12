@@ -155,6 +155,8 @@ struct WorktreeRowIdentitySlot: View {
     var projectIconData: Data? = nil
     /// The rendered agent drawing, shown in place of the emoji (LAYOUT-2.202).
     var drawingData: Data? = nil
+    /// Remote rows carry the revision without a local drawing's SVG.
+    var identity: WorktreeIconIdentity? = nil
     var identityMenu: ((NSView) -> NSMenu)? = nil
 
     private var resolvedProject: SidebarProject {
@@ -162,7 +164,7 @@ struct WorktreeRowIdentitySlot: View {
     }
 
     private var drawingIdentity: WorktreeIconIdentity {
-        .resolve(isMainCheckout: isMainCheckout, emoji: entry.emoji, drawingRevision: entry.drawing?.revision,
+        identity ?? .resolve(isMainCheckout: isMainCheckout, emoji: entry.emoji, drawingRevision: entry.drawing?.revision,
                  emojiChosenByUser: entry.emojiChosenByUser)
     }
 
