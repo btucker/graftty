@@ -825,8 +825,7 @@ struct SidebarView: View {
             ?? SidebarProject(id: projectID, repositoryID: row.row.repositoryID ?? projectID, name: row.row.repoDisplayName)
         let host = row.hostLabel.isEmpty ? nil : row.hostLabel
         return PinnedTileFace(identity: row.row.iconIdentity, project: project, imageData: nil, word: word,
-                              hostBadge: badge, state: .asleep, isSelected: false,
-                              selectedFill: theme.highlightedWorktreeBackground)
+                              hostBadge: badge, state: .asleep, isSelected: false)
             .help(PinnedTile.hoverText(name: row.relativeName, host: host, status: .none) + "\nCan't be opened from this Mac right now")
             .pinnedTileAccessibility(name: row.relativeName, host: host, state: .asleep, isSelected: false) {}
     }
@@ -844,8 +843,7 @@ struct SidebarView: View {
         return PinnedTileFace(identity: context.worktree.iconIdentity, project: project,
                               imageData: isMain ? iconStore.iconData(for: repo) : iconStore.drawingData(for: worktree),
                               word: word,
-                              hostBadge: badge, state: state, isSelected: isActive,
-                              selectedFill: theme.highlightedWorktreeBackground)
+                              hostBadge: badge, state: state, isSelected: isActive)
             .rightClickMenu(anchored: { anchor in buildWorktreeMenu(worktree, repo: repo, context: context, window: anchor.window) })
             .overlay {
                 WorktreeDragSourceOverlay(

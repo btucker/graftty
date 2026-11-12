@@ -23,13 +23,11 @@ public struct PinnedTileFace: View {
     let hostBadge: String?
     let state: PinnedTileState
     let isSelected: Bool
-    let selectedFill: Color
 
     public init(identity: WorktreeIconIdentity, project: SidebarProject, imageData: Data? = nil, word: String,
-                hostBadge: String?, state: PinnedTileState, isSelected: Bool, selectedFill: Color) {
+                hostBadge: String?, state: PinnedTileState, isSelected: Bool) {
         self.identity = identity; self.project = project; self.imageData = imageData; self.word = word
         self.hostBadge = hostBadge; self.state = state; self.isSelected = isSelected
-        self.selectedFill = selectedFill
     }
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous) }
@@ -63,7 +61,7 @@ public struct PinnedTileFace: View {
         .frame(maxWidth: .infinity, minHeight: Self.height)
         .background {
             // A plain fill: the shelf's glass edge is the only outline, so borders never nest.
-            if isSelected { shape.fill(selectedFill) }
+            if isSelected { shape.fill(isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.08)) }
         }
         .overlay(alignment: .topTrailing) {
             if state == .asleep {

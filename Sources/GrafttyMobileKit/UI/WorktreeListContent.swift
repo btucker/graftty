@@ -1131,8 +1131,7 @@ public struct WorktreeListContent: View {
         return PinnedTileFace(identity: wt.iconIdentity, project: project,
                               imageData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
                               word: word,
-                              hostBadge: badge, state: state, isSelected: isSelected(wt),
-                              selectedFill: theme?.foreground.opacity(0.16) ?? Color.primary.opacity(0.12))
+                              hostBadge: badge, state: state, isSelected: isSelected(wt))
             .onTapGesture { beginSelectingWorktree(wt) }
             .contextMenu {
                 if !wt.state.isInFlight {

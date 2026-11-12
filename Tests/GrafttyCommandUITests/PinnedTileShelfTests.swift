@@ -11,7 +11,7 @@ struct PinnedTileShelfTests {
 
     private func face(selected: Bool, host: String? = nil) -> PinnedTileFace {
         PinnedTileFace(identity: .none, project: SidebarProject(id: "p", repositoryID: "p", name: "app"), word: "data",
-                       hostBadge: host, state: .waiting, isSelected: selected, selectedFill: .white.opacity(0.4))
+                       hostBadge: host, state: .waiting, isSelected: selected)
     }
 
     /// Renders `view` over solid red and returns the sRGB colour at a point in points.
@@ -47,10 +47,29 @@ struct PinnedTileShelfTests {
         let size = CGSize(width: 80, height: PinnedTileFace.height)
         func tile(_ state: PinnedTileState) -> PinnedTileFace {
             PinnedTileFace(identity: .none, project: SidebarProject(id: "p", repositoryID: "p", name: "app"), word: "data",
-                           hostBadge: nil, state: state, isSelected: false, selectedFill: .clear)
+                           hostBadge: nil, state: state, isSelected: false)
         }
         #expect(try bluePixels(tile(.working), size: size) > 10, "A working tile draws its blue dot")
         #expect(try bluePixels(tile(.idle), size: size) == 0)
+    }
+
+    /// The selected pad must read on a dark glass sidebar without an outline.
+    @Test func selectedPadStandsOutOnADarkSidebar() throws {
+        let size = CGSize(width: 80, height: PinnedTileFace.height)
+        let sidebar = Color(white: 0.2)
+        func brightness<V: View>(_ view: V) throws -> CGFloat {
+            let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
+                .background(sidebar).environment(\.colorScheme, .dark))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let scale = Double(bitmap.pixelsWide) / size.width
+            return try #require(bitmap.colorAt(x: Int(8 * scale), y: Int(8 * scale))?.usingColorSpace(.sRGB)).brightnessComponent
+        }
+        let plain = try brightness(Color.clear)
+        let selected = try brightness(face(selected: true))
+        #expect(selected - plain > 0.08, "Selected pad is \(selected) on a \(plain) sidebar")
     }
 
     @Test("@spec LAYOUT-2.242: While pinned agents are shown as tiles on Mac or mobile, the application shall place them on one shared glass surface and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.")

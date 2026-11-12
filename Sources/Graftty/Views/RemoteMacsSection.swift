@@ -651,8 +651,7 @@ struct RemoteMacsSection: View {
         let face = PinnedTileFace(identity: worktree.iconIdentity, project: project,
                                   imageData: worktree.isMainCheckout ? projectIcons[projectID] : nil,
                                   word: tile.tileWord ?? PinnedTile.word(name: tile.displayName, isMainCheckout: worktree.isMainCheckout, branch: worktree.displayBranch),
-                                  hostBadge: badge, state: state, isSelected: isActive,
-                                  selectedFill: theme.highlightedWorktreeBackground)
+                                  hostBadge: badge, state: state, isSelected: isActive)
         return Button(action: tile.onOpen) { face }
             .buttonStyle(.plain)
             .rightClickMenu { remoteWorktreeMenu(worktree, context: context, remoteMac: tile.remoteMac) }
