@@ -131,6 +131,15 @@ terminal input and output, graceful shutdown, and persistence after replacement.
 
 Release automation publishes `ghcr.io/btucker/graftty-runner` after the Mac
 release and Linux archive checks pass. It uses the workflow's `GITHUB_TOKEN`
-with `packages: write`; no Docker Hub credential is needed. After the first
-publication, [make the GitHub package public](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility)
+with `packages: write`; no Docker Hub credential is needed.
+
+To publish an image for an existing release, run **Publish runner from an
+existing release** in GitHub Actions on `main`. Enter the published release tag,
+such as `v0.8.0`. This workflow downloads and verifies that release's Linux
+archives, tests both images, and publishes their manifest without a Mac release.
+Publishing a stable version also updates `latest`, so select the newest stable
+release when publishing manually.
+
+After the first publication,
+[make the GitHub package public](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility)
 to allow anonymous pulls.

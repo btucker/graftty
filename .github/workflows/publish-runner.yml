@@ -1,0 +1,51 @@
+name: Publish runner from an existing release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published Graftty release tag with Linux archives, such as v0.8.0.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  archives:
+    # Only the reviewed image recipe on main can publish official release tags.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download published Linux archives and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          scripts/linux/runner/tags.sh "$RELEASE_TAG" >/dev/null
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
+          gh release download "$RELEASE_TAG" --dir dist \
+            --pattern "graftty-linux-*-$ARCH.tar.gz" \
+            --pattern "graftty-linux-*-$ARCH.tar.gz.sha256"
+          (cd dist && sha256sum -c ./*.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graftty-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: archives
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/runner.yml
+    with:
+      version: ${{ inputs.version }}
