@@ -17,6 +17,11 @@ public enum MergedWorktreeList {
         "\(row.origin?.deviceID.value ?? "connected")\u{0}\(row.sidebar?.id ?? row.path)"
     }
 
+    /// Whether `candidate` is `row` on the same host, so a popover anchors to one row only (IOS-13.29).
+    public static func isSameWorktree(_ candidate: WorktreePanes?, _ row: WorktreePanes) -> Bool {
+        candidate.map { identity($0) == identity(row) } ?? false
+    }
+
     /// Keeps each worktree once, on its most direct route, in first-seen order.
     public static func deduplicated(_ rows: [WorktreePanes]) -> [WorktreePanes] {
         var best: [String: WorktreePanes] = [:]

@@ -2802,6 +2802,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.28** While a mobile worktree row offers removal, the application shall align the trash icon to the trailing edge of the row.
 
+**IOS-13.29** When the user deletes or dismisses a worktree from its row or tile on iPhone or iPad, the application shall anchor the confirmation to that row or tile, and to no other row, including a same-path worktree on another host.
+
 ## IPAD — iPad Layout
 
 ### IPAD-1.x — Root Layout and Sidebar

@@ -92,6 +92,37 @@ public struct WorktreeListContent: View {
         let action: WorktreePickerSwipeAction
     }
 
+    /// Presents the delete or dismiss confirmation from the row or tile that asked,
+    /// so its popover points at that worktree on iPad and iOS 26 (IOS-13.29).
+    private struct DeleteConfirmation: ViewModifier {
+        @Binding var pending: PendingDelete?
+        let worktree: WorktreePanes
+        let perform: (PendingDelete) -> Void
+
+        func body(content: Content) -> some View {
+            content.confirmationDialog(
+                pending?.action.dialogTitle ?? "",
+                isPresented: Binding(
+                    get: { MergedWorktreeList.isSameWorktree(pending?.worktree, worktree) },
+                    set: { if !$0, MergedWorktreeList.isSameWorktree(pending?.worktree, worktree) { pending = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pending
+            ) { request in
+                Button(request.action.buttonLabel, role: .destructive) { perform(request) }
+                Button("Cancel", role: .cancel) { }
+            } message: { request in
+                Text(request.action.dialogBody)
+            }
+        }
+    }
+
+    private func deleteConfirmation(_ wt: WorktreePanes) -> DeleteConfirmation {
+        DeleteConfirmation(pending: $pendingDelete, worktree: wt) { request in
+            Task { await performDelete(worktree: request.worktree, force: false) }
+        }
+    }
+
     private struct DeleteRequestContext {
         let host: Host
         let remoteConnectionProvider: RemoteConnectionProvider?
@@ -326,22 +357,6 @@ public struct WorktreeListContent: View {
         .onChange(of: showsProjectRail) { _, _ in
             selectionIntentGeneration &+= 1
             navigation.resetSelection()
-        }
-        .confirmationDialog(
-            pendingDelete?.action.dialogTitle ?? "",
-            isPresented: Binding(
-                get: { pendingDelete != nil },
-                set: { if !$0 { pendingDelete = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingDelete
-        ) { pending in
-            Button(pending.action.buttonLabel, role: .destructive) {
-                Task { await performDelete(worktree: pending.worktree, force: false) }
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: { pending in
-            Text(pending.action.dialogBody)
         }
         .confirmationDialog(
             "Could not delete worktree",
@@ -1131,6 +1146,7 @@ public struct WorktreeListContent: View {
                 }
             }
             .modifier(reportPopover(wt))
+            .modifier(deleteConfirmation(wt))
             .pinnedTileAccessibility(name: row.relativeName, host: host, state: state, isSelected: isSelected(wt)) {
                 beginSelectingWorktree(wt)
             }
@@ -1200,6 +1216,7 @@ public struct WorktreeListContent: View {
             onDismissRequest: { dismissRequest(wt) }
         )
         .modifier(reportPopover(wt))
+        .modifier(deleteConfirmation(wt))
         .id(wt.sidebar?.id ?? wt.path)
         .background(GeometryReader { geometry in
             let frame = geometry.frame(in: .named(worktreeScrollSpace))
