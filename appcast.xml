@@ -6,6 +6,21 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.8.1</title>
+            <sparkle:version>100.85.00</sparkle:version>
+            <sparkle:shortVersionString>0.8.1</sparkle:shortVersionString>
+            <pubDate>Thu, 12 Nov 2026 21:32:06 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's changed</h2>
+<ul dir="auto">
+<li>Read agent activity at a glance in Context and answer agent questions there. <a href="https://github.com/btucker/graftty/pull/874" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/874/hovercard">#874</a></li>
+<li>Show pinned agents in a shared inset niche on Mac and mobile. <a href="https://github.com/btucker/graftty/pull/876" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/876/hovercard">#876</a></li>
+<li>Keep Claude session persistence enabled in Graftty panes. <a href="https://github.com/btucker/graftty/pull/877" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/877/hovercard">#877</a></li>
+</ul>
+<p dir="auto"><a href="https://github.com/btucker/graftty/compare/v0.8.0...v0.8.1">Full changelog</a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.8.1/Graftty-0.8.1.zip" length="51181618" type="application/octet-stream" sparkle:edSignature="WZAzzmJ5sJRziTLUja7LcAqrKtH3EDp/dJ3jNQ4uJLzSeFRwmHIrsGU8LJKvsqjOLxXHosMDzlj6ZJMWdUOPBw=="/>
+        </item>
+        <item>
             <title>Version 0.8.0</title>
             <sparkle:version>100.84.00</sparkle:version>
             <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
