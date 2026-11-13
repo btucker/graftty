@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 16:34:41 +0000
+Subject: Paging: synchronous ios presentation
+
+
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 39017151dfdb3060d2fe654e9335244e3627985a..67fbfd74690fa315633e2ae4cd0c6953217990ad 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1252,6 +1252,7 @@ GHOSTTY_API bool ghostty_surface_grid_matches(ghostty_surface_t, uint16_t column
+ 
+ GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_draw(ghostty_surface_t);
++GHOSTTY_API void ghostty_surface_draw_latest(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+ GHOSTTY_API void ghostty_surface_set_focus(ghostty_surface_t, bool);
+ GHOSTTY_API void ghostty_surface_set_occlusion(ghostty_surface_t, bool);
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 22666391b3314d9c6e53993f3b30c4b33a6b5716..08c6368758449fac1d2cdfc71799bff5c6070ed4 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -938,6 +938,14 @@ pub fn draw(self: *Surface) !void {
+     try self.renderer.drawFrame(true);
+ }
+ 
++/// Like `draw`, but first waits (briefly) for the renderer thread to
++/// rebuild frame data from the terminal state as it is now, so the frame
++/// shows a change the caller just made, such as a viewport scroll.
++pub fn drawLatest(self: *Surface) !void {
++    self.renderer_thread.waitForFrameUpdate();
++    try self.renderer.drawFrame(true);
++}
++
+ /// Activate the inspector. This will begin collecting inspection data.
+ /// This will not affect the GUI. The GUI must use performAction to
+ /// show/hide the inspector UI.
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 2d6bfc77f33c322567fd744165cdb567f52a22f7..6f9a1470efbe8ce4ae27969c07b7f0d90b6c1b07 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1065,6 +1065,13 @@ pub const Surface = struct {
+         };
+     }
+ 
++    pub fn drawLatest(self: *Surface) void {
++        self.core_surface.drawLatest() catch |err| {
++            log.err("error in draw latest err={}", .{err});
++            return;
++        };
++    }
++
+     pub fn updateContentScale(self: *Surface, x: f64, y: f64) void {
+         // We are an embedded API so the caller can send us all sorts of
+         // garbage. We want to make sure that the float values are valid
+@@ -2397,6 +2404,15 @@ pub const CAPI = struct {
+         surface.draw();
+     }
+ 
++    /// Draw synchronously once the renderer has rebuilt frame data from
++    /// the terminal state as it is now (waiting a few milliseconds at
++    /// most). Use it after a change such as scroll_to_row, so the new
++    /// frame lands in the same Core Animation transaction as the caller's
++    /// layout.
++    export fn ghostty_surface_draw_latest(surface: *Surface) void {
++        surface.drawLatest();
++    }
++
+     /// Update the size of a surface. This will trigger resize notifications
+     /// to the pty and the renderer.
+     export fn ghostty_surface_set_size(surface: *Surface, w: u32, h: u32) void {
+diff --git a/src/renderer/Thread.zig b/src/renderer/Thread.zig
+index 79e52c4bbee223528aa07415c78b776602ae8e6e..ed9131baf85fb63748ac21dc2661899be9a93044 100644
+--- a/src/renderer/Thread.zig
++++ b/src/renderer/Thread.zig
+@@ -19,6 +19,9 @@ const log = std.log.scoped(.renderer_thread);
+ 
+ const CURSOR_BLINK_INTERVAL = 600;
+ 
++/// The longest `waitForFrameUpdate` blocks its caller.
++const FRAME_UPDATE_WAIT_NS = 4 * std.time.ns_per_ms;
++
+ /// Whether calls to `drawFrame` must be done from the app thread.
+ ///
+ /// The type used for sending messages to the IO thread. For now this is
+@@ -100,6 +103,14 @@ flags: packed struct {
+     focused: bool = true,
+ } = .{},
+ 
++/// Frame update requests from host threads, and the latest request a
++/// completed `updateFrame` had seen before it began. See
++/// `waitForFrameUpdate`.
++frame_update_requested: std.atomic.Value(u64) = .init(0),
++frame_update_completed: std.atomic.Value(u64) = .init(0),
++/// The request a host thread is waiting in `waitForFrameUpdate` for, or 0.
++frame_update_waiting: std.atomic.Value(u64) = .init(0),
++
+ pub const DerivedConfig = struct {
+     scrollback_compression: bool,
+ 
+@@ -467,6 +478,22 @@ fn drawFrame(self: *Thread, now: bool) void {
+     // If we're invisible, we do not draw.
+     if (!self.flags.visible) return;
+ 
++    // iOS: the host presents every frame from its main thread, so layer
++    // contents and the host's own layout land in one Core Animation
++    // transaction. A draw here would present from a GPU completion hop
++    // instead, out of step with the host, and add a frame that can reuse
++    // a swap chain surface still on screen. Ask the host to draw. Never
++    // wait for mailbox space: only the host's main thread drains it, and
++    // it stops while its view is detached, so after a burst of output this
++    // thread would block there and a surface free (which joins it) would
++    // hang. A dropped request loses nothing: the push still wakes the
++    // host, and a full mailbox means it is already owed a tick that draws
++    // the frame data this update just built.
++    if (comptime builtin.os.tag == .ios) {
++        _ = self.renderer.surface_mailbox.push(.redraw, .instant);
++        return;
++    }
++
+     // If the renderer is managing a vsync on its own, we only draw
+     // when we're forced to via `now`.
+     if (!now and self.renderer.hasVsync()) return;
+@@ -574,14 +601,22 @@ fn renderCallback(
+     if (!t.flags.visible) return .disarm;
+ 
+     // Update our frame data
++    const update_request = t.frame_update_requested.load(.seq_cst);
+     t.renderer.updateFrame(
+         t.state,
+         t.flags.cursor_blink_visible,
+     ) catch |err|
+         log.warn("error rendering err={}", .{err});
++    t.frame_update_completed.store(update_request, .seq_cst);
+ 
+-    // Draw
+-    t.drawFrame(false);
++    // Draw, unless (iOS) a host thread waits for this update: it draws as
++    // soon as its wait returns, so a host draw request would only repeat
++    // that frame. If the wait gives up first, it stops waiting only after
++    // this check, and so draws after this update completed.
++    const waiting = t.frame_update_waiting.load(.seq_cst);
++    const host_draws = builtin.os.tag == .ios and
++        waiting != 0 and waiting <= update_request;
++    if (!host_draws) t.drawFrame(false);
+ 
+     // Schedule the next animation wake, if the renderer needs one.
+     t.armAnimationTimer();
+@@ -589,6 +624,31 @@ fn renderCallback(
+     return .disarm;
+ }
+ 
++/// Wake this thread for a frame update and wait until it has rebuilt
++/// frame data from the terminal state as of this call, so that a draw
++/// that follows shows state the caller just changed (for example a
++/// viewport scroll). Called from a host thread that does not hold the
++/// renderer state lock. Returns after `FRAME_UPDATE_WAIT_NS` at most, so a
++/// busy or hidden renderer cannot stall the caller; the draw then shows
++/// the last update, as it would have without waiting.
++pub fn waitForFrameUpdate(self: *Thread) void {
++    // The update that reads this request takes the terminal state lock
++    // after the read, so it sees every change made before this call.
++    const request = self.frame_update_requested.fetchAdd(1, .seq_cst) + 1;
++    self.frame_update_waiting.store(request, .seq_cst);
++    defer self.frame_update_waiting.store(0, .seq_cst);
++    self.wakeup.notify() catch |err| {
++        log.warn("error waking renderer for frame update err={}", .{err});
++        return;
++    };
++    const start: std.Io.Timestamp = .now(global.io(), .awake);
++    while (self.frame_update_completed.load(.seq_cst) < request) {
++        std.atomic.spinLoopHint();
++        const now: std.Io.Timestamp = .now(global.io(), .awake);
++        if (start.durationTo(now).nanoseconds >= FRAME_UPDATE_WAIT_NS) return;
++    }
++}
++
+ /// Schedule the animation timer for the renderer's next animation
+ /// wake, if it needs one.
+ ///
