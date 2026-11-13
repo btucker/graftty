@@ -3,6 +3,8 @@ import Darwin
 import Foundation
 import GrafttyProtocol
 @testable import GrafttyRemoteClient
+import GrafttyRemoteTestSupport
+import GrafttyTunnel
 import NIOCore
 import NIOConcurrencyHelpers
 import NIOPosix
@@ -46,6 +48,40 @@ struct TailcatIntegrationTests {
             }
             #expect(!serverChannel.isActive)
             await connection.close()
+        }
+    }
+
+    // Measurements are opt-in, never timing assertions in the ordinary suite.
+    @Test("Matched Tailcat and WebRTC terminal performance", .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TAILCAT_BENCHMARK"] == "1"), .timeLimit(.minutes(10)))
+    func matchedPerformance() async throws {
+        for round in 0..<3 {
+            let transports = round.isMultiple(of: 2) ? ["tailcat", "webrtc"] : ["webrtc", "tailcat"]
+            for transport in transports {
+                let start = ContinuousClock.now
+                if transport == "tailcat" {
+                    try await withFixture { fixture in
+                        let connection = try await fixture.connect()
+                        do {
+                            let terminal = try await connection.ssh.openTerminalSession(sessionName: "matched-probe")
+                            defer { terminal.close() }
+                            let setup = milliseconds(since: start)
+                            let route = try await connection.routeKind()
+                            try await measure(terminal, transport: transport, route: route, round: round, setup: setup)
+                        } catch { await connection.close(); throw error }
+                        await connection.close()
+                    }
+                } else {
+                    let fixture = WebRTCFixture()
+                    do {
+                        try await fixture.connect()
+                        let terminal = try await fixture.client.openTerminalSession(sessionName: "matched-probe")
+                        defer { terminal.close() }
+                        try await measure(terminal, transport: transport, route: "local-ice", round: round,
+                                          setup: milliseconds(since: start))
+                    } catch { await fixture.close(); throw error }
+                    await fixture.close()
+                }
+            }
         }
     }
 
@@ -161,6 +197,103 @@ private func duplicatePipeDescriptors(_ descriptor: Int32,
         throw error
     }
     return (input, output)
+}
+
+private func milliseconds(since start: ContinuousClock.Instant) -> Double {
+    let elapsed = start.duration(to: .now).components
+    return Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15
+}
+
+private func measure(_ terminal: TerminalSessionClient, transport: String, route: String, round: Int, setup: Double) async throws {
+    for _ in 0..<5 {
+        try await terminal.send(.binary(Data([0])))
+        #expect(try await terminal.receive() == .binary(Data([0])))
+    }
+    var samples: [Double] = []
+    for index in 0..<100 {
+        let byte = Data([UInt8(truncatingIfNeeded: index)])
+        let start = ContinuousClock.now
+        try await terminal.send(.binary(byte))
+        #expect(try await terminal.receive() == .binary(byte))
+        samples.append(milliseconds(since: start))
+    }
+    let payload = Data((0..<(4 * 1024 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+    let start = ContinuousClock.now
+    let drain = Task { () throws -> Data in
+        var received = Data()
+        while received.count < payload.count {
+            if case .binary(let bytes) = try await terminal.receive() { received.append(bytes) }
+        }
+        return received
+    }
+    do {
+        try await terminal.send(.binary(payload))
+        #expect(try await drain.value == payload)
+    } catch {
+        terminal.close()
+        _ = try? await drain.value
+        throw error
+    }
+    let transfer = milliseconds(since: start)
+    let report = PerformanceReport(transport: transport, route: route, round: round, setupMilliseconds: setup,
+        echo: try #require(TransportLatencySummary(milliseconds: samples)), bulkPayloadBytes: payload.count,
+        bulkEchoMilliseconds: transfer, bulkEchoMiBPerSecond: Double(payload.count) / (1024 * 1024) * 1000 / transfer)
+    print("[tailcat-comparison] \(String(decoding: try JSONEncoder().encode(report), as: UTF8.self))")
+}
+
+private struct PerformanceReport: Encodable {
+    let transport: String
+    let route: String
+    let round: Int
+    let setupMilliseconds: Double
+    let echo: TransportLatencySummary
+    let bulkPayloadBytes: Int
+    let bulkEchoMilliseconds: Double
+    // Payload size divided by the complete upload-and-echo duration. This is
+    // not a one-way goodput measurement; the wire carries the payload twice.
+    let bulkEchoMiBPerSecond: Double
+}
+
+private final class WebRTCFixture: @unchecked Sendable {
+    let hostKey = Curve25519.Signing.PrivateKey()
+    let clientKey = Curve25519.Signing.PrivateKey()
+    let client: RemoteHostConnection
+    let peer = LoopbackPeer(role: .answerer, inbound: .keepInbox)
+    private var hostTask: Task<SSHNIOTransport, Error>?
+
+    init() {
+        client = RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: try! fingerprint(hostKey))
+    }
+    func connect() async throws {
+        let offer = try await client.createOffer()
+        let answer = try await peer.accept(offer: offer)
+        await client.bindIceCandidates(to: peer)
+        await peer.bindIceCandidates(to: client)
+        hostTask = Task { [hostKey, clientKey, peer] in
+            let (channel, inbox) = try await peer.arrivedDataChannel(label: GrafttyWebRTC.dataChannelLabel)
+            let transport = SSHNIOTransport(dataChannel: channel, inbox: inbox)
+            do {
+                try await transport.eventLoop.submit {
+                    let config = SSHServerConfiguration(hostKeys: [NIOSSHPrivateKey(ed25519Key: hostKey)],
+                        userAuthDelegate: PairedKey(key: NIOSSHPrivateKey(ed25519Key: clientKey).publicKey))
+                    try transport.channel.pipeline.syncOperations.addHandler(NIOSSHHandler(role: .server(config),
+                        allocator: transport.channel.allocator, inboundChildChannelInitializer: { child, type in
+                            guard case .session = type else { return child.eventLoop.makeFailedFuture(FixtureFailure.unexpectedChannel) }
+                            return child.pipeline.addHandler(TerminalEcho())
+                        }))
+                }.get()
+                try await transport.start()
+                return transport
+            } catch { await transport.close(); throw error }
+        }
+        try await client.applyAnswer(answer)
+        _ = try await hostTask?.value
+    }
+    func close() async {
+        await client.close()
+        await peer.close()
+        if let transport = try? await hostTask?.value { await transport.close() }
+    }
 }
 
 private func fingerprint(_ key: Curve25519.Signing.PrivateKey) throws -> RemoteIdentityFingerprint {

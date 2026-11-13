@@ -84,8 +84,46 @@ several minutes without progress. The full regression gate is not green.
 The existing SSH pipe-authentication regression passed separately with both
 the matching-pin and mismatched-pin cases.
 
-Probe latency varied substantially across runs on this machine. No latency
-advantage over WebRTC has been established.
+The pre-PR review added regressions for descriptor-allocation failure and SSH
+closure without explicit peer closure. Both failed before the fixes and passed
+afterward in the simulator. The peer-closure test now waits for a parked receive.
+The builder also recovers an interrupted initial source checkout.
+
+## Compare performance
+
+Set `TEST_RUNNER_GRAFTTY_TAILCAT_BENCHMARK=1` on the simulator test command to
+enable the matched probe. It alternates transport order across three rounds,
+using five warm-up echoes, 100 one-byte echoes, and a 4 MiB bulk echo per round.
+Both transports use the same `TerminalSessionClient` and synthetic SSH server.
+Unsupported optional subsystem probes reject immediately. The probe prints
+numeric JSON lines with the prefix `[tailcat-comparison]` and checks byte integrity.
+
+The 13 November run on an iPhone 18 Pro simulator, iOS 27.0, Xcode 27.2, and
+Mac16,8 produced these medians across three rounds. Raw reports and source
+hashes are in [performance-simulator.json](performance-simulator.json).
+
+| Metric | Tailcat, direct | WebRTC, local ICE |
+| --- | ---: | ---: |
+| One-byte echo p50 | 0.372 ms | 0.353 ms |
+| One-byte echo p95 | 0.587 ms | 0.663 ms |
+| One-byte echo p99 | 0.609 ms | 0.877 ms |
+| 4 MiB bulk echo payload rate | 26.14 MiB/s | 0.87 MiB/s |
+| Fresh fixture setup | 4.46 s | 0.124 s |
+
+Idle echo latency is similar. Tailcat's bulk echo was faster in this harness,
+with rates of 16.8–27.8 MiB/s versus WebRTC's 0.86–1.50 MiB/s. This is payload
+size divided by the complete upload-and-echo duration, not one-way goodput.
+It does not establish a corresponding speedup in rendered terminal output.
+
+Setup timings are not application connection times. Tailcat starts a new
+server and contacts public relay infrastructure in each round. WebRTC uses
+in-process SDP exchange. A persistent host, real signaling, and network
+conditions can change the comparison.
+
+These debug-build loopback measurements exclude rendering, injected packet
+loss or delay, interactive latency during concurrent bulk output, physical
+device power use, and cellular transitions. A controlled real-device test
+remains necessary before a migration performance claim.
 
 ## Limits
 
