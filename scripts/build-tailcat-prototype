@@ -1,0 +1,48 @@
+#!/bin/bash
+# Build the optional Tailcat experiment. Generated artifacts are never committed.
+set -euo pipefail
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+PIN="$(cat "$REPO/Prototypes/Tailcat/UPSTREAM_COMMIT")"
+BUILD="$REPO/Prototypes/Tailcat/.build"
+SOURCE="${GRAFTTY_TAILCAT_SOURCE:-$BUILD/upstream}"
+mkdir -p "$BUILD" "$REPO/.deps"
+if [[ ! -d "$SOURCE/.git" ]]; then
+  git init "$SOURCE"
+  git -C "$SOURCE" remote add origin https://github.com/tailscale/tailcat.git
+  git -C "$SOURCE" fetch --depth 1 origin "$PIN"
+  git -C "$SOURCE" checkout --detach FETCH_HEAD
+fi
+[[ "$(git -C "$SOURCE" rev-parse HEAD)" == "$PIN" ]] || { echo 'Tailcat checkout does not match UPSTREAM_COMMIT' >&2; exit 1; }
+TAGS="$(cat "$SOURCE/build-tags.txt")"
+for PLATFORM in macos simulator; do
+  if [[ "$PLATFORM" == macos ]]; then
+    SDK=macosx
+    TRIPLE=arm64-apple-macos14
+    TARGET_OS=darwin
+  else
+    SDK=iphonesimulator
+    TRIPLE=arm64-apple-ios17.0-simulator
+    TARGET_OS=ios
+  fi
+  mkdir -p "$BUILD/$PLATFORM/Headers"
+  (
+    cd "$SOURCE"
+    env CGO_ENABLED=1 GOOS="$TARGET_OS" GOARCH=arm64 \
+      CC="$(xcrun --sdk "$SDK" --find clang) -target $TRIPLE -isysroot $(xcrun --sdk "$SDK" --show-sdk-path)" \
+      go build -tags "$TAGS" -buildmode=c-archive -o "$BUILD/$PLATFORM/libTailcat.a" ./cmd/libtailcat
+  )
+  cp "$SOURCE/cmd/libtailcat/tailcat.h" "$BUILD/$PLATFORM/Headers/"
+  cp "$SOURCE/LICENSE" "$BUILD/$PLATFORM/Headers/LICENSE"
+  cat > "$BUILD/$PLATFORM/Headers/module.modulemap" <<'MODULE'
+module CTailcat {
+  header "tailcat.h"
+  export *
+}
+MODULE
+done
+rm -rf "$REPO/.deps/Tailcat.xcframework"
+xcodebuild -create-xcframework \
+  -library "$BUILD/macos/libTailcat.a" -headers "$BUILD/macos/Headers" \
+  -library "$BUILD/simulator/libTailcat.a" -headers "$BUILD/simulator/Headers" \
+  -output "$REPO/.deps/Tailcat.xcframework"
+xcodegen generate --spec "$REPO/Prototypes/Tailcat/project.yml"
