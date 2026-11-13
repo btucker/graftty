@@ -186,7 +186,13 @@ public actor WebRTCHostAgent {
     /// See `RemoteHostConnection.iceGatheringTimeout`.
     private static let iceGatheringTimeout: Duration = .seconds(5)
     private static let authenticationDeadline: Duration = .seconds(30)
-    private static let iceDisconnectedGrace: Duration = .seconds(5)
+    /// Backstop for a transport libwebrtc reports `.disconnected` but never
+    /// `.failed`. ICE only reports `.disconnected` after
+    /// `WebRTCPeerSupport.iceUnwritableTimeout` without check responses, so a
+    /// short grace here would close healthy high-latency links that libwebrtc
+    /// itself is still waiting out. Deriving it from `iceInactiveTimeout`
+    /// keeps the grace at least as long as libwebrtc's own wait for `.failed`.
+    internal static let iceDisconnectedGrace: Duration = WebRTCPeerSupport.iceInactiveTimeout
 
     public init(
         hostKey: Curve25519.Signing.PrivateKey,

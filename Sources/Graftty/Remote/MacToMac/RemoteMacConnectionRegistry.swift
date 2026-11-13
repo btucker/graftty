@@ -665,7 +665,7 @@ final class RemoteMacConnectionRegistry {
         pendingPaneStores[entryID] = store
         defer { if pendingPaneStores[entryID] === store { pendingPaneStores[entryID] = nil } }
         do {
-            guard try await store.waitForFirstSnapshot(timeout: .seconds(15)) == .received else {
+            guard try await store.waitForFirstSnapshot(timeout: RemoteLinkDeadlines.firstSnapshot) == .received else {
                 throw ConnectionError.paneEnvironmentUnavailable(identity)
             }
             try Task.checkCancellation()

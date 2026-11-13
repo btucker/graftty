@@ -168,11 +168,12 @@ struct WebRTCHostAgentReconnectTests {
 
     @Test("""
     @spec REMOTE-11.11: When the current host ICE connection does not return \
-    to a connected state within five seconds after disconnecting, the \
+    to a connected state within thirty seconds after disconnecting, the \
     application shall close it and release that device's connection; if ICE \
     recovers first, the application shall keep the connection.
     """)
     func staleDisconnectedTransportReleasesTheHostSlotAfterGrace() async throws {
+        #expect(WebRTCHostAgent.iceDisconnectedGrace == .seconds(30))
         let agent = Self.makeHostAgent()
 
         await agent.beginConnectionLifecycle()

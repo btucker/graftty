@@ -93,7 +93,7 @@ struct PanesStateConvergenceTests {
         await fixture.link.close()
     }
 
-    @Test("@spec REMOTE-6.16: If a panes-state subscription has no initial snapshot within 15 seconds of initial subsystem acceptance or within a 15-second renewal attempt that includes channel opening and subsystem negotiation, then the shared client shall close the feed as unhealthy and end its observers while leaving the parent connection open.")
+    @Test("@spec REMOTE-6.16: If a panes-state subscription has no initial snapshot within 30 seconds of initial subsystem acceptance or within a 30-second renewal attempt that includes channel opening and subsystem negotiation, then the shared client shall close the feed as unhealthy and end its observers while leaving the parent connection open.")
     func acceptedButSilentChannelBecomesUnhealthy() async throws {
         let fixture = try await FeedFixture.make()
         let initial = ManualReplyDeadline()
