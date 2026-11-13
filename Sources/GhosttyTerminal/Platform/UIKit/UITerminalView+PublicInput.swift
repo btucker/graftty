@@ -95,6 +95,14 @@
             surface?.scrollToRow(row) ?? false
         }
 
+        /// Present the terminal as it is now before returning, after a
+        /// change such as ``scrollToRow(_:)``, so a caller that moves this
+        /// view in the same main-actor turn shows the new rows and the move
+        /// in one frame. Waits a few milliseconds at most for the renderer.
+        func presentLatestFrame() {
+            core.renderLatestImmediately()
+        }
+
         /// Whether the application currently owns the mouse.
         var isMouseCaptured: Bool {
             surface?.isMouseCaptured ?? false

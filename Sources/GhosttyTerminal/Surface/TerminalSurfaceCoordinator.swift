@@ -8,6 +8,7 @@
 import DisplayLink
 import Foundation
 import GhosttyKit
+import os
 import QuartzCore
 
 private final class TerminalTransactionRetirement: NSObject {
@@ -135,6 +136,19 @@ final class TerminalSurfaceCoordinator {
     private var isWindowVisible = true
     private var isApplicationActive = true
     private var pendingImmediateTick = true
+    private var pendingFrameRefresh = true
+    /// Main-thread draws as intervals on Instruments' Points of Interest
+    /// track, to compare their cost while scrolling.
+    static let signposter = OSSignposter(subsystem: "com.quotably.graftty", category: .pointsOfInterest)
+    /// UIKit libghostty presents only from host draws: its renderer thread
+    /// rebuilds frame data and then sends a render request instead of
+    /// drawing. Refreshing on every tick there would answer each request
+    /// with another frame update, and so another request, every frame.
+    #if os(iOS)
+        private static let refreshesEveryTick = false
+    #else
+        private static let refreshesEveryTick = true
+    #endif
 
     /// Running only while frames are owed. The engine's wakeups arrive at
     /// PTY speed, not display speed; rendering straight from them draws far
@@ -162,7 +176,7 @@ final class TerminalSurfaceCoordinator {
             self?.handleCellSizeChange(width: width, height: height)
         }
         bridge.onRenderRequest = { [weak self] in
-            self?.requestImmediateTick()
+            self?.requestImmediateTick(refreshingFrame: false)
         }
         bridge.onMouseShape = { [weak self] shape in
             self?.onMouseShape?(shape)
@@ -172,9 +186,29 @@ final class TerminalSurfaceCoordinator {
         }
     }
 
-    func requestImmediateTick() {
+    /// `refreshingFrame` asks the renderer thread to rebuild frame data
+    /// from terminal state at the tick. Native render requests and app
+    /// wakeups pass false: they follow work the renderer already did.
+    func requestImmediateTick(refreshingFrame: Bool = true) {
         pendingImmediateTick = true
+        pendingFrameRefresh = pendingFrameRefresh || refreshingFrame
         ensureDisplayLink()
+    }
+
+    /// Presents the terminal state as it is now before returning, so a
+    /// change made in this main-actor turn, such as a viewport scroll,
+    /// reaches the screen in the same Core Animation transaction as the
+    /// caller's layout for it rather than a frame earlier or later. Waits
+    /// for the renderer thread's frame update a few milliseconds at most.
+    func renderLatestImmediately() {
+        guard canRenderFrame, let surface else { return }
+        TerminalDebugLog.log(.render, "render latest")
+        // The frame update this waits for is the refresh a tick would ask.
+        pendingFrameRefresh = false
+        let signpost = Self.signposter.beginInterval("Terminal present latest")
+        surface.drawLatest()
+        Self.signposter.endInterval("Terminal present latest", signpost)
+        onPostRender?()
     }
 
     func stopDisplayLink() {
@@ -292,7 +326,7 @@ final class TerminalSurfaceCoordinator {
                 return isApplicationActive && isAttached()
             },
             onWakeup: { [weak self] in
-                self?.requestImmediateTick()
+                self?.requestImmediateTick(refreshingFrame: false)
             },
         )
         TerminalDebugLog.log(.lifecycle, "surface rebuild succeeded")
@@ -598,11 +632,28 @@ final class TerminalSurfaceCoordinator {
         }
         lastRenderTimestamp = timestamp
         idleFrameCount = 0
-        pendingImmediateTick = false
         TerminalDebugLog.log(.render, "tick")
+        // Where the renderer thread presents its own frames, this draw shows
+        // frame data from before this tick's refresh, so a request raised
+        // while the controller drains its mailbox still needs a later tick.
+        if Self.refreshesEveryTick { pendingImmediateTick = false }
         controller?.tick()
-        surface?.refresh()
-        surface?.draw()
+        // Otherwise this draw serves render requests raised during the
+        // drain, such as one for a finished frame update.
+        if !Self.refreshesEveryTick { pendingImmediateTick = false }
+        let signpost = Self.signposter.beginInterval("Terminal tick draw")
+        if Self.refreshesEveryTick {
+            surface?.refresh()
+            surface?.draw()
+        } else if pendingFrameRefresh {
+            // Draw the rebuilt frame data in this tick, rather than stale
+            // data now and the rebuild again on its render request.
+            surface?.drawLatest()
+        } else {
+            surface?.draw()
+        }
+        Self.signposter.endInterval("Terminal tick draw", signpost)
+        pendingFrameRefresh = false
         onPostRender?()
     }
 
@@ -711,6 +762,7 @@ final class TerminalSurfaceCoordinator {
         resizeThrottleArmed = false
         resizeThrottleTrailing = false
         pendingImmediateTick = true
+        pendingFrameRefresh = true
         lastRenderTimestamp = nil
         owningController?.remove(bridge)
         surfaceController = nil
@@ -785,6 +837,7 @@ final class TerminalSurfaceCoordinator {
 
         lastRenderTimestamp = nil
         pendingImmediateTick = true
+        pendingFrameRefresh = true
         tick()
         ensureDisplayLink()
     }
