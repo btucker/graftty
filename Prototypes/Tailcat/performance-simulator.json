@@ -1,0 +1,124 @@
+{
+  "date": "2026-11-13",
+  "environment": {
+    "platform": "iOS Simulator",
+    "device": "iPhone 18 Pro",
+    "runtime": "iOS 27.0",
+    "xcode": "27.2",
+    "xcodeBuild": "27B52",
+    "architecture": "arm64",
+    "hostModel": "Mac16,8"
+  },
+  "method": {
+    "rounds": 3,
+    "warmupEchoesPerRound": 5,
+    "oneByteEchoSamplesPerRound": 100,
+    "bulkPayloadBytes": 4194304,
+    "bulkMetric": "payload MiB / complete upload-and-echo duration, not one-way goodput",
+    "setupMetric": "fresh in-process fixture to SSH terminal open; Tailcat contacts public relays, WebRTC exchanges SDP in process",
+    "limits": "same-process simulator loopback; synthetic terminal; no injected delay or loss; no rendering, cellular, device power or concurrent bulk latency measured"
+  },
+  "sourceBaseCommit": "94710adc",
+  "sourceSHA256": {
+    "Prototypes/Tailcat/Sources/TailcatTransport.swift": "d2dd92349fa9d6659f471642b240b1a62d04cbecb9425798d5fe6c66dfed206b",
+    "Tests/GrafttyTailcatTests/TailcatIntegrationTests.swift": "d2497e9c186502e8c15ed70513fe503635202a3b883d120866817f7c195a13cf"
+  },
+  "reports": [
+    {
+      "round": 0,
+      "transport": "tailcat",
+      "bulkEchoMilliseconds": 237.90125,
+      "bulkEchoMiBPerSecond": 16.81369896122866,
+      "echo": {
+        "sampleCount": 100,
+        "p50Milliseconds": 0.563333,
+        "p95Milliseconds": 1.086,
+        "p99Milliseconds": 1.819625,
+        "maxMilliseconds": 2.513
+      },
+      "bulkPayloadBytes": 4194304,
+      "setupMilliseconds": 4464.460291,
+      "route": "direct"
+    },
+    {
+      "round": 0,
+      "transport": "webrtc",
+      "bulkEchoMilliseconds": 2674.164292,
+      "bulkEchoMiBPerSecond": 1.4957944102261613,
+      "echo": {
+        "p95Milliseconds": 1.0575,
+        "p99Milliseconds": 1.631417,
+        "p50Milliseconds": 0.668875,
+        "sampleCount": 100,
+        "maxMilliseconds": 1.713958
+      },
+      "bulkPayloadBytes": 4194304,
+      "setupMilliseconds": 149.343708,
+      "route": "local-ice"
+    },
+    {
+      "setupMilliseconds": 115.399417,
+      "bulkPayloadBytes": 4194304,
+      "bulkEchoMilliseconds": 4608.234416,
+      "bulkEchoMiBPerSecond": 0.8680113984895859,
+      "round": 1,
+      "route": "local-ice",
+      "transport": "webrtc",
+      "echo": {
+        "maxMilliseconds": 0.938917,
+        "p95Milliseconds": 0.663125,
+        "p50Milliseconds": 0.353,
+        "sampleCount": 100,
+        "p99Milliseconds": 0.877167
+      }
+    },
+    {
+      "transport": "tailcat",
+      "round": 1,
+      "bulkEchoMilliseconds": 153.020667,
+      "bulkEchoMiBPerSecond": 26.14025986437505,
+      "echo": {
+        "maxMilliseconds": 0.646209,
+        "p50Milliseconds": 0.371583,
+        "p95Milliseconds": 0.586625,
+        "p99Milliseconds": 0.609083,
+        "sampleCount": 100
+      },
+      "bulkPayloadBytes": 4194304,
+      "setupMilliseconds": 4457.8225,
+      "route": "direct"
+    },
+    {
+      "bulkEchoMilliseconds": 143.81325,
+      "echo": {
+        "sampleCount": 100,
+        "p50Milliseconds": 0.20475,
+        "p95Milliseconds": 0.224916,
+        "p99Milliseconds": 0.241792,
+        "maxMilliseconds": 0.266125
+      },
+      "route": "direct",
+      "bulkPayloadBytes": 4194304,
+      "transport": "tailcat",
+      "setupMilliseconds": 4481.096291,
+      "bulkEchoMiBPerSecond": 27.813848863022006,
+      "round": 2
+    },
+    {
+      "bulkEchoMilliseconds": 4636.041041,
+      "echo": {
+        "maxMilliseconds": 0.687417,
+        "p50Milliseconds": 0.276792,
+        "p95Milliseconds": 0.362167,
+        "p99Milliseconds": 0.401792,
+        "sampleCount": 100
+      },
+      "route": "local-ice",
+      "bulkPayloadBytes": 4194304,
+      "transport": "webrtc",
+      "setupMilliseconds": 124.432958,
+      "bulkEchoMiBPerSecond": 0.862805131495815,
+      "round": 2
+    }
+  ]
+}

@@ -6078,6 +6078,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SSH-1.12** When native WebRTC teardown begins, the application shall run it once outside Swift tasks, release detached resources before resuming its waiters, and finish cleanup even if a waiter is cancelled.
 
+**SSH-1.13** When the Tailcat prototype connects a paired SSH client to a pinned host, the application shall preserve terminal byte order and contents.
+
+**SSH-1.14** If the Tailcat prototype receives a mismatched SSH host key or an unpaired client key, then the application shall reject the SSH connection.
+
+**SSH-1.15** When a pending Tailcat accept is cancelled, the application shall interrupt the accept and retain the listener for a subsequent authenticated connection.
+
+**SSH-1.16** When a Tailcat peer closes, the application shall unblock pending SSH terminal receives and permit a fresh connection.
+
+**SSH-1.17** If descriptor duplication fails during Tailcat SSH setup, then the application shall release successful duplicates and report an error before NIO bootstrap.
+
+**SSH-1.18** When a Tailcat SSH connection closes its NIO channel, the application shall close the remote SSH transport without requiring explicit Tailcat peer closure.
+
 ## TEST — TEST
 
 ### TEST-1.x

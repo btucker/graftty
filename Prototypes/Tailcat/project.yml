@@ -1,0 +1,49 @@
+name: TailcatPrototype
+options:
+  bundleIdPrefix: net.graftty.prototype
+packages:
+  Graftty:
+    path: ../..
+targetTemplates:
+  Tests:
+    type: bundle.unit-test
+    sources:
+      - Sources
+      - ../../Tests/GrafttyTailcatTests
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+        OTHER_LDFLAGS: "$(inherited) -framework Security -framework CoreFoundation -lresolv"
+    dependencies:
+      - framework: ../../.deps/Tailcat.xcframework
+      - package: Graftty
+        product: GrafttyRemoteClient
+      - package: Graftty
+        product: GrafttyRemoteTestSupport
+    # GrafttyRemoteTestSupport exports the existing SSH probe dependencies.
+targets:
+  TailcatTests:
+    templates: [Tests]
+    platform: iOS
+    deploymentTarget: "17.0"
+  TailcatTestsMac:
+    templates: [Tests]
+    platform: macOS
+    deploymentTarget: "14.0"
+schemes:
+  TailcatSimulator:
+    build:
+      targets:
+        TailcatTests: all
+    test:
+      targets: [TailcatTests]
+      parallelizable: false
+  TailcatMac:
+    build:
+      targets:
+        TailcatTestsMac: all
+    test:
+      targets: [TailcatTestsMac]
+      parallelizable: false
