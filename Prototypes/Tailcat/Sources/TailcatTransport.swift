@@ -128,6 +128,8 @@ public final class TailcatPeer: @unchecked Sendable {
     public func close() async { await resource.close() }
 }
 
+/// Keep the owning TailcatPeer alive while using this listener or its streams.
+/// Closing or releasing the peer closes the C library's complete resource tree.
 public final class TailcatListener: @unchecked Sendable {
     private let resource: Resource
     fileprivate init(_ handle: tc_handle) { resource = Resource(handle) }
@@ -142,6 +144,8 @@ public final class TailcatListener: @unchecked Sendable {
 
 /// Owns the Swift end of an internal socket pair, not a listening TCP port.
 /// The SSH client duplicates this file descriptor and owns its duplicates.
+/// After handing duplicates to NIO, close `file` so local SSH closure reaches
+/// the bridge. Retain the owning peer until the stream is finished.
 public final class TailcatPipe: @unchecked Sendable {
     public let file: FileHandle
     private let bridge: SocketBridge
@@ -262,6 +266,7 @@ public final class TailcatSSHConnection: @unchecked Sendable {
         let ssh = DirectSSHHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
         do {
             try await ssh.connect(input: pipe.file, output: pipe.file)
+            try pipe.file.close()
             try Task.checkCancellation()
             return TailcatSSHConnection(ssh: ssh, peer: peer, pipe: pipe)
         } catch {

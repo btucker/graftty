@@ -8,7 +8,11 @@ SOURCE="${GRAFTTY_TAILCAT_SOURCE:-$BUILD/upstream}"
 mkdir -p "$BUILD" "$REPO/.deps"
 if [[ ! -d "$SOURCE/.git" ]]; then
   git init "$SOURCE"
-  git -C "$SOURCE" remote add origin https://github.com/tailscale/tailcat.git
+fi
+if ! git -C "$SOURCE" rev-parse --verify HEAD >/dev/null 2>&1; then
+  if ! git -C "$SOURCE" remote get-url origin >/dev/null 2>&1; then
+    git -C "$SOURCE" remote add origin https://github.com/tailscale/tailcat.git
+  fi
   git -C "$SOURCE" fetch --depth 1 origin "$PIN"
   git -C "$SOURCE" checkout --detach FETCH_HEAD
 fi

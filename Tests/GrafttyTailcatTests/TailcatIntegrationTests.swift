@@ -2,14 +2,53 @@ import CryptoKit
 import Darwin
 import Foundation
 import GrafttyProtocol
-import GrafttyRemoteClient
+@testable import GrafttyRemoteClient
 import NIOCore
+import NIOConcurrencyHelpers
 import NIOPosix
 import NIOSSH
 import Testing
 
 @Suite("Embedded Tailcat with the Graftty SSH client", .serialized)
 struct TailcatIntegrationTests {
+    @Test("@spec SSH-1.17: If descriptor duplication fails during Tailcat SSH setup, then the application shall release successful duplicates and report an error before NIO bootstrap.")
+    func descriptorAllocationFailureIsRecoverable() throws {
+        let pipe = Pipe()
+        var first: Int32 = -1
+        var calls = 0
+        var released: [Int32] = []
+        defer { if first >= 0 { Darwin.close(first) } }
+        #expect(throws: POSIXError.self) {
+            _ = try duplicatePipeDescriptors(pipe.fileHandleForReading.fileDescriptor,
+                closeDescriptor: { released.append($0) }) { descriptor in
+                calls += 1
+                if calls == 1 {
+                    first = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+                    return first
+                }
+                errno = EMFILE
+                return -1
+            }
+        }
+        #expect(first >= 0)
+        #expect(released == [first])
+    }
+
+    @Test("@spec SSH-1.18: When a Tailcat SSH connection closes its NIO channel, the application shall close the remote SSH transport without requiring explicit Tailcat peer closure.", .timeLimit(.minutes(2)))
+    func sshClosureReleasesBridge() async throws {
+        try await withFixture { fixture in
+            let connection = try await fixture.connect()
+            let (serverChannel, _) = try await fixture.accepted.value
+            await connection.ssh.close()
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while serverChannel.isActive && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(!serverChannel.isActive)
+            await connection.close()
+        }
+    }
+
     @Test("@spec SSH-1.13: When the Tailcat prototype connects a paired SSH client to a pinned host, the application shall preserve terminal byte order and contents.", .timeLimit(.minutes(2)))
     func authenticatedTerminalRoundTrip() async throws {
         try await withFixture { fixture in
@@ -92,6 +131,11 @@ struct TailcatIntegrationTests {
                 let terminal = try await connection.ssh.openTerminalSession(sessionName: "close-probe")
                 defer { terminal.close() }
                 let receive = Task { try await terminal.receive() }
+                let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+                while terminal.pendingReceiverCountForTesting == 0 && ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(1))
+                }
+                #expect(terminal.pendingReceiverCountForTesting == 1)
                 await fixture.server.close()
                 await #expect(throws: (any Error).self) { _ = try await receive.value }
             } catch { await connection.close(); throw error }
@@ -103,6 +147,20 @@ struct TailcatIntegrationTests {
             await connection.close()
         }
     }
+}
+
+private func duplicatePipeDescriptors(_ descriptor: Int32,
+    closeDescriptor: (Int32) -> Void = { _ = Darwin.close($0) },
+    duplicate: (Int32) -> Int32 = { fcntl($0, F_DUPFD_CLOEXEC, 0) }) throws -> (Int32, Int32) {
+    let input = duplicate(descriptor)
+    guard input >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    let output = duplicate(descriptor)
+    guard output >= 0 else {
+        let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        closeDescriptor(input)
+        throw error
+    }
+    return (input, output)
 }
 
 private func fingerprint(_ key: Curve25519.Signing.PrivateKey) throws -> RemoteIdentityFingerprint {
@@ -121,10 +179,15 @@ private final class Fixture: @unchecked Sendable {
         let clientKey = clientKey
         accepted = Task {
             let pipe = try await listener.accept()
+            var descriptors: (Int32, Int32)?
+            let initialized = NIOLockedValueBox(false)
             do {
+                let pair = try duplicatePipeDescriptors(pipe.file.fileDescriptor)
+                descriptors = pair
                 let channel = try await NIOPipeBootstrap(group: MultiThreadedEventLoopGroup.singleton)
                     .channelInitializer { channel in
-                        channel.eventLoop.makeCompletedFuture {
+                        initialized.withLockedValue { $0 = true }
+                        return channel.eventLoop.makeCompletedFuture {
                             let config = SSHServerConfiguration(hostKeys: [NIOSSHPrivateKey(ed25519Key: hostKey)],
                                 userAuthDelegate: PairedKey(key: NIOSSHPrivateKey(ed25519Key: clientKey).publicKey))
                             try channel.pipeline.syncOperations.addHandler(NIOSSHHandler(role: .server(config),
@@ -133,9 +196,18 @@ private final class Fixture: @unchecked Sendable {
                                     return child.pipeline.addHandler(TerminalEcho())
                                 }))
                         }
-                    }.takingOwnershipOfDescriptors(input: dup(pipe.file.fileDescriptor), output: dup(pipe.file.fileDescriptor)).get()
+                    }.takingOwnershipOfDescriptors(input: pair.0, output: pair.1).get()
+                do { try pipe.file.close() }
+                catch { try? await channel.close().get(); throw error }
                 return (channel, pipe)
-            } catch { await pipe.close(); throw error }
+            } catch {
+                if !initialized.withLockedValue({ $0 }), let descriptors {
+                    Darwin.close(descriptors.0)
+                    Darwin.close(descriptors.1)
+                }
+                await pipe.close()
+                throw error
+            }
         }
     }
 
@@ -192,6 +264,11 @@ private final class TerminalEcho: ChannelInboundHandler {
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         let reply: Bool
         switch event {
+        case let request as SSHChannelRequestEvent.SubsystemRequest:
+            // Match a legacy host: reject unsupported optional probes at once.
+            if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
+            context.close(promise: nil)
+            return
         case let request as SSHChannelRequestEvent.EnvironmentRequest: reply = request.wantReply
         case let request as SSHChannelRequestEvent.PseudoTerminalRequest: reply = request.wantReply
         case let request as SSHChannelRequestEvent.ShellRequest: reply = request.wantReply

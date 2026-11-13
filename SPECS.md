@@ -6086,6 +6086,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SSH-1.16** When a Tailcat peer closes, the application shall unblock pending SSH terminal receives and permit a fresh connection.
 
+**SSH-1.17** If descriptor duplication fails during Tailcat SSH setup, then the application shall release successful duplicates and report an error before NIO bootstrap.
+
+**SSH-1.18** When a Tailcat SSH connection closes its NIO channel, the application shall close the remote SSH transport without requiring explicit Tailcat peer closure.
+
 ## TEST — TEST
 
 ### TEST-1.x
