@@ -34,7 +34,7 @@ func openChildChannel(
     parentChannel: Channel,
     parentHandler: NIOSSHHandler,
     channelType: SSHChannelType = .session,
-    timeout: Duration = .seconds(10),
+    timeout: Duration = RemoteLinkDeadlines.childChannelOpen,
     closeParentOnTimeout: Bool = true,
     waiter: SSHReplyWaiter<Channel> = .init(),
     initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>

@@ -3590,7 +3590,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.15** While a panes-state subscription remains open, the client shall renew only that subscription on the existing host connection 60 seconds after the previous fresh initial snapshot and apply its new initial snapshot, including empty or unchanged legacy snapshots, without treating a quiet feed as a failure.
 
-**REMOTE-6.16** If a panes-state subscription has no initial snapshot within 15 seconds of initial subsystem acceptance or within a 15-second renewal attempt that includes channel opening and subsystem negotiation, then the shared client shall close the feed as unhealthy and end its observers while leaving the parent connection open.
+**REMOTE-6.16** If a panes-state subscription has no initial snapshot within 30 seconds of initial subsystem acceptance or within a 30-second renewal attempt that includes channel opening and subsystem negotiation, then the shared client shall close the feed as unhealthy and end its observers while leaving the parent connection open.
 
 **REMOTE-6.17** When a panes-state subscription is replaced, the client shall fence snapshots and close callbacks from earlier generations so they cannot overwrite or close the replacement.
 
@@ -3712,7 +3712,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.10** When a signed signaling offer requests reconnect for a paired device with an active connection, the host shall replace only that device's lifecycle, admit other devices independently, and reject ordinary same-device offers as busy.
 
-**REMOTE-11.11** When the current host ICE connection does not return to a connected state within five seconds after disconnecting, the application shall close it and release that device's connection; if ICE recovers first, the application shall keep the connection.
+**REMOTE-11.11** When the current host ICE connection does not return to a connected state within thirty seconds after disconnecting, the application shall close it and release that device's connection; if ICE recovers first, the application shall keep the connection.
 
 **REMOTE-11.12** When signaling authenticates a connection for one paired device, the host shall reject SSH user authentication from a different device before it can open a subsystem channel.
 
@@ -3747,6 +3747,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.27** If an optional history channel cannot open before its deadline, then the application shall preserve the active terminal and deliver history over its primary channel.
 
 **REMOTE-11.28** When a remote connection closes, the client shall finish closing its SSH transports before closing the peer connection, and concurrent close callers shall await the same teardown.
+
+**REMOTE-11.29** The client shall allow thirty seconds for a signaling request to complete, an SSH child channel to open, and a panes-state initial snapshot to arrive, so a link with multi-second round trips is not torn down as stalled.
+
+**REMOTE-11.30** The application shall configure both peers to tolerate high-latency links: a candidate pair shall stop counting as receiving only after ten seconds without inbound traffic, become unwritable (ICE disconnected) only after ten seconds without check responses, and time out (ICE failed) only after thirty seconds without check responses.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 

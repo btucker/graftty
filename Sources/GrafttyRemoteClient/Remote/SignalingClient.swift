@@ -311,19 +311,17 @@ public struct SignalingClient: Sendable {
     /// default session, and so this file doesn't mutate shared, ambient
     /// state as a side effect of being imported.
     ///
-    /// Signaling is LAN/tailnet-local: a healthy host answers
-    /// `/v2/rtc/challenge` and `/v2/rtc/offer` in well under a second.
-    /// 10s is generous headroom
-    /// above that normal case while still failing fast enough that a
-    /// hung request (dropped Wi-Fi, a host that vanished mid-request)
-    /// doesn't stall negotiation indefinitely — paired with
-    /// `RemoteConnectionCoordinator`'s per-host failure cooldown, which
-    /// only starts once this timeout (or any other failure) actually
-    /// surfaces.
+    /// Signaling is normally LAN/tailnet-local and answers in well under a
+    /// second. The 10s idle timeout still fails a host that never answers
+    /// (dropped Wi-Fi, a sleeping host awaiting Wake-on-LAN) quickly, while
+    /// the total budget (`RemoteLinkDeadlines.signalingRequest`) leaves room
+    /// for an offer on a high-latency link: several round trips plus up to
+    /// five seconds of host ICE gathering. Failures surface into
+    /// `RemoteConnectionCoordinator`'s per-host failure cooldown.
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 10
-        config.timeoutIntervalForResource = 10
+        config.timeoutIntervalForResource = RemoteLinkDeadlines.signalingRequest
         return URLSession(configuration: config)
     }()
 }

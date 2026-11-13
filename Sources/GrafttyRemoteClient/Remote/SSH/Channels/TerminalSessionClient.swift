@@ -283,7 +283,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         ))
         try await requestSubsystem(
             SSHChannelTypeNames.terminalPaged, on: child, waiter: waiter,
-            timeout: .seconds(10), timeoutError: ClientError.channelClosed
+            timeout: RemoteLinkDeadlines.childChannelOpen, timeoutError: ClientError.channelClosed
         )
     }
 
