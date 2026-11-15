@@ -134,6 +134,39 @@ struct MacPagedTerminalTests {
     }
 
     #if GRAFTTY_PAGED_HISTORY
+    @Test("Native history recovery distinguishes the oldest loaded row from the prefetch region", .timeLimit(.minutes(1)))
+    func recoveryBoundaryExcludesPrefetchRegion() async throws {
+        let fixture = try await HistoryDaemon.make(lineCount: 2000)
+        defer { fixture.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: fixture.launcher.executable,
+            zmxDir: fixture.launcher.zmxDir, sessionName: "history"))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        guard case .checkpoint(let checkpoint) = try #require(await events.next()) else {
+            Issue.record("Expected a current-screen checkpoint"); return
+        }
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        try await renderer.install(checkpoint, generation: 1)
+        try await stream.requestHistory(.init(incarnation: checkpoint.incarnation, checkpointID: checkpoint.id,
+            requestID: 1, ordinal: 0, screen: 0))
+        guard case .page(let page) = try #require(await events.next()) else {
+            Issue.record("Expected an older history page"); return
+        }
+        #expect(await renderer.appendHistory(page.data, screen: 0, generation: 1) == .applied)
+        let nearTop = "scroll_to_row:10"
+        #expect(nearTop.withCString { ghostty_surface_binding_action(terminal.raw, $0, UInt(nearTop.utf8.count)) })
+        #expect(renderer.isNearHistoryTop(screen: 0, generation: 1))
+        #expect(!renderer.isAtHistoryTop(screen: 0, generation: 1))
+        let atTop = "scroll_to_row:0"
+        #expect(atTop.withCString { ghostty_surface_binding_action(terminal.raw, $0, UInt(atTop.utf8.count)) })
+        #expect(renderer.isAtHistoryTop(screen: 0, generation: 1))
+        #expect(!renderer.isAtHistoryTop(screen: 1, generation: 1))
+        #expect(!renderer.isAtHistoryTop(screen: 0, generation: 2))
+    }
+
     @Test("@spec TERM-12.48: When a terminal's height changes within its current backing pages without changing its columns, the application shall keep retained older history fetchable on Mac and mobile without requiring a replacement checkpoint, including after a height round trip.", .timeLimit(.minutes(1)), arguments: [[UInt16(30)], [UInt16(16)], [UInt16(30), 16, 24]])
     func heightChangesPreservePendingHistory(heights: [UInt16]) async throws {
         try await verifyHistoryAfterHeightChanges(heights, requiresRecovery: false)

@@ -5,6 +5,93 @@ import Testing
 
 @MainActor
 struct PagedTerminalCoordinatorTests {
+    @Test("@spec TERM-12.73: While retained terminal history remains readable, the application shall show checkpoint recovery only after user history interaction at the oldest loaded boundary on Mac and mobile, preserve retained content, and hide the warning when the reader moves away.", arguments: [false, true])
+    func recoveryWarningFollowsHistoryBoundary(nativeRejection: Bool) async throws {
+        let surface = Surface()
+        surface.nearTop = true
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { requests.append($0) }
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        await coordinator.viewportDidChange()
+        guard case .history(let first) = try #require(requests.last) else { return }
+        try await coordinator.handle(.page(page(first)))
+        guard case .history(let second) = try #require(requests.last) else { return }
+        #expect(surface.pages == [0])
+
+        // A request can finish after the reader has scrolled away from the top.
+        surface.nearTop = false
+        if nativeRejection {
+            surface.result = .requiresRecovery
+            try await coordinator.handle(.page(page(second)))
+        } else {
+            try await coordinator.handle(.unavailable(.init(request: second, reason: .expired)))
+        }
+        #expect(coordinator.status == .requiresRecovery)
+        #expect(!coordinator.showsHistoryRecovery)
+        #expect(surface.installed == [1])
+        #expect(surface.pages == [0])
+
+        // The prefetch threshold is not the oldest loaded boundary.
+        surface.nearTop = true
+        await coordinator.viewportDidChange()
+        #expect(!coordinator.showsHistoryRecovery)
+        surface.atTop = true
+        await coordinator.viewportDidChange()
+        #expect(coordinator.showsHistoryRecovery)
+        surface.atTop = false
+        await coordinator.viewportDidChange(requestHistory: false)
+        #expect(!coordinator.showsHistoryRecovery)
+        #expect(coordinator.status == .requiresRecovery)
+        #expect(requests.count == 2, "Viewport changes must not retry or replace the snapshot")
+        #expect(surface.pages == [0])
+        coordinator.disconnect()
+        #expect(!coordinator.showsHistoryRecovery)
+    }
+
+    @Test("A background history failure waits for user interaction before showing recovery")
+    func backgroundFailureDoesNotDemandRecovery() async throws {
+        let surface = Surface()
+        surface.nearTop = true
+        surface.atTop = true
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { requests.append($0) }
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        await coordinator.loadIfNeeded(prefetch: true)
+        guard case .history(let request) = try #require(requests.last) else { return }
+        try await coordinator.handle(.unavailable(.init(request: request, reason: .expired)))
+        await coordinator.viewportDidChange(requestHistory: false)
+        #expect(!coordinator.showsHistoryRecovery)
+        await coordinator.viewportDidChange()
+        #expect(coordinator.showsHistoryRecovery)
+        coordinator.invalidateHistory()
+        #expect(coordinator.showsHistoryRecovery, "Invalidation preserves the reader's history intent")
+        await coordinator.recover()
+        #expect(!coordinator.showsHistoryRecovery)
+        try await coordinator.handle(.checkpoint(checkpoint(2)))
+        coordinator.invalidateHistory()
+        #expect(!coordinator.showsHistoryRecovery, "A new checkpoint clears earlier scroll intent")
+        coordinator.disconnect()
+    }
+
+    @Test("A stale native attachment keeps recovery available without a usable history boundary")
+    func staleAttachmentKeepsRecoveryActionable() async throws {
+        let surface = Surface()
+        surface.nearTop = true
+        surface.result = .stale
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { requests.append($0) }
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        await coordinator.viewportDidChange()
+        guard case .history(let request) = try #require(requests.last) else { return }
+        try await coordinator.handle(.page(page(request)))
+        #expect(coordinator.status == .requiresRecovery)
+        #expect(coordinator.showsHistoryRecovery)
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        #expect(surface.installed == [1], "A stale attachment still requires explicit recovery, not a duplicate checkpoint")
+        #expect(coordinator.showsHistoryRecovery)
+        coordinator.disconnect()
+    }
+
     @Test("@spec TERM-12.60: When a remote viewer scrolls toward unloaded history, the application shall request one page at a time and continue only while the viewport needs history, without initial prefetch or recurring polling.")
     func viewportDemandStartsAndContinuesBoundedHistory() async throws {
         let surface = Surface()
@@ -292,6 +379,7 @@ struct PagedTerminalCoordinatorTests {
                                             hasPrimaryHistory: true, hasAlternateHistory: false)
         await #expect(throws: Unmounted.self) { try await coordinator.handle(.checkpoint(value)) }
         #expect(coordinator.status == .requiresRecovery)
+        #expect(coordinator.showsHistoryRecovery, "Initial restore failure must remain actionable")
 
         surface.installError = nil
         try await coordinator.handle(.checkpoint(value))
@@ -435,6 +523,7 @@ struct PagedTerminalCoordinatorTests {
         var installed: [UInt64] = []
         var pages: [UInt16] = []
         var nearTop = false
+        var atTop = false
         var result: PagedTerminalPageResult = .applied
         var installError: (any Error)?
         var holdInstall = false
@@ -457,5 +546,6 @@ struct PagedTerminalCoordinatorTests {
             return result
         }
         func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 }
+        func isAtHistoryTop(screen: UInt16, generation: UInt64) -> Bool { atTop && screen == 0 }
     }
 }

@@ -858,6 +858,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.72** When a mobile follower's scroll changes the history rows shown above its live screen, the application shall present those rows in the same main-actor turn that moves their display.
 
+**TERM-12.73** While retained terminal history remains readable, the application shall show checkpoint recovery only after user history interaction at the oldest loaded boundary on Mac and mobile, preserve retained content, and hide the warning when the reader moves away.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.

@@ -928,4 +928,5 @@ private final class RemotePagedRenderer: PagedTerminalRenderer {
     }
     func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult { .applied }
     func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { true }
+    func isAtHistoryTop(screen: UInt16, generation: UInt64) -> Bool { true }
 }

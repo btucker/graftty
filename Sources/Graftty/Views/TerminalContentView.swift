@@ -286,8 +286,10 @@ private struct MacPagedHistoryBanner: View {
         if let paging = presentation.coordinator {
             switch paging.status {
             case .requiresRecovery, .pageTooLarge:
-                message("Older history needs a fresh snapshot", button: "Reload from live screen") {
-                    await paging.recover()
+                if paging.status == .pageTooLarge || paging.showsHistoryRecovery {
+                    message("Older history needs a fresh snapshot", button: "Reload from live screen") {
+                        await paging.recover()
+                    }
                 }
             case .unavailable:
                 message("Couldn't load older history", button: "Retry") { await paging.retry() }

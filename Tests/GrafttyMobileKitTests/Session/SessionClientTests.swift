@@ -1173,6 +1173,7 @@ struct SessionClientTests {
             return .applied
         }
         func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 }
+        func isAtHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 }
     }
 
     @Test("Non-paged output waits for grid readiness and a suspended attachment cannot resume parsing")

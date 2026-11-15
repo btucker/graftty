@@ -12,8 +12,10 @@ struct PagedHistoryBanner: View {
         case .loading:
             message("Loading older history") { ProgressView() }
         case .requiresRecovery:
-            message("Older history needs a fresh snapshot") {
-                Button("Reload from live screen") { Task { await paging.recover() } }
+            if paging.showsHistoryRecovery {
+                message("Older history needs a fresh snapshot") {
+                    Button("Reload from live screen") { Task { await paging.recover() } }
+                }
             }
         case .unavailable:
             message("Couldn't load older history") {
