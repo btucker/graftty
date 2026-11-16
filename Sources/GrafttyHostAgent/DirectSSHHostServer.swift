@@ -31,7 +31,7 @@ public actor DirectSSHHostServer {
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
         activeRemotePeers: ActiveRemotePeerRegistry = ActiveRemotePeerRegistry(),
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        streamFactory: @escaping @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream,
         pagedFactory: PagedTerminalStreamFactory? = nil,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,

@@ -49,6 +49,7 @@ public final class HeadlessHostRuntime {
     var worktreeStats: [String: WorktreeWireStats] = [:]
     public internal(set) var hostResources: HostResourceSnapshot?
     public var origin: WorktreeOrigin?
+    public var displayOwnershipStore: SessionDisplayOwnershipStore?
 
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,
                 initialState: AppState? = nil, portScanner: PortScanner? = nil,
@@ -146,18 +147,21 @@ public final class HeadlessHostRuntime {
         await AgentControl.resumeHostStoppedConversations(platform: controlPlatform)
     }
 
-    public func openWorktree(_ path: String, command: String? = nil, selectTab: Bool = true) async throws -> String {
+    public func openWorktree(_ path: String, command: String? = nil, selectTab: Bool = true,
+                             sourcePaneSessionName: String? = nil) async throws -> String {
         try acquire(path)
         defer { busyPaths.remove(path) }
-        return try await openUnlocked(path, command: command, selectTab: selectTab)
+        return try await openUnlocked(path, command: command, selectTab: selectTab, sourcePaneSessionName: sourcePaneSessionName)
     }
 
-    func openUnlocked(_ path: String, command: String? = nil, selectTab: Bool = true) async throws -> String {
+    func openUnlocked(_ path: String, command: String? = nil, selectTab: Bool = true,
+                      sourcePaneSessionName: String? = nil) async throws -> String {
         let initialIndex = try indices(path)
         let initialWorktree = state.repos[initialIndex.repo].worktrees[initialIndex.worktree]
         guard FileManager.default.fileExists(atPath: path) else { throw HostRuntimeError.notFound("worktree directory is missing") }
         if initialWorktree.state == .running, let slot = initialWorktree.splitTree.allLeaves.first,
            let session = initialWorktree.paneSessions[slot] { return launcher.sessionName(for: session) }
+        let initialSize = startupWindowSize(from: sourcePaneSessionName ?? startupSession(in: state.selectedWorktreePath))
         let managed = initialWorktree.agents.first { $0.status == .starting && $0.paneSlotID != nil }
         let slot = managed?.paneSlotID ?? PaneSlotID()
         let session = managed?.paneSessionID ?? PaneSessionID()
@@ -172,7 +176,7 @@ public final class HeadlessHostRuntime {
         state.repos[index.repo].worktrees[index.worktree] = worktree
         if selectTab { state.selectedWorktreePath = path }
         do { try save() } catch { state = previous; throw error }
-        do { try await terminals.start(spawn(session: session, path: path, command: command)) }
+        do { try await terminals.start(spawn(session: session, path: path, command: command, initialWindowSize: initialSize)) }
         catch {
             await rollbackReservedPane(path: path, slot: slot, session: session, reason: error.localizedDescription)
             throw error
@@ -182,7 +186,8 @@ public final class HeadlessHostRuntime {
     }
 
     public func splitPane(target: String, direction: PaneControlRequest.SplitDirection, command: String? = nil,
-                          managedAgent: ManagedAgent? = nil, selectTab: Bool = true) async throws -> String {
+                          managedAgent: ManagedAgent? = nil, selectTab: Bool = true,
+                          sourcePaneSessionName: String? = nil) async throws -> String {
         let (path, slot) = try resolve(target)
         try acquire(path)
         defer { busyPaths.remove(path) }
@@ -190,6 +195,8 @@ public final class HeadlessHostRuntime {
         let session = managedAgent?.paneSessionID ?? PaneSessionID()
         let index = try indices(path)
         var worktree = state.repos[index.repo].worktrees[index.worktree]
+        let sourceSession = worktree.paneSessions[slot].map { launcher.sessionName(for: $0) }
+        let initialSize = startupWindowSize(from: sourcePaneSessionName ?? sourceSession)
         worktree.recordPaneSession(session, for: newSlot)
         let axis: SplitDirection = direction == .left || direction == .right ? .horizontal : .vertical
         worktree.splitTree = direction == .left || direction == .up
@@ -200,7 +207,7 @@ public final class HeadlessHostRuntime {
         let previous = state
         state.repos[index.repo].worktrees[index.worktree] = worktree
         do { try save() } catch { state = previous; throw error }
-        do { try await terminals.start(spawn(session: session, path: path, command: command)) }
+        do { try await terminals.start(spawn(session: session, path: path, command: command, initialWindowSize: initialSize)) }
         catch {
             await rollbackReservedPane(path: path, slot: newSlot, session: session, reason: error.localizedDescription)
             throw error
@@ -357,7 +364,8 @@ public final class HeadlessHostRuntime {
             try await prepareEnvironment?(path)
             try Task.checkCancellation()
             guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
-            let session = try await openUnlocked(path, command: plan.initialCommand, selectTab: plan.selectTab ?? true)
+            let session = try await openUnlocked(path, command: plan.initialCommand, selectTab: plan.selectTab ?? true,
+                sourcePaneSessionName: plan.sourcePaneSessionName ?? startupSession(in: plan.sourceWorktreePath))
             state.transitionCreation(at: path, to: .ready, operationID: operationID)
             try? save()
             return session
@@ -480,7 +488,21 @@ public final class HeadlessHostRuntime {
         terminals.detachAll()
     }
 
-    public func spawn(session: PaneSessionID, path: String, command: String? = nil) -> ZmxSpawnConfiguration {
+    private func startupSession(in path: String?) -> String? {
+        guard let path, let worktree = state.worktree(forPath: path),
+              let slot = worktree.focusedPaneSlotID ?? worktree.splitTree.allLeaves.first else { return nil }
+        return worktree.paneSessions[slot].map { launcher.sessionName(for: $0) }
+    }
+
+    private func startupWindowSize(from sessionName: String?) -> PtyProcess.WindowSize? {
+        guard let sessionName, let displayOwnershipStore else { return nil }
+        let snapshot = displayOwnershipStore.snapshot(sessionName: sessionName)
+        guard snapshot.ownerClientID != nil else { return nil }
+        return .init(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+    }
+
+    public func spawn(session: PaneSessionID, path: String, command: String? = nil,
+                      initialWindowSize: PtyProcess.WindowSize? = nil) -> ZmxSpawnConfiguration {
         let command = placements.environment(for: path).map { DevContainerPreparer.shellCommand(for: $0, command: command) } ?? command
         var environment = ProcessInfo.processInfo.environment
         for key in ZmxLauncher.leakyEnvKeysToStripAtAppLaunch { environment.removeValue(forKey: key) }
@@ -490,17 +512,18 @@ public final class HeadlessHostRuntime {
         #endif
         environment["SHELL"] = configuration.shell
         environment["GRAFTTY_STATE_DIR"] = configuration.stateDirectory.path
-        let config = ZmxSpawnConfiguration.make(launcher: launcher, paneSessionID: session, worktreePath: path,
+        var config = ZmxSpawnConfiguration.make(launcher: launcher, paneSessionID: session, worktreePath: path,
             socketPath: configuration.socketPath, processEnv: environment,
             bundleURL: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent(),
             ghosttyResourcesDir: nil, agentHooksDisabled: false, agentHooksRoot: configuration.hooksDirectory,
             initialCommand: command)
         if let command, !config.runsInitialCommand {
             let script = command + "\nexec " + WorktreeAgentLaunchCommand.shellLiteral(configuration.shell) + " -l"
-            return ZmxSpawnConfiguration(sessionName: config.sessionName,
+            config = ZmxSpawnConfiguration(sessionName: config.sessionName,
                 argv: [launcher.executable.path, "attach", config.sessionName, "/bin/sh", "-c", script],
                 env: config.env, workingDirectory: config.workingDirectory, shellReadySignalAvailable: false)
         }
+        config.initialWindowSize = initialWindowSize
         return config
     }
 

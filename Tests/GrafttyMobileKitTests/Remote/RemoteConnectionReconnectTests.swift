@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import CryptoKit
 import Foundation
+import GhosttyTerminal
 import GrafttyProtocol
 import GrafttyTunnel
 import NIOCore
@@ -256,6 +257,8 @@ struct RemoteConnectionReconnectTests {
             backoffSchedule: backoffSchedule
         )
         defer { client.stop() }
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 80, rows: 24,
+            widthPixels: 960, heightPixels: 576, cellWidthPixels: 12, cellHeightPixels: 24))
         client.start()
 
         // 1: first dial negotiates through the real coordinator + signaling.

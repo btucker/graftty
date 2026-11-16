@@ -36,11 +36,12 @@ public final class TerminalInputContainerView: UIView,
             if onPhysicalViewportReady != nil { setNeedsLayout() }
         }
     }
-    private(set) var awaitingPhysicalViewport = false
+    private(set) var awaitingPhysicalViewport = true
     public var authoritativeGrid: SessionClient.GridSize? {
         didSet {
             guard authoritativeGrid != oldValue else { return }
-            awaitingPhysicalViewport = oldValue != nil && authoritativeGrid == nil
+            if authoritativeGrid != nil { awaitingPhysicalViewport = false }
+            else if oldValue != nil { awaitingPhysicalViewport = true }
             if oldValue == nil && authoritativeGrid != nil { cancelPendingApplicationScroll() }
             updateTerminalGestureEnablement()
             setNeedsLayout()

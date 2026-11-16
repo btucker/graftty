@@ -56,18 +56,21 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         public let sessionName: String
         public let workingDirectory: URL?
         public let spawnConfiguration: ZmxSpawnConfiguration?
+        public let initialWindowSize: PtyProcess.WindowSize?
         public init(
             zmxExecutable: URL,
             zmxDir: URL,
             sessionName: String,
             workingDirectory: URL? = nil,
-            spawnConfiguration: ZmxSpawnConfiguration? = nil
+            spawnConfiguration: ZmxSpawnConfiguration? = nil,
+            initialWindowSize: PtyProcess.WindowSize? = nil
         ) {
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.sessionName = sessionName
             self.workingDirectory = workingDirectory
             self.spawnConfiguration = spawnConfiguration
+            self.initialWindowSize = initialWindowSize
         }
     }
 
@@ -244,7 +247,8 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
             spawned = try PtyProcess.spawn(
                 argv: argv,
                 env: env,
-                currentDirectory: config.workingDirectory
+                currentDirectory: config.workingDirectory,
+                initialWindowSize: config.initialWindowSize
             )
         } catch {
             throw Error.spawnFailed(error)

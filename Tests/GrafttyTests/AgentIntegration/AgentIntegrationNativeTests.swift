@@ -204,14 +204,15 @@ private final class AgentIntegrationMacHost {
         let launcher = runtime.launcher
         let attachments = attachments
         return WebRTCHostAgent(hostKey: hostKey, trustedPeerStore: peers,
-            streamFactory: { target in
+            streamFactory: { target, initialGrid in
                 let config = try await runtime.sessionConfiguration(target)
                 let engine = ZmxAttachEngine(config: .init(zmxExecutable: launcher.executable, zmxDir: launcher.zmxDir,
-                    sessionName: target, workingDirectory: config.workingDirectory, spawnConfiguration: config))
+                    sessionName: target, workingDirectory: config.workingDirectory, spawnConfiguration: config,
+                    initialWindowSize: initialGrid.map { .init(cols: $0.cols, rows: $0.rows) }))
                 engine.attachmentRegistry = attachments
                 try await Task.detached { try engine.start() }.value
                 return engine
-            }, pagedFactory: { target in
+            }, pagedFactory: { target, _ in
                 let config = try await runtime.sessionConfiguration(target)
                 let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: launcher.executable, zmxDir: launcher.zmxDir,
                     sessionName: target, workingDirectory: config.workingDirectory, spawnConfiguration: config))

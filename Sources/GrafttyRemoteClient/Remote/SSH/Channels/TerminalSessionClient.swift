@@ -148,10 +148,10 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     /// Resolves only after the server acknowledges the shell request
     /// (ChannelSuccessEvent), ensuring the server-side stream is attached
     /// before the caller sends any terminal bytes.
-    public func connect(paged: Bool = false) async throws {
+    public func connect(paged: Bool = false, initialGrid: DisplayGrid? = nil) async throws {
         try await withTaskCancellationHandler {
             do {
-                try await connectChild(paged: paged)
+                try await connectChild(paged: paged, initialGrid: initialGrid)
                 try Task.checkCancellation()
             } catch {
                 if Task.isCancelled { throw CancellationError() }
@@ -162,7 +162,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         }
     }
 
-    private func connectChild(paged: Bool) async throws {
+    private func connectChild(paged: Bool, initialGrid: DisplayGrid?) async throws {
         let waiter = SSHReplyWaiter<Channel>()
         let shouldOpen = lock.withLock {
             guard !closed else { return false }
@@ -231,7 +231,8 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
                 try await Self.sendEnv(channel: child, name: PagedTerminalBinary.environmentName, value: PagedTerminalBinary.encodingName)
             }
             try await Self.sendEnv(channel: child, name: "GRAFTTY_SESSION", value: sessionName)
-            try await Self.sendPty(channel: child, term: "xterm-256color", cols: 80, rows: 24)
+            let grid = initialGrid ?? .daemonFallback
+            try await Self.sendPty(channel: child, term: "xterm-256color", cols: Int(grid.cols), rows: Int(grid.rows))
         } catch {
             child.close(promise: nil)
             throw error

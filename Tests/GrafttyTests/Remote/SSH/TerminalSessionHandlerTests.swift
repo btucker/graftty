@@ -29,7 +29,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
             let page = PagedTerminalEvent.page(.init(incarnation: 1, checkpointID: 2, requestID: 3,
                 ordinal: 0, screen: 0, data: Data([0, 255, 128]), complete: true))
             let channel = try await Self.channel(TerminalSessionHandler(
-                streamFactory: { _ in throw FactoryError.notFound }, pagedFactory: { _ in stream },
+                streamFactory: { _, _ in throw FactoryError.notFound }, pagedFactory: { _, _ in stream },
                 ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
                 deviceID: RemoteDeviceID(value: "binary-test")))
             let deadline = Task {
@@ -73,8 +73,8 @@ final class TerminalSessionHandlerTests: XCTestCase {
             let gate = TerminalOutputWriteGate()
             let capture = OutboundEventCapture()
             let handler = TerminalSessionHandler(
-                streamFactory: { _ in stream },
-                pagedFactory: paged ? { @Sendable _ in pagedStream } : nil,
+                streamFactory: { _, _ in stream },
+                pagedFactory: paged ? { @Sendable _, _ in pagedStream } : nil,
                 ownershipStore: SessionDisplayOwnershipStore(),
                 ownershipBroadcaster: DisplayOwnershipBroadcaster(),
                 deviceID: RemoteDeviceID(value: "paced-output"))
@@ -134,7 +134,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
     func testSourceGridBeforeLateHelloIsReannounced() async throws {
         let stream = SizeReportingStream(initialSize: (120, 67))
         let capture = OutboundEventCapture()
-        let channel = try await Self.channel(capture, Self.makeHandler(streamFactory: { _ in stream }))
+        let channel = try await Self.channel(capture, Self.makeHandler(streamFactory: { _, _ in stream }))
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
         try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
         try await sendShellRequest(channel)
@@ -162,7 +162,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
     func testReportedSourceGridDoesNotReceiveClientPTYFallback() async throws {
         let stream = SizeReportingStream(initialSize: (120, 67))
         let capture = OutboundEventCapture()
-        let handler = Self.makeHandler(streamFactory: { _ in
+        let handler = Self.makeHandler(streamFactory: { _, _ in
             try await Task.sleep(for: .milliseconds(100))
             return stream
         })
@@ -193,7 +193,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         paged.continuation.yield(.checkpoint(checkpoint))
         paged.continuation.yield(.output(Data("live-without-history".utf8)))
         let handler = TerminalSessionHandler(
-            streamFactory: { _ in throw FactoryError.notFound }, pagedFactory: { _ in paged },
+            streamFactory: { _, _ in throw FactoryError.notFound }, pagedFactory: { _, _ in paged },
             ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
             deviceID: RemoteDeviceID(value: "paged-test"))
         let channel = try await Self.channel(handler)
@@ -232,7 +232,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         let paged = TestPagedStream()
         let capture = OutboundEventCapture()
         let handler = TerminalSessionHandler(
-            streamFactory: { _ in throw FactoryError.notFound }, pagedFactory: { _ in paged },
+            streamFactory: { _, _ in throw FactoryError.notFound }, pagedFactory: { _, _ in paged },
             ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
             deviceID: RemoteDeviceID(value: "paged-recovery"))
         let channel = try await Self.channel(capture, handler)
@@ -267,7 +267,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         let paged = TestPagedStream()
         let capture = OutboundEventCapture()
         let handler = TerminalSessionHandler(
-            streamFactory: { _ in throw FactoryError.notFound }, pagedFactory: { _ in paged },
+            streamFactory: { _, _ in throw FactoryError.notFound }, pagedFactory: { _, _ in paged },
             ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
             deviceID: RemoteDeviceID(value: "paged-termination"))
         let channel = try await Self.channel(capture, handler)
@@ -284,6 +284,38 @@ final class TerminalSessionHandlerTests: XCTestCase {
     }
 
     // MARK: - env + pty + shell -> attach
+
+    /// @spec REMOTE-9.27: When an SSH terminal attachment starts, the host shall pass the attached display owner's grid to the terminal factory, or the requesting client's PTY grid when there is no owner, before the factory can create a zmx session.
+    func testFactoryReceivesControllingClientGridBeforeStartup() async throws {
+        for paged in [false, true] {
+            for hasOwner in [false, true] {
+                let received = NIOLockedValueBox<[DisplayGrid?]>([])
+                let store = SessionDisplayOwnershipStore()
+                let ownerGrid = try DisplayGrid(cols: 117, rows: 43)
+                if hasOwner {
+                    _ = store.attachClient(sessionName: "alpha", clientID: .init("owner"), kind: .mac,
+                        role: .interactive, visible: true, grid: ownerGrid)
+                }
+                let handler = TerminalSessionHandler(
+                    streamFactory: { _, grid in
+                        received.withLockedValue { $0.append(grid) }
+                        return EchoStream()
+                    },
+                    pagedFactory: paged ? { @Sendable _, grid in
+                        received.withLockedValue { $0.append(grid) }
+                        return TestPagedStream()
+                    } : nil,
+                    ownershipStore: store, ownershipBroadcaster: .init(), deviceID: .init(value: "startup"))
+                let channel = try await Self.channel(handler)
+                try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+                try await sendPtyRequest(channel, term: "xterm-256color", cols: 73, rows: 29)
+                try await sendShellRequest(channel)
+                try await waitUntil { !received.withLockedValue { $0.isEmpty } }
+                XCTAssertEqual(received.withLockedValue { $0 }, [hasOwner ? ownerGrid : try DisplayGrid(cols: 73, rows: 29)])
+                _ = try? await channel.finish()
+            }
+        }
+    }
 
     func testShellCallsStreamFactoryWithEnvSessionName() async throws {
         let factory = RecordingStreamFactory(returning: .success(EchoStream()))
@@ -444,7 +476,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
     func testChannelInactiveDuringFactoryAwaitClosesStream() async throws {
         let stream = ClosableStream()
         // Slow factory so we can fire channelInactive before it returns.
-        let delayedFactory: @Sendable (String) async throws -> any TerminalByteStream = { _ in
+        let delayedFactory: @Sendable (String, DisplayGrid?) async throws -> any TerminalByteStream = { _, _ in
             try await Task.sleep(for: .milliseconds(100))
             return stream
         }
@@ -734,7 +766,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
     func testHelloArrivingBeforeAttachCompletesIsBufferedNotDropped() async throws {
         let stream = EchoStream()
         // Delayed factory so the hello can arrive mid-attach.
-        let delayedFactory: @Sendable (String) async throws -> any TerminalByteStream = { _ in
+        let delayedFactory: @Sendable (String, DisplayGrid?) async throws -> any TerminalByteStream = { _, _ in
             try await Task.sleep(for: .milliseconds(100))
             return stream
         }
@@ -1291,7 +1323,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
     /// pre-dating REMOTE-9, plus the explicit legacy-path test) don't
     /// need to construct their own store/broadcaster/deviceID.
     private static func makeHandler(
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        streamFactory: @escaping @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream,
         ownershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore(),
         ownershipBroadcaster: DisplayOwnershipBroadcaster = DisplayOwnershipBroadcaster(),
         deviceID: RemoteDeviceID = RemoteDeviceID(value: "test-device"),
@@ -1552,8 +1584,8 @@ private final class RecordingStreamFactory: @unchecked Sendable {
         self.result = result
     }
 
-    var callable: @Sendable (String) async throws -> any TerminalByteStream {
-        return { [self] name in
+    var callable: @Sendable (String, DisplayGrid?) async throws -> any TerminalByteStream {
+        return { [self] name, _ in
             self.lock.withLock { self._received.append(name) }
             return try self.result.get()
         }

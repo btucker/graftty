@@ -394,6 +394,10 @@ final class HostManagedZmxBackend {
     }
 
     func start(surface: ghostty_surface_t) throws {
+        try start(surface: surface, initialWindowSize: nil)
+    }
+
+    func start(surface: ghostty_surface_t, initialWindowSize: PtyProcess.WindowSize?) throws {
         lock.lock()
         switch lifecycle {
         case .idle:
@@ -417,7 +421,7 @@ final class HostManagedZmxBackend {
         let gridQuery = currentGridSize
         let initialPixelSize = latestPixelSize
         lock.unlock()
-        let spawnSize = windowQuery() ?? gridQuery().map {
+        let spawnSize = initialWindowSize ?? windowQuery() ?? gridQuery().map {
             PtyProcess.WindowSize(
                 cols: $0.cols,
                 rows: $0.rows,

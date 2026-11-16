@@ -123,6 +123,7 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private let startError: Error?
     private let setSizeCountSource: () -> Int
     private(set) var startCount = 0
+    private(set) var initialWindowSize: PtyProcess.WindowSize?
     private(set) var closeCount = 0
     private(set) var releaseCount = 0
     private(set) var writes: [Data] = []
@@ -165,6 +166,11 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
         if let startError {
             throw startError
         }
+    }
+
+    func start(surface: ghostty_surface_t, initialWindowSize: PtyProcess.WindowSize?) throws {
+        self.initialWindowSize = initialWindowSize
+        try start(surface: surface)
     }
 
     func write(_ data: Data) throws {

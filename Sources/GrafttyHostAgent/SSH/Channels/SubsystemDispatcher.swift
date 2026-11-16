@@ -31,7 +31,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     public typealias InboundIn = SSHChannelData
     public typealias OutboundOut = SSHChannelData
 
-    private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private let streamFactory: @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream
     private let pagedFactory: PagedTerminalStreamFactory?
     private let panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
@@ -73,7 +73,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     private var dispatched = false
 
     public init(
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        streamFactory: @escaping @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream,
         pagedFactory: PagedTerminalStreamFactory? = nil,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,

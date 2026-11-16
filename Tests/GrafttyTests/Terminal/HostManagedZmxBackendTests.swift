@@ -7,6 +7,17 @@ import Testing
 
 @Suite("HostManagedZmxBackend — Ghostty host-managed adapter", .serialized)
 struct HostManagedZmxBackendTests {
+    @Test("@spec TERM-11.24: When a new zmx session inherits a controlling client's dimensions, the native backend shall start its PTY at those dimensions even if its unmounted host renderer reports another grid.")
+    func startsAtInheritedGridBeforeHostLayout() throws {
+        let captured = LockedRecorder<PtyProcess.WindowSize?>()
+        let backend = HostManagedZmxBackend(spawnConfiguration: Self.spawnConfiguration(),
+            sessionFactory: { _, _, size in captured.append(size); return FakeHostManagedSession() })
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(currentWindowSize: { .init(cols: 80, rows: 24) }, requestRefresh: {})
+        try backend.start(surface: Self.fakeSurface(), initialWindowSize: .init(cols: 117, rows: 43))
+        #expect(captured.values().first??.cols == 117)
+        #expect(captured.values().first??.rows == 43)
+    }
     @Test("@spec OWN-1.8: When a local Mac pane reattaches after its leader detached, the application shall accept its viewport and input without manual takeover unless another attached client has become leader.", arguments: [false, true])
     func reattachedMacAcquiresLeadershipUnlessAnotherLeaderIsActive(otherLeader: Bool) throws {
         let store = SessionDisplayOwnershipStore()

@@ -226,7 +226,7 @@ final class SubsystemDispatcherTests: XCTestCase {
     // MARK: - helpers
 
     private func makeDispatcher(
-        streamFactory: @escaping @Sendable (String) async throws -> any TerminalByteStream,
+        streamFactory: @escaping @Sendable (String, DisplayGrid?) async throws -> any TerminalByteStream,
         panesStateSubscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: PaneControlChannelHandler.Mutator? = nil,
         worktreeManagementMutator:
@@ -332,8 +332,8 @@ private final class RecordingStreamFactory: @unchecked Sendable {
 
     var received: [String] { lock.withLock { _received } }
 
-    var callable: @Sendable (String) async throws -> any TerminalByteStream {
-        return { [self] name in
+    var callable: @Sendable (String, DisplayGrid?) async throws -> any TerminalByteStream {
+        return { [self] name, _ in
             self.lock.withLock { self._received.append(name) }
             return EchoStream()
         }

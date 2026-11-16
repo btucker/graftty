@@ -132,18 +132,17 @@ extension SessionClient {
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule()
     ) -> SessionClient {
-        SessionClient(
+        let dial: @Sendable (DisplayGrid?) async throws -> WebSocketClient = { initialGrid in
+            try await dialTransport(sessionName: sessionName, role: role,
+                remoteHost: await remoteConnectionProvider?(), initialGrid: initialGrid)
+        }
+        return SessionClient(
             sessionName: sessionName,
-            webSocketFactory: {
-                try await dialTransport(
-                    sessionName: sessionName,
-                    role: role,
-                    remoteHost: await remoteConnectionProvider?()
-                )
-            },
+            webSocketFactory: { try await dial(nil) },
             clock: clock,
             backoffSchedule: backoffSchedule,
-            role: role
+            role: role,
+            webSocketFactoryWithInitialGrid: dial
         )
     }
 
@@ -154,7 +153,8 @@ extension SessionClient {
     nonisolated static func dialTransport(
         sessionName: String,
         role: Role,
-        remoteHost: RemoteHostConnection?
+        remoteHost: RemoteHostConnection?,
+        initialGrid: DisplayGrid? = nil
     ) async throws -> WebSocketClient {
         guard let remoteHost else {
             throw sessionName.hasPrefix("relay-pane-")
@@ -163,7 +163,7 @@ extension SessionClient {
         }
         return try await remoteHost.openTerminalSession(
             sessionName: sessionName, preferPaged: MobilePagedTerminalRenderer.isSupported,
-            background: role == .preview
+            background: role == .preview, initialGrid: initialGrid
         )
     }
 }

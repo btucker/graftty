@@ -33,7 +33,7 @@ struct ChromeTabTransportTests {
         let state = ChromeTabState(tabs: (0..<32).map { .init(id: String($0), title: String(repeating: "x", count: 256), url: "https://example.com/" + String(repeating: "x", count: 2028)) },
             selectedTabID: "0", frame: .init(tabID: "0", jpeg: Data(repeating: 0xff, count: ChromeTabFrame.maximumJPEGBytes), sequence: 1))
         #expect(try ChromeTabResponse(state: state).encoded().count < ChromeTabRequest.maximumResponseBytes)
-        let server = DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: store, streamFactory: { _ in throw UnusedTerminal.unused },
+        let server = DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: store, streamFactory: { _, _ in throw UnusedTerminal.unused },
             panesStateSubscribe: { onChange in await onChange(.snapshot([])); return .init(cancel: {}) }, paneControlMutator: { _ in .ok },
             chromeTabMutator: { _, peer, _ in await recorder.received(peer); return .init(state: state) },
             chromeTabOnDisconnect: { _ in await recorder.closed() }, displayOwnershipStore: SessionDisplayOwnershipStore())

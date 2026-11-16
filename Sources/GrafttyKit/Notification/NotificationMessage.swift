@@ -181,18 +181,18 @@ public extension NotificationMessage {
     }
 
     static func addPane(path: String, direction: PaneSplit, command: String?, agentRuntime: TeamHookRuntime? = nil,
-                        agentPrompt: String? = nil) -> Self {
+                        agentPrompt: String? = nil, sourcePaneSessionName: String? = nil) -> Self {
         .addPane(AddPaneRequest(path: path, direction: direction, command: command, agentRuntime: agentRuntime,
-                                agentPrompt: agentPrompt))
+                                agentPrompt: agentPrompt, sourcePaneSessionName: sourcePaneSessionName))
     }
 
     static func createWorktree(callerWorktree: String, worktreeName: String, branchName: String, existing: Bool,
                                base: String?, command: String?, agentRuntime: TeamHookRuntime?, agentPrompt: String?,
-                               operationID: String?) -> Self {
+                               operationID: String?, sourcePaneSessionName: String? = nil) -> Self {
         .createWorktree(CreateWorktreeRequest(
             callerWorktree: callerWorktree, worktreeName: worktreeName, branchName: branchName, existing: existing,
             base: base, command: command, agentRuntime: agentRuntime, agentPrompt: agentPrompt,
-            operationID: operationID))
+            operationID: operationID, sourcePaneSessionName: sourcePaneSessionName))
     }
 
     static func providerActivity(callerWorktree: String, runtime: TeamHookRuntime, sessionID: String?,

@@ -359,7 +359,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// Open a new SSH terminal session over the established connection.
     /// Throws `ConnectionError.notConnected` if the SSH handshake has not
     /// completed yet (i.e. `applyAnswer` has not returned successfully).
-    public func openTerminalSession(sessionName: String, preferPaged: Bool = false, background: Bool = false) async throws -> TerminalSessionClient {
+    public func openTerminalSession(sessionName: String, preferPaged: Bool = false, background: Bool = false, initialGrid: DisplayGrid? = nil) async throws -> TerminalSessionClient {
         if background { await bulkSetupTask?.value }
         guard
             let transport = background ? (bulkTransport ?? sshTransport) : sshTransport,
@@ -372,7 +372,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
                 parentChannel: transport.channel, parentHandler: box.handler, sessionName: sessionName
             )
             do {
-                try await paged.connect(paged: true)
+                try await paged.connect(paged: true, initialGrid: initialGrid)
                 if !background { scheduleHistoryConnection(for: paged) }
                 return paged
             } catch TerminalSessionClient.ClientError.pagingUnsupported {
@@ -387,7 +387,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             parentHandler: box.handler,
             sessionName: sessionName
         )
-        try await client.connect()
+        try await client.connect(initialGrid: initialGrid)
         return client
     }
 

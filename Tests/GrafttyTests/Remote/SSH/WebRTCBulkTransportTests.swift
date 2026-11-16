@@ -22,7 +22,7 @@ struct WebRTCBulkTransportTests {
             displayName: "test", capabilities: .defaultsAfterPairing, pairedAt: Date(), lastSeenAt: nil)
         try store.add(peer)
         let host = WebRTCHostAgent(hostKey: hostKey, trustedPeerStore: store,
-            streamFactory: { _ in LegacyBulkEchoStream() }, pagedFactory: { _ in BulkEchoStream() },
+            streamFactory: { _, _ in LegacyBulkEchoStream() }, pagedFactory: { _, _ in BulkEchoStream() },
             panesStateSubscribe: { _ in .init(cancel: {}) }, paneControlMutator: { _ in fatalError("not used") },
             displayOwnershipStore: SessionDisplayOwnershipStore())
         let client = RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: .init(
@@ -78,7 +78,7 @@ struct WebRTCBulkTransportTests {
             displayName: "test", capabilities: .defaultsAfterPairing, pairedAt: Date(), lastSeenAt: nil)
         try store.add(peer)
         let host = WebRTCHostAgent(hostKey: hostKey, trustedPeerStore: store,
-            streamFactory: { _ in LegacyBulkEchoStream() }, pagedFactory: { _ in BulkEchoStream() },
+            streamFactory: { _, _ in LegacyBulkEchoStream() }, pagedFactory: { _, _ in BulkEchoStream() },
             panesStateSubscribe: { _ in .init(cancel: {}) },
             paneControlMutator: { _ in fatalError("not used") },
             displayOwnershipStore: SessionDisplayOwnershipStore())
@@ -153,7 +153,7 @@ struct WebRTCBulkTransportTests {
         )
         try store.add(peer)
         let host = WebRTCHostAgent(
-            hostKey: hostKey, trustedPeerStore: store, streamFactory: { _ in LegacyBulkEchoStream() }, pagedFactory: { _ in BulkEchoStream() },
+            hostKey: hostKey, trustedPeerStore: store, streamFactory: { _, _ in LegacyBulkEchoStream() }, pagedFactory: { _, _ in BulkEchoStream() },
             panesStateSubscribe: { _ in .init(cancel: {}) },
             paneControlMutator: { _ in fatalError("not used") },
             displayOwnershipStore: SessionDisplayOwnershipStore()

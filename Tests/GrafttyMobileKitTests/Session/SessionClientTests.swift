@@ -11,6 +11,78 @@ import GrafttyRemoteClient
 @Suite
 @MainActor
 struct SessionClientTests {
+    private actor StartupGridCapture {
+        var grids: [DisplayGrid?] = []
+        func record(_ grid: DisplayGrid?) { grids.append(grid) }
+    }
+
+    @Test("@spec IOS-4.68: When a fullscreen mobile terminal first connects, the application shall wait for its confirmed physical viewport and pass that grid to the transport before shell startup, while cancellation before confirmation shall prevent the dial.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func startupDialWaitsForPhysicalViewport(cancel: Bool) async throws {
+        let capture = StartupGridCapture()
+        let client = SessionClient(sessionName: "startup", webSocketFactory: { FakeWS() },
+            webSocketFactoryWithInitialGrid: { grid in
+                await capture.record(grid)
+                return FakeWS()
+            })
+        defer { client.stop() }
+        client.start()
+        // The parser's initial callback alone must not admit a placeholder grid.
+        primeViewport(client, columns: 1, rows: 1)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await capture.grids.isEmpty)
+        if cancel { client.stop() }
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 117, rows: 43,
+            widthPixels: 1404, heightPixels: 1032, cellWidthPixels: 12, cellHeightPixels: 24))
+        for _ in 0..<100 {
+            if await !capture.grids.isEmpty { break }
+            if cancel { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await capture.grids == (cancel ? [] : [try DisplayGrid(cols: 117, rows: 43)]))
+    }
+
+    @Test("A retained follower reconnect reuses its confirmed physical viewport without waiting on the scaled canvas", .timeLimit(.minutes(1)))
+    func followerReconnectRetainsStartupViewport() async throws {
+        let capture = StartupGridCapture()
+        let client = SessionClient(sessionName: "startup", webSocketFactory: { FakeWS() },
+            webSocketFactoryWithInitialGrid: { grid in await capture.record(grid); return FakeWS() })
+        defer { client.stop() }
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 117, rows: 43,
+            widthPixels: 1404, heightPixels: 1032, cellWidthPixels: 12, cellHeightPixels: 24))
+        client.start()
+        for _ in 0..<100 {
+            if await capture.grids.count == 1 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await capture.grids.count == 1)
+        client.handleTextFrame(WebControlEnvelope.ownership(try ownershipSnapshot(
+            ownerClientID: .init("desktop"), ownerKind: .mac, cols: 80, rows: 24)).encoded())
+        client.suspend()
+        client.resume()
+        for _ in 0..<100 {
+            if await capture.grids.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await capture.grids.count == 2)
+    }
+
+    @Test("Physical layout confirmed during suspension remains available when the terminal resumes", .timeLimit(.minutes(1)))
+    func initialPhysicalViewportSurvivesSuspension() async throws {
+        let capture = StartupGridCapture()
+        let client = SessionClient(sessionName: "startup", webSocketFactory: { FakeWS() },
+            webSocketFactoryWithInitialGrid: { grid in await capture.record(grid); return FakeWS() })
+        defer { client.stop() }
+        client.start()
+        client.suspend()
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 117, rows: 43,
+            widthPixels: 1404, heightPixels: 1032, cellWidthPixels: 12, cellHeightPixels: 24))
+        client.resume()
+        for _ in 0..<100 {
+            if await !capture.grids.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await capture.grids == [try DisplayGrid(cols: 117, rows: 43)])
+    }
 
     @Test("@spec AGENT-6.145: When a mobile conversation restarts with the same terminal name, the application shall discard the retained previous-assignment client before attaching even if its process-end event has not arrived.")
     func resumedAssignmentReplacesLiveRetainedClient() {

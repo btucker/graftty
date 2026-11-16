@@ -71,7 +71,7 @@ struct TerminalTransportProbeConnection: Sendable {
             displayName: "probe", capabilities: .defaultsAfterPairing, pairedAt: Date(), lastSeenAt: nil)
         try store.add(peer)
         let fingerprint = RemoteIdentityFingerprint(of: try .init(rawRepresentation: hostKey.publicKey.rawRepresentation))
-        let factory: @Sendable (String) async throws -> GrafttyKit.TerminalByteStream = { TransportProbeStream(bulk: $0 == "bulk") }
+        let factory: @Sendable (String, DisplayGrid?) async throws -> GrafttyKit.TerminalByteStream = { name, _ in TransportProbeStream(bulk: name == "bulk") }
         let open: @Sendable (String) async throws -> TerminalSessionClient
         let close: @Sendable () async -> Void
         if direct {

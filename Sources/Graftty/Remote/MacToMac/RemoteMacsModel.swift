@@ -580,12 +580,14 @@ final class RemoteMacsModel: ObservableObject {
     func openTerminalSession(
         identity: RemoteMacIdentity,
         sessionName: String,
-        preferPaged: Bool = MacPagedTerminalRenderer.isSupported
+        preferPaged: Bool = MacPagedTerminalRenderer.isSupported,
+        initialGrid: DisplayGrid? = nil
     ) async throws -> any WebSocketClient & Sendable {
         try await connectionRegistry.openTerminalSession(
             identity: identity,
             sessionName: sessionName,
-            preferPaged: preferPaged
+            preferPaged: preferPaged,
+            initialGrid: initialGrid
         )
     }
 
@@ -1478,7 +1480,7 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
-    private func relayedTerminalClient(alias: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
+    private func relayedTerminalClient(alias: String, preferPaged: Bool, initialGrid: DisplayGrid?) async throws -> any WebSocketClient & Sendable {
         guard let target = relayRouter.resolvePane(alias),
               let remoteMac = savedRemoteMacs.first(where: {
                   RemoteMacIdentity($0) == target.identity
@@ -1489,16 +1491,17 @@ final class RemoteMacsModel: ObservableObject {
         return try await openTerminalSession(
             identity: target.identity,
             sessionName: target.sessionName,
-            preferPaged: preferPaged
+            preferPaged: preferPaged,
+            initialGrid: initialGrid
         )
     }
 
-    func openRelayedTerminal(alias: String) async throws -> RelayedTerminalByteStream {
-        RelayedTerminalByteStream(client: try await relayedTerminalClient(alias: alias, preferPaged: false))
+    func openRelayedTerminal(alias: String, initialGrid: DisplayGrid? = nil) async throws -> RelayedTerminalByteStream {
+        RelayedTerminalByteStream(client: try await relayedTerminalClient(alias: alias, preferPaged: false, initialGrid: initialGrid))
     }
 
-    func openRelayedPagedTerminal(alias: String) async throws -> RelayedPagedTerminalStream {
-        try RelayedPagedTerminalStream(client: await relayedTerminalClient(alias: alias, preferPaged: true))
+    func openRelayedPagedTerminal(alias: String, initialGrid: DisplayGrid? = nil) async throws -> RelayedPagedTerminalStream {
+        try RelayedPagedTerminalStream(client: await relayedTerminalClient(alias: alias, preferPaged: true, initialGrid: initialGrid))
     }
 
     private func applyPaneSnapshot(

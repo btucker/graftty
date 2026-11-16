@@ -36,7 +36,7 @@ public actor WebRTCHostAgent {
     private let trustedPeerStore: TrustedPeerStore
     public nonisolated let activeRemotePeers: ActiveRemotePeerRegistry
     private let pagedFactory: PagedTerminalStreamFactory?
-    private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private let streamFactory: @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream
     private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private var panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     private var paneControlMutator: PaneControlChannelHandler.Mutator
@@ -198,7 +198,7 @@ public actor WebRTCHostAgent {
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
         activeRemotePeers: ActiveRemotePeerRegistry = ActiveRemotePeerRegistry(),
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        streamFactory: @escaping @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream,
         pagedFactory: PagedTerminalStreamFactory? = nil,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
