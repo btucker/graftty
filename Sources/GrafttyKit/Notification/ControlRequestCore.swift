@@ -65,7 +65,7 @@ public enum ControlRequestCore {
                 return .error("invalid attention recap or unknown worktree")
             }
             let reportedAt = Date()
-            platform.state.recordAgentRecap(recap, callerPath: callerPath, reportedAt: reportedAt)
+            platform.state.recordAgentRecap(recap, callerPath: callerPath, reportedAt: reportedAt, callerAgentID: callerAgentID)
             do { try platform.stateDidChange() } catch { return .error(String(describing: error)) }
             platform.attentionRecaps.report(recap, worktree: callerPath, agentID: callerAgentID, reportedAt: reportedAt)
             return .ok
@@ -281,6 +281,7 @@ public enum ControlRequestCore {
                                  attentionReason: AgentHookAttentionReason?, stopHookActive: Bool, turnID: String?,
                                  fallbackReport: AttentionFileRecapEvent?,
                                  platform: any ControlPlatform) async -> ResponseMessage {
+        defer { try? platform.state.publishContextSnapshot(worktree: callerPath) }
         if event != .sessionStart {
             // Identity enrichment must not block activity, attention, or inbox delivery.
             // Failed persistence leaves the session unbound for the next hook to retry.
@@ -296,13 +297,13 @@ public enum ControlRequestCore {
             if let report = fallbackReport, report.worktree == callerPath,
                report.agentID == callerAgentID, report.recap.isValid {
                 if platform.state.hasConsumedAgentReport(callerPath: callerPath, runtime: runtime,
-                    callerAgentID: callerAgentID, sessionID: sessionID, reportedAt: report.reportedAt) {
+                    callerAgentID: callerAgentID, sessionID: sessionID, reportedAt: report.reportedAt, receiptID: report.recap.contextUpdate?.receiptID) {
                     let key = AgentHookAttentionIdentity.key(runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID)
                     let consumed = key.flatMap { platform.state.worktree(forPath: callerPath)?.consumedAgentReports[$0] }
                     if turnID == nil || consumed?.turnID == turnID { return .teamHookOutput("{}") }
                     consumedFallbackReportedAt = report.reportedAt
                 } else if platform.attentionRecaps.report(report.recap, worktree: callerPath, agentID: report.agentID, reportedAt: report.reportedAt) {
-                    platform.state.recordAgentRecap(report.recap, callerPath: callerPath, reportedAt: report.reportedAt)
+                    platform.state.recordAgentRecap(report.recap, callerPath: callerPath, reportedAt: report.reportedAt, callerAgentID: report.agentID)
                 }
             }
             let reportedAt = platform.attentionRecaps.reportedAt(worktree: callerPath, agentID: callerAgentID)

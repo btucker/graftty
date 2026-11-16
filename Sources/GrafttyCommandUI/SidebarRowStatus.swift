@@ -23,7 +23,7 @@ public enum SidebarRowStatus: Equatable, Sendable {
     public var waitsForUser: Bool {
         switch self {
         case .question, .notification: return true
-        case .whereWeAre(_, let isUnread): return isUnread
+        case .whereWeAre: return false
         case .working, .none: return false
         }
     }
@@ -63,6 +63,9 @@ public enum SidebarRowStatus: Equatable, Sendable {
         }
         if isCached { return whereWeAre(isUnread: false) }
         if let question = context.question { return .question(question, paneID: context.questionPaneID) }
+        if let notice = context.pending.first(where: { $0.agentStop?.notice != nil }) {
+            return .notification(notice.agentStop?.notice ?? notice.title, paneID: notice.paneID)
+        }
         if let notice = context.pending.first(where: { $0.agentStop == nil && $0.occurrence?.source != .agentStop }),
            let text = notice.occurrence?.text {
             return .notification(text, paneID: notice.paneID)

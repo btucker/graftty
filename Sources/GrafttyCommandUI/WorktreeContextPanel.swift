@@ -112,6 +112,8 @@ public struct WorktreeContextPanel: View {
                             WorktreeContextEmpty(context: context, secondary: secondary)
                         case .ask:
                             WorktreeContextAsk(context: context, secondary: secondary)
+                        case .notices:
+                            WorktreeContextNotices(context: context, secondary: secondary)
                         case .status:
                             WorktreeContextStatus(context: context, secondary: secondary)
                         }
@@ -160,10 +162,12 @@ public struct WorktreeContextPanel: View {
         let lastEvent: String?
         let updatedAt: Double?
         let question: String?
+        let notices: [SidebarAttentionOccurrence]
         init(context: SidebarWorktreeContext, lastEvent: String?) {
             self.lastEvent = lastEvent
             updatedAt = context.brief?.updatedAt
             question = context.question
+            notices = context.pending.filter { $0.agentStop?.notice != nil }.compactMap(\.occurrence)
         }
     }
 

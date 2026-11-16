@@ -36,7 +36,9 @@ public struct SidebarWorktreeContext: Equatable {
         let stop = ([worktree.sidebar?.unseenAgentStop, worktree.sidebar?.lastAgentStop].compactMap { $0 }
             + saved.compactMap(\.agentStop)).max { $0.timestamp < $1.timestamp }
         self.brief = worktree.sidebar?.brief ?? stop.flatMap { stop in
-            stop.recap.map { WorktreeBrief(recap: $0, at: stop.stoppedAt) }
+            stop.recap.flatMap { recap in
+                recap.contextUpdate == nil ? WorktreeBrief(recap: recap, at: stop.stoppedAt) : nil
+            }
         }
         var target = live.first ?? SidebarActivityItem(id: stableID, projectID: projectID,
             worktreeID: worktree.path, paneID: nil, projectName: worktree.repoDisplayName,
@@ -67,18 +69,26 @@ public struct SidebarWorktreeContext: Equatable {
         self.isRunning = busy
         self.hasUnseenStop = worktree.sidebar?.unseenAgentStop != nil && !busy && !(hasCurrentStop && isViewed(target))
         self.pending = live.filter { candidate in
-            candidate.needsAttention && !candidate.isBusy && !isViewed(candidate)
-                && !(candidate.agentStop != nil && (resumed || busy))
-                && !(candidate.agentStop.map { $0.timestamp < (stop?.timestamp ?? -.infinity) } ?? false)
+            if candidate.agentStop?.notice != nil { return true }
+            let candidateResumed = candidate.agentStop.map { request in
+                let time = request.providerSessionKey.flatMap { progress[$0] }
+                    ?? (request.providerSessionKey == nil ? progress.values.max() : nil)
+                return (time ?? -.infinity) >= request.timestamp
+            } ?? false
+            let superseded = candidate.agentStop.map { request in
+                request.timestamp < (stop?.timestamp ?? -.infinity)
+                    && (request.providerSessionKey == stop?.providerSessionKey || request.providerSessionKey == nil || stop?.providerSessionKey == nil)
+            } ?? false
+            return candidate.needsAttention && !candidate.isBusy && !isViewed(candidate) && !candidateResumed && !superseded
         }
-        let stopRequest = pending.first { $0.id == target.id && $0.occurrence == target.occurrence }
-        let stoppedQuestion = stopRequest != nil ? stop?.question : nil
+        let stopRequest = pending.first { $0.agentStop?.question != nil }
+        let stoppedQuestion = stopRequest?.agentStop?.question
         let providerRequest = pending.first { $0.agentStop == nil && $0.occurrence?.source == .agentStop }
         self.question = stoppedQuestion ?? providerRequest?.occurrence?.text
-        self.questionPaneID = stoppedQuestion != nil ? route : providerRequest?.paneID
+        self.questionPaneID = stopRequest.flatMap { SidebarProjection.attentionPaneRoute(for: $0, in: worktree) } ?? providerRequest?.paneID
         self.questionItem = stoppedQuestion != nil ? stopRequest : providerRequest
-        self.questionCatchUp = stoppedQuestion != nil ? stop?.recap?.catchUp : nil
-        self.questionOptions = stoppedQuestion != nil ? stop?.recap?.options ?? [] : []
+        self.questionCatchUp = stopRequest?.agentStop?.recap?.catchUp
+        self.questionOptions = stopRequest?.agentStop?.recap?.options ?? []
     }
 
     /// The sidebar and workspace tabs derive input state from the same live requests.

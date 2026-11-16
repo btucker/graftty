@@ -283,7 +283,7 @@ public enum SidebarHostNavigation {
         var metadata = SidebarWorktreeMetadata(id: "\(projectID):\(worktree.id.uuidString)", projectID: projectID, folders: folders, folderIDs: folderIDs,
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
-                     attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop, lastAgentStop: worktree.lastAgentStop, brief: worktree.brief, history: worktree.history,
+                     attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop ?? worktree.unreadAgentNotices.last, lastAgentStop: worktree.lastAgentStop, brief: worktree.brief, history: worktree.history,
                      agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.path == repositoryPath ? nil : worktree.emoji, isPinned: worktree.isPinned,
                      activityTime: worktree.lastActivity?.timeIntervalSinceReferenceDate, pinnedRank: worktree.isPinned ? worktree.pinnedRank : nil)
         #if canImport(AppKit)
@@ -291,6 +291,7 @@ public enum SidebarHostNavigation {
         metadata.drawingRevision = worktree.path == repositoryPath ? nil : worktree.drawing?.revision
         #endif
         metadata.emojiChosenByUser = worktree.emojiChosenByUser ? true : nil
+        metadata.unreadAgentNotices = worktree.unreadAgentNotices.isEmpty ? nil : worktree.unreadAgentNotices
         return metadata
     }
 
@@ -347,6 +348,10 @@ public enum SidebarHostNavigation {
                                     occurrence: SidebarAttentionOccurrence) -> Bool {
         for ri in state.repos.indices {
             guard let wi = state.repos[ri].worktrees.firstIndex(where: { $0.path == worktreeID }) else { continue }
+            if paneID == nil, let index = state.repos[ri].worktrees[wi].unreadAgentNotices.firstIndex(where: { $0.occurrence == occurrence }) {
+                state.repos[ri].worktrees[wi].unreadAgentNotices.remove(at: index)
+                return true
+            }
             if paneID == nil, let stop = state.repos[ri].worktrees[wi].unseenAgentStop,
                occurrence == stop.occurrence {
                 state.repos[ri].worktrees[wi].unseenAgentStop = nil

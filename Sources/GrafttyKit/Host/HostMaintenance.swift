@@ -130,7 +130,7 @@ public extension HeadlessHostRuntime {
             agentLiveness.recordFileActivity(event, in: state)
             switch event {
             case .recap(let report):
-                state.recordAgentRecap(report.recap, callerPath: report.worktree, reportedAt: report.reportedAt)
+                state.recordAgentRecap(report.recap, callerPath: report.worktree, reportedAt: report.reportedAt, callerAgentID: report.agentID)
             case .response(let response):
                 guard let index = state.indices(forWorktreePath: response.worktree) else { return }
                 state.repos[index.repo].worktrees[index.worktree].recordAgentResponse(response.response)
@@ -149,6 +149,7 @@ public extension HeadlessHostRuntime {
                         runtime: progress.runtime, sessionID: progress.sessionID, progressedAt: progress.progressedAt)
                 }
             }
+            try state.publishContextSnapshot(worktree: event.worktreePath, handoff: handoff)
             try save()
         }
     }

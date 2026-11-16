@@ -24,6 +24,7 @@ public final class AttentionRecapCoordinator {
     private var pending: [Key: Report] = [:]
     private var lastRecordedTurn: [Key: String] = [:]
     private var lastConsumedReport: [Key: Date] = [:]
+    private var consumedReceipts: [Key: [UUID]] = [:]
 
     public init() {}
 
@@ -32,7 +33,11 @@ public final class AttentionRecapCoordinator {
         let key = Key(worktree: worktree, agentID: agentID)
         // A socket retry may carry a receipt already completed through this
         // coordinator. It cannot satisfy a later peer turn's report check.
-        guard lastConsumedReport[key].map({ reportedAt > $0 }) ?? true else { return false }
+        if let id = recap.contextUpdate?.receiptID {
+            guard !(consumedReceipts[key] ?? []).contains(id) else { return false }
+        } else {
+            guard lastConsumedReport[key].map({ reportedAt > $0 }) ?? true else { return false }
+        }
         guard pending[key].map({ reportedAt >= $0.reportedAt }) ?? true else { return false }
         pending[key] = Report(recap: recap, reportedAt: reportedAt)
         return true
@@ -59,7 +64,10 @@ public final class AttentionRecapCoordinator {
         if recap == nil, !stopHookActive { return .requestRecap }
         lastRecordedTurn[key] = completedTurn
         if let report = pending.removeValue(forKey: key) {
-            lastConsumedReport[key] = report.reportedAt
+            lastConsumedReport[key] = max(lastConsumedReport[key] ?? .distantPast, report.reportedAt)
+            if let id = report.recap.contextUpdate?.receiptID {
+                consumedReceipts[key] = Array(((consumedReceipts[key] ?? []) + [id]).suffix(128))
+            }
         }
         return .record(recap)
     }

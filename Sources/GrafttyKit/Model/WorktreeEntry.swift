@@ -125,6 +125,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// (STATE-2.3), independent of the pane rows beneath it.
     public var attention: Attention?
     public var unseenAgentStop: SidebarAgentStop?
+    /// Notices survive provider progress and subsequent stopped turns.
+    public var unreadAgentNotices: [SidebarAgentStop] = []
     /// Last stop remains available after the user views its card, so its
     /// first subsequent progress event can retire that viewed occurrence.
     public private(set) var lastAgentStop: SidebarAgentStop?
@@ -138,6 +140,12 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public struct ConsumedAgentReport: Codable, Sendable, Equatable {
         public let reportedAt: Double
         public let turnID: String?
+        public var receiptIDs: [UUID]? = nil
+
+        public func contains(receiptID: UUID?, reportedAt: Date) -> Bool {
+            if let receiptID { return receiptIDs?.contains(receiptID) == true }
+            return self.reportedAt >= reportedAt.timeIntervalSinceReferenceDate
+        }
     }
     public var consumedAgentReports: [String: ConsumedAgentReport]
     /// Pane-scoped attention slots keyed by pane `PaneSlotID`. Driven by
@@ -214,7 +222,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, drawing, drawingHue, emojiChosenByUser, isPinned, pinnedRank, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
+        case id, path, branch, emoji, emojiSource, drawing, drawingHue, emojiChosenByUser, isPinned, pinnedRank, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, unreadAgentNotices, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID, agents, workspaceLayout
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -244,9 +252,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
         self.unseenAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .unseenAgentStop)
+        self.unreadAgentNotices = try container.decodeIfPresent([SidebarAgentStop].self, forKey: .unreadAgentNotices) ?? []
         self.lastAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .lastAgentStop)
         let legacyReport = [lastAgentStop, unseenAgentStop].compactMap { $0 }
-            .filter { $0.recap != nil }.max { $0.timestamp < $1.timestamp }
+            .filter { $0.recap != nil && $0.recap?.contextUpdate == nil }.max { $0.timestamp < $1.timestamp }
         self.brief = try container.decodeIfPresent(WorktreeBrief.self, forKey: .brief)
             ?? legacyReport.flatMap { stop in stop.recap.map { WorktreeBrief(recap: $0, at: stop.stoppedAt) } }
         self.agentProgressTimes = try container.decodeIfPresent([String: Double].self, forKey: .agentProgressTimes) ?? [:]
@@ -279,7 +288,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// any `AttentionSource`, or an unseen agent stop. Single home for the predicate so worktree
     /// navigation (KBD-5) and any other consumer can't drift on scope.
     public var hasAttention: Bool {
-        attention != nil || !paneAttention.isEmpty || unseenAgentStop != nil
+        attention != nil || !paneAttention.isEmpty || unseenAgentStop?.requestsAttention == true || !unreadAgentNotices.isEmpty
     }
 
     /// Only a recap newer than the brief may change it or the worktree's drawing.
@@ -289,7 +298,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
 
     /// Report content persists independently of unread completion attention.
     public mutating func recordAgentRecap(_ recap: AttentionRecap, at reportedAt: Date) {
-        guard isNewerThanBrief(reportedAt) else { return }
+        guard recap.contextUpdate != nil || isNewerThanBrief(reportedAt) else { return }
+        if let update = recap.contextUpdate, brief == nil, update.purpose == nil || update.now == nil { return }
         if brief == nil { brief = WorktreeBrief(recap: recap, at: reportedAt) }
         else {
             let boundary = history?.inputs.last(where: { $0.timestamp <= reportedAt.timeIntervalSinceReferenceDate })
@@ -298,12 +308,18 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         }
     }
 
-    public mutating func recordAgentStop(_ stop: SidebarAgentStop, recapReportedAt: Date? = nil) {
-        if let recap = stop.recap {
+    public mutating func recordAgentStop(_ stop: SidebarAgentStop, recapReportedAt: Date? = nil, updatesContext: Bool = true) {
+        if updatesContext, let recap = stop.recap {
             recordAgentRecap(recap, at: recapReportedAt ?? stop.stoppedAt)
         }
-        unseenAgentStop = stop
-        lastAgentStop = stop
+        var composed = stop
+        if let recap = stop.recap, let brief { composed.recap = brief.snapshot(attentionFrom: recap) }
+        if composed.notice != nil {
+            if !unreadAgentNotices.contains(where: { $0.occurrence == composed.occurrence }) { unreadAgentNotices.append(composed) }
+        } else if unseenAgentStop?.question == nil || unseenAgentStop?.providerSessionKey == composed.providerSessionKey {
+            unseenAgentStop = composed
+        }
+        if lastAgentStop.map({ $0.timestamp <= composed.timestamp }) ?? true { lastAgentStop = composed }
     }
 
     public mutating func expectLaunchPrompt(_ prompt: String, runtime: TeamHookRuntime) {
@@ -384,6 +400,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// Explicitly acknowledges every request and notification on the worktree.
     public mutating func acknowledgeAttention() {
         unseenAgentStop = nil
+        unreadAgentNotices.removeAll()
         attention = nil
         paneAttention.removeAll()
     }
@@ -391,6 +408,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// Explicitly acknowledges the stopped turn and the chosen pane's attention.
     public mutating func acknowledgePaneAttention(_ pane: PaneSlotID) {
         unseenAgentStop = nil
+        unreadAgentNotices.removeAll { $0.paneSlotID == pane.id.uuidString }
         paneAttention[pane] = nil
     }
 

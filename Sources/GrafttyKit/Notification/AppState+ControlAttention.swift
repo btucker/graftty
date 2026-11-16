@@ -14,6 +14,11 @@ public struct AttentionAutoClear: Sendable, Equatable {
 /// Attention mutations behind the control socket and the provider file
 /// handoff, shared by the Mac app and the headless host.
 public extension AppState {
+    func publishContextSnapshot(worktree path: String, handoff: AttentionFileHandoff = AttentionFileHandoff()) throws {
+        guard let worktree = worktree(forPath: path) else { return }
+        try handoff.publishContext(worktree.brief, worktree: path, emoji: worktree.emoji, iconDescription: worktree.drawing?.description)
+    }
+
     /// `graftty notify`. Invalid text and untracked paths are ignored
     /// (ATTN-1.7 defense in depth). A pane session that resolves within the
     /// worktree scopes the attention to that pane (AGENT-4.1/4.2);
@@ -66,25 +71,39 @@ public extension AppState {
     /// Like the brief, only a recap newer than the brief may change the
     /// drawing, so a late or dropped report cannot revert it (AGENT-3.34).
     private mutating func adoptDrawing(from recap: AttentionRecap, callerPath: String, reportedAt: Date) {
-        guard recap.icon != nil, let index = indices(forWorktreePath: callerPath),
-              repos[index.repo].worktrees[index.worktree].isNewerThanBrief(reportedAt) else { return }
+        guard recap.icon != nil, let index = indices(forWorktreePath: callerPath) else { return }
+        let worktree = repos[index.repo].worktrees[index.worktree]
+        if recap.contextUpdate != nil {
+            guard reportedAt > (worktree.drawing?.adoptedAt ?? .distantPast) else { return }
+        } else {
+            guard worktree.isNewerThanBrief(reportedAt) else { return }
+        }
         SidebarHostNavigation.adoptReportedDrawing(recap, worktreePath: callerPath,
             projectHue: ProjectHueRegistry.shared.hue(for: repos[index.repo].id), in: &repos)
+        if recap.contextUpdate != nil, repos[index.repo].worktrees[index.worktree].drawing != worktree.drawing {
+            repos[index.repo].worktrees[index.worktree].drawing?.adoptedAt = reportedAt
+        }
     }
 
     /// Publishes retained context without marking the agent stopped.
-    mutating func recordAgentRecap(_ recap: AttentionRecap, callerPath: String, reportedAt: Date) {
-        guard let index = indices(forWorktreePath: callerPath) else { return }
+    mutating func recordAgentRecap(_ recap: AttentionRecap, callerPath: String, reportedAt: Date, callerAgentID: String? = nil) {
+        guard ownsContext(callerAgentID: callerAgentID, path: callerPath), let index = indices(forWorktreePath: callerPath) else { return }
         SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos)
         adoptDrawing(from: recap, callerPath: callerPath, reportedAt: reportedAt)
         repos[index.repo].worktrees[index.worktree].recordAgentRecap(recap.withoutDrawing, at: reportedAt)
     }
 
+    private func ownsContext(callerAgentID: String?, path: String) -> Bool {
+        guard let worktree = worktree(forPath: path) else { return false }
+        guard let callerAgentID, let agent = worktree.agents.first(where: { $0.id == callerAgentID || $0.nativeAgentID == callerAgentID }) else { return true }
+        return worktree.isPrimaryAgent(agent)
+    }
+
     func hasConsumedAgentReport(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
-                                sessionID: String?, reportedAt: Date) -> Bool {
+                                sessionID: String?, reportedAt: Date, receiptID: UUID? = nil) -> Bool {
         guard let key = AgentHookAttentionIdentity.key(runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID),
               let consumed = worktree(forPath: callerPath)?.consumedAgentReports[key] else { return false }
-        return consumed.reportedAt >= reportedAt.timeIntervalSinceReferenceDate
+        return consumed.contains(receiptID: receiptID, reportedAt: reportedAt)
     }
 
     /// Records a provider's stopped turn on the sidebar. Stops older than
@@ -97,7 +116,7 @@ public extension AppState {
         let owner = AgentHookAttentionIdentity.key(runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID)
         let consumed = owner.flatMap { worktree?.consumedAgentReports[$0] }
         let isConsumed = recapReportedAt.map { date in
-            consumed.map { $0.reportedAt >= date.timeIntervalSinceReferenceDate } ?? false
+            consumed?.contains(receiptID: recap?.contextUpdate?.receiptID, reportedAt: date) ?? false
         } ?? false
         // A recovered duplicate is a no-op. A distinct provider turn still
         // completes, but cannot reuse the old recap or its pending question.
@@ -114,20 +133,31 @@ public extension AppState {
                 runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID
             )
         )
-        if let key = stop.providerSessionKey, let progressedAt = worktree?.agentProgressTimes[key],
+        if stop.notice == nil, let key = stop.providerSessionKey, let progressedAt = worktree?.agentProgressTimes[key],
            progressedAt > stop.timestamp { return nil }
         if let previous = worktree?.lastAgentStop {
-            if previous.timestamp > stop.timestamp { return nil }
-            if previous.timestamp == stop.timestamp, previous.providerSessionKey == stop.providerSessionKey,
-               previous.recap == stop.recap { return nil }
+            if stop.notice == nil, previous.timestamp > stop.timestamp { return nil }
+            if previous.timestamp == stop.timestamp, previous.providerSessionKey == stop.providerSessionKey { return nil }
         }
-        SidebarHostNavigation.adoptReportedEmoji(effectiveRecap, worktreePath: callerPath, in: &repos)
-        if !isConsumed, let recap { adoptDrawing(from: recap, callerPath: callerPath, reportedAt: recapReportedAt ?? stoppedAt) }
+        if worktree?.unreadAgentNotices.contains(where: { $0.occurrence == stop.occurrence }) == true { return nil }
+        if ownsContext(callerAgentID: callerAgentID, path: callerPath) {
+            SidebarHostNavigation.adoptReportedEmoji(effectiveRecap, worktreePath: callerPath, in: &repos)
+            if !isConsumed, let recap { adoptDrawing(from: recap, callerPath: callerPath, reportedAt: recapReportedAt ?? stoppedAt) }
+        }
         guard let index = indices(forWorktreePath: callerPath) else { return nil }
-        repos[index.repo].worktrees[index.worktree].recordAgentStop(stop, recapReportedAt: recapReportedAt)
+        if let effectiveRecap {
+            recordAgentRecap(effectiveRecap, callerPath: callerPath, reportedAt: recapReportedAt ?? stoppedAt, callerAgentID: callerAgentID)
+        }
+        repos[index.repo].worktrees[index.worktree].recordAgentStop(stop, recapReportedAt: recapReportedAt, updatesContext: false)
         if let recapReportedAt, let key = stop.providerSessionKey {
             let latestReport = max(consumed?.reportedAt ?? -.infinity, recapReportedAt.timeIntervalSinceReferenceDate)
-            repos[index.repo].worktrees[index.worktree].consumedAgentReports[key] = .init(reportedAt: latestReport, turnID: turnID)
+            var receipt = WorktreeEntry.ConsumedAgentReport(reportedAt: latestReport,
+                turnID: recapReportedAt.timeIntervalSinceReferenceDate >= (consumed?.reportedAt ?? -.infinity) ? turnID : consumed?.turnID)
+            receipt.receiptIDs = consumed?.receiptIDs
+            if let id = recap?.contextUpdate?.receiptID, !(receipt.receiptIDs ?? []).contains(id) {
+                receipt.receiptIDs = Array(((receipt.receiptIDs ?? []) + [id]).suffix(128))
+            }
+            repos[index.repo].worktrees[index.worktree].consumedAgentReports[key] = receipt
             if repos[index.repo].worktrees[index.worktree].consumedAgentReports.count > 20,
                let oldest = repos[index.repo].worktrees[index.worktree].consumedAgentReports.min(by: { $0.value.reportedAt < $1.value.reportedAt })?.key {
                 repos[index.repo].worktrees[index.worktree].consumedAgentReports.removeValue(forKey: oldest)
@@ -198,9 +228,11 @@ private extension AttentionRecap {
     /// Stored stops, briefs and broadcasts never carry agent SVG; the drawing
     /// lives only on the worktree that adopted it.
     var withoutDrawing: AttentionRecap {
-        var stripped = self
+        var stripped = contextUpdate.map(AttentionRecap.init(update:)) ?? self
         stripped.icon = nil
         stripped.iconDescription = nil
+        stripped.contextUpdate?.icon = nil
+        stripped.contextUpdate?.iconDescription = nil
         return stripped
     }
 }

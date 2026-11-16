@@ -65,6 +65,15 @@ public enum AttentionFileActivityEvent: Sendable {
     case progress(AttentionFileProgressEvent)
     case response(AttentionFileResponseEvent)
 
+    public var worktreePath: String {
+        switch self {
+        case .recap(let event): event.worktree
+        case .stop(let event): event.worktree
+        case .progress(let event): event.worktree
+        case .response(let event): event.worktree
+        }
+    }
+
     var occurredAt: Date {
         switch self {
         case .recap(let event): event.reportedAt
@@ -78,6 +87,18 @@ public enum AttentionFileActivityEvent: Sendable {
 public enum AttentionFileHandoffError: Error {
     case unsafeDirectory
     case invalidRecap
+    case contextUnavailable
+}
+
+/// A read-only brief and capability receipt from the host that owns this worktree.
+public struct WorktreeContextSnapshot: Codable, Sendable, Equatable {
+    public let version: Int
+    public let worktree: String
+    public let brief: WorktreeBrief?
+    public let emoji: String?
+    public let iconDescription: String?
+    public let hostPID: Int32
+    public let hostStart: Int64
 }
 
 /// Transfers Attention and provider hook activity through files writable by
@@ -102,6 +123,39 @@ public struct AttentionFileHandoff: Sendable {
 
     public init(rootDirectory: URL = defaultRootDirectory) {
         self.rootDirectory = rootDirectory
+    }
+
+    /// Atomic and unchanged-content aware so the observer does not trigger itself forever.
+    public func publishContext(_ brief: WorktreeBrief?, worktree: String, emoji: String?, iconDescription: String? = nil) throws {
+        try ensureDirectory()
+        let pid = ProcessInfo.processInfo.processIdentifier
+        guard let start = ProcessIdentityReader.startTimeMicroseconds(ofPID: pid) else {
+            throw AttentionFileHandoffError.contextUnavailable
+        }
+        let snapshot = WorktreeContextSnapshot(version: 1, worktree: worktree, brief: brief, emoji: emoji,
+                                               iconDescription: iconDescription, hostPID: pid, hostStart: start)
+        let url = contextURL(worktree: worktree)
+        let data = try JSONEncoder().encode(snapshot)
+        if let previous = try? Data(contentsOf: url),
+           (try? JSONDecoder().decode(WorktreeContextSnapshot.self, from: previous)) == snapshot { return }
+        try data.write(to: url, options: .atomic)
+    }
+
+    public func context(worktree: String,
+                        isCurrentHost: (Int32, Int64) -> Bool = { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) == $1 }) throws -> WorktreeContextSnapshot {
+        try ensureDirectory()
+        let url = contextURL(worktree: worktree)
+        guard let data = try? Data(contentsOf: url), data.count <= 262_144,
+              let snapshot = try? JSONDecoder().decode(WorktreeContextSnapshot.self, from: data),
+              snapshot.version == 1, snapshot.worktree == worktree,
+              isCurrentHost(snapshot.hostPID, snapshot.hostStart) else {
+            throw AttentionFileHandoffError.contextUnavailable
+        }
+        return snapshot
+    }
+
+    private func contextURL(worktree: String) -> URL {
+        rootDirectory.appendingPathComponent("context-\(key(for: worktree)).json")
     }
 
     public func stage(_ recap: AttentionRecap, worktree: String, agentID: String) throws {
@@ -348,8 +402,9 @@ public struct AttentionFileHandoff: Sendable {
         var events: [(URL, AttentionFileActivityEvent)] = []
         for file in files {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            // Recaps and stops can carry a JSON-escaped 16 KB worktree drawing (AGENT-3.38).
-            guard values.isRegularFile == true, (values.fileSize ?? 0) <= 65_536 else {
+            // Sparse receipts also carry their original update, including the drawing.
+            let limit = file.lastPathComponent.hasPrefix("recap-") || file.lastPathComponent.hasPrefix("stop-") ? 131_072 : 65_536
+            guard values.isRegularFile == true, (values.fileSize ?? 0) <= limit else {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }

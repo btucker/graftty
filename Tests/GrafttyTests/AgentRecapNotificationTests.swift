@@ -14,7 +14,7 @@ struct AgentRecapNotificationTests {
         #expect(AgentNotificationRouter.foregroundPresentationOptions(kind: nil).isEmpty)
     }
 
-    @Test("@spec NOTIF-1.7: When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once if it requests input. The application shall ignore duplicate deliveries and stops older than a recorded stop or that provider's progress.")
+    @Test("@spec NOTIF-1.7: When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once for an ask or explicit notice, ignore duplicate deliveries, and ignore ordinary stops older than recorded activity or provider progress.")
     func recordingAStoppedRecapPostsOnce() {
         var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo",
             worktrees: [WorktreeEntry(path: "/repo/sidebar", branch: "sidebar")])])
@@ -50,7 +50,7 @@ struct AgentRecapNotificationTests {
         routineRecap.completed = "A teammate finished."
         record(250, recap: routineRecap)
         #expect(notifications.count == 2)
-        #expect(state.repos[0].worktrees[0].unseenAgentStop?.recap == routineRecap)
+        #expect(state.repos[0].worktrees[0].unseenAgentStop?.recap == state.repos[0].worktrees[0].brief?.snapshot(attentionFrom: routineRecap))
         #expect(state.repos[0].worktrees[0].brief?.completed == routineRecap.completed)
         record(300, recap: nil)
         #expect(notifications.count == 2)
