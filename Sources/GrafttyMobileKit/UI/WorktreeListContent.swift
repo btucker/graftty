@@ -57,7 +57,7 @@ public struct WorktreeListContent: View {
     /// A row's merged identity: paths alone can repeat across hosts.
     @State private var reportWorktreeID: String?
     /// Holds rows still while someone is reaching for one, so a row doesn't
-    /// move out from under a finger or a report when activity arrives.
+    /// move out from under a finger, report, or delete confirmation when activity arrives.
     @State private var rowHold: WorktreeActivitySections.Hold?
     @State private var heldWorkingAgents: [WorkingAgent]?
     @State private var isTouchingList = false
@@ -72,7 +72,9 @@ public struct WorktreeListContent: View {
     private var orderMutationInFlight: Bool { orderMutationID != nil }
     /// The iPad sidebar paints a themed background that system colors don't follow.
     var sectionTitleColor: Color { theme?.sidebarSecondaryText ?? .secondary }
-    private var isHoldingRows: Bool { isTouchingList || reportWorktreeID != nil || listEditMode.isEditing }
+    private var isHoldingRows: Bool {
+        isTouchingList || reportWorktreeID != nil || pendingDelete != nil || listEditMode.isEditing
+    }
     // NavigationSplitView gives its narrow sidebar a compact size class even
     // when RootView chose the iPad layout. Follow the navigation container.
     private let isSidebar: Bool

@@ -2814,6 +2814,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.29** When the user deletes or dismisses a worktree from its row or tile on iPhone or iPad, the application shall anchor the confirmation to that row or tile, and to no other row, including a same-path worktree on another host.
 
+**IOS-13.30** While a mobile worktree delete confirmation is open, the application shall keep its row in its section and position through live activity updates.
+
 ## IPAD — iPad Layout
 
 ### IPAD-1.x — Root Layout and Sidebar

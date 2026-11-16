@@ -125,6 +125,47 @@ struct WorktreeListContentTests {
         )
     }
 
+    @Test("@spec IOS-13.30: While a mobile worktree delete confirmation is open, the application shall keep its row in its section and position through live activity updates.", .timeLimit(.minutes(1)))
+    func deleteConfirmationKeepsItsRowDuringActivityUpdates() async throws {
+        let suite = "worktree-delete-hold-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        func candidate(busy: Bool) -> WorktreePanes {
+            WorktreePanes(path: "/repo/target", displayName: busy ? "target updated" : "target", repoDisplayName: "repo", displayBranch: "target",
+                state: .running, isMainCheckout: false,
+                prBadge: .init(number: 1, state: .merged, checks: .success, url: URL(string: "https://example.com/pull/1")!),
+                stats: nil, attentionText: nil,
+                layout: .leaf(sessionName: "target-pane", title: "Target agent", attentionText: nil, isBusy: busy, attentionSource: nil))
+        }
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        defer { frames.continuation.finish() }
+        frames.continuation.yield(.frame(.snapshot([sampleWorktree(path: "/repo/first"), candidate(busy: false)])))
+        let window = try host(WorktreeListContent(
+            feed: makeFeed(frames.stream), isSidebar: true,
+            onSelect: { _, _ in }, onSelectPane: { _, _, _ in },
+            navigation: SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true)
+        ), defaults: defaults)
+        defer { window.isHidden = true }
+        try await waitUntilRendered(window, ["Remove worktree target"])
+        let remove = try #require(renderedObjects(in: window)["Remove worktree target"])
+        let originalY = remove.accessibilityFrame.minY
+        try #require(remove.accessibilityActivate())
+
+        let root = try #require(window.rootViewController)
+        for _ in 0..<100 where root.presentedViewController == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let confirmation = try #require(root.presentedViewController as? UIAlertController)
+        #expect(confirmation.title == "Delete Worktree?")
+        // A pushed update would move the target from Recent into a different ForEach.
+        frames.continuation.yield(.frame(.snapshot([candidate(busy: true), sampleWorktree(path: "/repo/first")])))
+        try await waitUntilRendered(window, ["Remove worktree target updated"])
+        #expect(root.presentedViewController === confirmation)
+        #expect(!confirmation.isBeingDismissed)
+        let heldRemove = try #require(renderedObjects(in: window)["Remove worktree target updated"])
+        #expect(abs(heldRemove.accessibilityFrame.minY - originalY) < 1)
+    }
+
     @Test("@spec IOS-4.52: While a paired host's worktree list is displayed, when the host pushes a changed panes-state frame, the application shall render it without fetching the list again.", .timeLimit(.minutes(1)))
     func pushedFrameUpdatesTheListWithoutAFetch() async throws {
         let suite = "worktree-push-\(UUID())"
