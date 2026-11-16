@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import os
 import UIKit
 
 /// Scrolls a width-fitted checkpoint without resizing its native terminal grid.
@@ -361,7 +362,21 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         repaint.append(history.bytes)
         historySession.receive(repaint)
         lastHistory = history
+        // This display moved with the canvas in this transaction. Parse the
+        // repaint and present it in the same transaction, as the live screen
+        // does when its row changes.
+        guard repaint.count <= Self.synchronousHistoryRepaintLimit else { return }
+        let signpost = Self.signposter.beginInterval("Terminal history repaint")
+        defer { Self.signposter.endInterval("Terminal history repaint", signpost) }
+        guard historySession.waitForPendingOutput() else { return }
+        view.presentLatestFrame()
     }
+
+    private static let signposter = OSSignposter(subsystem: "com.quotably.graftty", category: .pointsOfInterest)
+    /// Larger repaints (only when a very short live screen leaves room for
+    /// hundreds of wide rows) parse too long to wait for while scrolling.
+    /// They present asynchronously instead, as every repaint once did.
+    private static let synchronousHistoryRepaintLimit = 64 * 1024
 
     var additionalHistoryTextForTesting: String? { historySession.readViewportText() }
     var additionalHistoryRowsForTesting: String? { historySession.readViewportRowsText() }
@@ -400,7 +415,12 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             : UInt64(min(CGFloat(historyRows), max(0, floor(contentOffset.y / rowHeight))))
         if row != nativeRow {
             nativeRow = row
-            terminalView.surface?.scrollToRow(UInt(row))
+            // positionCanvas moves the canvas by whole rows in this
+            // transaction; present the scrolled rows in it too, or one
+            // display frame shows the text a row off and then snaps back.
+            if terminalView.surface?.scrollToRow(UInt(row)) == true {
+                terminalView.presentLatestFrame()
+            }
         }
         positionCanvas(canvas)
     }

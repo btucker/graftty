@@ -236,6 +236,14 @@ public final class TerminalSurface {
         ghostty_surface_refresh(s)
     }
 
+    /// Draw on this thread once the renderer has rebuilt frame data from
+    /// the terminal state as it is now, waiting a few milliseconds at most.
+    func drawLatest() {
+        guard let s = surface else { return }
+        TerminalDebugLog.log(.render, "surface draw latest")
+        ghostty_surface_draw_latest(s)
+    }
+
     func setSize(width: UInt32, height: UInt32) {
         guard let s = surface else {
             TerminalDebugLog.log(.metrics, "surface setSize ignored: missing surface")

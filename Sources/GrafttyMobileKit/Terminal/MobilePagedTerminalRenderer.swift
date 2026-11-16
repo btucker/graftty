@@ -138,6 +138,14 @@ final class MobilePagedTerminalRenderer: PagedTerminalRenderer {
         #endif
     }
 
+    func isAtHistoryTop(screen: UInt16, generation: UInt64) -> Bool {
+        #if GRAFTTY_PAGED_HISTORY
+        session.nearHistoryTop(generation: generation, screen: screen, thresholdRows: 0)
+        #else
+        false
+        #endif
+    }
+
     enum Error: Swift.Error { case gridUnavailable, invalidSnapshot }
 }
 #endif

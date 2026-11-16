@@ -223,6 +223,14 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
         #endif
     }
 
+    func isAtHistoryTop(screen: UInt16, generation: UInt64) -> Bool {
+        #if GRAFTTY_PAGED_HISTORY
+        surface.withIdleSurface { ghostty_surface_snapshot_near_top($0, generation, screen, 0) } == true
+        #else
+        false
+        #endif
+    }
+
     private func checkActive() throws {
         try Task.checkCancellation()
         guard surface.isOpen else { throw CancellationError() }
@@ -339,8 +347,10 @@ final class MacPagedAttachment {
             do { try await Task.sleep(for: requestTimeout) } catch { return }
             guard let self, !self.closed, self.rebase != nil else { return }
             self.rebase = nil
+            let requestHistory = self.queuedHistoryDemand
             self.queuedHistoryDemand = false
             self.coordinator.invalidateHistory()
+            await self.coordinator.viewportDidChange(requestHistory: requestHistory)
         }
     }
 

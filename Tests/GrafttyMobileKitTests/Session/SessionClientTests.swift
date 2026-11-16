@@ -1145,6 +1145,7 @@ struct SessionClientTests {
         var installed: [UInt64] = []
         var generations: [UInt64] = []
         var nearTop = false
+        var activeScreen: UInt16 = 0
         var pages = 0
         var holdResize = false
         var holdFlush = false
@@ -1172,7 +1173,46 @@ struct SessionClientTests {
             pages += 1
             return .applied
         }
-        func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 }
+        func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == activeScreen }
+        func isAtHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == activeScreen }
+    }
+
+    @Test("@spec IOS-6.49: While mobile history requires recovery, the application shall refresh recovery visibility after live output is parsed even if a screen switch leaves scrollbar dimensions unchanged.")
+    func recoveryVisibilityFollowsParsedOutputWithoutScrollbarChange() async throws {
+        let ws = DelayedReceiveWS(paged: true)
+        let renderer = PagingRenderer()
+        renderer.nearTop = true
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, pagedRenderer: renderer)
+        client.start()
+        defer {
+            renderer.flushContinuation?.resume()
+            renderer.flushContinuation = nil
+            client.stop()
+            ws.fail(CancellationError())
+        }
+        try await waitUntil("initial receive") { ws.receiveCalls == 1 }
+        ws.deliver(.paged(.checkpoint(.init(incarnation: 1, id: 1, cols: 80, rows: 24,
+            ready: Data([1]), hasPrimaryHistory: true, hasAlternateHistory: false))))
+        try await waitUntil("checkpoint installed") { ws.receiveCalls == 2 }
+        await client.historyViewportDidChange()
+        client.paging?.invalidateHistory()
+        #expect(client.paging?.showsHistoryRecovery == true)
+
+        for (screen, output) in [(UInt16(1), "\u{1b}[?1049h"), (UInt16(0), "\u{1b}[?1049l")] {
+            let receiveCount = ws.receiveCalls
+            renderer.holdFlush = true
+            ws.deliver(.binary(Data(output.utf8)))
+            try await waitUntil("output drain") {
+                renderer.flushContinuation != nil || ws.receiveCalls > receiveCount
+            }
+            #expect(renderer.flushContinuation != nil, "Refresh must wait for the native parser")
+            renderer.activeScreen = screen
+            renderer.flushContinuation?.resume()
+            renderer.flushContinuation = nil
+            try await waitUntil("output processed") { ws.receiveCalls > receiveCount }
+            #expect(client.paging?.showsHistoryRecovery == (screen == 0))
+        }
+        #expect(client.paging?.status == .requiresRecovery)
     }
 
     @Test("Non-paged output waits for grid readiness and a suspended attachment cannot resume parsing")

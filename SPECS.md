@@ -854,6 +854,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.70** When a Mac terminal applies an authoritative source-grid change, the application shall preserve retained prompt and input rows and their rendered content rather than blank them for shell redraw.
 
+**TERM-12.71** When a mobile follower's scroll crosses a row boundary, the application shall present the scrolled rows in the same main-actor turn that moves its live screen, so no displayed frame shows the text a row away from its scroll position.
+
+**TERM-12.72** When a mobile follower's scroll changes the history rows shown above its live screen, the application shall present those rows in the same main-actor turn that moves their display.
+
+**TERM-12.73** While retained terminal history remains readable, the application shall show checkpoint recovery only after user history interaction at the oldest loaded boundary on Mac and mobile, preserve retained content, and hide the warning when the reader moves away.
+
+**TERM-12.74** If a Mac initial owner resize times out after the user requests history, then the application shall retain that demand and show recovery at the loaded-history boundary.
+
 ### TERM-13.x — Native Windows terminal backend
 
 **TERM-13.1** When a native Windows terminal launches a process, the application shall preserve empty arguments, quotes, whitespace, and trailing backslashes in the Windows command line.
@@ -2595,6 +2603,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.46** When a two-finger trackpad scroll reaches an iPad terminal, the application shall scroll the terminal and shall not start a pointer-drag text selection.
 
 **IOS-6.47** While a non-modifier hardware key is held in a mobile terminal, the application shall repeat it after the same initial delay and interval as a held arrow key, as a Mac does, without repeating a standalone modifier or a Command shortcut.
+
+**IOS-6.48** While a mobile terminal's content is unchanged, the application shall stop presenting frames rather than redraw on every display refresh, and shall present new output when it arrives.
+
+**IOS-6.49** While mobile history requires recovery, the application shall refresh recovery visibility after live output is parsed even if a screen switch leaves scrollbar dimensions unchanged.
 
 ### IOS-7.x — Lifecycle
 
