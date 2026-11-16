@@ -18,8 +18,8 @@ public enum SidebarRowStatus: Equatable, Sendable {
         }
     }
 
-    /// Everything waiting for the person: a request, or a finished turn they
-    /// haven't opened. This is what Needs you, tile borders, and counts show.
+    /// Explicit requests and notices shown in Needs you and attention counts.
+    /// Unread routine completions remain activity.
     public var waitsForUser: Bool {
         switch self {
         case .question, .notification: return true
@@ -57,7 +57,7 @@ public enum SidebarRowStatus: Equatable, Sendable {
         // It outranks pane liveness, which lags behind it, unless the agent resumed.
         let hasUnreadStop = context.hasUnseenStop
         func whereWeAre(isUnread: Bool) -> SidebarRowStatus {
-            // A stop without a recap still waits for the user, so it says who stopped.
+            // A stop without a recap still names who stopped.
             if completed.isEmpty, isUnread, let stop = worktree.sidebar?.unseenAgentStop { return .whereWeAre(stop.title, isUnread: true) }
             return completed.isEmpty ? .none : .whereWeAre(completed, isUnread: isUnread)
         }
