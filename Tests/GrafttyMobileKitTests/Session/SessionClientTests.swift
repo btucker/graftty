@@ -632,6 +632,7 @@ struct SessionClientTests {
         private let second: FakeWS
         private var callCount = 0
         private var firstContinuation: CheckedContinuation<FakeWS, Never>?
+        private var firstReleased = false
 
         init(first: FakeWS, second: FakeWS) {
             self.first = first
@@ -647,14 +648,18 @@ struct SessionClientTests {
             }
             guard call == 1 else { return second }
             return await withCheckedContinuation { continuation in
-                lock.withLock {
+                let alreadyReleased = lock.withLock {
+                    guard !firstReleased else { return true }
                     firstContinuation = continuation
+                    return false
                 }
+                if alreadyReleased { continuation.resume(returning: first) }
             }
         }
 
         func releaseFirst() {
             let continuation = lock.withLock {
+                firstReleased = true
                 defer { firstContinuation = nil }
                 return firstContinuation
             }
@@ -2120,6 +2125,21 @@ struct SessionClientTests {
             ws.closed
         }
         #expect(ws.closed)
+    }
+
+    @Test("A delayed socket factory retains cleanup requested before its continuation is installed")
+    func delayedFactoryRetainsEarlyRelease() async throws {
+        let first = FakeWS()
+        let factory = DelayedFirstWebSocketFactory(first: first, second: FakeWS())
+        factory.releaseFirst()
+        var received: FakeWS?
+        let operation = Task { @MainActor in received = await factory.make() }
+        defer {
+            factory.releaseFirst()
+            operation.cancel()
+        }
+        try await waitUntil("the factory to honor its early release") { received != nil }
+        #expect(received === first)
     }
 
     @Test("""
