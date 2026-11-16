@@ -66,7 +66,7 @@ public enum TeamHookRenderer {
             + (assignmentContext.isEmpty ? "" : "\n\n" + assignmentContext))
     }
 
-    static let recapGuidance = "During this turn, load the `graftty` skill and run `graftty context update --stdin` before your final response. Send changed groups only, or {\"unchanged\":true}. On first use send purpose, now, and emoji; send an `icon` once the purpose is clear or when a redraw is requested. Use attention.kind ask for input and notice for a reviewable result; routine progress updates Context only. Do not mention the report unless it fails. Do not acknowledge routine team notifications."
+    static let recapGuidance = "During this turn, load the `graftty` skill and run `graftty context update --stdin` before your final response. Send changed groups only, or {\"unchanged\":true}. On first use send purpose, now, and emoji; send an `icon` once the purpose is clear or when a redraw is requested. Write `now.summary` in one plain sentence and keep `historyEntry` headlines short. Use attention.kind ask for input and include `background` needed to answer. For clear choices, give `options` with a few words of cost each and your suggested pick. Use notice for a reviewable result; routine progress updates Context only. Do not mention the report unless it fails. Do not acknowledge routine team notifications."
 
     /// Only a missing report reaches this fallback. `stop_hook_active` lets
     /// the correction turn finish even if the report command fails again.

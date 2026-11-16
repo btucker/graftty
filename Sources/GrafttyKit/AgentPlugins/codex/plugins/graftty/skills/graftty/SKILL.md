@@ -43,12 +43,13 @@ Omitted groups stay unchanged. A supplied group replaces that whole group.
 
 - `purpose`: `title` and `context`, stating the problem and why it matters.
   Keep the title stable until the task changes. Do not turn it into status.
-- `now`: one plain `summary` sentence stating verified progress and optional
+- `now`: `summary` in one plain sentence stating verified progress and optional
   `next`. Omitting `next` removes the old next step. Put progress here.
 - `decisions`: the current list, only when it changes. `[]` clears it.
 - `historyEntry`: a short `headline` and optional `detail` for a discovery,
   decision, changed request, or major outcome worth remembering. Omit it for
-  routine updates. Say what changed and why. Distinguish proposals from decisions.
+  routine updates. Keep headlines about 60 characters and use plain words.
+  Say what changed and why. Distinguish proposals from decisions.
 - `emoji` and up to three distinct `emojiAlternatives`: task-specific single
   glyphs for initial identity. Omit them once identity is assigned.
 
@@ -78,8 +79,9 @@ Omitted groups stay unchanged. A supplied group replaces that whole group.
 
 An ask requires an answer. Send it only when input is needed. Include enough
 background for someone who has forgotten the worktree to answer. When there
-are clear choices, give 2 to 4 options with a short label, optional cost, and
-`suggested: true` on your pick. Labels must not start with `!` or `/`.
+are clear choices, give 2 to 4 options with a short label, a few words of cost
+when useful, and `suggested: true` on your pick. Labels must not start with
+`!` or `/`.
 
 ```json
 {"attention":{"kind":"ask","question":"Ship now or wait for CI?","background":"The regression test passed; the suite is running.","options":[{"label":"Wait","cost":"About 15 minutes","suggested":true},{"label":"Ship now","cost":"Full-suite result unknown"}]}}

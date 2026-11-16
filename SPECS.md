@@ -4936,7 +4936,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.40** When a client asks a host to explain a stopped agent's question, the host shall type the catch-up prompt into that agent's pane and submit it, and shall refuse a pane it cannot find or one waiting at its harness's own prompt.
 
-**AGENT-3.41** When the application renders agent recap guidance, it shall ask for a one-sentence plain completed state, short plain history headlines, and, for a question with clear choices, options with a few words of cost each in place of a catch-up paragraph, without lengthening the per-turn guidance.
+**AGENT-3.41** When the application renders context-update guidance, it shall request sparse updates with a summary in one plain sentence, short history headlines, and explicit asks with options, brief costs, and background, within the existing per-turn guidance limit.
 
 **AGENT-3.42** When an agent submits a worktree drawing, the application shall accept a wide 96-by-64 canvas as well as the older 64-unit square, reject any other canvas, and know which canvas a stored drawing uses.
 
