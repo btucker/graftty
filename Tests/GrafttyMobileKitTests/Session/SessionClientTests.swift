@@ -638,7 +638,7 @@ struct SessionClientTests {
             self.second = second
         }
 
-        var calls: Int { lock.withLock { callCount } }
+        var isFirstCallPending: Bool { lock.withLock { firstContinuation != nil } }
 
         func make() async -> FakeWS {
             let call = lock.withLock {
@@ -1351,7 +1351,7 @@ struct SessionClientTests {
             client.stop()
         }
         try await waitUntil("the first dial to begin") {
-            factory.calls == 1
+            factory.isFirstCallPending
         }
 
         client.suspend()
@@ -2104,13 +2104,18 @@ struct SessionClientTests {
     @Test
     func stopClosesWebSocket() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        let factory = DelayedFirstWebSocketFactory(first: ws, second: FakeWS())
+        let client = SessionClient(sessionName: "s", webSocketFactory: { await factory.make() })
         client.start()
+        defer {
+            factory.releaseFirst()
+            client.stop()
+        }
+        try await waitUntil("the socket factory to suspend") { factory.isFirstCallPending }
         client.stop()
-        // The factory is now async, so the first WS is constructed in
-        // an open Task. `stop()` flags `stopped`, the open Task sees it
-        // when the factory resolves, and closes the WS without
-        // assigning it to `self.ws`. Quiesce so the open Task runs.
+        // Complete an already-running factory after cancellation. A dial
+        // cancelled before its factory starts has no socket to close.
+        factory.releaseFirst()
         try await waitUntil("the stopped client's pending WebSocket to close") {
             ws.closed
         }
