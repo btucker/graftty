@@ -85,7 +85,9 @@ public struct SidebarWorktreeContext: Equatable {
         let stoppedQuestion = stopRequest?.agentStop?.question
         let providerRequest = pending.first { $0.agentStop == nil && $0.occurrence?.source == .agentStop }
         self.question = stoppedQuestion ?? providerRequest?.occurrence?.text
-        self.questionPaneID = stopRequest.flatMap { SidebarProjection.attentionPaneRoute(for: $0, in: worktree) } ?? providerRequest?.paneID
+        self.questionPaneID = stoppedQuestion != nil
+            ? stopRequest.flatMap { SidebarProjection.attentionPaneRoute(for: $0, in: worktree) }
+            : providerRequest?.paneID
         self.questionItem = stoppedQuestion != nil ? stopRequest : providerRequest
         self.questionCatchUp = stopRequest?.agentStop?.recap?.catchUp
         self.questionOptions = stopRequest?.agentStop?.recap?.options ?? []

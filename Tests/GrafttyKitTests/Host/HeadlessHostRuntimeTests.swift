@@ -1372,6 +1372,36 @@ struct HeadlessHostRuntimeTests {
         #expect(runtime.agentLiveness.livenessBySession[pane] == .busy)
     }
 
+    @Test("@spec CONTEXT-84: When a headless host starts maintenance after restoring its worktrees, the application shall publish their retained context with the current host process identity before accepting further updates.")
+    func maintenancePublishesRestoredContext() throws {
+        let (root, config, initialState) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var state = initialState
+        state.recordAgentRecap(.init(title: "Restored", completed: "Kept across restart.", next: "Review."), callerPath: root.path, reportedAt: Date())
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        runtime.startMaintenance(handoff: handoff)
+        defer { runtime.maintenance?.stop() }
+        let snapshot = try handoff.context(worktree: root.path)
+        #expect(snapshot.brief?.completed == "Kept across restart.")
+        #expect(snapshot.hostPID == ProcessInfo.processInfo.processIdentifier)
+    }
+
+    @Test func snapshotFailureDoesNotPreventDurableActivityConsumption() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        try handoff.publishContext(nil, worktree: root.path, emoji: nil)
+        let file = try #require(FileManager.default.contentsOfDirectory(at: handoff.rootDirectory, includingPropertiesForKeys: nil).first { $0.lastPathComponent.hasPrefix("context-") })
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        try handoff.publish(.init(title: "Fix", completed: "Persisted.", next: "Review."), worktree: root.path, agentID: "one")
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(try AppState.load(from: root).worktree(forPath: root.path)?.brief?.completed == "Persisted.")
+        #expect(try handoff.takeActivities { _ in }.isEmpty)
+    }
+
     @Test("@spec REMOTE-22.8: When a headless host consumes a file-based stopped-turn recap, the application shall persist the recap and clear it only after matching provider progress.")
     func fileAttentionHandoff() async throws {
         let (root, config, state) = try fixture()

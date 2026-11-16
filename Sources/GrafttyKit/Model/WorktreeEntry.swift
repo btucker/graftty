@@ -316,7 +316,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         if let recap = stop.recap, let brief { composed.recap = brief.snapshot(attentionFrom: recap) }
         if composed.notice != nil {
             if !unreadAgentNotices.contains(where: { $0.occurrence == composed.occurrence }) { unreadAgentNotices.append(composed) }
-        } else if unseenAgentStop?.question == nil || unseenAgentStop?.providerSessionKey == composed.providerSessionKey {
+        } else if composed.question != nil || unseenAgentStop?.question == nil || unseenAgentStop?.providerSessionKey == composed.providerSessionKey {
             unseenAgentStop = composed
         }
         if lastAgentStop.map({ $0.timestamp <= composed.timestamp }) ?? true { lastAgentStop = composed }

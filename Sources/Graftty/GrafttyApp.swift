@@ -777,16 +777,16 @@ struct GrafttyApp: App {
                         terminalManager: tm
                     )
                 }
-                try? binding.wrappedValue.publishContextSnapshot(worktree: activity.worktreePath, handoff: attentionHandoff)
+                if activity.publishesContextSnapshot {
+                    try? binding.wrappedValue.publishContextSnapshot(worktree: activity.worktreePath, handoff: attentionHandoff)
+                }
             },
             // One off-main write per batch; files are deleted only after it
             // lands (REMOTE-23.10).
             persist: { try await Self.persistAppStateNow(binding.wrappedValue) }
         )
+        binding.wrappedValue.publishContextSnapshots(handoff: attentionHandoff)
         do {
-            for worktree in binding.wrappedValue.repos.flatMap(\.worktrees) {
-                try binding.wrappedValue.publishContextSnapshot(worktree: worktree.path, handoff: attentionHandoff)
-            }
             try attentionObserver.start {
                 Task { @MainActor in await attentionDrain.drain() }
             }

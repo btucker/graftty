@@ -74,6 +74,14 @@ public enum AttentionFileActivityEvent: Sendable {
         }
     }
 
+    public var publishesContextSnapshot: Bool {
+        switch self {
+        case .recap, .stop: true
+        case .response: false
+        case .progress(let event): event.hookEvent == .sessionStart || event.hookEvent == .userPromptSubmit
+        }
+    }
+
     var occurredAt: Date {
         switch self {
         case .recap(let event): event.reportedAt
@@ -156,6 +164,24 @@ public struct AttentionFileHandoff: Sendable {
 
     private func contextURL(worktree: String) -> URL {
         rootDirectory.appendingPathComponent("context-\(key(for: worktree)).json")
+    }
+
+    /// A successful first command can still be waiting for the host's next drain.
+    public func hasQueuedContextInitialization(worktree: String, agentID: String) throws -> Bool {
+        try ensureDirectory()
+        let files = try FileManager.default.contentsOfDirectory(at: rootDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])
+        for file in files where file.lastPathComponent.hasPrefix("recap-") && file.pathExtension == "json" {
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  values.isRegularFile == true, (values.fileSize ?? 0) <= 131_072,
+                  let data = try? Data(contentsOf: file),
+                  let event = try? JSONDecoder().decode(AttentionFileRecapEvent.self, from: data),
+                  event.worktree == worktree, event.agentID == agentID, event.recap.isValid else { continue }
+            if let update = event.recap.contextUpdate {
+                if update.purpose != nil && update.now != nil { return true }
+            } else { return true }
+        }
+        return false
     }
 
     public func stage(_ recap: AttentionRecap, worktree: String, agentID: String) throws {

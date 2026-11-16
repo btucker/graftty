@@ -67,6 +67,7 @@ public enum ControlRequestCore {
             let reportedAt = Date()
             platform.state.recordAgentRecap(recap, callerPath: callerPath, reportedAt: reportedAt, callerAgentID: callerAgentID)
             do { try platform.stateDidChange() } catch { return .error(String(describing: error)) }
+            platform.publishContextSnapshot(worktree: callerPath)
             platform.attentionRecaps.report(recap, worktree: callerPath, agentID: callerAgentID, reportedAt: reportedAt)
             return .ok
         case .teamSend(let request):
@@ -281,7 +282,6 @@ public enum ControlRequestCore {
                                  attentionReason: AgentHookAttentionReason?, stopHookActive: Bool, turnID: String?,
                                  fallbackReport: AttentionFileRecapEvent?,
                                  platform: any ControlPlatform) async -> ResponseMessage {
-        defer { try? platform.state.publishContextSnapshot(worktree: callerPath) }
         if event != .sessionStart {
             // Identity enrichment must not block activity, attention, or inbox delivery.
             // Failed persistence leaves the session unbound for the next hook to retry.
@@ -350,6 +350,9 @@ public enum ControlRequestCore {
         // untouched, so the headless host skips a state write per tool call.
         if action != AgentHookAttentionAction.none {
             do { try platform.stateDidChange() } catch { return .error(String(describing: error)) }
+        }
+        if event == .sessionStart || event == .userPromptSubmit || action == .recordStoppedTurn {
+            platform.publishContextSnapshot(worktree: callerPath)
         }
 
         // These hooks skip inbox scans. Turn start adds current lifetime guidance

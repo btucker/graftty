@@ -83,4 +83,14 @@ struct WorktreeContextUpdateTests {
         #expect(value.history.map(\.title) == ["Ruled out the cache.", "Found the trigger.", "Chose the fix."])
         #expect(value.updatedAt == 104)
     }
+
+    @Test func delayedRepeatedHistoryTextKeepsChronologicalSeparator() {
+        var value = brief()
+        value.update(.init(update: .init(historyEntry: .init(headline: "A"))), at: start.addingTimeInterval(2))
+        value.update(.init(update: .init(historyEntry: .init(headline: "B"))), at: start.addingTimeInterval(3))
+        let delayed = AttentionRecap(update: .init(historyEntry: .init(headline: "B")))
+        value.update(delayed, at: start.addingTimeInterval(1))
+        value.update(delayed, at: start.addingTimeInterval(1))
+        #expect(value.history.map(\.title) == ["B", "A", "B"])
+    }
 }

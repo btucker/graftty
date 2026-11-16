@@ -17,6 +17,7 @@ public protocol ControlPlatform: ControlTeamPlatform {
     /// save here, since no window may be observing state; the headless host
     /// saves immediately.
     func stateDidChange() throws
+    func publishContextSnapshot(worktree: String)
     func providerActivity(path: String, paneSessionName: String?, sessionID: String?,
                           activity: ProviderSleepActivity, runtime: TeamHookRuntime)
     /// Provider hook busy/idle state for a pane tracked in the caller's worktree.
@@ -45,6 +46,9 @@ public protocol ControlPlatform: ControlTeamPlatform {
 }
 
 public extension ControlPlatform {
+    func publishContextSnapshot(worktree: String) {
+        try? state.publishContextSnapshot(worktree: worktree)
+    }
     var drawingThemeContext: String? { nil }
     var hostStart: Date { ProcessIdentityReader.currentProcessStart }
     var agentArchives: AgentArchiveStore {

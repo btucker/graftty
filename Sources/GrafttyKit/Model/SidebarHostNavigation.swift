@@ -291,7 +291,8 @@ public enum SidebarHostNavigation {
         metadata.drawingRevision = worktree.path == repositoryPath ? nil : worktree.drawing?.revision
         #endif
         metadata.emojiChosenByUser = worktree.emojiChosenByUser ? true : nil
-        metadata.unreadAgentNotices = worktree.unreadAgentNotices.isEmpty ? nil : worktree.unreadAgentNotices
+        // An explicit empty list tells clients this host authoritatively supports notices.
+        metadata.unreadAgentNotices = worktree.unreadAgentNotices
         return metadata
     }
 

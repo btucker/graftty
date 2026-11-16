@@ -117,15 +117,16 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
             guard !(historyReceipts ?? []).contains(receiptID) else { return }
             historyReceipts = Array(((historyReceipts ?? []) + [receiptID]).suffix(128))
         }
-        let last = history.last
+        let previousIndex = history.lastIndex { $0.timestamp <= timestamp }
+        let last = previousIndex.map { history[$0] }
         let canMerge = boundary.map { (last?.timestamp ?? -.infinity) > $0.timeIntervalSinceReferenceDate } ?? true
         if !purposeChanged, canMerge, last?.title == heading,
            (last?.isExplicitEntry == true) == isExplicit {
             // Retrying a report or updating only its brief must not move history.
             if last?.completed == detail { return }
-            if !isExplicit {
-                history[history.count - 1].timestamp = timestamp
-                history[history.count - 1].completed = detail
+            if !isExplicit, let previousIndex {
+                history[previousIndex].timestamp = timestamp
+                history[previousIndex].completed = detail
                 return
             }
         }

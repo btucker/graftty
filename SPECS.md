@@ -5672,6 +5672,38 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-76** While additional agents share a worktree, the application shall preserve the primary agent's retained context and identity while retaining additional agents' explicit result notices.
 
+### CONTEXT-77.x
+
+**CONTEXT-77** When another session submits an explicit ask, the application shall make the newest ask actionable while preserving it across other sessions' routine completions.
+
+### CONTEXT-78.x
+
+**CONTEXT-78** While a valid initialization from the same agent is durably queued, the context command shall accept later sparse updates without waiting for the host snapshot to catch up.
+
+### CONTEXT-79.x
+
+**CONTEXT-79** When a stopped question's pane cannot be resolved, the application shall preserve its unresolved route rather than borrowing another pane's provider request.
+
+### CONTEXT-80.x
+
+**CONTEXT-80** When the host acknowledges a notice, the application shall remove its retained navigation item and dismissal marker from authoritative snapshots while preserving unacknowledged notices as pending during provider progress.
+
+### CONTEXT-81.x
+
+**CONTEXT-81** While a Mac or mobile report preview has unread notices and retained context, the application shall display their messages and omit the next-step section when no next step exists.
+
+### CONTEXT-82.x
+
+**CONTEXT-82** If one context snapshot cannot be published, then the application shall continue publishing other worktrees and keep activity observation independent of that failure.
+
+### CONTEXT-83.x
+
+**CONTEXT-83** When a socket report persists retained context, the application shall refresh its read-back snapshot without requiring another hook, while unchanged tool hooks shall not republish the snapshot.
+
+### CONTEXT-84.x
+
+**CONTEXT-84** When a headless host starts maintenance after restoring its worktrees, the application shall publish their retained context with the current host process identity before accepting further updates.
+
 ## MEM — MEM
 
 ### MEM-1.x

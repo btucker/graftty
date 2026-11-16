@@ -86,6 +86,9 @@ struct WorktreeContextLifecycleTests {
             callerPath: "/wt", reportedAt: start, callerAgentID: primary.id)
         let other = AttentionRecap(title: "Review", completed: "Checked the diff.", next: "Finish.", emoji: "🔬", purposeChanged: true)
         state.recordAgentRecap(other, callerPath: "/wt", reportedAt: start.addingTimeInterval(1), callerAgentID: reviewer.id)
+        state.recordAgentRecap(other, callerPath: "/wt", reportedAt: start.addingTimeInterval(1), callerAgentID: "native-subagent")
+        state.repos[0].worktrees[0].agents[0] = ManagedAgent(name: "Primary", provider: .codex, parent: nil, status: .closed, isPrimary: true)
+        state.recordAgentRecap(other, callerPath: "/wt", reportedAt: start.addingTimeInterval(1), callerAgentID: "native-subagent")
         _ = state.recordStoppedTurn(callerPath: "/wt", runtime: .codex, callerAgentID: reviewer.id,
             sessionID: "review", paneSessionName: nil,
             recap: .init(update: .init(attention: .init(kind: .notice, message: "Review notes ready."))),
@@ -94,5 +97,32 @@ struct WorktreeContextLifecycleTests {
         #expect(state.repos[0].worktrees[0].brief?.completed == "Fixed restoration.")
         #expect(state.repos[0].worktrees[0].emoji == "🧪")
         #expect(state.repos[0].worktrees[0].unreadAgentNotices.first?.notice == "Review notes ready.")
+    }
+
+    @Test("@spec CONTEXT-77: When another session submits an explicit ask, the application shall make the newest ask actionable while preserving it across other sessions' routine completions.")
+    func newestExplicitQuestionReplacesTheCurrentQuestion() {
+        var entry = WorktreeEntry(path: "/wt", branch: "fix")
+        func question(_ text: String, owner: String, offset: Double) -> SidebarAgentStop {
+            .init(agentName: "Codex", stoppedAt: start.addingTimeInterval(offset),
+                recap: .init(update: .init(attention: .init(kind: .ask, question: text))), providerSessionKey: owner)
+        }
+        entry.recordAgentStop(question("First?", owner: "one", offset: 0))
+        entry.recordAgentStop(question("Second?", owner: "two", offset: 1))
+        #expect(entry.unseenAgentStop?.question == "Second?")
+        entry.recordAgentStop(.init(agentName: "Codex", stoppedAt: start.addingTimeInterval(2), providerSessionKey: "one"))
+        #expect(entry.unseenAgentStop?.question == "Second?")
+    }
+
+    @Test func legacyAndSparseDrawingsUseTheSameClock() {
+        var state = AppState(repos: [.init(path: "/repo", displayName: "Repo", worktrees: [.init(path: "/wt", branch: "fix")])])
+        let first = "<svg viewBox='0 0 96 64'><circle cx='48' cy='32' r='20' fill='primary'/></svg>"
+        let second = first.replacingOccurrences(of: "primary", with: "accent")
+        var legacy = AttentionRecap(title: "Fix", completed: "Started.", next: "Test.")
+        legacy.icon = first
+        state.recordAgentRecap(legacy, callerPath: "/wt", reportedAt: start)
+        var update = WorktreeContextUpdate(purpose: .init(title: "New purpose", context: "Changed scope."))
+        update.icon = second
+        state.recordAgentRecap(.init(update: update), callerPath: "/wt", reportedAt: start.addingTimeInterval(1))
+        #expect(state.repos[0].worktrees[0].drawing?.svg == second)
     }
 }

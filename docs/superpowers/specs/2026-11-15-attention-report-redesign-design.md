@@ -198,9 +198,8 @@ the generated requirement inventory in `SPECS.md`.
 
 ## Verification
 
-- The affected suites and all protocol tests passed with 863 Swift Testing
-  tests across five targets. The final context layout also received a focused
-  check after placing notices before questions.
+- The affected suites and all protocol tests passed with 889 Swift Testing
+  tests across five targets after the review fixes.
 - GrafttyMobile built for the iOS simulator.
 - Spec generation, stale-spec checking, Linux test membership, and whitespace
   checks passed.
@@ -208,7 +207,7 @@ the generated requirement inventory in `SPECS.md`.
   remote-feed, and UI tests and stopped making progress. That run was stopped.
 - The existing `contextUsesOpaqueThemeSurface` test failed with the same
   14 color assertions against both the changed panel and the original panel
-  from `HEAD`. The affected-suite run excludes this confirmed baseline failure.
+  before this change. The affected-suite run excludes this confirmed baseline failure.
 
 The new commands require a running host built from this change. Existing
 installed apps continue to use the legacy report contract until updated.

@@ -19,13 +19,21 @@ struct ContextUpdate: ParsableCommand {
         let recap = try Self.decodeUpdate(FileHandle.standardInput.readDataToEndOfFile())
         let worktree = try CLIEnv.resolveWorktree()
         let handoff = AttentionFileHandoff()
-        let snapshot = try ContextShow.read(worktree: worktree, handoff: handoff)
-        guard snapshot.brief != nil || (recap.contextUpdate?.purpose != nil && recap.contextUpdate?.now != nil) else {
-            throw ValidationError("the first context update needs purpose (title and context) and now (summary and optional next)")
-        }
         guard let agentID = AttentionReportIdentity.currentAgentID(worktreePath: worktree)
             ?? AttentionReportIdentity.unmanagedAgent(environment: ProcessInfo.processInfo.environment)?.agentID else {
             throw ValidationError("an active agent session is required")
+        }
+        try Self.publish(recap, worktree: worktree, agentID: agentID, handoff: handoff)
+    }
+
+    static func publish(_ recap: AttentionRecap, worktree: String, agentID: String, handoff: AttentionFileHandoff) throws {
+        let snapshot = try ContextShow.read(worktree: worktree, handoff: handoff)
+        if snapshot.brief == nil && !(recap.contextUpdate?.purpose != nil && recap.contextUpdate?.now != nil) {
+            // The host may consume initialization between the first read and the queue scan.
+            let queued = try handoff.hasQueuedContextInitialization(worktree: worktree, agentID: agentID)
+            guard try queued || ContextShow.read(worktree: worktree, handoff: handoff).brief != nil else {
+                throw ValidationError("the first context update needs purpose (title and context) and now (summary and optional next)")
+            }
         }
         try handoff.publish(recap, worktree: worktree, agentID: agentID)
     }

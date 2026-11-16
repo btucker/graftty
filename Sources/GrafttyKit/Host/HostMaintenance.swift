@@ -72,8 +72,9 @@ final class HostMaintenance: WorktreeMonitorDelegate {
 }
 
 public extension HeadlessHostRuntime {
-    func startMaintenance() {
+    func startMaintenance(handoff: AttentionFileHandoff = AttentionFileHandoff()) {
         guard maintenance == nil else { return }
+        state.publishContextSnapshots(handoff: handoff)
         let coordinator = HostMaintenance(runtime: self)
         maintenance = coordinator
         coordinator.start()
@@ -149,8 +150,10 @@ public extension HeadlessHostRuntime {
                         runtime: progress.runtime, sessionID: progress.sessionID, progressedAt: progress.progressedAt)
                 }
             }
-            try state.publishContextSnapshot(worktree: event.worktreePath, handoff: handoff)
             try save()
+            if event.publishesContextSnapshot {
+                try? state.publishContextSnapshot(worktree: event.worktreePath, handoff: handoff)
+            }
         }
     }
 }

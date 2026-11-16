@@ -14,6 +14,12 @@ public struct AttentionAutoClear: Sendable, Equatable {
 /// Attention mutations behind the control socket and the provider file
 /// handoff, shared by the Mac app and the headless host.
 public extension AppState {
+    func publishContextSnapshots(handoff: AttentionFileHandoff = AttentionFileHandoff()) {
+        for worktree in repos.flatMap(\.worktrees) {
+            try? publishContextSnapshot(worktree: worktree.path, handoff: handoff)
+        }
+    }
+
     func publishContextSnapshot(worktree path: String, handoff: AttentionFileHandoff = AttentionFileHandoff()) throws {
         guard let worktree = worktree(forPath: path) else { return }
         try handoff.publishContext(worktree.brief, worktree: path, emoji: worktree.emoji, iconDescription: worktree.drawing?.description)
@@ -80,7 +86,7 @@ public extension AppState {
         }
         SidebarHostNavigation.adoptReportedDrawing(recap, worktreePath: callerPath,
             projectHue: ProjectHueRegistry.shared.hue(for: repos[index.repo].id), in: &repos)
-        if recap.contextUpdate != nil, repos[index.repo].worktrees[index.worktree].drawing != worktree.drawing {
+        if repos[index.repo].worktrees[index.worktree].drawing != worktree.drawing {
             repos[index.repo].worktrees[index.worktree].drawing?.adoptedAt = reportedAt
         }
     }
@@ -95,7 +101,9 @@ public extension AppState {
 
     private func ownsContext(callerAgentID: String?, path: String) -> Bool {
         guard let worktree = worktree(forPath: path) else { return false }
-        guard let callerAgentID, let agent = worktree.agents.first(where: { $0.id == callerAgentID || $0.nativeAgentID == callerAgentID }) else { return true }
+        guard let callerAgentID, let agent = worktree.agents.first(where: { $0.id == callerAgentID || $0.nativeAgentID == callerAgentID }) else {
+            return !worktree.agents.contains { worktree.isPrimaryAgent($0) }
+        }
         return worktree.isPrimaryAgent(agent)
     }
 
