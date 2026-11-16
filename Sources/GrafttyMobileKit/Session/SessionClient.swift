@@ -626,6 +626,13 @@ public final class SessionClient {
                                 await self.waitForParserBacklog()
                                 guard self.isCurrentTransport(generation) else { return }
                                 self.session.receive(data)
+                                if self.paging?.status == .requiresRecovery {
+                                    // Screen switches can preserve scrollbar values.
+                                    // Query the active boundary after native parsing.
+                                    try await self.terminalRenderer?.flushOutput()
+                                    guard self.isCurrentTransport(generation) else { return }
+                                    await self.paging?.viewportDidChange(requestHistory: false)
+                                }
                             }
                         case .paged(let event):
                             guard self.usesPagedHistory else { throw URLError(.badServerResponse) }

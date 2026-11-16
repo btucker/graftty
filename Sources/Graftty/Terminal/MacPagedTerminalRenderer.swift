@@ -347,8 +347,10 @@ final class MacPagedAttachment {
             do { try await Task.sleep(for: requestTimeout) } catch { return }
             guard let self, !self.closed, self.rebase != nil else { return }
             self.rebase = nil
+            let requestHistory = self.queuedHistoryDemand
             self.queuedHistoryDemand = false
             self.coordinator.invalidateHistory()
+            await self.coordinator.viewportDidChange(requestHistory: requestHistory)
         }
     }
 

@@ -159,7 +159,7 @@ struct RemoteTerminalSurfaceBackendTests {
     }
 
     @MainActor
-    @Test(arguments: [false, true])
+    @Test("@spec TERM-12.74: If a Mac initial owner resize times out after the user requests history, then the application shall retain that demand and show recovery at the loaded-history boundary.", arguments: [false, true])
     func initialResizeHistoryGateHasBoundedRecovery(alreadyRead: Bool) async throws {
         var requests: [PagedTerminalRequest] = []
         let attachment = MacPagedAttachment(renderer: RemotePagedRenderer(prepare: { _ in }),
@@ -180,6 +180,7 @@ struct RemoteTerminalSurfaceBackendTests {
                 try await Task.sleep(for: .milliseconds(5))
             }
             #expect(attachment.coordinator.status == .requiresRecovery)
+            #expect(attachment.coordinator.showsHistoryRecovery)
             await attachment.coordinator.recover()
             #expect(requests == [.checkpoint])
         }
