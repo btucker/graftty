@@ -82,6 +82,7 @@ public struct RootView: View {
     public var body: some View {
         rootContent
             .environment(\.multiHostFeed, feed)
+            .onChange(of: feed.state) { _, _ in MobileWatchCompanion.shared.update(from: feed) }
             .modifier(RootFeedObserver(feed: feed, hostStore: hostStore, appState: iPadAppState,
                 isReady: scenePhase != .background && gate.state == .unlocked,
                 isRegular: horizontalSizeClass == .regular,

@@ -35,6 +35,7 @@ struct ControlRequestCoreTests {
         var liveness: [(TeamHookEvent, String)] = []
         var notifications: [AgentStopNotificationContent] = []
         var platformRequests: [NotificationMessage] = []
+        var platformResponse: ResponseMessage = .ok
         var closedAgentSlots: [PaneSlotID] = []
         var agentCloseFailure: String?
         var liveAgentSessionNames: Set<String>?
@@ -97,7 +98,7 @@ struct ControlRequestCoreTests {
         }
         func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
             platformRequests.append(message)
-            return .ok
+            return platformResponse
         }
         func agentSessionNames() async throws -> Set<String> {
             liveAgentSessionNames ?? Set(state.repos.flatMap(\.worktrees).flatMap { $0.paneSessions.values }.map(ZmxLauncher.sessionName(for:)))
