@@ -34,6 +34,7 @@ struct WatchTerminalTests {
         #expect(model.isLoading)
         await model.refresh { _ in Issue.record("Overlapping read"); return .failure("Unexpected") }
         model.stop()
+        await model.refresh { _ in Issue.record("Restart overlapped the uncancelled read"); return .failure("Unexpected") }
         pending.resume(returning: .terminal(.init(targetID: target.id, text: "old")))
         await task.value
         #expect(model.frame == nil)

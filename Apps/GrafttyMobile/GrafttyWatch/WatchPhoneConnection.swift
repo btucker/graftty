@@ -8,6 +8,7 @@ final class WatchPhoneConnection: NSObject, WCSessionDelegate {
     let inbox: WatchInboxModel
     private var session: WCSession?
     private var isActive = false
+    private var activationFinished = false
 
     override init() {
         #if DEBUG
@@ -31,6 +32,7 @@ final class WatchPhoneConnection: NSObject, WCSessionDelegate {
         let session = WCSession.default
         session.delegate = self
         self.session = session
+        activationFinished = false
         session.activate()
     }
 
@@ -46,9 +48,13 @@ final class WatchPhoneConnection: NSObject, WCSessionDelegate {
     func receiveBackgroundUpdate() async {
         activate()
         guard let session else { return }
-        while session.activationState != .activated || session.hasContentPending {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while !activationFinished || session.hasContentPending {
+            if activationFinished, session.activationState != .activated { return }
+            guard ContinuousClock.now < deadline else { return }
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
         }
+        guard session.activationState == .activated else { return }
         if let bytes = session.receivedApplicationContext["snapshot"] as? Data,
            let snapshot = try? JSONDecoder().decode(WatchAttentionSnapshot.self, from: bytes) { receive(snapshot) }
     }
@@ -77,7 +83,7 @@ final class WatchPhoneConnection: NSObject, WCSessionDelegate {
         guard let session, session.activationState == .activated else {
             throw WCError(.sessionNotActivated)
         }
-        let bytes = try JSONEncoder().encode(request)
+        let bytes = try request.encodedForTransfer()
         let response: WatchResponse = try await withCheckedThrowingContinuation { continuation in
             session.sendMessageData(bytes, replyHandler: { bytes in
                 do { continuation.resume(returning: try JSONDecoder().decode(WatchResponse.self, from: bytes)) }
@@ -91,6 +97,7 @@ final class WatchPhoneConnection: NSObject, WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         let bytes = session.receivedApplicationContext["snapshot"] as? Data
         Task { @MainActor in
+            self.activationFinished = true
             if let bytes, let snapshot = try? JSONDecoder().decode(WatchAttentionSnapshot.self, from: bytes) {
                 self.receive(snapshot)
             }

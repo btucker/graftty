@@ -3072,6 +3072,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WATCH-1.8** If an attention snapshot exceeds the watch transfer budget, then the application shall keep the newest cards within the budget and report the number of omitted requests.
 
+**WATCH-1.9** When a watch question is answered, the application shall use the same 60000-byte encoded request budget on both devices and report an oversized reply before sending it.
+
 ### WATCH-2.x — iPhone relay
 
 **WATCH-2.1** When a paired iPhone projects a worktree's stopped question for Apple Watch, the application shall include its context and choices and preserve the host-validated occurrence and asking pane for replies.
@@ -3081,6 +3083,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **WATCH-2.3** While an attention request belongs to a harness permission prompt, the watch shall display the request without offering a text reply; resumed agents and routine recaps shall not appear as questions.
 
 **WATCH-2.4** If a paired host becomes unavailable, then the iPhone shall retain its last watch questions with an unavailable label, remove forgotten hosts' questions, and avoid repeating a worktree delivered by a live route.
+
+**WATCH-2.5** While the phone foreground or any enabled watch request needs a host connection, the application shall share its connection coordinator and keep access until the final consumer releases it.
+
+**WATCH-2.6** When watch access is disabled or a watch request expires, the application shall release that request's connection lease without closing connections still needed by the foreground or another request, and shall refuse disabled or cancelled requests.
 
 ### WATCH-3.x — Terminal viewing
 

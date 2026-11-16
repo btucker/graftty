@@ -61,6 +61,7 @@ Watch snapshots fit within a 48 KB payload. If more requests are available than
 fit, the watch reports how many remain on the iPhone.
 
 The relay uses [`WCSession` application context and interactive messages](https://developer.apple.com/documentation/watchconnectivity/wcsession).
-It closes its host connections when each watch request finishes. Turning off
-**Enable Apple Watch** stops active relay connections and sends an empty,
-disabled snapshot to the watch.
+The foreground phone and watch requests share authenticated host connections.
+Connections close when neither the unlocked foreground app nor any watch
+request needs them. Turning off **Enable Apple Watch** cancels watch work,
+leaves foreground connections available, and sends an empty, disabled snapshot.

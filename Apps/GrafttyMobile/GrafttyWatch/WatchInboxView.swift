@@ -151,12 +151,12 @@ private struct WatchQuestionView: View {
                     }
                 }
                 .padding(.horizontal, 4)
-                // A draft for an old question must never become an answer to its replacement.
-                .onChange(of: card.questionID) { _, _ in reply = "" }
             } else {
                 Label("This request has cleared.", systemImage: "checkmark.bubble")
             }
         }
+        // Observe the nil transition too, while the question branch is absent.
+        .onChange(of: card?.questionID) { _, _ in reply = "" }
         .navigationTitle(card?.worktree ?? "Request")
     }
 

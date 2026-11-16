@@ -32,6 +32,7 @@ public struct RootView: View {
     /// negotiated once from either surface is cached for the other.
     @State private var coordinator: RemoteConnectionCoordinator
     @State private var feed: MultiHostFeed
+    @State private var foregroundConnectionConsumer = UUID()
     @State private var showsHosts = false
     @State private var nearbyMacBrowser = NearbyMacBrowser()
     @State private var projectIconCache = ProjectIconCache()
@@ -45,7 +46,7 @@ public struct RootView: View {
     private var notificationConnectionProvider: RemoteConnectionProvider?
 
     public init() {
-        let coordinator = RemoteConnectionCoordinator(connectionsAllowedInitially: false)
+        let coordinator = MobileWatchCompanion.shared.coordinator
         _coordinator = State(initialValue: coordinator)
         _feed = State(initialValue: MultiHostFeed(coordinator: coordinator))
     }
@@ -83,6 +84,12 @@ public struct RootView: View {
         rootContent
             .environment(\.multiHostFeed, feed)
             .onChange(of: feed.state) { _, _ in MobileWatchCompanion.shared.update(from: feed) }
+            .onAppear { updateConnectionAccess() }
+            .onDisappear {
+                if notificationIO == nil {
+                    MobileWatchCompanion.shared.setForegroundConnectionsAllowed(false, consumer: foregroundConnectionConsumer)
+                }
+            }
             .modifier(RootFeedObserver(feed: feed, hostStore: hostStore, appState: iPadAppState,
                 isReady: scenePhase != .background && gate.state == .unlocked,
                 isRegular: horizontalSizeClass == .regular,
@@ -454,9 +461,11 @@ public struct RootView: View {
 
     private func updateConnectionAccess() {
         if scenePhase == .background || gate.state != .unlocked { retainedPanes.suspendAll() }
-        coordinator.setConnectionsAllowed(
-            scenePhase != .background && gate.state == .unlocked
-        )
+        let allowed = scenePhase != .background && gate.state == .unlocked
+        if notificationIO == nil {
+            MobileWatchCompanion.shared.setForegroundConnectionsAllowed(allowed, consumer: foregroundConnectionConsumer)
+        }
+        else { coordinator.setConnectionsAllowed(allowed) }
     }
 
     /// With nothing paired, the root is where pairing happens.

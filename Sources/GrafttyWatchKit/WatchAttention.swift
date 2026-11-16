@@ -83,6 +83,16 @@ public struct WatchAttentionSnapshot: Codable, Sendable, Equatable {
 }
 
 public enum WatchRequest: Codable, Sendable, Equatable {
+    public enum TransferError: LocalizedError {
+        case tooLarge
+        public var errorDescription: String? { "This reply is too long for Apple Watch. Shorten it and try again." }
+    }
+    public static let maximumBytes = 60_000
+    public func encodedForTransfer() throws -> Data {
+        let data = try JSONEncoder().encode(self)
+        guard data.count <= Self.maximumBytes else { throw TransferError.tooLarge }
+        return data
+    }
     case refresh
     case terminal(WatchTerminalTarget)
     case answer(id: UUID, card: WatchAttentionCard, text: String)

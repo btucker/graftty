@@ -5,6 +5,11 @@ options:
     iOS: "17.0"
   developmentLanguage: en
 
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
 packages:
   GrafttyMobileKit:
     path: ../..
@@ -48,6 +53,8 @@ targets:
       path: GrafttyWatch/Info.plist
       properties:
         CFBundleDisplayName: Graftty
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         WKApplication: true
         WKCompanionAppBundleIdentifier: com.quotably.graftty
     settings:

@@ -13,14 +13,23 @@ import UIKit
 final class MobileWatchCompanion: NSObject, WCSessionDelegate {
     static let shared = MobileWatchCompanion()
     static var isSupported: Bool { WCSession.isSupported() }
+    let coordinator = RemoteConnectionCoordinator(connectionsAllowedInitially: false)
+    private lazy var access = WatchConnectionAccess(watchEnabled: isEnabled) { [coordinator] allowed in
+        coordinator.setConnectionsAllowed(allowed)
+    }
     private var session: WCSession?
     private var cached = WatchAttentionSnapshot(isEnabled: false)
-    private var active: [UUID: RemoteConnectionCoordinator] = [:]
+    private var cacheRevision: UInt64 = 0
+    private var active: [UUID: WatchBackgroundOperation] = [:]
     private var answers: [String: Task<WatchResponse, Never>] = [:]
     private var completed: [String: WatchResponse] = [:]
     private var completionOrder: [String] = []
 
     var isEnabled: Bool { UserDefaults.standard.bool(forKey: WatchCompanionSettings.enabledKey) }
+
+    func setForegroundConnectionsAllowed(_ allowed: Bool, consumer: UUID) {
+        access.setForegroundAllowed(allowed, consumer: consumer)
+    }
 
     func install() {
         guard session == nil, WCSession.isSupported() else { return }
@@ -34,8 +43,9 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
 
     func setEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: WatchCompanionSettings.enabledKey)
+        access.setWatchEnabled(enabled)
         if !enabled {
-            for coordinator in active.values { coordinator.setConnectionsAllowed(false) }
+            for operation in active.values { operation.finish() }
             answers.values.forEach { $0.cancel() }
             publish(.init(updatedAt: .now, isEnabled: false))
         } else {
@@ -52,6 +62,7 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
     }
 
     private func publish(_ snapshot: WatchAttentionSnapshot) {
+        cacheRevision &+= 1
         cached = snapshot
         guard let bytes = try? snapshot.encodedForTransfer() else { return }
         UserDefaults.standard.set(bytes, forKey: WatchCompanionSettings.snapshotKey)
@@ -82,19 +93,28 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
     }
 
     private func perform(_ request: WatchRequest) async -> WatchResponse {
-        let token = UUID()
-        let coordinator = RemoteConnectionCoordinator()
-        active[token] = coordinator
-        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Watch reply") {
-            Task { @MainActor in coordinator.setConnectionsAllowed(false) }
+        guard let token = access.beginWatchRequest() else { return .failure("Apple Watch access was turned off.") }
+        let operation = WatchBackgroundOperation { [access] in access.endWatchRequest(token) }
+        active[token] = operation
+        let task = Task { await execute(request, lease: token) }
+        operation.cancel = { task.cancel() }
+        operation.identifier = UIApplication.shared.beginBackgroundTask(withName: "Watch request") {
+            // UIKit invokes expiration handlers on the main thread. End the
+            // assertion here even if signaling cannot unwind immediately.
+            MainActor.assumeIsolated { operation.finish() }
         }
         defer {
-            coordinator.setConnectionsAllowed(false)
+            operation.finish()
             active[token] = nil
-            if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) }
         }
+        return await task.value
+    }
+
+    private func execute(_ request: WatchRequest, lease: UUID) async -> WatchResponse {
+        let revision = cacheRevision
         let store = HostStore()
         await store.loadIfNeeded()
+        guard access.isActive(lease), !Task.isCancelled else { return .failure("This watch request expired or access was turned off.") }
         let hosts = store.hosts.filter { coordinator.isPaired($0) }
         do {
             switch request {
@@ -102,9 +122,11 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
                 guard let host = hosts.first(where: { $0.id == target.hostID }) else { return .failure("This Mac is no longer paired.") }
                 let rows = try await coordinator.worktreePanes(for: host, wake: .now)
                 let request = try WatchAttentionProjection.terminalRequest(target, rows: rows, host: host)
-                guard isEnabled, !Task.isCancelled else { return .failure("Apple Watch access was turned off.") }
+                guard access.isActive(lease), !Task.isCancelled else { return .failure("This watch request expired or access was turned off.") }
                 switch try await coordinator.sendWorktreeManagement(request, to: host) {
-                case .terminalText(let text): return .terminal(.init(targetID: target.id, text: text))
+                case .terminalText(let text):
+                    guard access.isActive(lease), !Task.isCancelled else { return .failure("This watch request expired.") }
+                    return .terminal(.init(targetID: target.id, text: text))
                 case .error(let code, let message, _, _):
                     return .failure(code == "malformed-request" ? "Update Graftty on this Mac to view its terminal on the watch." : message)
                 default: return .failure("The host couldn't read this terminal.")
@@ -116,23 +138,28 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
                 await withTaskGroup(of: (UUID, [WorktreePanes]?).self) { group in
                     for host in hosts {
                         group.addTask { @MainActor in
-                            (host.id, try? await coordinator.worktreePanes(for: host, wake: .never))
+                            guard !Task.isCancelled else { return (host.id, nil) }
+                            return (host.id, try? await self.coordinator.worktreePanes(for: host, wake: .never))
                         }
                     }
                     for await (hostID, rows) in group {
                         if let rows { state.apply(rows: rows, projects: [], from: hostID) }
                     }
                 }
-                guard isEnabled, !Task.isCancelled else { return .failure("Apple Watch access was turned off.") }
-                let snapshot = WatchAttentionProjection.snapshot(from: state, hosts: hosts, previous: cached)
-                publish(snapshot)
+                guard access.isActive(lease), !Task.isCancelled else { return .failure("This watch request expired or access was turned off.") }
+                let snapshot: WatchAttentionSnapshot
+                if revision != cacheRevision { snapshot = cached }
+                else {
+                    snapshot = WatchAttentionProjection.snapshot(from: state, hosts: hosts, previous: cached)
+                    publish(snapshot)
+                }
                 // Bound interactive responses as well as application context.
                 return .snapshot(try JSONDecoder().decode(WatchAttentionSnapshot.self, from: snapshot.encodedForTransfer()))
             case .answer(_, let card, let text):
                 guard let host = hosts.first(where: { $0.id == card.hostID }) else { return .failure("This Mac is no longer paired. Open Graftty on iPhone.") }
                 let rows = try await coordinator.worktreePanes(for: host, wake: .now)
                 let answer = try WatchAttentionProjection.answer(card, text: text, rows: rows, host: host)
-                guard isEnabled, !Task.isCancelled else { return .failure("Apple Watch access was turned off.") }
+                guard access.isActive(lease), !Task.isCancelled else { return .failure("This watch request expired or access was turned off.") }
                 let response = try await coordinator.sendWorktreeManagement(answer, to: host)
                 if let failure = AttentionAnswer.failureMessage(for: response) { return .failure(failure) }
                 return .answered
@@ -150,7 +177,7 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didReceiveMessageData messageData: Data, replyHandler: @escaping (Data) -> Void) {
         Task { @MainActor in
             let response: WatchResponse
-            if messageData.count <= 16_000, let request = try? JSONDecoder().decode(WatchRequest.self, from: messageData) {
+            if messageData.count <= WatchRequest.maximumBytes, let request = try? JSONDecoder().decode(WatchRequest.self, from: messageData) {
                 response = await self.handle(request)
             } else { response = .failure("Couldn't read this watch request. Update both apps.") }
             if let bytes = try? JSONEncoder().encode(response) { replyHandler(bytes) }
@@ -159,5 +186,27 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
 
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
     nonisolated func sessionDidDeactivate(_ session: WCSession) { session.activate() }
+}
+
+@MainActor
+private final class WatchBackgroundOperation {
+    var identifier: UIBackgroundTaskIdentifier = .invalid
+    var cancel: (() -> Void)?
+    private var finished = false
+    private let release: () -> Void
+
+    init(release: @escaping () -> Void) { self.release = release }
+
+    func finish() {
+        guard !finished else { return }
+        finished = true
+        cancel?()
+        cancel = nil
+        release()
+        if identifier != .invalid {
+            UIApplication.shared.endBackgroundTask(identifier)
+            identifier = .invalid
+        }
+    }
 }
 #endif

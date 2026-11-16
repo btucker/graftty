@@ -41,7 +41,9 @@ public final class WatchTerminalModel {
         guard !isLoading, !Task.isCancelled else { return }
         let generation = self.generation
         isLoading = true
-        defer { if generation == self.generation { isLoading = false } }
+        // WCSession cannot cancel an already sent exchange. Keep this guard
+        // until its callback returns, even when stop invalidates the result.
+        defer { isLoading = false }
         do {
             let response = try await send(.terminal(target))
             guard generation == self.generation, !Task.isCancelled else { return }
@@ -51,6 +53,7 @@ public final class WatchTerminalModel {
                 error = nil
             case .failure(let message): error = message
             case .snapshot(let snapshot) where !snapshot.isEnabled:
+                frame = nil
                 error = "Enable Apple Watch in Graftty's Hosts screen on iPhone."
             default: error = "The terminal response didn't match this pane. Refresh the terminal list."
             }
@@ -61,6 +64,5 @@ public final class WatchTerminalModel {
     }
     public func stop() {
         generation += 1
-        isLoading = false
     }
 }

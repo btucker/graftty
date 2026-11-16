@@ -106,4 +106,20 @@ struct WatchInboxTests {
         #expect(decoded.cards == Array(cards.prefix(decoded.cards.count)))
         #expect(decoded.cards.count + decoded.omittedCount == 20)
     }
+
+    @Test("@spec WATCH-1.9: When a watch question is answered, the application shall use the same 60000-byte encoded request budget on both devices and report an oversized reply before sending it.")
+    func displayedLargeCardsCanBeAnswered() throws {
+        var question = card()
+        question.context = String(repeating: "界", count: 7_000)
+        let visible = try WatchAttentionSnapshot(cards: [question], updatedAt: .now).encodedForTransfer()
+        #expect(visible.count < 48_000)
+        let request = WatchRequest.answer(id: UUID(), card: question, text: "Ship")
+        let data = try request.encodedForTransfer()
+        #expect(data.count > 16_000)
+        #expect(data.count <= WatchRequest.maximumBytes)
+        question.context = String(repeating: "a", count: 61_000)
+        #expect(throws: WatchRequest.TransferError.self) {
+            try WatchRequest.answer(id: UUID(), card: question, text: "Ship").encodedForTransfer()
+        }
+    }
 }

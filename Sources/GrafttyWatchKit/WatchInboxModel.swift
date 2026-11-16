@@ -50,6 +50,8 @@ public final class WatchInboxModel {
             case .failure(let message): state = .failed(message)
             case .snapshot, .terminal: state = .failed("The iPhone returned an unexpected response.")
             }
+        } catch let error as WatchRequest.TransferError {
+            state = .failed(error.localizedDescription)
         } catch {
             state = .failed("Delivery wasn't confirmed. Refresh before trying again.")
         }

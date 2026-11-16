@@ -50,14 +50,18 @@ struct WatchTerminalView: View {
         _model = State(initialValue: WatchTerminalModel(target: target))
     }
 
-    private var updatesActive: Bool { scenePhase == .active && !paused && !showsOptions }
+    private var updatesActive: Bool {
+        connection.inbox.snapshot.isEnabled && scenePhase == .active && !paused && !showsOptions
+    }
     private var displayFontSize: Double { fontSize.isFinite ? min(14, max(6, fontSize)) : 9 }
 
     var body: some View {
         ScrollViewReader { reader in
             ScrollView(wrapLines ? [.vertical] : [.vertical, .horizontal]) {
                 VStack(alignment: .leading, spacing: 8) {
-                    if let frame = model.frame {
+                    if !connection.inbox.snapshot.isEnabled {
+                        Text("Enable Apple Watch in Graftty's Hosts screen on iPhone.").font(.footnote)
+                    } else if let frame = model.frame {
                         Text(frame.text.isEmpty ? "Terminal is empty." : frame.text)
                             .font(.system(size: displayFontSize, design: .monospaced))
                             .foregroundStyle(.white)
