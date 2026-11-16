@@ -12,6 +12,8 @@ public struct CLIWorktreeCreationPlan: Sendable {
     public let initialCommand: String?
     public let agentRuntime: TeamHookRuntime?
     public var selectTab: Bool? = nil
+    public var sourceWorktreePath: String? = nil
+    public var sourcePaneSessionName: String? = nil
 }
 
 /// Host-specific effects behind `CLIWorktreeCreationRequestHandler`. The
@@ -235,7 +237,9 @@ public enum CLIWorktreeCreationRequestHandler {
                 value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
             },
             agentRuntime: agentRuntime,
-            selectTab: request.selectTab
+            selectTab: request.selectTab,
+            sourceWorktreePath: callerPath,
+            sourcePaneSessionName: request.sourcePaneSessionName
         )
         var status = worktreeCreations.start(
             worktreePath: worktreePath,

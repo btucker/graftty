@@ -521,7 +521,7 @@ private final class SSHBackpressureFixture: @unchecked Sendable {
                 }
                 child.closeFuture.whenComplete { _ in if index == 0 { probe.markChildClosed() } else { probe.markSiblingClosed() } }
                 let installed = child.pipeline.addHandlers([SSHBackpressureCreditRecorder(probe: probe), TerminalSessionHandler(
-                    streamFactory: { _ in
+                    streamFactory: { _, _ in
                         await attachGate?.wait()
                         return index == 0 ? stream : siblingStream
                     },

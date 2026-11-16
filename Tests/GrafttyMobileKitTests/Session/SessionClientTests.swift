@@ -11,6 +11,78 @@ import GrafttyRemoteClient
 @Suite
 @MainActor
 struct SessionClientTests {
+    private actor StartupGridCapture {
+        var grids: [DisplayGrid?] = []
+        func record(_ grid: DisplayGrid?) { grids.append(grid) }
+    }
+
+    @Test("@spec IOS-4.68: When a fullscreen mobile terminal first connects, the application shall wait for its confirmed physical viewport and pass that grid to the transport before shell startup, while cancellation before confirmation shall prevent the dial.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func startupDialWaitsForPhysicalViewport(cancel: Bool) async throws {
+        let capture = StartupGridCapture()
+        let client = SessionClient(sessionName: "startup", webSocketFactory: { FakeWS() },
+            webSocketFactoryWithInitialGrid: { grid in
+                await capture.record(grid)
+                return FakeWS()
+            })
+        defer { client.stop() }
+        client.start()
+        // The parser's initial callback alone must not admit a placeholder grid.
+        primeViewport(client, columns: 1, rows: 1)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await capture.grids.isEmpty)
+        if cancel { client.stop() }
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 117, rows: 43,
+            widthPixels: 1404, heightPixels: 1032, cellWidthPixels: 12, cellHeightPixels: 24))
+        for _ in 0..<100 {
+            if await !capture.grids.isEmpty { break }
+            if cancel { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await capture.grids == (cancel ? [] : [try DisplayGrid(cols: 117, rows: 43)]))
+    }
+
+    @Test("A retained follower reconnect reuses its confirmed physical viewport without waiting on the scaled canvas", .timeLimit(.minutes(1)))
+    func followerReconnectRetainsStartupViewport() async throws {
+        let capture = StartupGridCapture()
+        let client = SessionClient(sessionName: "startup", webSocketFactory: { FakeWS() },
+            webSocketFactoryWithInitialGrid: { grid in await capture.record(grid); return FakeWS() })
+        defer { client.stop() }
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 117, rows: 43,
+            widthPixels: 1404, heightPixels: 1032, cellWidthPixels: 12, cellHeightPixels: 24))
+        client.start()
+        for _ in 0..<100 {
+            if await capture.grids.count == 1 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await capture.grids.count == 1)
+        client.handleTextFrame(WebControlEnvelope.ownership(try ownershipSnapshot(
+            ownerClientID: .init("desktop"), ownerKind: .mac, cols: 80, rows: 24)).encoded())
+        client.suspend()
+        client.resume()
+        for _ in 0..<100 {
+            if await capture.grids.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await capture.grids.count == 2)
+    }
+
+    @Test("Physical layout confirmed during suspension remains available when the terminal resumes", .timeLimit(.minutes(1)))
+    func initialPhysicalViewportSurvivesSuspension() async throws {
+        let capture = StartupGridCapture()
+        let client = SessionClient(sessionName: "startup", webSocketFactory: { FakeWS() },
+            webSocketFactoryWithInitialGrid: { grid in await capture.record(grid); return FakeWS() })
+        defer { client.stop() }
+        client.start()
+        client.suspend()
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 117, rows: 43,
+            widthPixels: 1404, heightPixels: 1032, cellWidthPixels: 12, cellHeightPixels: 24))
+        client.resume()
+        for _ in 0..<100 {
+            if await !capture.grids.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await capture.grids == [try DisplayGrid(cols: 117, rows: 43)])
+    }
 
     @Test("@spec AGENT-6.145: When a mobile conversation restarts with the same terminal name, the application shall discard the retained previous-assignment client before attaching even if its process-end event has not arrived.")
     func resumedAssignmentReplacesLiveRetainedClient() {
@@ -560,13 +632,14 @@ struct SessionClientTests {
         private let second: FakeWS
         private var callCount = 0
         private var firstContinuation: CheckedContinuation<FakeWS, Never>?
+        private var firstReleased = false
 
         init(first: FakeWS, second: FakeWS) {
             self.first = first
             self.second = second
         }
 
-        var calls: Int { lock.withLock { callCount } }
+        var isFirstCallPending: Bool { lock.withLock { firstContinuation != nil } }
 
         func make() async -> FakeWS {
             let call = lock.withLock {
@@ -575,14 +648,18 @@ struct SessionClientTests {
             }
             guard call == 1 else { return second }
             return await withCheckedContinuation { continuation in
-                lock.withLock {
+                let alreadyReleased = lock.withLock {
+                    guard !firstReleased else { return true }
                     firstContinuation = continuation
+                    return false
                 }
+                if alreadyReleased { continuation.resume(returning: first) }
             }
         }
 
         func releaseFirst() {
             let continuation = lock.withLock {
+                firstReleased = true
                 defer { firstContinuation = nil }
                 return firstContinuation
             }
@@ -1319,7 +1396,7 @@ struct SessionClientTests {
             client.stop()
         }
         try await waitUntil("the first dial to begin") {
-            factory.calls == 1
+            factory.isFirstCallPending
         }
 
         client.suspend()
@@ -2072,17 +2149,37 @@ struct SessionClientTests {
     @Test
     func stopClosesWebSocket() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        let factory = DelayedFirstWebSocketFactory(first: ws, second: FakeWS())
+        let client = SessionClient(sessionName: "s", webSocketFactory: { await factory.make() })
         client.start()
+        defer {
+            factory.releaseFirst()
+            client.stop()
+        }
+        try await waitUntil("the socket factory to suspend") { factory.isFirstCallPending }
         client.stop()
-        // The factory is now async, so the first WS is constructed in
-        // an open Task. `stop()` flags `stopped`, the open Task sees it
-        // when the factory resolves, and closes the WS without
-        // assigning it to `self.ws`. Quiesce so the open Task runs.
+        // Complete an already-running factory after cancellation. A dial
+        // cancelled before its factory starts has no socket to close.
+        factory.releaseFirst()
         try await waitUntil("the stopped client's pending WebSocket to close") {
             ws.closed
         }
         #expect(ws.closed)
+    }
+
+    @Test("A delayed socket factory retains cleanup requested before its continuation is installed")
+    func delayedFactoryRetainsEarlyRelease() async throws {
+        let first = FakeWS()
+        let factory = DelayedFirstWebSocketFactory(first: first, second: FakeWS())
+        factory.releaseFirst()
+        var received: FakeWS?
+        let operation = Task { @MainActor in received = await factory.make() }
+        defer {
+            factory.releaseFirst()
+            operation.cancel()
+        }
+        try await waitUntil("the factory to honor its early release") { received != nil }
+        #expect(received === first)
     }
 
     @Test("""

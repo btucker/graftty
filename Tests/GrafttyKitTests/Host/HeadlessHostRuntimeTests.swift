@@ -86,6 +86,21 @@ private actor HostDevContainerFake: CLIExecutor {
 
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
+    @Test("@spec ZMX-9.13: When the headless host starts a new pane from a session with an attached display owner, the application shall give the new zmx shell that owner's grid before startup.")
+    func newHeadlessPaneInheritsControllingGrid() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let store = SessionDisplayOwnershipStore()
+        runtime.displayOwnershipStore = store
+        let first = try await runtime.openWorktree(root.path)
+        _ = store.attachClient(sessionName: first, clientID: .init("ipad"), kind: .ios,
+            role: .interactive, visible: true, grid: try DisplayGrid(cols: 117, rows: 43))
+        _ = try await runtime.splitPane(target: first, direction: .right)
+        #expect(terminal.starts.last?.initialWindowSize?.cols == 117)
+        #expect(terminal.starts.last?.initialWindowSize?.rows == 43)
+    }
     @Test("Paired creation starts the selected primary provider with its exact initial task", arguments: [TeamHookRuntime.codex, .claude])
     func pairedCreationPreservesSelectedAgentTask(provider: TeamHookRuntime) async throws {
         let (root, config, state) = try fixture()

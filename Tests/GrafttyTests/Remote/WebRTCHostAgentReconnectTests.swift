@@ -455,7 +455,7 @@ struct WebRTCHostAgentReconnectTests {
         WebRTCHostAgent(
             hostKey: Curve25519.Signing.PrivateKey(),
             trustedPeerStore: trustedPeerStore ?? TrustedPeerStore(directory: Self.tempDir()),
-            streamFactory: { _ in fatalError("not expected: no data channel opens in this test") },
+            streamFactory: { _, _ in fatalError("not expected: no data channel opens in this test") },
             panesStateSubscribe: { _ in PanesStateChannelHandler.Cancellable(cancel: {}) },
             paneControlMutator: { _ in fatalError("not expected: no data channel opens in this test") },
             displayOwnershipStore: SessionDisplayOwnershipStore(),

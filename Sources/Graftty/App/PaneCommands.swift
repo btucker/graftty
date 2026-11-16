@@ -27,7 +27,8 @@ enum PaneCommands {
         terminalManager: TerminalManager,
         startSurfacesInBackground: Bool = false,
         extraInitialInput: String? = nil,
-        initialAgent: ManagedAgent? = nil
+        initialAgent: ManagedAgent? = nil,
+        inheritingGridFrom sourceID: PaneSlotID? = nil
     ) -> WorktreeStartResult {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
@@ -81,7 +82,9 @@ enum PaneCommands {
                     paneSessions: appState.wrappedValue.repos[repoIdx]
                         .worktrees[wtIdx].paneSessions,
                     worktreePath: path,
-                    extraInitialInput: extraInitialInput
+                    extraInitialInput: extraInitialInput,
+                    inheritedWindowSize: terminalManager.initialWindowSizeForNewSession(
+                        inheritingFrom: sourceID ?? terminalManager.focusedTerminalID)
                 )
                 if startSurfacesInBackground,
                    !terminalManager.startSurfacesForBackgroundLaunch(
@@ -112,7 +115,8 @@ enum PaneCommands {
         activateNewPane: Bool = true,
         preserveZoom: Bool = false,
         reservedSlot: PaneSlotID? = nil,
-        reservedSession: PaneSessionID? = nil
+        reservedSession: PaneSessionID? = nil,
+        inheritingGridFrom sourceID: PaneSlotID? = nil
     ) -> PaneSlotID? {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
@@ -162,7 +166,8 @@ enum PaneCommands {
                     terminalID: newID,
                     paneSessionID: paneSessionID,
                     worktreePath: wt.path,
-                    extraInitialInput: extraInitialInput
+                    extraInitialInput: extraInitialInput,
+                    inheritingGridFrom: sourceID ?? targetID
                 ) != nil else {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = wt.splitTree
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].clearPaneSession(for: newID)

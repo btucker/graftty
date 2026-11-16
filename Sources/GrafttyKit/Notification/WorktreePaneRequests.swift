@@ -7,6 +7,7 @@ import Foundation
 /// and optionally launch an agent.
 public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
     public var callerWorktree: String
+    public var sourcePaneSessionName: String?
     public var worktreeName: String
     public var branchName: String
     public var existing: Bool
@@ -21,8 +22,9 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
 
     public init(callerWorktree: String, worktreeName: String, branchName: String, existing: Bool, base: String?,
                 command: String?, agentRuntime: TeamHookRuntime?, agentPrompt: String?, operationID: String?, managedAgent: ManagedAgent? = nil, selectTab: Bool? = nil,
-                existingBranchSource: BranchSelection.ExistingSource? = nil) {
+                existingBranchSource: BranchSelection.ExistingSource? = nil, sourcePaneSessionName: String? = nil) {
         self.callerWorktree = callerWorktree
+        self.sourcePaneSessionName = sourcePaneSessionName
         self.worktreeName = worktreeName
         self.branchName = branchName
         self.existing = existing
@@ -50,6 +52,7 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
+        case sourcePaneSessionName = "source_pane_session_name"
         case callerWorktree = "caller_worktree"
         case worktreeName = "worktree_name"
         case branchName = "branch_name"
@@ -68,6 +71,7 @@ public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
 /// `command` stays an arbitrary shell line.
 public struct AddPaneRequest: Codable, Sendable, Equatable {
     public var path: String
+    public var sourcePaneSessionName: String?
     public var direction: PaneSplit
     public var command: String?
     public var agentRuntime: TeamHookRuntime?
@@ -76,8 +80,9 @@ public struct AddPaneRequest: Codable, Sendable, Equatable {
     public var agentPrompt: String?
 
     public init(path: String, direction: PaneSplit, command: String?, agentRuntime: TeamHookRuntime? = nil,
-                agentPrompt: String? = nil, managedAgent: ManagedAgent? = nil, selectTab: Bool? = nil) {
+                agentPrompt: String? = nil, managedAgent: ManagedAgent? = nil, selectTab: Bool? = nil, sourcePaneSessionName: String? = nil) {
         self.path = path
+        self.sourcePaneSessionName = sourcePaneSessionName
         self.direction = direction
         self.command = command
         self.agentRuntime = agentRuntime
@@ -88,6 +93,7 @@ public struct AddPaneRequest: Codable, Sendable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case path, direction, command
+        case sourcePaneSessionName = "source_pane_session_name"
         case agentRuntime = "agent_runtime"
         case agentPrompt = "agent_prompt"
         case managedAgent = "managed_agent"

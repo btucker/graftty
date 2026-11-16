@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import CryptoKit
 import Foundation
+import GhosttyTerminal
 import Testing
 @testable import GrafttyMobileKit
 import GrafttyProtocol
@@ -386,6 +387,8 @@ struct SessionReconnectTests {
             backoffSchedule: [1, 2, 4]
         )
         defer { client.stop() }
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 80, rows: 24,
+            widthPixels: 960, heightPixels: 576, cellWidthPixels: 12, cellHeightPixels: 24))
         client.start()
         await waitUntil {
             provider.invocationCount == 1 &&

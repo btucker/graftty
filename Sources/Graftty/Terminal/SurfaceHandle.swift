@@ -55,6 +55,7 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func bindSourceGrid(_ handler: @escaping (DisplayGrid?) -> Void)
     func configure(_ config: inout ghostty_surface_config_s)
     func start(surface: ghostty_surface_t) throws
+    func start(surface: ghostty_surface_t, initialWindowSize: PtyProcess.WindowSize?) throws
     func write(_ data: Data) throws
     func write(_ data: Data, claimEngagement: Bool) throws
     /// Returns false when ownership or another backend policy rejected the
@@ -94,6 +95,9 @@ protocol SurfaceHandleZmxBackend: AnyObject {
 }
 
 extension SurfaceHandleZmxBackend {
+    func start(surface: ghostty_surface_t, initialWindowSize: PtyProcess.WindowSize?) throws {
+        try start(surface: surface)
+    }
     @MainActor func bindPagedHistory(_ handler: @escaping (PagedTerminalCoordinator?) -> Void) {}
     @MainActor func historyViewportDidChange(requestHistory: Bool) {}
     func bindOwnershipLoss(_ handler: @escaping () -> Void) {}
@@ -234,7 +238,8 @@ final class SurfaceHandle {
                 ownership: ownership
             )
         },
-        initialGridSize: ghostty_surface_size_s? = nil
+        initialGridSize: ghostty_surface_size_s? = nil,
+        inheritedWindowSize: PtyProcess.WindowSize? = nil
     ) {
         self.terminalID = terminalID
         self.actionIdentity = GhosttyActionBridge.SurfaceIdentity(terminalID: terminalID)
@@ -513,7 +518,7 @@ final class SurfaceHandle {
             }
             // TERM-11.10: spawn-time injection rides along with the
             // deferred start.
-            pendingZmxStart = PendingZmxStart(extraInitialInput: extraInitialInput)
+            pendingZmxStart = PendingZmxStart(extraInitialInput: extraInitialInput, inheritedWindowSize: inheritedWindowSize)
         }
 
         if let initialGridSize, initialGridSize.width_px > 0, initialGridSize.height_px > 0 {
@@ -529,6 +534,7 @@ final class SurfaceHandle {
     /// double-start or replay the spawn-time injection.
     private struct PendingZmxStart {
         let extraInitialInput: String?
+        let inheritedWindowSize: PtyProcess.WindowSize?
     }
 
     private var pendingZmxStart: PendingZmxStart?
@@ -542,7 +548,7 @@ final class SurfaceHandle {
     @discardableResult
     func startForBackgroundLaunch() -> Bool {
         guard zmxBackend != nil else { return true }
-        return startZmxBackendIfNeeded()
+        return startZmxBackendIfNeeded(useInheritedSize: view.window == nil)
     }
 
     func waitForBackendStartup() async -> Bool {
@@ -551,11 +557,11 @@ final class SurfaceHandle {
     }
 
     @discardableResult
-    private func startZmxBackendIfNeeded() -> Bool {
+    private func startZmxBackendIfNeeded(useInheritedSize: Bool = false) -> Bool {
         guard let backend = zmxBackend, let pending = pendingZmxStart else { return true }
         pendingZmxStart = nil
         do {
-            try backend.start(surface: surface)
+            try backend.start(surface: surface, initialWindowSize: useInheritedSize ? pending.inheritedWindowSize : nil)
             if let extraInitialInput = pending.extraInitialInput,
                let data = extraInitialInput.data(using: .utf8) {
                 // extraInitialInput is programmatic spawn-time

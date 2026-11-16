@@ -650,7 +650,8 @@ final class TerminalManager: ObservableObject {
         paneSessions: [PaneSlotID: PaneSessionID],
         worktreePath: String,
         extraInitialInput: String? = nil,
-        confirmedLiveSessions: Set<String>? = nil
+        confirmedLiveSessions: Set<String>? = nil,
+        inheritedWindowSize: PtyProcess.WindowSize? = nil
     ) -> [PaneSlotID: SurfaceHandle] {
         guard wakeWorktree(worktreePath) else { return [:] }
         recordPaneSessions(
@@ -711,7 +712,9 @@ final class TerminalManager: ObservableObject {
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
                 displayOwnershipStore: displayOwnershipStore,
                 displayClientID: displayClientID,
-                initialGridSize: consumeCachedGridSize(for: terminalID)
+                initialGridSize: consumeCachedGridSize(for: terminalID),
+                inheritedWindowSize: rehydratedSurfaces.contains(terminalID) ? nil
+                    : inheritedWindowSize ?? initialWindowSizeForNewSession(inheritingFrom: focusedTerminalID)
             ) else {
                 explicitInitialInputSurfaces.remove(terminalID)
                 continue
@@ -728,13 +731,28 @@ final class TerminalManager: ObservableObject {
         return created
     }
 
+    /// The controlling client's grid takes precedence over a host follower's viewport.
+    func initialWindowSizeForNewSession(inheritingFrom sourceID: PaneSlotID?) -> PtyProcess.WindowSize? {
+        guard let sourceID else { return nil }
+        if let session = zmxSessionName(for: sourceID), let displayOwnershipStore {
+            let snapshot = displayOwnershipStore.snapshot(sessionName: session)
+            if snapshot.ownerClientID != nil {
+                return .init(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+            }
+        }
+        guard let size = handle(for: sourceID)?.queryGridSize(), size.columns > 0, size.rows > 0 else { return nil }
+        return .init(cols: size.columns, rows: size.rows,
+            xpixel: UInt16(clamping: size.width_px), ypixel: UInt16(clamping: size.height_px))
+    }
+
     /// Create a single surface, or return the existing one for this `PaneSlotID`.
     func createSurface(
         terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
         worktreePath: String,
         extraInitialInput: String? = nil,
-        hostManagedBackend: SurfaceHandleZmxBackend? = nil
+        hostManagedBackend: SurfaceHandleZmxBackend? = nil,
+        inheritingGridFrom sourceID: PaneSlotID? = nil
     ) -> SurfaceHandle? {
         guard hostManagedBackend != nil || wakeWorktree(worktreePath) else { return nil }
         recordPaneSession(
@@ -787,7 +805,9 @@ final class TerminalManager: ObservableObject {
             displayOwnershipStore: displayOwnershipStore,
             displayClientID: displayClientID,
             hostManagedBackend: hostManagedBackend,
-            initialGridSize: consumeCachedGridSize(for: terminalID)
+            initialGridSize: consumeCachedGridSize(for: terminalID),
+            inheritedWindowSize: isDirectHostManagedSurface || rehydratedSurfaces.contains(terminalID) ? nil
+                : initialWindowSizeForNewSession(inheritingFrom: sourceID ?? focusedTerminalID)
         ) else {
             explicitInitialInputSurfaces.remove(terminalID)
             return nil

@@ -345,7 +345,8 @@ public enum AgentControl {
                 throw error
             }
             let response = await platform.handlePlatformRequest(.addPane(.init(path: target, direction: .right, command: nil,
-                agentRuntime: provider, agentPrompt: request.prompt, managedAgent: agent, selectTab: request.selectTab ?? false)))
+                agentRuntime: provider, agentPrompt: request.prompt, managedAgent: agent, selectTab: request.selectTab ?? false,
+                sourcePaneSessionName: request.paneSessionName)))
             guard response == .ok else {
                 _ = try recordLaunchFailure(response, agent: agent, path: target, platform: platform)
                 return response ?? .error("Agent launch failed.")
@@ -371,7 +372,7 @@ public enum AgentControl {
             worktreeName: names.worktree, branchName: names.branch, existing: request.existing ?? false, base: request.base, command: nil,
             agentRuntime: provider, agentPrompt: request.prompt, operationID: agent.launchOperationID,
             managedAgent: agent, selectTab: request.selectTab ?? false,
-            existingBranchSource: request.existingBranchSource), platform: platform.worktreeCreation)
+            existingBranchSource: request.existingBranchSource, sourcePaneSessionName: request.paneSessionName), platform: platform.worktreeCreation)
         guard case .worktreeCreate(let status) = response else {
             if let path = platform.state.repos.flatMap(\.worktrees).first(where: { $0.agents.contains { $0.id == agent.id } })?.path {
                 agent.paneSlotID = nil

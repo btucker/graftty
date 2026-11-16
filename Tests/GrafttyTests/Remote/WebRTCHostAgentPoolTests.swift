@@ -274,7 +274,7 @@ struct WebRTCHostAgentPoolTests {
         WebRTCHostAgent(
             hostKey: Curve25519.Signing.PrivateKey(),
             trustedPeerStore: TrustedPeerStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            streamFactory: { _ in fatalError("No native WebRTC in pool tests") },
+            streamFactory: { _, _ in fatalError("No native WebRTC in pool tests") },
             panesStateSubscribe: { _ in .init(cancel: {}) },
             paneControlMutator: { _ in .ok },
             displayOwnershipStore: SessionDisplayOwnershipStore()

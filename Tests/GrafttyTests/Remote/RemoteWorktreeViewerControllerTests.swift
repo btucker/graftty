@@ -11,6 +11,15 @@ import Testing
 @Suite("Remote worktree viewer mutation queue")
 @MainActor
 struct RemoteWorktreeViewerControllerTests {
+    @Test("A Mac viewer forwards the controlling source grid before opening the remote terminal")
+    func forwardsStartupGridBeforeCreatingRemoteSurface() async throws {
+        let surfaces = FakeViewerSurfaces()
+        let expected = try DisplayGrid(cols: 117, rows: 43)
+        surfaces.startupGrid = expected
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"), surfaces: surfaces)
+        #expect(viewer.model.startupGrids == [expected])
+        #expect(surfaces.live.count == 1)
+    }
     @Test("A newer explicit open prevents adoption of an older recovery")
     func explicitOpenCancelsOldRouteRecovery() async throws {
         let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
@@ -1060,6 +1069,7 @@ private final class FakeViewerModel: RemoteWorktreeViewerModel {
     private(set) var paneControls: [FakePaneControl] = []
     private(set) var operationTasks: [Task<PaneControlResponse, Never>] = []
     private(set) var openedWorktrees: [String] = []
+    private(set) var startupGrids: [DisplayGrid?] = []
 
     var requests: [PaneControlRequest] { paneControls.map(\.request) }
 
@@ -1076,6 +1086,12 @@ private final class FakeViewerModel: RemoteWorktreeViewerModel {
     }
 
     func connectViewer(to remoteMac: RemoteMac) async throws {}
+
+    func openViewerTerminalSession(identity: RemoteMacIdentity, sessionName: String, initialGrid: DisplayGrid?) async throws
+        -> any WebSocketClient & Sendable {
+        startupGrids.append(initialGrid)
+        return try await openViewerTerminalSession(identity: identity, sessionName: sessionName)
+    }
 
     func openViewerTerminalSession(identity: RemoteMacIdentity, sessionName: String) async throws
         -> any WebSocketClient & Sendable {
@@ -1120,6 +1136,8 @@ private final class FakeViewerTerminalClient: WebSocketClient, @unchecked Sendab
 @MainActor
 private final class FakeViewerSurfaces: RemoteWorktreeViewerSurfaces {
     var splitPreserveZoomOnNavigation = false
+    var startupGrid: DisplayGrid?
+    func terminalStartupGrid() -> DisplayGrid? { startupGrid }
     var failingCreates = 0
     /// Every call the viewer makes, for `settle()`'s quiescence check.
     private(set) var events = 0

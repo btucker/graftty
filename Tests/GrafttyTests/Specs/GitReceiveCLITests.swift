@@ -128,7 +128,7 @@ struct GitReceiveCLITests {
                                        cliExecutable: try executable())
         let broker = GitReceiveBroker(delegations: authority, replicas: replicas)
         let server = DirectSSHHostServer(hostKey: parentKey, trustedPeerStore: trusted,
-            streamFactory: { _ in Issue.record("Replication worker reached terminal factory"); throw GitReplicationError.unavailable },
+            streamFactory: { _, _ in Issue.record("Replication worker reached terminal factory"); throw GitReplicationError.unavailable },
             panesStateSubscribe: { _ in Issue.record("Replication worker subscribed to parent panes"); return .init(cancel: {}) },
             paneControlMutator: { _ in Issue.record("Replication worker reached pane control"); return .ok },
             chromeTabMutator: { _, _, _ in Issue.record("Replication worker reached browser control"); return .init(error: "forbidden") },

@@ -10,6 +10,7 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
     /// True when this spawn installs shell integration that emits the
     /// first-PWD readiness signal consumed by `TerminalManager`.
     public let shellReadySignalAvailable: Bool
+    public var initialWindowSize: PtyProcess.WindowSize? = nil
 
     /// The shell init shim owns startup instead of renderer-driven typing.
     public var runsInitialCommand: Bool { env["GRAFTTY_INITIAL_COMMAND"] != nil }

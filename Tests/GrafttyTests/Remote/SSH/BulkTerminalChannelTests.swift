@@ -23,7 +23,7 @@ struct BulkTerminalChannelTests {
         let stream = BulkPagedStream()
         let terminal = NIOAsyncTestingChannel()
         let handler = TerminalSessionHandler(
-            streamFactory: { _ in throw TerminalTestError.unexpected }, pagedFactory: { _ in stream },
+            streamFactory: { _, _ in throw TerminalTestError.unexpected }, pagedFactory: { _, _ in stream },
             ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
             deviceID: device, bulkChannels: registry
         )

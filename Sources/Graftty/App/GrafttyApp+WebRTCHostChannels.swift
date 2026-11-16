@@ -707,10 +707,10 @@ extension GrafttyApp {
                 trustedPeerStore: trustedPeerStore,
                 activeRemotePeers: activeRemotePeers,
                 streamFactory: {
-                    [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                    [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName, initialGrid in
                     if sessionName.hasPrefix("relay-pane-") {
                         return try await remoteMacsModel.openRelayedTerminal(
-                            alias: sessionName
+                            alias: sessionName, initialGrid: initialGrid
                         )
                     }
                     let launch = await Self.remoteLaunch(forSessionName: sessionName, terminalManager: terminalManager)
@@ -719,15 +719,16 @@ extension GrafttyApp {
                         zmxDir: zmxDir,
                         sessionName: sessionName,
                         workingDirectory: launch.workingDirectory,
-                        spawnConfiguration: launch.spawnConfiguration
+                        spawnConfiguration: launch.spawnConfiguration,
+                        initialWindowSize: initialGrid.map { .init(cols: $0.cols, rows: $0.rows) }
                     ))
                     engine.attachmentRegistry = registry
                     try engine.start()
                     return engine
                 },
-                pagedFactory: { [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                pagedFactory: { [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName, initialGrid in
                     if sessionName.hasPrefix("relay-pane-") {
-                        return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
+                        return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName, initialGrid: initialGrid)
                     }
                     let launch = await Self.remoteLaunch(forSessionName: sessionName, terminalManager: terminalManager)
                     // Paging attaches only to existing daemons. A newly
@@ -739,7 +740,8 @@ extension GrafttyApp {
                         let session = ZmxAttachEngine(config: .init(
                             zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
                             workingDirectory: launch.workingDirectory,
-                            spawnConfiguration: launch.spawnConfiguration
+                            spawnConfiguration: launch.spawnConfiguration,
+                            initialWindowSize: initialGrid.map { .init(cols: $0.cols, rows: $0.rows) }
                         ))
                         // Discard bootstrap output. The paged channel will
                         // obtain its own checkpoint once the daemon exists.

@@ -160,7 +160,8 @@ public final class SessionClient {
         public let rows: UInt16
     }
 
-    nonisolated private let webSocketFactory: @Sendable () async throws -> WebSocketClient
+    nonisolated private let webSocketFactory: @Sendable (DisplayGrid?) async throws -> WebSocketClient
+    nonisolated private let requiresInitialPhysicalViewport: Bool
     nonisolated internal let clock: any Clock
     nonisolated internal let backoffSchedule: [TimeInterval]
     /// NSLock protects `_ws` and `_wsReadyTask` which are read from
@@ -219,6 +220,8 @@ public final class SessionClient {
     /// layout tick; no view reads it, so don't churn observers.
     @ObservationIgnored
     private var lastIOSViewport: (cols: UInt16, rows: UInt16)?
+    @ObservationIgnored
+    private var hasInitialPhysicalViewport = false
     /// IOS-4.43: pixel size of `lastIOSViewport`'s grid, sent with owner
     /// resizes so the host PTY reports the phone's real pixel geometry.
     @ObservationIgnored
@@ -384,10 +387,12 @@ public final class SessionClient {
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule(),
         role: Role = .fullscreen,
-        pagedRenderer: (any PagedTerminalRenderer)? = nil
+        pagedRenderer: (any PagedTerminalRenderer)? = nil,
+        webSocketFactoryWithInitialGrid: (@Sendable (DisplayGrid?) async throws -> WebSocketClient)? = nil
     ) {
         self.sessionName = sessionName
-        self.webSocketFactory = webSocketFactory
+        self.webSocketFactory = webSocketFactoryWithInitialGrid ?? { _ in try await webSocketFactory() }
+        self.requiresInitialPhysicalViewport = webSocketFactoryWithInitialGrid != nil
         self.clock = clock
         self.backoffSchedule = backoffSchedule
         self.role = role
@@ -499,12 +504,12 @@ public final class SessionClient {
     }
 
     internal func physicalViewportDidBecomeReady(_ viewport: InMemoryTerminalViewport) {
-        guard awaitingOwnerViewport else { return }
+        hasInitialPhysicalViewport = true
         updateViewport(viewport, confirmedPhysicalViewport: true)
     }
 
     private func updateViewport(_ viewport: InMemoryTerminalViewport, confirmedPhysicalViewport: Bool) {
-        guard !stopped else { return }
+        guard !stopped || confirmedPhysicalViewport else { return }
         let cols = max(1, viewport.columns)
         let rows = max(1, viewport.rows)
         nativeGrid = GridSize(cols: cols, rows: rows)
@@ -520,6 +525,7 @@ public final class SessionClient {
             heightPixels: viewport.heightPixels
         )
         lastIOSViewportPixels = pixels
+        guard !stopped else { return }
         switch ownershipTransportMode {
         case .webControl where isOwner:
             guard let epoch = ownershipSnapshot?.epoch else { return }
@@ -792,7 +798,13 @@ public final class SessionClient {
         let task: Task<WebSocketClient?, Never> = Task { @MainActor [weak self] in
             guard let self else { return nil }
             do {
-                let client = try await self.webSocketFactory()
+                while self.requiresInitialPhysicalViewport && self.role != .preview && !self.hasInitialPhysicalViewport {
+                    guard self.isCurrentTransport(generation) else { throw CancellationError() }
+                    try await Task.sleep(for: .milliseconds(16))
+                }
+                try Task.checkCancellation()
+                let grid = self.helloGrid()
+                let client = try await self.webSocketFactory(try? DisplayGrid(cols: grid.cols, rows: grid.rows))
                 if !self.isCurrentTransport(generation) {
                     client.close()
                     return nil

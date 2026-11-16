@@ -189,8 +189,9 @@ public extension HeadlessHostRuntime {
                         created = try await splitPane(target: launcher.sessionName(for: session),
                             direction: PaneControlRequest.SplitDirection(rawValue: request.direction.rawValue) ?? .right,
                             command: launch.command, managedAgent: request.managedAgent,
-                            selectTab: request.selectTab ?? (request.managedAgent == nil))
-                    } else { created = try await openWorktree(request.path, command: launch.command, selectTab: request.selectTab ?? (request.managedAgent == nil)) }
+                            selectTab: request.selectTab ?? (request.managedAgent == nil), sourcePaneSessionName: request.sourcePaneSessionName)
+                    } else { created = try await openWorktree(request.path, command: launch.command,
+                        selectTab: request.selectTab ?? (request.managedAgent == nil), sourcePaneSessionName: request.sourcePaneSessionName) }
                     // The exact binding was persisted before terminals.start.
                     if request.selectTab == true {
                         let (path, slot) = try resolve(created)

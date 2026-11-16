@@ -716,6 +716,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.23** When a Ghostty action is deferred to the main queue, the application shall copy each consumed borrowed payload before the callback returns and preserve live-surface and app-scoped routing.
 
+**TERM-11.24** When a new zmx session inherits a controlling client's dimensions, the native backend shall start its PTY at those dimensions even if its unmounted host renderer reports another grid.
+
+**TERM-11.25** When a new pane inherits startup dimensions from an existing pane, the application shall use that pane's attached display owner's grid, falling back to its host viewport when it has no owner.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
@@ -1794,6 +1798,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-9.10** When a bundled `zmx attach` client reattaches to a session, it shall reset text attributes before clearing the screen and the replay shall restore the session's cursor style.
 
+**ZMX-9.11** When a terminal attachment starts a new zmx session with a known controlling-client size, the application shall apply that size before executing zmx so the session's first terminal-size read sees the client's rows and columns.
+
+**ZMX-9.12** When the CLI requests a new pane or worktree from a zmx terminal, the application shall carry the source pane's session identity through request encoding so startup can inherit its controlling client's dimensions.
+
+**ZMX-9.13** When the headless host starts a new pane from a session with an attached display owner, the application shall give the new zmx shell that owner's grid before startup.
+
 ## DIST — Distribution
 
 ### DIST-1.x — Build Bundle
@@ -2488,6 +2498,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.67** When an iPhone opens an agent's terminal, the application shall start the terminal screen with the rows it already has for that host, so the terminal is not rebuilt and left blank when the worktree's agents arrive.
 
+**IOS-4.68** When a fullscreen mobile terminal first connects, the application shall wait for its confirmed physical viewport and pass that grid to the transport before shell startup, while cancellation before confirmation shall prevent the dial.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2825,6 +2837,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-13.28** While a mobile worktree row offers removal, the application shall align the trash icon to the trailing edge of the row.
 
 **IOS-13.29** When the user deletes or dismisses a worktree from its row or tile on iPhone or iPad, the application shall anchor the confirmation to that row or tile, and to no other row, including a same-path worktree on another host.
+
+**IOS-13.30** While a mobile worktree delete confirmation is open, the application shall keep its row in its section and position through live activity updates.
 
 ## IPAD — iPad Layout
 
@@ -3695,6 +3709,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-9.25** When an adaptive terminal consumer speeds up with no buffered output, the client shall send newly available credit without waiting for another inbound frame.
 
 **REMOTE-9.26** The application shall advertise a 256 KiB maximum SSH channel packet size on host and client connections, so each channel's receive window is the 16 MiB that terminal flow control is sized for.
+
+**REMOTE-9.27** When an SSH terminal attachment starts, the host shall pass the attached display owner's grid to the terminal factory, or the requesting client's PTY grid when there is no owner, before the factory can create a zmx session.
+
+**REMOTE-9.28** When a terminal client opens an SSH session with a known viewport, the application shall send that grid in the initial PTY request before shell startup, including after paging falls back to legacy attachment.
 
 ### REMOTE-10.x
 

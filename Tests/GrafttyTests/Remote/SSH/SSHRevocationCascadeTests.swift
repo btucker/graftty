@@ -289,7 +289,7 @@ struct SSHRevocationCascadeTests {
                 // silent fallback.
                 return child.eventLoop.makeCompletedFuture {
                     let dispatcher = SubsystemDispatcher(
-                        streamFactory: { _ in fatalError("terminal-session path not exercised by this test") },
+                        streamFactory: { _, _ in fatalError("terminal-session path not exercised by this test") },
                         panesStateSubscribe: { _ in PanesStateChannelHandler.Cancellable(cancel: {}) },
                         paneControlMutator: { _ in .ok },
                         ownershipStore: SessionDisplayOwnershipStore(),

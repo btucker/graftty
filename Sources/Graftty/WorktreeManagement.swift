@@ -268,6 +268,8 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
     /// Phase two of a CLI creation: the backend starts with no view mounted.
     func finishWorktreeCreation(_ plan: CLIWorktreeCreationPlan) async -> String? {
         let operationID = state.worktree(forPath: plan.worktreePath)?.creationProgress?.operationID
+        let sourcePane = plan.sourcePaneSessionName.flatMap { terminalManager.paneID(forSessionName: $0) }.map(PaneSlotID.init(id:))
+            ?? plan.sourceWorktreePath.flatMap { state.worktree(forPath: $0)?.focusedPaneSlotID }
         let result = await AddWorktreeFlow.finishCreate(
             repoPath: plan.repoPath,
             worktreePath: plan.worktreePath,
@@ -279,7 +281,8 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
             terminalManager: terminalManager,
             teamEventDispatcher: teamEventDispatcher,
             initialCommand: plan.initialCommand,
-            terminalStartTiming: AddWorktreeFlow.terminalStartTiming(for: .cli)
+            terminalStartTiming: AddWorktreeFlow.terminalStartTiming(for: .cli),
+            sourcePaneID: sourcePane
         )
         switch result {
         case .success:

@@ -12,6 +12,43 @@ import GrafttyTestSupport
 @Suite("ZmxAttachEngine")
 struct ZmxAttachEngineTests {
 
+    @Test("@spec ZMX-9.11: When a terminal attachment starts a new zmx session with a known controlling-client size, the application shall apply that size before executing zmx so the session's first terminal-size read sees the client's rows and columns.", .timeLimit(.minutes(1)))
+    func initialSizeIsAppliedBeforeZmxExecutes() throws {
+        let dir = try makeTempDir(prefix: "zmx-initial-size")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("zmx")
+        let measured = dir.appendingPathComponent("size")
+        try Self.writeScript("#!/bin/sh\nstty size > \(PTYFixtureTestSupport.shellQuoted(measured.path + ".tmp")); mv \(PTYFixtureTestSupport.shellQuoted(measured.path + ".tmp")) \(PTYFixtureTestSupport.shellQuoted(measured.path))\nsleep 5\n", to: script)
+        let engine = ZmxAttachEngine(config: .init(zmxExecutable: script, zmxDir: dir, sessionName: "startup",
+            initialWindowSize: .init(cols: 117, rows: 43)))
+        try engine.start()
+        defer { engine.close() }
+        try #require(PTYFixtureTestSupport.waitForFile(measured))
+        #expect(try String(contentsOf: measured, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "43 117")
+    }
+
+    #if os(macOS)
+    @Test("A newly created zmx shell sees the controlling grid in its first command", .timeLimit(.minutes(1)))
+    func newZmxShellStartsAtControllingGrid() throws {
+        try ZmxSurvivalIntegrationTests.withScopedZmxDir { launcher in
+            let name = launcher.sessionName(for: UUID())
+            defer { launcher.kill(sessionName: name) }
+            let measured = launcher.zmxDir.appendingPathComponent("size")
+            let spawn = ZmxSpawnConfiguration(sessionName: name,
+                argv: [launcher.executable.path, "attach", name, "/bin/sh", "-c",
+                       "stty size > \(PTYFixtureTestSupport.shellQuoted(measured.path + ".tmp")); mv \(PTYFixtureTestSupport.shellQuoted(measured.path + ".tmp")) \(PTYFixtureTestSupport.shellQuoted(measured.path)); sleep 5"],
+                env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
+                workingDirectory: launcher.zmxDir, shellReadySignalAvailable: false)
+            let engine = ZmxAttachEngine(config: .init(zmxExecutable: launcher.executable, zmxDir: launcher.zmxDir,
+                sessionName: name, spawnConfiguration: spawn, initialWindowSize: .init(cols: 117, rows: 43)))
+            try engine.start()
+            defer { engine.close() }
+            try #require(PTYFixtureTestSupport.waitForFile(measured))
+            #expect(try String(contentsOf: measured, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "43 117")
+        }
+    }
+    #endif
+
     @Test("@spec REMOTE-10.2: While a legacy SSH terminal consumer is stalled, the application shall bound queued output and backpressure its attach reader without losing bytes, and shall release queued output when the attachment closes.", .timeLimit(.minutes(1)))
     func stalledConsumerBackpressuresAndCloseDiscardsQueuedOutput() async throws {
         let dir = try makeTempDir(prefix: "zmx-output-backpressure")

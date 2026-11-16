@@ -164,16 +164,16 @@ public actor DirectSSHHostConnection {
         let (channel, ssh) = try connectedTransport()
         return TeamChannelClient(parentChannel: channel, parentHandler: ssh.handler, handler: handler, onClose: onClose)
     }
-    public func openTerminalSession(sessionName: String, preferPaged: Bool = false) async throws -> TerminalSessionClient {
+    public func openTerminalSession(sessionName: String, preferPaged: Bool = false, initialGrid: DisplayGrid? = nil) async throws -> TerminalSessionClient {
         let (channel, handler) = try connectedTransport()
         if preferPaged {
             let paged = TerminalSessionClient(parentChannel: channel, parentHandler: handler.handler, sessionName: sessionName)
-            do { try await paged.connect(paged: true); return paged }
+            do { try await paged.connect(paged: true, initialGrid: initialGrid); return paged }
             catch TerminalSessionClient.ClientError.pagingUnsupported { paged.close() }
             catch { paged.close(); throw error }
         }
         let client = TerminalSessionClient(parentChannel: channel, parentHandler: handler.handler, sessionName: sessionName)
-        do { try await client.connect(); return client }
+        do { try await client.connect(initialGrid: initialGrid); return client }
         catch { client.close(); throw error }
     }
 

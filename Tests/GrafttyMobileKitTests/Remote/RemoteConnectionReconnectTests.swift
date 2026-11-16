@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import CryptoKit
 import Foundation
+import GhosttyTerminal
 import GrafttyProtocol
 import GrafttyTunnel
 import NIOCore
@@ -256,6 +257,8 @@ struct RemoteConnectionReconnectTests {
             backoffSchedule: backoffSchedule
         )
         defer { client.stop() }
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 80, rows: 24,
+            widthPixels: 960, heightPixels: 576, cellWidthPixels: 12, cellHeightPixels: 24))
         client.start()
 
         // 1: first dial negotiates through the real coordinator + signaling.
@@ -272,6 +275,12 @@ struct RemoteConnectionReconnectTests {
         // and echo back over the SAME SSH session channel `SessionClient`
         // opened.
         try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { client.isOwner }
+        // The confirmed viewport parks input behind the owner-resize quiet
+        // window. Release its virtual timer before expecting bytes to flow.
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15), stage: "E2E first owner resize") {
+            clock.hasPendingSleep(for: SessionClient.ownerResizeQuietWindow)
+        }
+        clock.advance(by: SessionClient.ownerResizeQuietWindow)
         let firstBytes = Data("hello-from-client\n".utf8)
         client.session.sendInput(firstBytes)
         try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { recorder.contains(firstBytes) }
@@ -317,6 +326,10 @@ struct RemoteConnectionReconnectTests {
         // NEW connection, and bytes flow again through the NEW SSH
         // session channel the healed `SessionClient` opened.
         try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { client.isOwner }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15), stage: "E2E second owner resize") {
+            clock.hasPendingSleep(for: SessionClient.ownerResizeQuietWindow)
+        }
+        clock.advance(by: SessionClient.ownerResizeQuietWindow)
         let secondBytes = Data("hello-after-reconnect\n".utf8)
         client.session.sendInput(secondBytes)
         try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { recorder.contains(secondBytes) }

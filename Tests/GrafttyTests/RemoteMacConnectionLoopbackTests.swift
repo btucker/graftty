@@ -70,7 +70,7 @@ struct RemoteMacConnectionLoopbackTests {
         let hostAgent = WebRTCHostAgent(
             hostKey: hostKey,
             trustedPeerStore: trustedPeerStore,
-            streamFactory: { _ in EchoTerminalStream() },
+            streamFactory: { _, _ in EchoTerminalStream() },
             panesStateSubscribe: { onChange in
                 await onChange(.snapshot([]))
                 return PanesStateChannelHandler.Cancellable(cancel: {})

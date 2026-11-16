@@ -28,7 +28,8 @@ public final class ZmxHostTerminalDriver: HostTerminalDriver {
         if engines[configuration.sessionName] != nil { return }
         let engine = ZmxAttachEngine(config: .init(zmxExecutable: launcher.executable,
             zmxDir: launcher.zmxDir, sessionName: configuration.sessionName,
-            workingDirectory: configuration.workingDirectory, spawnConfiguration: configuration))
+            workingDirectory: configuration.workingDirectory, spawnConfiguration: configuration,
+            initialWindowSize: configuration.initialWindowSize))
         // Consume headless output without retaining history in an AsyncStream.
         engine.onPTYData = { _ in }
         try await Task.detached { try engine.start() }.value

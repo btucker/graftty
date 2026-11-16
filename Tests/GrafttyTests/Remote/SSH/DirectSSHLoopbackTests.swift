@@ -19,6 +19,32 @@ import Network
 
 @Suite(.serialized)
 struct DirectSSHLoopbackTests {
+    @Test("@spec REMOTE-9.28: When a terminal client opens an SSH session with a known viewport, the application shall send that grid in the initial PTY request before shell startup, including after paging falls back to legacy attachment.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func initialViewportReachesHostBeforeShell(preferPaged: Bool) async throws {
+        actor Capture {
+            var grid: DisplayGrid?
+            func record(_ grid: DisplayGrid?) { self.grid = grid }
+        }
+        let capture = Capture()
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _, grid in
+                await capture.record(grid)
+                return DirectEchoTerminalStream()
+            }, panesStateSubscribe: { _ in .init {} }, paneControlMutator: { _ in .ok },
+            displayOwnershipStore: .init())
+        let client = try f.client()
+        do {
+            let port = try await server.start(host: "127.0.0.1", port: 0)
+            try await client.connect(host: "127.0.0.1", port: port)
+            let expected = try DisplayGrid(cols: 117, rows: 43)
+            let terminal = try await client.openTerminalSession(sessionName: "startup", preferPaged: preferPaged, initialGrid: expected)
+            #expect(await capture.grid == expected)
+            terminal.close()
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
     @Test(.timeLimit(.minutes(1)), arguments: [true, false])
     func replicationOnlyRejectsMobilePeersAndMissingReceiver(configured: Bool) async throws {
         let f = Fixture(); defer { f.cleanup() }
@@ -78,7 +104,7 @@ struct DirectSSHLoopbackTests {
         try f.store.add(f.peer(key: f.clientKey))
         let sample = HostResourceSnapshot(sampledAt: Date().timeIntervalSince1970, cpuCount: 4, cpuUtilization: 0.25, diskPath: "/workspace")
         let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
-            streamFactory: { _ in DirectEchoTerminalStream() }, panesStateSubscribe: { _ in .init {} },
+            streamFactory: { _, _ in DirectEchoTerminalStream() }, panesStateSubscribe: { _ in .init {} },
             panesStateV2Subscribe: { onChange in
                 if mode == "sample" || mode == "unknown" {
                     await onChange(.snapshot([], sidebar: .init(projects: [], hostResources: mode == "sample" ? sample : nil)))
@@ -276,7 +302,7 @@ struct DirectSSHLoopbackTests {
         }
         func server() -> DirectSSHHostServer {
             DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: store,
-                streamFactory: { _ in DirectEchoTerminalStream() },
+                streamFactory: { _, _ in DirectEchoTerminalStream() },
                 panesStateSubscribe: { onChange in
                     await onChange(.snapshot([]))
                     return .init(cancel: {})
@@ -296,7 +322,7 @@ struct DirectSSHLoopbackTests {
         try f.store.add(peer)
         let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
         let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
-            streamFactory: { _ in DirectEchoTerminalStream() },
+            streamFactory: { _, _ in DirectEchoTerminalStream() },
             panesStateSubscribe: { _ in .init(cancel: {}) }, paneControlMutator: { _ in .ok },
             authenticatedPlacementMutator: { _, owner in
                 #expect(allowed)
@@ -343,7 +369,7 @@ struct DirectSSHLoopbackTests {
         try f.store.add(f.peer(key: f.clientKey, managementAllowed: true))
         let receiver = RemoteSkillTransferReceiver(directory: f.directory.appendingPathComponent("skills"))
         let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
-            streamFactory: { _ in DirectEchoTerminalStream() }, panesStateSubscribe: { _ in .init(cancel: {}) },
+            streamFactory: { _, _ in DirectEchoTerminalStream() }, panesStateSubscribe: { _ in .init(cancel: {}) },
             paneControlMutator: { _ in .ok }, authenticatedSkillMutator: { request, owner in
                 do { return .agentSkills(try await receiver.handle(request, owner: owner, repositories: ["/repo"])) }
                 catch { return .error(code: "fixture", message: String(describing: error), forceAllowed: false, shortStatus: nil) }
@@ -382,7 +408,7 @@ struct DirectSSHLoopbackTests {
         let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
         let descriptor = RemoteSkillTransferDescriptor(operationID: UUID(), repositoryID: "/repo", runtime: "codex", revision: String(repeating: "0", count: 64), byteCount: 1)
         let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
-            streamFactory: { _ in DirectEchoTerminalStream() },
+            streamFactory: { _, _ in DirectEchoTerminalStream() },
             panesStateSubscribe: { _ in .init(cancel: {}) }, paneControlMutator: { _ in .ok },
             authenticatedSkillMutator: { request, owner in
                 #expect(owner == expected)
