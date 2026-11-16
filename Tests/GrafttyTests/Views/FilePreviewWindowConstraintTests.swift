@@ -95,6 +95,14 @@ final class FilePreviewWindowConstraintChild: XCTestCase {
             let size = sizes[index % sizes.count]
             window.setFrame(NSRect(origin: .init(x: 100, y: 100), size: size), display: true)
             let acceptedSize = window.frame.size
+            // SwiftUI may defer the representable's creation on a busy host.
+            // Mount it while visible before exercising hidden-window layout.
+            let initialContent = try XCTUnwrap(window.contentView)
+            let mountDeadline = ContinuousClock.now + .seconds(2)
+            while findTray(in: initialContent) == nil, ContinuousClock.now < mountDeadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            _ = try XCTUnwrap(findTray(in: initialContent), "Preview \(index) did not mount its native tray")
             if index.isMultiple(of: 2) { window.orderOut(nil) }
             main.setContentSize(.init(width: 700 + index * 30, height: 400 + index * 20))
             try await Task.sleep(for: .milliseconds(250))
