@@ -100,13 +100,10 @@ struct HostBrowserProxyTests {
         let network = HostBrowserNetwork()
         defer { network.stop() }
         let configuration = try await network.start(url: authorization.url!, dataStoreIdentifier: UUID()) { socket, host, port, reply in
+            defer { socket.cancel() }
             if !reply.isEmpty { try await BrowserProxy.send(reply, to: socket) }
-            let request: Data = try await withCheckedThrowingContinuation { continuation in
-                socket.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, error in
-                    if let error { continuation.resume(throwing: error) }
-                    else { continuation.resume(returning: data ?? Data()) }
-                }
-            }
+            let request = try await Self.readRequest(from: socket)
+            guard !request.isEmpty else { return }
             let text = String(decoding: request, as: UTF8.self)
             if host == "example.invalid" {
                 #expect(port == 32134)
@@ -118,9 +115,26 @@ struct HostBrowserProxyTests {
                 let response = "HTTP/1.1 200 OK\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 try await BrowserProxy.send(Data(response.utf8), to: socket)
             }
-            socket.cancel()
         }
         try await expectPage("mcp-sign-in-complete", url: authorization.url!, configuration: configuration)
+    }
+
+    @Test("OAuth fixtures wait for complete HTTP headers and ignore unused connections", arguments: [false, true])
+    func oauthFixtureHandlesTCPBoundaries(fragmented: Bool) async throws {
+        let request = Data("GET /callback?code=test HTTP/1.1\r\nHost: fixture\r\n\r\n".utf8)
+        let chunks: [(Data, Bool)] = fragmented
+            ? [(Data(request.prefix(2)), false), (Data(request.dropFirst(2)), true)]
+            : [(Data(), true)]
+        var reads = 0
+        let received = try await Self.readRequest { maximumLength in
+            try #require(reads < chunks.count)
+            let chunk = chunks[reads]
+            #expect(chunk.0.count <= maximumLength)
+            reads += 1
+            return chunk
+        }
+        #expect(reads == chunks.count)
+        #expect(received == (fragmented ? request : Data()))
     }
 
     @Test(.timeLimit(.minutes(2))) func signInUsesPhoneNetworkingAndOnlyTunnelsItsCallback() async throws {
@@ -164,14 +178,15 @@ struct HostBrowserProxyTests {
         let network = HostBrowserNetwork()
         defer { network.stop() }
         let configuration = try await network.start(url: authorization.url!, dataStoreIdentifier: UUID(), callbackHost: "127.0.0.1") { socket, host, port, reply in
+            defer { socket.cancel() }
             #expect(host == "127.0.0.1" && port == 32137)
             #expect(reply.isEmpty)
             let request = try await Self.readRequest(from: socket)
+            guard !request.isEmpty else { return }
             #expect(String(decoding: request, as: UTF8.self).hasPrefix("GET /callback?code=test&state=unchanged HTTP/1.1"))
             let body = "scoped-auth-complete"
             let response = "HTTP/1.1 200 OK\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
             try await BrowserProxy.send(Data(response.utf8), to: socket)
-            socket.cancel()
         }
         #expect(configuration.websiteDataStore.proxyConfigurations.isEmpty)
         #expect(!configuration.websiteDataStore.isPersistent)
@@ -245,12 +260,13 @@ struct HostBrowserProxyTests {
         let browserSheet = try #require(anchor.presentedViewController)
         local.open(url: authorization.url!, hostID: hostID, makeTunnel: {
             LocalBrowserTunnel(isConnected: { true }, connect: { socket, host, port, reply in
+                defer { socket.cancel() }
                 #expect(host == "127.0.0.1" && port == 32182 && reply.isEmpty)
                 await probe.callbackConnected()
                 let request = try await Self.readRequest(from: socket)
+                guard !request.isEmpty else { return }
                 await probe.record(request)
                 try await Self.serveCallbackResponse(socket)
-                socket.cancel()
             })
         }, authenticate: { url in .init(url: url, callbackHost: "127.0.0.1") }, isPaneOwner: { true })
         try await waitForBrowserState("Safari must finish presenting before its callback is awaited") {
@@ -564,12 +580,41 @@ struct HostBrowserProxyTests {
     }
 
     private static func readRequest(from socket: NWConnection) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            socket.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: data ?? Data()) }
+        // Speculative WebKit connections may remain idle. Cancel the socket
+        // independently of the main actor so a pending receive always resumes.
+        let deadline = DispatchWorkItem { socket.cancel() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: deadline)
+        defer { deadline.cancel() }
+        return try await readRequest { maximumLength in
+            try await withCheckedThrowingContinuation { continuation in
+                socket.receive(minimumIncompleteLength: 1, maximumLength: maximumLength) { data, _, complete, error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume(returning: (data ?? Data(), complete)) }
+                }
             }
         }
+    }
+
+    private static func readRequest(receive: (Int) async throws -> (Data, Bool)) async throws -> Data {
+        var request = Data()
+        let headerEnd = Data("\r\n\r\n".utf8)
+        while request.range(of: headerEnd) == nil {
+            try #require(request.count < 16_384, "HTTP fixture headers exceed 16 KiB")
+            let remaining = 16_384 - request.count
+            let (chunk, complete): (Data, Bool)
+            do {
+                (chunk, complete) = try await receive(remaining)
+            } catch {
+                if !request.isEmpty { Issue.record("HTTP fixture receive failed after a partial request: \(error)") }
+                throw error
+            }
+            request.append(chunk)
+            // An unused speculative connection must receive no HTTP response.
+            if complete && request.isEmpty { return Data() }
+            try #require(!complete || request.range(of: headerEnd) != nil, "HTTP fixture received truncated headers")
+        }
+        try #require(String(decoding: request, as: UTF8.self).hasPrefix("GET /"))
+        return request
     }
 
     /// A sign-in provider's redirect to its OAuth callback, closing the connection.
@@ -632,25 +677,7 @@ struct HostBrowserProxyTests {
                                   receive: (Int) async throws -> (Data, Bool),
                                   send: (Data) async throws -> Void) async throws {
         if !reply.isEmpty { try await send(reply) }
-        var request = Data()
-        let headerEnd = Data("\r\n\r\n".utf8)
-        while request.range(of: headerEnd) == nil {
-            try #require(request.count < 16_384, "HTTP fixture headers exceed 16 KiB")
-            let remaining = 16_384 - request.count
-            let (chunk, complete): (Data, Bool)
-            do {
-                (chunk, complete) = try await receive(remaining)
-            } catch {
-                if !request.isEmpty { Issue.record("HTTP fixture receive failed after a partial request: \(error)") }
-                throw error
-            }
-            request.append(chunk)
-            // WebKit can open a speculative connection then close it without
-            // sending HTTP. It must receive no response and cannot satisfy expectPage.
-            if complete && request.isEmpty { return }
-            try #require(!complete || request.range(of: headerEnd) != nil, "HTTP fixture received truncated headers")
-        }
-        try #require(String(decoding: request, as: UTF8.self).hasPrefix("GET /"))
+        guard !(try await readRequest(receive: receive)).isEmpty else { return }
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
         try await send(Data(response.utf8))
     }
