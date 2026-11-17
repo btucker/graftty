@@ -54,9 +54,16 @@ upstream test hook.
 The integration tests run independent Tailcat server and client peers inside
 the test process. They use the public relay bootstrap and may discover a
 direct path. They require internet access and transfer synthetic bytes only.
-The server is a small NIOSSH fixture with an explicit paired-key check and an
-echoing terminal. It substitutes for a Mac PTY, as the existing simulator SSH
-tests do. It is not the production host authorization implementation.
+The shared Mac and simulator suite uses a small NIOSSH fixture with an explicit
+paired-key check and an echoing terminal. It substitutes for a Mac PTY, as the
+existing simulator SSH tests do.
+
+The additional Mac-only `TailcatHostIntegrationTests` suite passes accepted
+Tailcat streams to the production `DirectSSHHostServer`. It exercises the real
+paired-key store, host pinning, channel capabilities, and revocation registry,
+plus control, team, and terminal channels. Its PTY is still an injected echo
+stream. The host package depends on AppKit, so the simulator continues to test
+the shared client against the small NIOSSH fixture.
 
 Tests cover pinned SSH authentication, terminal echo and a 1 MiB ordered
 transfer, host-key mismatch, an unpaired client, accept cancellation, peer
@@ -88,6 +95,13 @@ The pre-PR review added regressions for descriptor-allocation failure and SSH
 closure without explicit peer closure. Both failed before the fixes and passed
 afterward in the simulator. The peer-closure test now waits for a parked receive.
 The builder also recovers an interrupted initial source checkout.
+
+On 17 November 2026, the production-host suite passed on Mac, including both
+untrusted-identity cases and a 1 MiB terminal echo. All ten Mac tests then passed
+with DERP forced and the relay route asserted. The seven-test shared client
+suite also passed on the iPhone 18 Pro simulator running iOS 27.0. The optional
+performance probe remained disabled. These checks do not exercise app pairing
+or app connection routing.
 
 ## Compare performance
 
@@ -132,7 +146,8 @@ in memory and does not print or persist them. C errors expose numeric status
 only. Do not commit addresses, keys, or unredacted runtime logs.
 
 The prototype does not implement pairing UI, address distribution, persistent
-listener identity, production capability checks, or live peer revocation.
+listener identity, or app connection routing. Production capability checks and
+live peer revocation have passed in the Mac host integration suite.
 Simulator results cannot establish cellular behavior, physical-device power
 use, suspension recovery, or performance across NATs. Those remain migration
 gates, together with a relay hosting plan and upstream compatibility handling.

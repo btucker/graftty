@@ -32,6 +32,9 @@ targets:
     templates: [Tests]
     platform: macOS
     deploymentTarget: "14.0"
+    dependencies:
+      - package: Graftty
+        product: GrafttyHostAgent
 schemes:
   TailcatSimulator:
     build:
