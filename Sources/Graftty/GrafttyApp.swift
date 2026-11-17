@@ -748,7 +748,7 @@ struct GrafttyApp: App {
                 services.claudeSessionRegistry.recordFileActivity(activity, in: binding.wrappedValue)
                 switch activity {
                 case .recap(let event):
-                    binding.wrappedValue.recordAgentRecap(event.recap, callerPath: event.worktree, reportedAt: event.reportedAt)
+                    binding.wrappedValue.recordAgentRecap(event.recap, callerPath: event.worktree, reportedAt: event.reportedAt, callerAgentID: event.agentID)
                 case .response(let event):
                     guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
                     binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordAgentResponse(event.response)
@@ -777,11 +777,15 @@ struct GrafttyApp: App {
                         terminalManager: tm
                     )
                 }
+                if activity.publishesContextSnapshot {
+                    try? binding.wrappedValue.publishContextSnapshot(worktree: activity.worktreePath, handoff: attentionHandoff)
+                }
             },
             // One off-main write per batch; files are deleted only after it
             // lands (REMOTE-23.10).
             persist: { try await Self.persistAppStateNow(binding.wrappedValue) }
         )
+        binding.wrappedValue.publishContextSnapshots(handoff: attentionHandoff)
         do {
             try attentionObserver.start {
                 Task { @MainActor in await attentionDrain.drain() }

@@ -1,40 +1,59 @@
 ---
 name: graftty
-description: Report a brief Graftty Attention recap before ending a tracked agent turn.
+description: Keep worktree context current and request attention explicitly.
 ---
 
 # Graftty
 
-Keep the problem being solved and why it matters front and center. The recap
-helps the user recover their context when returning to this worktree. Lead with
-that purpose, then explain progress, decisions, and what happens next.
+Help the user recover the problem being solved and why it matters, where the
+work stands, and whether they need to act. Graftty retains that context.
+Send only what changed.
 
-The current brief and the history serve different purposes. Current-state fields
-replace the previous brief, so retaining unchanged context and decisions is useful.
-History entries tell the story of what changed and why. Most reports need no
-history entry; do not invent a milestone just because a turn ended.
+Read `graftty context show --json` at session start or after losing context.
+The private file snapshot also verifies that the owning host supports updates.
+If unavailable, relaunch the updated app and start a turn. Do not submit the new
+shape to an older host. Legacy `graftty attention report --stdin` remains
+available for old integrations.
 
-Send your first report as soon as you understand the task and why it matters,
-before starting long work such as builds, test runs, or broad edits. A rough
-early brief is more useful than a polished late one: the user can see what you
-are working on while you work. Refine it in later reports.
-
-During each top-level turn in a tracked worktree, run this before your final response:
+Publish the first context as soon as you understand the task and why it
+matters, before starting long work. Include `purpose` and `now` on first use:
 
 ```sh
-graftty attention report --stdin <<'GRAFTTY_ATTENTION_7F3A91C2'
-{"title":"Posting detail model evals","context":"Model costs limit how many postings we can process accurately.","completed":"v3 scored 0.910 against a700's 0.935.","next":"Evaluate v3 on the new holdout.","decisions":["Compare models on the same holdout before changing the production model."],"historyEntry":{"headline":"v3 nearly matched a700 on the baseline.","detail":"Its 0.910 score versus 0.935 makes it worth checking on the new holdout before choosing the cheaper model."},"emoji":"🧪","emojiAlternatives":["🔬","📊"]}
-GRAFTTY_ATTENTION_7F3A91C2
+graftty context update --stdin <<'GRAFTTY_CONTEXT_7F3A91C2'
+{"purpose":{"title":"Posting model evals","context":"Model costs limit how many postings we can process."},"now":{"summary":"The cheaper model nearly matched the baseline.","next":"Evaluate the holdout."},"emoji":"🧪","emojiAlternatives":["🔬","📊"]}
+GRAFTTY_CONTEXT_7F3A91C2
 ```
 
-Keep each field brief:
+During each turn, before your final response, publish changed groups or acknowledge no change:
 
-- `title`: recognizable worktree purpose, never a finding or status: `Crash investigation`, not `Crash investigation unaffected by cache stall`. Keep it stable across stops, milestones, and implementation steps.
-- `context`: include one sentence stating the problem and why solving it matters, ideally under 120 characters. Preserve that motivation as work progresses; refine it when understanding improves. Put status updates in `completed`.
-- `completed`: where things stand now, in one plain sentence a returning user understands; state unknown results honestly.
-- `next`: remaining concrete work.
-- `emoji`: task-specific subject. Include up to three distinct task-related `emojiAlternatives`. The first report assigns the worktree's enduring emoji.
-- Optional `icon`: the worktree's drawing. Send it once you understand the worktree's purpose. Send a replacement when the host asks for a one-time redraw, or when the purpose changes and the old picture no longer fits. Set `purposeChanged: true` only for an actual purpose change. Keep sending `emoji` as the fallback.
+```sh
+graftty context update --stdin <<'GRAFTTY_CONTEXT_63A2F4B1'
+{"now":{"summary":"Both models passed the holdout."}}
+GRAFTTY_CONTEXT_63A2F4B1
+```
+
+Use `{"unchanged":true}` by itself when nothing useful changed. It satisfies
+the turn check without changing the context timestamp. Stop checks for an
+update receipt and asks once if it is missing. Reporting failures must not
+prevent the turn from finishing.
+
+## Retained context
+
+Omitted groups stay unchanged. A supplied group replaces that whole group.
+
+- `purpose`: `title` and `context`, stating the problem and why it matters.
+  Keep the title stable until the task changes. Do not turn it into status.
+- `now`: `summary` in one plain sentence stating verified progress and optional
+  `next`. Omitting `next` removes the old next step. Put progress here.
+- `decisions`: the current list, only when it changes. `[]` clears it.
+- `historyEntry`: a short `headline` and optional `detail` for a discovery,
+  decision, changed request, or major outcome worth remembering. Omit it for
+  routine updates. Keep headlines about 60 characters and use plain words.
+  Say what changed and why. Distinguish proposals from decisions.
+- `emoji` and up to three distinct `emojiAlternatives`: task-specific single
+  glyphs for initial identity. Omit them once identity is assigned.
+
+- Optional `icon`: the worktree's drawing. Send it once you understand the worktree's purpose. Send a replacement when the host asks for a one-time redraw, or when the purpose changes and the old picture no longer fits. Resend `purpose` only when the goal changes. Keep the existing emoji as the fallback; do not repeat it in routine updates.
   - Pick a concrete subject tied to the work, such as a database for fixture data. Give it one odd detail that someone could remember after a glance.
   - Vary the composition. Let the subject and the detail suggest the layout. A clock can have a git branch for a hand. A paper boat can hang from the hook of a crane. Two spools can sit at opposite corners with a thread between them. Try a centered shape, a diagonal, a stack, or an overlap as the subject calls for it. Use the project's recent drawings to choose a different subject and overall silhouette.
   - Send an `iconDescription` with every `icon`. Name the subject, its odd detail, and how they fit together in a few words, such as `a clock with a branching hand`. Graftty shares these descriptions with other agents in the project.
@@ -55,25 +74,50 @@ Keep each field brief:
   ```svg
   <svg viewBox='0 0 96 64'><g stroke='ink' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M25 21c21-14 20 27 42 22' fill='none' stroke-width='4'/><path d='M12 7h24v6h-4v13h4v6H12v-6h4V13h-4Z' fill='primary'/><path d='M16 15h16m-16 5h16m-16 5h16' fill='none'/><path d='M62 33h24v6h-4v13h4v6H62v-6h4V39h-4Z' fill='accent'/><path d='M66 41h16m-16 5h16m-16 5h16' fill='none'/></g></svg>
   ```
-- Optional `need`: a brief question or action only when the user must decide or supply something before work can continue. Omit it when no input is needed; still report completed turns.
-- Optional `options`: when `need` has clear choices, give 2 to 4 objects, each with a `label` of at most 40 characters that does not start with `!` or `/`, an optional `cost` of a few words (at most 80 characters) saying what choosing it costs, and `suggested: true` on the one you recommend. The user can tap one in Graftty to answer from any device, so end your turn with `options` rather than asking through your harness's own choice picker. Do not invent options for an open question. For example: `"need":"Merge now or wait for CI?","options":[{"label":"Merge now","cost":"CI last failed on an unrelated flake","suggested":true},{"label":"Wait for CI","cost":"About 25 more minutes"}]`
-- Optional `catchUp`: one or two sentences of background the user needs to answer `need`, at most 600 characters, written for someone who has forgotten this worktree. Include it whenever you give no `options`.
-- Optional `decisions`: the complete current list of decisions worth retaining, up to eight short strings of at most 200 characters each. Omission preserves the prior list; `[]` clears it. Include the reason when it helps explain a choice.
-- Optional `historyEntry`: an object with a `headline` of at most 160 characters and optional `detail` of at most 300 characters. Record a discovery, decision, changed request, or major outcome that helps the user remember how the work got here. The headline must say what changed in a short plain phrase of about 60 characters; put commit hashes, job counts, internal names, and evidence in `detail`. Omit it for routine updates, repeated conclusions, and ordinary test runs. Do not copy the current brief or accumulated decisions. Distinguish proposals from accepted decisions and attempted work from verified results. A new entry adds to history; reusing a headline does not edit an earlier entry.
-- Legacy `checkpoint` is accepted for older agents. Use `historyEntry` for new reports; do not send both.
-- Optional `purposeChanged`: set to `true` only when the problem or goal actually changes. Then provide the new title and problem context, and the decisions that still apply. Finishing a step or changing implementation approach does not by itself change the worktree's purpose.
 
-Report during the ordinary turn. The command publishes the brief immediately.
-Stop verifies the report and asks for a correction only if it is missing. If reporting fails, mention the failure in your ordinary
-response. Do not send an extra final response for a recap. Routine team membership
-and merge notifications that require no action need no visible acknowledgment.
+## Explicit attention
 
-The report uses a private file handoff, so it needs no control-socket permission. Do not mention the report in your response unless the command fails; then mention the failure in your final response.
+An ask requires an answer. Send it only when input is needed. Include enough
+background for someone who has forgotten the worktree to answer. When there
+are clear choices, give 2 to 4 options with a short label, a few words of cost
+when useful, and `suggested: true` on your pick. Labels must not start with
+`!` or `/`.
 
-If `graftty` is absent from PATH, use `/Applications/Graftty.app/Contents/Helpers/graftty` or the matching installed app's helper.
+```json
+{"attention":{"kind":"ask","question":"Ship now or wait for CI?","background":"The regression test passed; the suite is running.","options":[{"label":"Wait","cost":"About 15 minutes","suggested":true},{"label":"Ship now","cost":"Full-suite result unknown"}]}}
+```
+
+An ask becomes actionable when its turn stops. It expires when that agent
+resumes or the user dismisses it. Ask again if the question still matters.
+An older ask is never copied into a later turn.
+
+A notice needs review or acknowledgement, with no answer controls:
+
+```json
+{"attention":{"kind":"notice","message":"The fix is ready to review."}}
+```
+
+Reserve notices for reviewable outcomes, important failures, and handoffs.
+They stay unread until acknowledged, even if you continue working. Routine
+progress and test results belong in `now`. A finished turn alone does not
+request attention. Provider-owned prompts stay in the terminal.
+
+Context updates, reads, and legacy reports use a private file handoff and need
+no control-socket permission. Both Context and Needs attention use retained
+host context on Mac and mobile.
+Do not mention the report in your response unless the command fails; then
+mention the failure in your final response.
+Do not send an extra final response for the update or acknowledge routine
+team notifications that need no action.
+
+If `graftty` is absent from PATH, use
+`/Applications/Graftty.app/Contents/Helpers/graftty`.
 
 Load these skills when relevant:
 
-- [graftty-team](../graftty-team/SKILL.md) before messaging, delegation, durable roles, or app-control commands. It explains permission selection before the first socket call. Pinned roles outlive PR closure; pinning does not establish agent availability.
-- [graftty-preview](../graftty-preview/SKILL.md) whenever a visual would explain something better. Create self-contained HTML and run `graftty preview` before responding. Also use it for requested file previews and finished review artifacts; tool output and Markdown alone do not open the native preview.
-- [graftty-open](../graftty-open/SKILL.md) for requested URLs or explicit requests to open files in their default app. Source edits and internal inspection files need no preview.
+- [graftty-team](../graftty-team/SKILL.md) before messaging, delegation, durable
+  roles, or app-control commands.
+- [graftty-preview](../graftty-preview/SKILL.md) for useful visual explanations,
+  requested file previews, and finished review artifacts. Run `graftty preview`.
+- [graftty-open](../graftty-open/SKILL.md) for requested URLs or explicit
+  requests to open files in their default app.

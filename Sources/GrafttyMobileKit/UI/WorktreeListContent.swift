@@ -435,7 +435,9 @@ public struct WorktreeListContent: View {
     private func syncNavigation() {
         let rows = feed.state.rows
         let merged = merged
-        navigation.reconcile(worktrees: rows, projects: feed.state.projects)
+        let authoritativeProjectIDs = Set(feed.state.hostIDs.filter { feed.state.isLive($0) }
+            .flatMap { feed.state.snapshot(of: $0)?.projects ?? [] }.filter(\.isAvailable).map(\.id))
+        navigation.reconcile(worktrees: rows, projects: feed.state.projects, authoritativeProjectIDs: authoritativeProjectIDs)
         let selected = selectedMergedID(in: merged)
         if selected == nil {
             navigation.selectedProjectID = rows.first(where: isSelected).map { merged.mergedID(forMember: SidebarProjection.projectID($0)) }

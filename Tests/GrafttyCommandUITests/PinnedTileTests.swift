@@ -7,7 +7,12 @@ struct PinnedTileTests {
     func tileStates() {
         #expect(PinnedTileState.resolve(status: .question("q", paneID: nil), isCached: false) == .waiting)
         #expect(PinnedTileState.resolve(status: .notification("n", paneID: nil), isCached: false) == .waiting)
-        #expect(PinnedTileState.resolve(status: .whereWeAre("done", isUnread: true), isCached: false) == .finished)
+        let completed = SidebarRowStatus.whereWeAre("done", isUnread: true)
+        let finished = PinnedTileState.resolve(status: completed, isCached: false)
+        #expect(finished == .finished)
+        #expect(!completed.needsAttention)
+        #expect(!completed.waitsForUser)
+        #expect(PinnedTile.accessibilityLabel(name: "appcast", host: nil, state: finished) == "appcast, finished, not yet opened")
         #expect(PinnedTileState.resolve(status: .working("tests"), isCached: false) == .working)
         #expect(PinnedTileState.resolve(status: .whereWeAre("done", isUnread: false), isCached: false) == .idle)
         #expect(PinnedTileState.resolve(status: .none, isCached: false) == .idle)

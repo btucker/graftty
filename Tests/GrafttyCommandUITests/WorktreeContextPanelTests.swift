@@ -25,7 +25,7 @@ struct WorktreeContextPanelTests {
         #expect(WorktreeContextPanel.headerTitle(for: Self.context(path: "/task", hasBrief: false)) == "Task")
     }
 
-    @Test("@spec CONTEXT-58: While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its completed sentence above a dimmer Next line, after the timeline, followed by any waiting question and a status line.")
+    @Test("@spec CONTEXT-58: While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its current-state sentence above a dimmer Next line when a next step exists, after the timeline, followed by any waiting question and a status line.")
     func presentStateEndsTheScroll() {
         let context = Self.context(path: "/task")
         #expect(WorktreeContextPanel.sections(for: context, showsDetails: false) == [.timeline, .now, .status])

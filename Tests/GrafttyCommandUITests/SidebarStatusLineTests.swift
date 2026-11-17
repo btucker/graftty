@@ -24,7 +24,7 @@ struct SidebarStatusLineTests {
         #expect(elements(status).map(\.text) == ["w"])
     }
 
-    @Test("@spec LAYOUT-2.210: While a project has worktrees waiting for the user, pinned or not, with a question, a notification, or a finished turn the user has not opened, the application shall show how many as a count in the attention color rather than a hand.")
+    @Test("@spec LAYOUT-2.210: While a project has worktrees waiting for the user, pinned or not, with a question, a notification, or an explicit agent notice, the application shall show how many as a count in the attention color rather than a hand.")
     func projectBadgeCountsInsteadOfShowingAHand() {
         func row(_ name: String, project: String, stop: SidebarAgentStop?) -> WorktreePanes {
             .init(path: "/" + name, displayName: name, repoDisplayName: "app", displayBranch: name, state: .running,
@@ -37,7 +37,7 @@ struct SidebarStatusLineTests {
             recap: .init(title: "Stop", completed: "Done", next: "Next"))
         let rows = [row("asks", project: "p", stop: asked), row("pinned", project: "p", stop: finished),
                     row("quiet", project: "p", stop: nil), row("other", project: "q", stop: finished)]
-        #expect(SidebarWaitingCounts.byProject(rows) { SidebarWorktreeContext(worktree: $0) } == ["p": 2, "q": 1])
+        #expect(SidebarWaitingCounts.byProject(rows) { SidebarWorktreeContext(worktree: $0) } == ["p": 1])
         #expect(SidebarActivityBadge(3).text == "3")
         #expect(SidebarActivityBadge(100).text == "99+")
         #expect(SidebarActivityBadge(1).label == "1 waiting for you")

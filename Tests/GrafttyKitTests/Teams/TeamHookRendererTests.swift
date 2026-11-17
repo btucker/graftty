@@ -26,12 +26,12 @@ struct TeamHookRendererTests {
         #expect(!claude.contains("require_escalated"))
     }
 
-    @Test("@spec AGENT-6.33: When an agent session starts, the application shall instruct the agent to load Graftty skills for Attention recaps, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji independently of cached skill instructions.")
+    @Test("@spec AGENT-6.33: When an agent session starts, the application shall instruct the agent to load Graftty skills for sparse context updates, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji on initialization independently of cached skill instructions.")
     func managedSessionLoadsGrafttySkill() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
             let json = try TeamHookRenderer.sessionStart(runtime: runtime)
             let context = try additionalContext(from: json)
-            #expect(context.contains("Load the `graftty` skill for Attention recaps"))
+            #expect(context.contains("Load the `graftty` skill for context updates"))
             #expect(context.contains("`graftty-team` skill for agent coordination"))
             #expect(context.contains("durable roles"))
             #expect(context.contains("task-specific `emoji`"))
@@ -61,11 +61,11 @@ struct TeamHookRendererTests {
         }
     }
 
-    @Test("@spec AGENT-3.24: When a user turn starts, the application shall remind the agent to report an Attention recap during that turn without requesting another final response or acknowledging routine team notifications.")
+    @Test("@spec AGENT-3.24: When a user turn starts, the application shall remind the agent to submit changed context groups or a no-change acknowledgement during that turn without requesting another final response or acknowledging routine team notifications.")
     func turnReminderKeepsReportSilent() throws {
         let json = try TeamHookRenderer.userPromptSubmit()
         let context = try additionalContext(from: json)
-        #expect(context.contains("graftty attention report --stdin"))
+        #expect(context.contains("graftty context update --stdin"))
         #expect(context.contains("before your final response"))
         #expect(context.contains("Do not mention the report"))
         #expect(context.contains("routine team notifications"))

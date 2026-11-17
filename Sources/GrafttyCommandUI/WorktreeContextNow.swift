@@ -12,6 +12,7 @@ public enum WorktreeContextSection: Equatable, Sendable {
     case empty
     /// A question waiting for the user (CONTEXT-61).
     case ask
+    case notices
     case status
 }
 
@@ -27,6 +28,7 @@ extension WorktreeContextPanel {
         var sections: [WorktreeContextSection] = showsDetails ? [.details] : []
         if !(timeline ?? WorktreeTimeline(context)).events.isEmpty { sections.append(.timeline) }
         sections.append(context.brief == nil ? .empty : .now)
+        if context.pending.contains(where: { $0.agentStop?.notice != nil }) { sections.append(.notices) }
         if context.question != nil { sections.append(.ask) }
         if context.brief != nil || context.isRunning { sections.append(.status) }
         return sections
@@ -42,11 +44,12 @@ struct WorktreeContextNow: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(brief.completed).font(.body).fontWeight(.medium).lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if !brief.next.isEmpty { HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("Next").font(.caption).fontWeight(.semibold)
                 Text(brief.next).font(.callout).fixedSize(horizontal: false, vertical: true)
             }
             .foregroundStyle(secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)

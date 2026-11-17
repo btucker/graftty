@@ -69,21 +69,22 @@ struct WorktreeActivitySectionsTests {
         #expect(sections.working.isEmpty)
     }
 
-    @Test("@spec IOS-13.4: While a temporary worktree has a finished turn the user has not opened, the application shall list it under Needs you, and list a finished turn that asks a question there once.")
-    func unreadStopGoesToNeedsYou() {
+    @Test("@spec IOS-13.4: When a temporary worktree finishes a routine turn, the application shall list it under Recent and reserve Needs you for explicit requests and notices.")
+    func routineStopStaysInRecent() {
         let sections = make(temporary: [worktree("a", unreadStop: true, activity: 5), worktree("b", asked: 9, activity: 4)])
-        #expect(names(sections.needsYou) == ["b", "a"])
-        #expect(sections.recent.isEmpty)
+        #expect(names(sections.needsYou) == ["b"])
+        #expect(names(sections.recent) == ["a"])
     }
 
-    /// An agent can stop without ever sending a recap; it still waits for the user.
-    @Test func unreadStopWithoutARecapStillNeedsYou() {
+    /// An unreported stop remains discoverable as activity.
+    @Test func unreadStopWithoutARecapStaysInRecent() {
         let bare = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: 3), recap: nil)
         let row = WorktreePanes(path: "/bare", displayName: "bare", repoDisplayName: "app", displayBranch: "bare", state: .running,
             isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
             sidebar: .init(id: "bare", projectID: "p", unseenAgentStop: bare))
         let sections = make(temporary: [row])
-        #expect(names(sections.needsYou) == ["bare"])
+        #expect(sections.needsYou.isEmpty)
+        #expect(names(sections.recent) == ["bare"])
         #expect(SidebarRowStatus.resolve(context: SidebarWorktreeContext(worktree: row), worktree: row, isCached: false)
             == .whereWeAre("Codex stopped", isUnread: true))
     }

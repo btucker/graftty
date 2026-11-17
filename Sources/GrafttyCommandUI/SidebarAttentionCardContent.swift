@@ -44,8 +44,10 @@ struct SidebarAttentionCardContent {
             )]
             if let need = recap.need {
                 sections.append(Section(kind: .needsYou, text: need, detail: nil))
+            } else if let notice = recap.notice {
+                sections.append(Section(kind: .needsYou, text: notice, detail: nil))
             }
-            sections.append(Section(kind: .upNext, text: recap.next, detail: nil))
+            if !recap.next.isEmpty { sections.append(Section(kind: .upNext, text: recap.next, detail: nil)) }
             self.sections = sections
         } else {
             sections = []

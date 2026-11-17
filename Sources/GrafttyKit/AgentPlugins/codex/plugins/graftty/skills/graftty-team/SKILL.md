@@ -21,7 +21,7 @@ In Codex with restricted network access, use `sandbox_permissions: "require_esca
 
 Keep this execution mode for subsequent control-socket commands. Do not repeat a known denial, change provider sandbox configuration, or enable general networking. If escalation is unavailable or denied, report the limitation and continue independent work. A readable socket or filesystem write grant does not grant connection access.
 
-Agent, team, pane, worktree, image, open, and other app-control commands use the socket. `graftty attention report --stdin`, help, and local-only commands do not need socket permission. Providers that already permit the socket need no elevation. For EPERM, errno 1, or connection failures, read [socket diagnosis](references/socket-diagnosis.md).
+Agent, team, pane, worktree, image, open, and other app-control commands use the socket. `graftty attention report --stdin`, `graftty context update --stdin`, `graftty context show --json`, help, and local-only commands do not need socket permission. Providers that already permit the socket need no elevation. For EPERM, errno 1, or connection failures, read [socket diagnosis](references/socket-diagnosis.md).
 
 ## Find a recipient
 

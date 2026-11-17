@@ -129,6 +129,14 @@ public struct RootView: View {
             } catch {
                 return "Couldn't reach the host to answer."
             }
+        }, dismissNotice: { [feed] worktree, occurrence in
+            guard let host = feed.host(for: worktree) else { return "This host isn't connected." }
+            do {
+                let response = try await RelayedWorktreeManagementClient.send(
+                    .acknowledgeOccurrence(worktreeID: worktree.path, paneID: nil, occurrence: occurrence), using: feed.provider(for: host))
+                if case .error(_, let message, _, _) = response { return message }
+                return response == .ok ? nil : "The host couldn't dismiss this notice."
+            } catch { return "Couldn't reach the host to dismiss the notice." }
         }))
         .alert("Could not open worktree", isPresented: Binding(
             get: { contextWorktreeError != nil }, set: { if !$0 { contextWorktreeError = nil } }

@@ -6,6 +6,16 @@ import GrafttyProtocol
 @MainActor
 @Suite("Agent attention recaps")
 struct AttentionRecapCoordinatorTests {
+    @Test func distinctSparseReceiptsCanArriveAfterALaterTurn() {
+        let coordinator = AttentionRecapCoordinator()
+        let newer = AttentionRecap(update: .init(unchanged: true))
+        let older = AttentionRecap(update: .init(attention: .init(kind: .notice, message: "Ready for review.")))
+        coordinator.report(newer, worktree: "/repo", agentID: "agent", reportedAt: Date(timeIntervalSince1970: 200))
+        #expect(coordinator.stop(worktree: "/repo", agentID: "agent", stopHookActive: false, turnID: "second") == .record(newer))
+        #expect(coordinator.report(older, worktree: "/repo", agentID: "agent", reportedAt: Date(timeIntervalSince1970: 100)))
+        #expect(coordinator.stop(worktree: "/repo", agentID: "agent", stopHookActive: false, turnID: "first") == .record(older))
+        #expect(!coordinator.report(older, worktree: "/repo", agentID: "agent", reportedAt: Date(timeIntervalSince1970: 100)))
+    }
     private let recap = AttentionRecap(
         title: "Posting detail model evals",
         completed: "v3 scored 0.910 against a700's 0.935.",
