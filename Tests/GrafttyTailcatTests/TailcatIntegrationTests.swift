@@ -13,6 +13,14 @@ import Testing
 
 @Suite("Embedded Tailcat with the Graftty SSH client", .serialized)
 struct TailcatIntegrationTests {
+    @Test("@spec SSH-1.23: When a user runs the standalone iPhone Tailcat check, the application shall verify an echo between two on-device peers and report the route and elapsed echo time.", .timeLimit(.minutes(2)))
+    func deviceEchoCheck() async throws {
+        let result = try await TailcatDeviceCheck.run()
+        #expect(result.byteCount == 1024)
+        #expect(["direct", "relay"].contains(result.route))
+        #expect(result.elapsed > .zero)
+    }
+
     @Test("@spec SSH-1.17: If descriptor duplication fails during Tailcat SSH setup, then the application shall release successful duplicates and report an error before NIO bootstrap.")
     func descriptorAllocationFailureIsRecoverable() throws {
         let pipe = Pipe()

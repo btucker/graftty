@@ -18,16 +18,12 @@ if ! git -C "$SOURCE" rev-parse --verify HEAD >/dev/null 2>&1; then
 fi
 [[ "$(git -C "$SOURCE" rev-parse HEAD)" == "$PIN" ]] || { echo 'Tailcat checkout does not match UPSTREAM_COMMIT' >&2; exit 1; }
 TAGS="$(cat "$SOURCE/build-tags.txt")"
-for PLATFORM in macos simulator; do
-  if [[ "$PLATFORM" == macos ]]; then
-    SDK=macosx
-    TRIPLE=arm64-apple-macos14
-    TARGET_OS=darwin
-  else
-    SDK=iphonesimulator
-    TRIPLE=arm64-apple-ios17.0-simulator
-    TARGET_OS=ios
-  fi
+for PLATFORM in macos simulator iphone; do
+  case "$PLATFORM" in
+    macos) SDK=macosx; TRIPLE=arm64-apple-macos14; TARGET_OS=darwin ;;
+    simulator) SDK=iphonesimulator; TRIPLE=arm64-apple-ios17.0-simulator; TARGET_OS=ios ;;
+    iphone) SDK=iphoneos; TRIPLE=arm64-apple-ios17.0; TARGET_OS=ios ;;
+  esac
   mkdir -p "$BUILD/$PLATFORM/Headers"
   (
     cd "$SOURCE"
@@ -48,5 +44,6 @@ rm -rf "$REPO/.deps/Tailcat.xcframework"
 xcodebuild -create-xcframework \
   -library "$BUILD/macos/libTailcat.a" -headers "$BUILD/macos/Headers" \
   -library "$BUILD/simulator/libTailcat.a" -headers "$BUILD/simulator/Headers" \
+  -library "$BUILD/iphone/libTailcat.a" -headers "$BUILD/iphone/Headers" \
   -output "$REPO/.deps/Tailcat.xcframework"
 xcodegen generate --spec "$REPO/Prototypes/Tailcat/project.yml"

@@ -6226,6 +6226,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SSH-1.22** When a Tailcat host restarts with its saved identity and relay region, the application shall reconnect with the previously paired address and SSH keys.
 
+**SSH-1.23** When a user runs the standalone iPhone Tailcat check, the application shall verify an echo between two on-device peers and report the route and elapsed echo time.
+
 ## TEST — TEST
 
 ### TEST-1.x

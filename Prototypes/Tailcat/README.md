@@ -23,10 +23,21 @@ scripts/deps prepare --platforms macos,ios
 scripts/build-tailcat-prototype
 ```
 
-`UPSTREAM_COMMIT` pins the Tailcat source. The builder produces arm64 macOS
-and arm64 iOS Simulator archives, copies the upstream header and license, and
-creates `.deps/Tailcat.xcframework`. Generated projects and binaries are ignored.
-This prototype does not yet build an iPhone device slice or Intel slices.
+`UPSTREAM_COMMIT` pins the Tailcat source. The builder packages arm64 macOS,
+iOS Simulator, and iPhone archives in `.deps/Tailcat.xcframework`, together
+with the upstream header and license. Generated projects and binaries are ignored.
+
+## Run on iPhone
+
+Select the `TailcatCheck` scheme in the generated project. Choose a signing team
+and run on an iPhone, or archive for a generic iOS device and export for Release
+Testing with a profile that includes the phone. The app's bundle ID is
+`com.quotably.graftty.tailcatcheck`, so it installs alongside Graftty.
+
+Open **Tailcat Check** and tap **Run transport check**. The app starts two
+peers on the phone, sends 1 KiB over Tailcat TCP, and verifies the echoed bytes.
+It displays the route and echo time. An internet connection is required for
+relay bootstrap. GrafttyMobile terminal sessions still use their existing transport.
 
 ## Test in the simulator
 
