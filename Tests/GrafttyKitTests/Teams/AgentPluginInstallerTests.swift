@@ -699,7 +699,7 @@ struct AgentPluginInstallerTests {
         for provider in ["codex", "claude"] {
             let recapSkill = try String(contentsOf: destination
                 .appendingPathComponent("\(provider)/plugins/graftty/skills/graftty/SKILL.md"))
-            #expect(recapSkill.contains("graftty attention report --stdin"))
+            #expect(recapSkill.contains("graftty context update --stdin"))
             #expect(recapSkill.contains("emojiAlternatives"))
             #expect(!recapSkill.contains("graftty team send"))
         }
@@ -822,7 +822,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.146: When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to report again before each final response.
+    @spec AGENT-6.146: When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to send changed groups or acknowledge no change before each final response.
     """)
     func materializedRecapSkillRequestsAnEarlyFirstReport() throws {
         for skill in try preparedSkillTexts(named: "graftty") {
@@ -851,24 +851,22 @@ struct AgentPluginInstallerTests {
     func materializedRecapSkillRequestsTaskContext() throws {
         for skill in try preparedSkillTexts(named: "graftty") {
             let recap = try SkillMarkdown.recapExample(in: skill)
-            for key in ["title", "context", "completed", "next", "emoji"] {
-                #expect((recap[key] as? String)?.isEmpty == false)
-            }
+            let purpose = try #require(recap["purpose"] as? [String: String])
+            let now = try #require(recap["now"] as? [String: String])
+            #expect(purpose["title"]?.isEmpty == false)
+            #expect(purpose["context"]?.isEmpty == false)
+            #expect(now["summary"]?.isEmpty == false)
             let alternatives = try #require(recap["emojiAlternatives"] as? [String])
             #expect(alternatives.count <= 3)
             #expect(Set(alternatives).count == alternatives.count)
             #expect(!alternatives.contains(try #require(recap["emoji"] as? String)))
-            #expect(recap["need"] == nil)
-            let entry = try #require(recap["historyEntry"] as? [String: String])
-            let decisions = try #require(recap["decisions"] as? [String])
-            #expect(entry["headline"]?.isEmpty == false)
-            #expect(recap["checkpoint"] == nil)
-            #expect(skill.contains("Omit it for routine updates"))
-            #expect(!decisions.isEmpty)
+            #expect(recap["attention"] == nil)
+            #expect(recap["decisions"] == nil)
+            #expect(recap["historyEntry"] == nil)
+            #expect(skill.contains("Omit it for"))
+            #expect(skill.contains("unchanged"))
             let data = try JSONSerialization.data(withJSONObject: recap)
-            let report = try JSONDecoder().decode(AttentionRecap.self, from: data)
-            #expect(report.isValid)
-            #expect(report.purposeChanged != true)
+            #expect(try JSONDecoder().decode(WorktreeContextUpdate.self, from: data).isValid)
         }
     }
 

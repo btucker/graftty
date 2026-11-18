@@ -86,6 +86,21 @@ private actor HostDevContainerFake: CLIExecutor {
 
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
+    @Test("@spec ZMX-9.13: When the headless host starts a new pane from a session with an attached display owner, the application shall give the new zmx shell that owner's grid before startup.")
+    func newHeadlessPaneInheritsControllingGrid() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let store = SessionDisplayOwnershipStore()
+        runtime.displayOwnershipStore = store
+        let first = try await runtime.openWorktree(root.path)
+        _ = store.attachClient(sessionName: first, clientID: .init("ipad"), kind: .ios,
+            role: .interactive, visible: true, grid: try DisplayGrid(cols: 117, rows: 43))
+        _ = try await runtime.splitPane(target: first, direction: .right)
+        #expect(terminal.starts.last?.initialWindowSize?.cols == 117)
+        #expect(terminal.starts.last?.initialWindowSize?.rows == 43)
+    }
     @Test("Paired creation starts the selected primary provider with its exact initial task", arguments: [TeamHookRuntime.codex, .claude])
     func pairedCreationPreservesSelectedAgentTask(provider: TeamHookRuntime) async throws {
         let (root, config, state) = try fixture()
@@ -1370,6 +1385,36 @@ struct HeadlessHostRuntimeTests {
         try queueWaiting()
         try runtime.consumeAttentionActivities(handoff: handoff)
         #expect(runtime.agentLiveness.livenessBySession[pane] == .busy)
+    }
+
+    @Test("@spec CONTEXT-84: When a headless host starts maintenance after restoring its worktrees, the application shall publish their retained context with the current host process identity before accepting further updates.")
+    func maintenancePublishesRestoredContext() throws {
+        let (root, config, initialState) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var state = initialState
+        state.recordAgentRecap(.init(title: "Restored", completed: "Kept across restart.", next: "Review."), callerPath: root.path, reportedAt: Date())
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        runtime.startMaintenance(handoff: handoff)
+        defer { runtime.maintenance?.stop() }
+        let snapshot = try handoff.context(worktree: root.path)
+        #expect(snapshot.brief?.completed == "Kept across restart.")
+        #expect(snapshot.hostPID == ProcessInfo.processInfo.processIdentifier)
+    }
+
+    @Test func snapshotFailureDoesNotPreventDurableActivityConsumption() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        try handoff.publishContext(nil, worktree: root.path, emoji: nil)
+        let file = try #require(FileManager.default.contentsOfDirectory(at: handoff.rootDirectory, includingPropertiesForKeys: nil).first { $0.lastPathComponent.hasPrefix("context-") })
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        try handoff.publish(.init(title: "Fix", completed: "Persisted.", next: "Review."), worktree: root.path, agentID: "one")
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(try AppState.load(from: root).worktree(forPath: root.path)?.brief?.completed == "Persisted.")
+        #expect(try handoff.takeActivities { _ in }.isEmpty)
     }
 
     @Test("@spec REMOTE-22.8: When a headless host consumes a file-based stopped-turn recap, the application shall persist the recap and clear it only after matching provider progress.")

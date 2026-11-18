@@ -50,7 +50,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         subsystemName: String = SSHChannelTypeNames.panesState,
         requestReply: Bool = false,
         subsystemReplyTimeout: TimeAmount = .seconds(30),
-        childOpenTimeout: Duration = .seconds(10),
+        childOpenTimeout: Duration = RemoteLinkDeadlines.childChannelOpen,
         onSnapshot: @escaping OnSnapshot,
         onClosed: @escaping OnClosed,
         onSidebarSnapshot: @escaping @Sendable (SidebarSnapshot?) async -> Void = { _ in }

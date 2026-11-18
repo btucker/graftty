@@ -538,7 +538,7 @@ public final class RemoteConnectionCoordinator {
         }
 
         onProgress?(.waitingForSnapshot)
-        switch try await store.waitForFirstSnapshot(timeout: .seconds(10)) {
+        switch try await store.waitForFirstSnapshot(timeout: RemoteLinkDeadlines.firstSnapshot) {
         case .closed:
             await discardPanesStore(store, hostID: host.id)
             throw ConnectionError.paneChannelClosed

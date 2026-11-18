@@ -264,7 +264,7 @@ extension SocketRequestRouter {
         case .addPane(let request):
             return await addPane(path: request.path, direction: request.direction, command: request.command,
                                  agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, managedAgent: request.managedAgent, selectTab: request.selectTab, teamInbox: teamInbox,
-                                 appState: appState, terminalManager: terminalManager)
+                                 appState: appState, terminalManager: terminalManager, sourcePaneSessionName: request.sourcePaneSessionName)
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
@@ -351,8 +351,10 @@ extension SocketRequestRouter {
         selectTab: Bool?,
         teamInbox: TeamInbox,
         appState: Binding<AppState>,
-        terminalManager: TerminalManager
+        terminalManager: TerminalManager,
+        sourcePaneSessionName: String? = nil
     ) async -> ResponseMessage {
+        let sourcePaneID = sourcePaneSessionName.flatMap { terminalManager.paneID(forSessionName: $0) }.map(PaneSlotID.init(id:))
         if let error = CLIWorktreeCreationPolicy.paneAddError(
             agentRuntime: agentRuntime,
             command: command,
@@ -362,7 +364,8 @@ extension SocketRequestRouter {
         }
         if managedAgent != nil, let worktree = appState.wrappedValue.worktree(forPath: path),
            worktree.state == .closed, worktree.firstPane != nil {
-            _ = PaneCommands.startWorktree(path: path, appState: appState, terminalManager: terminalManager)
+            _ = PaneCommands.startWorktree(path: path, appState: appState, terminalManager: terminalManager,
+                inheritingGridFrom: sourcePaneID)
         }
         func splitTargetError() -> String? {
             guard let wt = appState.wrappedValue.worktree(forPath: path) else { return "not tracked" }
@@ -429,7 +432,8 @@ extension SocketRequestRouter {
         if let managedAgent, let reserved = managedAgent.paneSlotID,
            appState.wrappedValue.worktree(forPath: path)?.firstPane == nil {
             guard PaneCommands.startWorktree(path: path, appState: appState, terminalManager: terminalManager,
-                extraInitialInput: PaneAgentLaunch.initialInput(launch.command), initialAgent: managedAgent) == .started else {
+                extraInitialInput: PaneAgentLaunch.initialInput(launch.command), initialAgent: managedAgent,
+                inheritingGridFrom: sourcePaneID) == .started else {
                 await abandonLaunch()
                 return .error("Could not start the agent's first pane.")
             }
@@ -450,7 +454,8 @@ extension SocketRequestRouter {
                   activateNewPane: selectTab ?? (managedAgent == nil),
                   preserveZoom: selectTab != true && managedAgent != nil,
                   reservedSlot: managedAgent?.paneSlotID,
-                  reservedSession: managedAgent?.paneSessionID
+                  reservedSession: managedAgent?.paneSessionID,
+                  inheritingGridFrom: sourcePaneID
               ) {
             newPaneID = splitPaneID
         } else {

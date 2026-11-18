@@ -113,7 +113,7 @@ final class SubsystemChannel: @unchecked Sendable {
         parentHandler: NIOSSHHandler,
         subsystem: String,
         maximumBufferSize: Int? = nil,
-        childOpenTimeout: Duration = .seconds(10),
+        childOpenTimeout: Duration = RemoteLinkDeadlines.childChannelOpen,
         closeParentOnOpenTimeout: Bool = true,
         reply: Reply,
         errors: SubsystemErrors

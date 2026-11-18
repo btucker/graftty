@@ -92,6 +92,12 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
         let live = SidebarProjection.activity(worktrees)
         merge(live)
         let liveByID = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for worktree in worktrees {
+            guard availableProjectIDs.contains(SidebarProjection.projectID(worktree)),
+                  let sidebar = worktree.sidebar, sidebar.unreadAgentNotices != nil else { continue }
+            let prefix = sidebar.id + ":notice:"
+            dismissed = dismissed.filter { !$0.key.hasPrefix(prefix) || liveByID[$0.key] != nil }
+        }
         var deletedIDs: Set<String> = []
         for index in items.indices {
             let item = items[index]
@@ -104,6 +110,11 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
                 if availableProjectIDs.contains(item.projectID) { deletedIDs.insert(item.id) }
                 continue // Offline and incomplete snapshots do not remove cards.
             }
+            if item.agentStop?.notice != nil, availableProjectIDs.contains(SidebarProjection.projectID(worktree)),
+               worktree.sidebar?.unreadAgentNotices != nil, liveByID[item.id] == nil {
+                deletedIDs.insert(item.id)
+                continue
+            }
             items[index].worktreeID = worktree.path
             items[index].projectID = SidebarProjection.projectID(worktree)
             items[index].projectName = worktree.repoDisplayName
@@ -114,6 +125,11 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
             items[index].prBadge = worktree.prBadge
             let route = SidebarProjection.attentionPaneRoute(for: item, in: worktree)
             if item.paneID != nil, let route { items[index].paneID = route }
+            if item.agentStop?.notice != nil {
+                items[index].isBusy = false
+                items[index].runningSince = nil
+                continue
+            }
             if let stop = item.agentStop {
                 let progress = worktree.sidebar?.agentProgressTimes ?? [:]
                 let resumedAt = stop.providerSessionKey.flatMap { progress[$0] }

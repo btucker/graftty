@@ -19,9 +19,11 @@ public protocol RemoteHostLink: PanesStateDriverMaking {
         handler: @escaping TeamRPCSession.Handler,
         onClose: @escaping @Sendable () async -> Void
     ) async throws -> TeamChannelClient
+    func openTerminalClient(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable
     func openTerminalClient(
         sessionName: String,
-        preferPaged: Bool
+        preferPaged: Bool,
+        initialGrid: DisplayGrid?
     ) async throws -> any WebSocketClient & Sendable
     #if canImport(Network)
     func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward
@@ -53,6 +55,10 @@ public protocol DirectHostLink: RemoteHostLink {
 }
 
 extension RemoteHostLink {
+    public func openTerminalClient(sessionName: String, preferPaged: Bool, initialGrid: DisplayGrid?) async throws -> any WebSocketClient & Sendable {
+        try await openTerminalClient(sessionName: sessionName, preferPaged: preferPaged)
+    }
+
     /// Reports only failed or closed transitions. Installs the link's single
     /// state-change handler, replacing any earlier one;
     /// `setOnStateChange(nil)` removes it.
@@ -85,11 +91,16 @@ extension DirectSSHHostConnection: DirectHostLink {
         try makeWorktreeManagementClient()
     }
 
+    public func openTerminalClient(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
+        try await openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
+    }
+
     public func openTerminalClient(
         sessionName: String,
-        preferPaged: Bool
+        preferPaged: Bool,
+        initialGrid: DisplayGrid?
     ) async throws -> any WebSocketClient & Sendable {
-        try await openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
+        try await openTerminalSession(sessionName: sessionName, preferPaged: preferPaged, initialGrid: initialGrid)
     }
 }
 
@@ -111,11 +122,16 @@ extension RemoteHostConnection: WebRTCHostLink {
         try makeWorktreeManagementClient()
     }
 
+    public func openTerminalClient(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
+        try await openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
+    }
+
     public func openTerminalClient(
         sessionName: String,
-        preferPaged: Bool
+        preferPaged: Bool,
+        initialGrid: DisplayGrid?
     ) async throws -> any WebSocketClient & Sendable {
-        try await openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
+        try await openTerminalSession(sessionName: sessionName, preferPaged: preferPaged, initialGrid: initialGrid)
     }
 }
 #endif

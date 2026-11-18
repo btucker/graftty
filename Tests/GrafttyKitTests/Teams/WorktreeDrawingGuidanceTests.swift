@@ -9,14 +9,14 @@ private func skill(_ provider: String) throws -> String {
         "Sources/GrafttyKit/AgentPlugins/\(provider)/plugins/graftty/skills/graftty/SKILL.md"), encoding: .utf8)
 }
 
-@Suite("@spec AGENT-3.36: When the application renders agent recap guidance, it shall explain the optional worktree drawing, varied compositions, its palette tokens and the redraw rule while still requiring an emoji.")
+@Suite("@spec AGENT-3.36: When the application renders agent recap guidance, it shall explain the optional worktree drawing, varied compositions, its palette tokens and the redraw rule while retaining assigned identity between updates.")
 struct WorktreeDrawingGuidanceTests {
     @Test func hookGuidanceMentionsDrawing() {
         for text in [TeamHookRenderer.skillGuidance, TeamHookRenderer.recapGuidance] {
             #expect(text.contains("`icon`"))
             #expect(text.contains("emoji"))
         }
-        #expect(TeamHookRenderer.skillGuidance.contains("purposeChanged"))
+        #expect(TeamHookRenderer.skillGuidance.contains("purpose"))
         #expect(TeamHookRenderer.skillGuidance.contains("Vary the composition"))
     }
 
@@ -25,7 +25,7 @@ struct WorktreeDrawingGuidanceTests {
             let text = try skill(provider)
             #expect(text.contains("`icon`"))
             #expect(text.contains("`primary`"))
-            #expect(text.contains("purposeChanged"))
+            #expect(text.contains("purpose"))
             #expect(text.contains("`emoji`"))
             #expect(text.contains("Vary the composition"))
             #expect(text.contains("resolved Ghostty theme colors"))

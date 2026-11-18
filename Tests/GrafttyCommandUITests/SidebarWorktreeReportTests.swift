@@ -7,6 +7,22 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarWorktreeReportTests {
+    @Test("@spec CONTEXT-81: While a Mac or mobile report preview has unread notices and retained context, the application shall display their messages and omit the next-step section when no next step exists.")
+    func noticesRenderInTheActualReportPreview() {
+        let brief = WorktreeBrief(recap: .init(title: "Fix", completed: "Tests passed.", next: ""), at: Date())
+        var metadata = SidebarWorktreeMetadata(id: "task", projectID: "p", brief: brief)
+        func height(_ metadata: SidebarWorktreeMetadata) -> CGFloat {
+            let row = WorktreePanes(path: "/task", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: metadata)
+            let view = WorktreeBriefContent(context: SidebarWorktreeContext(worktree: row))
+                .frame(width: 240).fixedSize(horizontal: false, vertical: true)
+            return NSHostingView(rootView: view).fittingSize.height
+        }
+        let quiet = height(metadata)
+        metadata.unreadAgentNotices = [.init(agentName: "Codex", stoppedAt: Date(),
+            recap: .init(update: .init(attention: .init(kind: .notice, message: String(repeating: "The fix is ready to review. ", count: 4)))))]
+        #expect(height(metadata) > quiet + 30)
+    }
     @Test("@spec CONTEXT-9: When a worktree has a pending request without a saved brief, the application shall display its message in the context report until that request is dismissed.")
     func pendingMessageRendersWithoutBrief() {
         let message = String(repeating: "Choose which device should receive the pending terminal session before continuing. ", count: 4)

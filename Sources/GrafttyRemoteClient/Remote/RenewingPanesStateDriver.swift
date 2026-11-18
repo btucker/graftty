@@ -149,7 +149,8 @@ final class RenewingPanesStateDriver: PanesStateSubscriptionDriver, SidebarSnaps
 
     /// One deadline covers replacement channel creation, V2→V1 negotiation,
     /// and its first snapshot. Thus a previously healthy feed converges or
-    /// fails within 60 + 15 seconds of its previous fresh initial snapshot,
+    /// fails within `renewal` + `initialSnapshot` (60 + 30 seconds) of its
+    /// previous fresh initial snapshot,
     /// including channel creation and negotiation. Uses Swift's clock, including over WebRTC.
     private func renewedFeed() async throws -> Feed {
         try await withThrowingTaskGroup(of: Feed.self) { group in

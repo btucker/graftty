@@ -156,9 +156,11 @@ enum AddWorktreeFlow {
         teamEventDispatcher: TeamEventDispatcher,
         initialCommand: String? = nil,
         terminalStartTiming: TerminalStartTiming,
+        sourcePaneID: PaneSlotID? = nil,
         discover: @MainActor (String) async throws -> [DiscoveredWorktree] = { try await GitWorktreeDiscovery.discover(repoPath: $0) }
     ) async -> Swift.Result<Result, FlowError> {
         let before = appState.wrappedValue
+        let startupSourcePane = sourcePaneID ?? terminalManager.focusedTerminalID
         let operationID = before.worktree(forPath: worktreePath)?.creationProgress?.operationID
         let baseline = operationID.flatMap { creationRelocationBaselines.removeValue(forKey: $0) }
         guard let repo = before.repos.first(where: { $0.path == repoPath }) else {
@@ -349,7 +351,8 @@ enum AddWorktreeFlow {
                 for: splitTree,
                 paneSessions: appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].paneSessions,
                 worktreePath: worktreePath,
-                extraInitialInput: initialCommand.map { $0 + "\r" }
+                extraInitialInput: initialCommand.map { $0 + "\r" },
+                inheritedWindowSize: terminalManager.initialWindowSizeForNewSession(inheritingFrom: startupSourcePane)
             )
             guard let firstHandle = createdSurfaces[firstLeaf] ?? terminalManager.handle(for: firstLeaf) else {
                 detachStartupSurfaces(in: splitTree, terminalManager: terminalManager)

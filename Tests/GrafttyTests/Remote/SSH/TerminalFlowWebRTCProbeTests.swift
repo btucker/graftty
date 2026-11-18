@@ -55,7 +55,7 @@ struct TerminalFlowWebRTCProbeTests {
                     inboundChildChannelInitializer: { child, _ in
                         let isBulk = attaches.next() == 0
                         return child.pipeline.addHandler(TerminalSessionHandler(
-                            streamFactory: { _ in isBulk ? source : FlowProbeStream() },
+                            streamFactory: { _, _ in isBulk ? source : FlowProbeStream() },
                             ownershipStore: ownership, ownershipBroadcaster: broadcaster, deviceID: peer.id
                         ))
                     }

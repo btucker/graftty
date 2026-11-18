@@ -37,7 +37,7 @@ struct SidebarAttentionDismissalTests {
         #expect(SidebarAttentionDismissal.requests(for: asked, supportsExactAcknowledgement: true).count == 1)
     }
 
-    @Test("@spec LAYOUT-2.216: While a worktree row waits for the user, the application shall offer Dismiss Request in that row's or tile's menu, and dismissing shall move it out of Needs You until a later request or finished turn arrives.")
+    @Test("@spec LAYOUT-2.216: While a worktree row waits for the user, the application shall offer Dismiss Request in that row's or tile's menu, and dismissing shall move it out of Needs You until a later request or notice arrives.")
     func dismissalIsOfferedOnlyWhileTheRowNeedsYou() {
         let navigation = SidebarNavigationState(prefix: "dismissal.\(UUID())")
         let row = asking()

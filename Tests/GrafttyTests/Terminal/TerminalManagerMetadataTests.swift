@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import GhosttyKit
+import GrafttyProtocol
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
@@ -8,6 +9,26 @@ import Testing
 @MainActor
 @Suite("TerminalManager pane metadata")
 struct TerminalManagerMetadataTests {
+    @Test("@spec TERM-11.25: When a new pane inherits startup dimensions from an existing pane, the application shall use that pane's attached display owner's grid, falling back to its host viewport when it has no owner.")
+    func newSessionInheritsControllingClientGrid() throws {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-startup-grid.sock")
+        let store = SessionDisplayOwnershipStore()
+        manager.displayOwnershipStore = store
+        let slot = PaneSlotID(), session = PaneSessionID()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        harness.sizeStub = .testSize132x43
+        let handle = try #require(SurfaceHandle(terminalID: slot, app: fakeApp(), worktreePath: "/repo",
+            socketPath: "/tmp/graftty-startup-grid.sock", surfaceFactory: harness.factory))
+        manager.insertSurfaceForTesting(handle, for: slot)
+        manager.recordPaneSession(session, for: slot, worktreePath: "/repo")
+        let local = manager.initialWindowSizeForNewSession(inheritingFrom: slot)
+        #expect(local?.cols == 132 && local?.rows == 43)
+        _ = store.attachClient(sessionName: ZmxLauncher.sessionName(for: session), clientID: .init("ipad"),
+            kind: .ios, role: .interactive, visible: true, grid: try DisplayGrid(cols: 73, rows: 29))
+        let remote = manager.initialWindowSizeForNewSession(inheritingFrom: slot)
+        #expect(remote?.cols == 73 && remote?.rows == 29)
+        #expect(manager.initialWindowSizeForNewSession(inheritingFrom: PaneSlotID()) == nil)
+    }
     @Test("@spec TEAM-15.15: When a native Mac pane is reassigned to another tracked worktree, the application shall dismiss pending completion and use the pane's new worktree context for subsequent agent discovery.")
     func completionContextFollowsPaneReassignment() async throws {
         let manager = TerminalManager(socketPath: "/tmp/graftty-completion-move.sock")

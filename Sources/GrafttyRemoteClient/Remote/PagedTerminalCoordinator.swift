@@ -15,6 +15,8 @@ public protocol PagedTerminalRenderer: AnyObject {
     func releaseSourceGrid() async throws
     func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult
     func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool
+    /// The oldest loaded row, rather than the earlier prefetch threshold.
+    func isAtHistoryTop(screen: UInt16, generation: UInt64) -> Bool
 }
 
 public extension PagedTerminalRenderer {
@@ -49,6 +51,14 @@ public final class PagedTerminalCoordinator {
     }
     /// Includes changes caused by a timeout when no further frame arrives.
     @ObservationIgnored public var onStatusChange: (@MainActor (Status) -> Void)?
+    private var isAtHistoryBoundary = false
+    private var hasCurrentSnapshot = false
+    /// Retained rows remain readable after paging fails. Offer recovery where
+    /// the reader needs unloaded history, or when there is no current checkpoint.
+    public var showsHistoryRecovery: Bool {
+        status == .requiresRecovery
+            && (!hasCurrentSnapshot || (hasViewportHistoryDemand && isAtHistoryBoundary))
+    }
     private let renderer: any PagedTerminalRenderer
     private let send: @MainActor (PagedTerminalRequest) async throws -> Void
     private let requestTimeout: Duration
@@ -99,6 +109,7 @@ public final class PagedTerminalCoordinator {
                 try await renderer.setSourceGrid(cols: cols, rows: rows)
             }
             guard resizingGeneration == generation else { return nil }
+            updateHistoryBoundary()
             return try DisplayGrid(cols: cols, rows: rows)
         case .checkpoint(let value):
             guard value.codec == PagedTerminalLimits.codec,
@@ -107,6 +118,8 @@ public final class PagedTerminalCoordinator {
             }
             if checkpoint?.incarnation == value.incarnation, checkpoint?.id == value.id { return nil }
             hasViewportHistoryDemand = false
+            isAtHistoryBoundary = false
+            hasCurrentSnapshot = false
             cancelPending()
             retryRequest = nil
             generation &+= 1
@@ -137,6 +150,7 @@ public final class PagedTerminalCoordinator {
                                hasAlternateHistory: value.hasAlternateHistory)
             nextOrdinal = [0, 0]
             remaining = [value.hasPrimaryHistory, value.hasAlternateHistory]
+            hasCurrentSnapshot = true
             status = remaining.contains(true) ? .available : .complete
             return try DisplayGrid(cols: value.cols, rows: value.rows)
 
@@ -160,7 +174,10 @@ public final class PagedTerminalCoordinator {
                 nextOrdinal[Int(page.screen)] &+= 1
                 remaining[Int(page.screen)] = !page.complete
                 status = remaining.contains(true) ? .available : .complete
-            case .requiresRecovery, .stale:
+            case .requiresRecovery:
+                status = .requiresRecovery
+            case .stale:
+                hasCurrentSnapshot = false
                 status = .requiresRecovery
             case .limit:
                 status = .limit
@@ -185,6 +202,7 @@ public final class PagedTerminalCoordinator {
         case .output, .ended:
             break
         }
+        updateHistoryBoundary()
         await continueViewportHistory()
         return nil
     }
@@ -193,7 +211,18 @@ public final class PagedTerminalCoordinator {
     /// completed pages can then continue it while the viewport remains near top.
     public func viewportDidChange(requestHistory: Bool = true) async {
         if requestHistory { hasViewportHistoryDemand = true }
+        updateHistoryBoundary()
         await continueViewportHistory()
+    }
+
+    private func updateHistoryBoundary() {
+        guard status == .requiresRecovery, hasViewportHistoryDemand, hasCurrentSnapshot else {
+            isAtHistoryBoundary = false
+            return
+        }
+        isAtHistoryBoundary = remaining.indices.contains {
+            remaining[$0] && renderer.isAtHistoryTop(screen: UInt16($0), generation: generation)
+        }
     }
 
     private func continueViewportHistory() async {
@@ -250,6 +279,7 @@ public final class PagedTerminalCoordinator {
         cancelPending()
         // Fence a prior send that can finish after its timeout and a retry.
         generation &+= 1
+        hasCurrentSnapshot = false
         // Explicit recovery must accept READY even when the host returns the
         // same identity. The renderer retains loaded content until it arrives.
         checkpoint = nil
@@ -270,12 +300,14 @@ public final class PagedTerminalCoordinator {
     /// Keep the live terminal visible while offering a fresh history snapshot.
     public func invalidateHistory() {
         cancelPending()
-        hasViewportHistoryDemand = false
         status = .requiresRecovery
+        updateHistoryBoundary()
     }
 
     public func disconnect() {
         hasViewportHistoryDemand = false
+        isAtHistoryBoundary = false
+        hasCurrentSnapshot = false
         generation &+= 1
         cancelPending()
         rendererOperation?.cancel()

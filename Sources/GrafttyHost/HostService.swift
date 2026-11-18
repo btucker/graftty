@@ -91,6 +91,7 @@ final class HostService {
         let runtime = runtime
         let launcher = runtime.launcher
         let ownership = SessionDisplayOwnershipStore()
+        runtime.displayOwnershipStore = ownership
         let attachment = RemoteAttachmentRegistry()
         let subscribe: PanesStateChannelHandler.Subscribe = { onChange in
             let initial = await runtime.panesMessage()
@@ -107,14 +108,15 @@ final class HostService {
             return .init { task.cancel() }
         }
         ssh = DirectSSHHostServer(hostKey: try identityStore.loadOrGenerateAndPersist(), trustedPeerStore: trusted,
-            streamFactory: { target in
+            streamFactory: { target, initialGrid in
                 let config = try await runtime.sessionConfiguration(target)
                 let engine = ZmxAttachEngine(config: .init(zmxExecutable: launcher.executable, zmxDir: launcher.zmxDir,
-                    sessionName: target, workingDirectory: config.workingDirectory, spawnConfiguration: config))
+                    sessionName: target, workingDirectory: config.workingDirectory, spawnConfiguration: config,
+                    initialWindowSize: initialGrid.map { .init(cols: $0.cols, rows: $0.rows) }))
                 engine.attachmentRegistry = attachment
                 try await Task.detached { try engine.start() }.value
                 return engine
-            }, pagedFactory: { target in
+            }, pagedFactory: { target, _ in
                 let config = try await runtime.sessionConfiguration(target)
                 let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: launcher.executable, zmxDir: launcher.zmxDir,
                     sessionName: target, workingDirectory: config.workingDirectory, spawnConfiguration: config))

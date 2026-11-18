@@ -16,7 +16,7 @@ struct TeamChannelHandlerTests {
             let box = TeamHostTestBox()
             let channel = NIOAsyncTestingChannel()
             let dispatcher = SubsystemDispatcher(
-                streamFactory: { _ in throw TeamRPCSession.SessionError.channelClosed },
+                streamFactory: { _, _ in throw TeamRPCSession.SessionError.channelClosed },
                 panesStateSubscribe: { _ in .init(cancel: {}) },
                 paneControlMutator: { _ in .ok },
                 ownershipStore: SessionDisplayOwnershipStore(),
@@ -101,7 +101,7 @@ struct TeamChannelHandlerTests {
             allocator: serverChannel.allocator,
             inboundChildChannelInitializer: { child, _ in
                 child.pipeline.addHandler(SubsystemDispatcher(
-                    streamFactory: { _ in throw TeamRPCSession.SessionError.channelClosed },
+                    streamFactory: { _, _ in throw TeamRPCSession.SessionError.channelClosed },
                     panesStateSubscribe: { _ in .init(cancel: {}) },
                     paneControlMutator: { _ in .ok },
                     ownershipStore: SessionDisplayOwnershipStore(),

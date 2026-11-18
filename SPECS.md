@@ -386,7 +386,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.209** While a status line asks for input, the application shall keep its text at 4.5:1 or better against its tint on both light and dark backgrounds.
 
-**LAYOUT-2.210** While a project has worktrees waiting for the user, pinned or not, with a question, a notification, or a finished turn the user has not opened, the application shall show how many as a count in the attention color rather than a hand.
+**LAYOUT-2.210** While a project has worktrees waiting for the user, pinned or not, with a question, a notification, or an explicit agent notice, the application shall show how many as a count in the attention color rather than a hand.
 
 **LAYOUT-2.211** While a worktree row shows its identity, the application shall draw it at full strength while the worktree waits for the user, including a finished turn the user has not opened, or works, and fade it otherwise.
 
@@ -398,7 +398,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.215** While the sidebar shows a worktree row, the application shall draw its name at no less than 80 percent of the theme foreground, and at full foreground when the row is selected, brighter than the status line beneath it.
 
-**LAYOUT-2.216** While a worktree row waits for the user, the application shall offer Dismiss Request in that row's or tile's menu, and dismissing shall move it out of Needs You until a later request or finished turn arrives.
+**LAYOUT-2.216** While a worktree row waits for the user, the application shall offer Dismiss Request in that row's or tile's menu, and dismissing shall move it out of Needs You until a later request or notice arrives.
 
 **LAYOUT-2.217** When the user right-clicks a macOS worktree's status line, the application shall open that worktree's row menu.
 
@@ -716,6 +716,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.23** When a Ghostty action is deferred to the main queue, the application shall copy each consumed borrowed payload before the callback returns and preserve live-surface and app-scoped routing.
 
+**TERM-11.24** When a new zmx session inherits a controlling client's dimensions, the native backend shall start its PTY at those dimensions even if its unmounted host renderer reports another grid.
+
+**TERM-11.25** When a new pane inherits startup dimensions from an existing pane, the application shall use that pane's attached display owner's grid, falling back to its host viewport when it has no owner.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
@@ -853,6 +857,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.68** When an agent input request appears, changes, or clears on Mac or mobile, the application shall present a single-line banner below the pane controls with the full question available on selection, without changing the terminal's size or covering its recovery controls.
 
 **TERM-12.70** When a Mac terminal applies an authoritative source-grid change, the application shall preserve retained prompt and input rows and their rendered content rather than blank them for shell redraw.
+
+**TERM-12.71** When a mobile follower's scroll crosses a row boundary, the application shall present the scrolled rows in the same main-actor turn that moves its live screen, so no displayed frame shows the text a row away from its scroll position.
+
+**TERM-12.72** When a mobile follower's scroll changes the history rows shown above its live screen, the application shall present those rows in the same main-actor turn that moves their display.
+
+**TERM-12.73** While retained terminal history remains readable, the application shall show checkpoint recovery only after user history interaction at the oldest loaded boundary on Mac and mobile, preserve retained content, and hide the warning when the reader moves away.
+
+**TERM-12.74** If a Mac initial owner resize times out after the user requests history, then the application shall retain that demand and show recovery at the loaded-history boundary.
 
 ### TERM-13.x — Native Windows terminal backend
 
@@ -1490,7 +1502,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.6** While Graftty is active, agent Attention notifications shall display native banners and sounds using the user's macOS notification settings.
 
-**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once if it requests input. The application shall ignore duplicate deliveries and stops older than a recorded stop or that provider's progress.
+**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once for an ask or explicit notice, ignore duplicate deliveries, and ignore ordinary stops older than recorded activity or provider progress.
 
 **NOTIF-1.8** When a connected Remote Mac records a stopped turn that requests input, the application shall send one macOS notification with its stable purpose title and worktree identity. The application shall keep routine completions, repeated snapshots, initial snapshots, and superseded prompts at the same target silent.
 
@@ -1785,6 +1797,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **ZMX-9.9** When a bundled `zmx attach` client receives SIGTERM, SIGHUP, or SIGINT, it shall restore the outer terminal's termios and reset its modes, then terminate by that same signal, leaving the session running.
 
 **ZMX-9.10** When a bundled `zmx attach` client reattaches to a session, it shall reset text attributes before clearing the screen and the replay shall restore the session's cursor style.
+
+**ZMX-9.11** When a terminal attachment starts a new zmx session with a known controlling-client size, the application shall apply that size before executing zmx so the session's first terminal-size read sees the client's rows and columns.
+
+**ZMX-9.12** When the CLI requests a new pane or worktree from a zmx terminal, the application shall carry the source pane's session identity through request encoding so startup can inherit its controlling client's dimensions.
+
+**ZMX-9.13** When the headless host starts a new pane from a session with an attached display owner, the application shall give the new zmx shell that owner's grid before startup.
 
 ## DIST — Distribution
 
@@ -2480,6 +2498,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.67** When an iPhone opens an agent's terminal, the application shall start the terminal screen with the rows it already has for that host, so the terminal is not rebuilt and left blank when the worktree's agents arrive.
 
+**IOS-4.68** When a fullscreen mobile terminal first connects, the application shall wait for its confirmed physical viewport and pass that grid to the transport before shell startup, while cancellation before confirmation shall prevent the dial.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2595,6 +2615,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.46** When a two-finger trackpad scroll reaches an iPad terminal, the application shall scroll the terminal and shall not start a pointer-drag text selection.
 
 **IOS-6.47** While a non-modifier hardware key is held in a mobile terminal, the application shall repeat it after the same initial delay and interval as a held arrow key, as a Mac does, without repeating a standalone modifier or a Command shortcut.
+
+**IOS-6.48** While a mobile terminal's content is unchanged, the application shall stop presenting frames rather than redraw on every display refresh, and shall present new output when it arrives.
+
+**IOS-6.49** While mobile history requires recovery, the application shall refresh recovery visibility after live output is parsed even if a screen switch leaves scrollbar dimensions unchanged.
 
 ### IOS-7.x — Lifecycle
 
@@ -2762,7 +2786,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.3** While a pinned worktree has a working agent, the application shall keep it in Pinned, so Working holds only temporary worktrees.
 
-**IOS-13.4** While a temporary worktree has a finished turn the user has not opened, the application shall list it under Needs you, and list a finished turn that asks a question there once.
+**IOS-13.4** When a temporary worktree finishes a routine turn, the application shall list it under Recent and reserve Needs you for explicit requests and notices.
 
 **IOS-13.5** While a worktree is being created, the application shall list it under Working so it stays near the top of the list.
 
@@ -2813,6 +2837,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-13.28** While a mobile worktree row offers removal, the application shall align the trash icon to the trailing edge of the row.
 
 **IOS-13.29** When the user deletes or dismisses a worktree from its row or tile on iPhone or iPad, the application shall anchor the confirmation to that row or tile, and to no other row, including a same-path worktree on another host.
+
+**IOS-13.30** While a mobile worktree delete confirmation is open, the application shall keep its row in its section and position through live activity updates.
 
 ## IPAD — iPad Layout
 
@@ -3590,7 +3616,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.15** While a panes-state subscription remains open, the client shall renew only that subscription on the existing host connection 60 seconds after the previous fresh initial snapshot and apply its new initial snapshot, including empty or unchanged legacy snapshots, without treating a quiet feed as a failure.
 
-**REMOTE-6.16** If a panes-state subscription has no initial snapshot within 15 seconds of initial subsystem acceptance or within a 15-second renewal attempt that includes channel opening and subsystem negotiation, then the shared client shall close the feed as unhealthy and end its observers while leaving the parent connection open.
+**REMOTE-6.16** If a panes-state subscription has no initial snapshot within 30 seconds of initial subsystem acceptance or within a 30-second renewal attempt that includes channel opening and subsystem negotiation, then the shared client shall close the feed as unhealthy and end its observers while leaving the parent connection open.
 
 **REMOTE-6.17** When a panes-state subscription is replaced, the client shall fence snapshots and close callbacks from earlier generations so they cannot overwrite or close the replacement.
 
@@ -3684,6 +3710,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.26** The application shall advertise a 256 KiB maximum SSH channel packet size on host and client connections, so each channel's receive window is the 16 MiB that terminal flow control is sized for.
 
+**REMOTE-9.27** When an SSH terminal attachment starts, the host shall pass the attached display owner's grid to the terminal factory, or the requesting client's PTY grid when there is no owner, before the factory can create a zmx session.
+
+**REMOTE-9.28** When a terminal client opens an SSH session with a known viewport, the application shall send that grid in the initial PTY request before shell startup, including after paging falls back to legacy attachment.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -3712,7 +3742,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.10** When a signed signaling offer requests reconnect for a paired device with an active connection, the host shall replace only that device's lifecycle, admit other devices independently, and reject ordinary same-device offers as busy.
 
-**REMOTE-11.11** When the current host ICE connection does not return to a connected state within five seconds after disconnecting, the application shall close it and release that device's connection; if ICE recovers first, the application shall keep the connection.
+**REMOTE-11.11** When the current host ICE connection does not return to a connected state within thirty seconds after disconnecting, the application shall close it and release that device's connection; if ICE recovers first, the application shall keep the connection.
 
 **REMOTE-11.12** When signaling authenticates a connection for one paired device, the host shall reject SSH user authentication from a different device before it can open a subsystem channel.
 
@@ -3747,6 +3777,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.27** If an optional history channel cannot open before its deadline, then the application shall preserve the active terminal and deliver history over its primary channel.
 
 **REMOTE-11.28** When a remote connection closes, the client shall finish closing its SSH transports before closing the peer connection, and concurrent close callers shall await the same teardown.
+
+**REMOTE-11.29** The client shall allow thirty seconds for a signaling request to complete, an SSH child channel to open, and a panes-state initial snapshot to arrive, so a link with multi-second round trips is not torn down as stalled.
+
+**REMOTE-11.30** The application shall configure both peers to tolerate high-latency links: a candidate pair shall stop counting as receiving only after ten seconds without inbound traffic, become unwritable (ICE disconnected) only after ten seconds without check responses, and time out (ICE failed) only after thirty seconds without check responses.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -4910,7 +4944,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.23** When a staged recap lacks an emoji, the Stop hook shall preserve the legacy recap without requesting a correction turn.
 
-**AGENT-3.24** When a user turn starts, the application shall remind the agent to report an Attention recap during that turn without requesting another final response or acknowledging routine team notifications.
+**AGENT-3.24** When a user turn starts, the application shall remind the agent to submit changed context groups or a no-change acknowledgement during that turn without requesting another final response or acknowledging routine team notifications.
 
 **AGENT-3.25** When an absolute GRAFTTY_ATTENTION_DIR is configured, the application shall use that directory for Attention handoff so isolated provider tests cannot publish into the user's notification queue.
 
@@ -4932,7 +4966,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.35** When the application records a recap that carried a drawing, it shall store and broadcast that recap without the drawing.
 
-**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, varied compositions, its palette tokens and the redraw rule while still requiring an emoji.
+**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, varied compositions, its palette tokens and the redraw rule while retaining assigned identity between updates.
 
 **AGENT-3.37** When an Attention report carries a drawing that fails validation, the CLI shall reject the report with the specific reason before staging it.
 
@@ -4942,7 +4976,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.40** When a client asks a host to explain a stopped agent's question, the host shall type the catch-up prompt into that agent's pane and submit it, and shall refuse a pane it cannot find or one waiting at its harness's own prompt.
 
-**AGENT-3.41** When the application renders agent recap guidance, it shall ask for a one-sentence plain completed state, short plain history headlines, and, for a question with clear choices, options with a few words of cost each in place of a catch-up paragraph, without lengthening the per-turn guidance.
+**AGENT-3.41** When the application renders context-update guidance, it shall request sparse updates with a summary in one plain sentence, short history headlines, and explicit asks with options, brief costs, and background, within the existing per-turn guidance limit.
 
 **AGENT-3.42** When an agent submits a worktree drawing, the application shall accept a wide 96-by-64 canvas as well as the older 64-unit square, reject any other canvas, and know which canvas a stored drawing uses.
 
@@ -5100,7 +5134,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load Graftty skills for Attention recaps, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji independently of cached skill instructions.
+**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load Graftty skills for sparse context updates, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji on initialization independently of cached skill instructions.
 
 **AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that routes finished review artifacts through graftty preview and documents external file opening, URL routing, worktree scope and mobile limits.
 
@@ -5326,7 +5360,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.145** When a mobile conversation restarts with the same terminal name, the application shall discard the retained previous-assignment client before attaching even if its process-end event has not arrived.
 
-**AGENT-6.146** When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to report again before each final response.
+**AGENT-6.146** When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to send changed groups or acknowledge no change before each final response.
 
 **AGENT-6.147** While an agent is the primary agent of a worktree, the application shall keep it available for ongoing work and reserve task-completion instructions and parent cleanup obligations for CLI-added additional agents in existing worktrees.
 
@@ -5604,7 +5638,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-58.x
 
-**CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its completed sentence above a dimmer Next line, after the timeline, followed by any waiting question and a status line.
+**CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its current-state sentence above a dimmer Next line when a next step exists, after the timeline, followed by any waiting question and a status line.
 
 ### CONTEXT-59.x
 
@@ -5625,6 +5659,90 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-63.x
 
 **CONTEXT-63** While Context starts below a workspace's tab row on desktop, the application shall paint the space above it with the tab row's background and header wash, so the tab strip continues across the window instead of leaving a blank band.
+
+### CONTEXT-64.x
+
+**CONTEXT-64** When an agent submits a current-state update, the application shall replace its summary and optional next step while retaining omitted purpose, identity, decisions, and history.
+
+### CONTEXT-65.x
+
+**CONTEXT-65** When updates to different retained groups arrive out of order, the application shall compare freshness per group and preserve newer values within each group.
+
+### CONTEXT-66.x
+
+**CONTEXT-66** When an agent acknowledges no change or submits only attention, the application shall preserve the retained brief and its content timestamp.
+
+### CONTEXT-67.x
+
+**CONTEXT-67** When an agent submits an attention request, the application shall validate asks and notices separately and reject contradictory or empty updates.
+
+### CONTEXT-68.x
+
+**CONTEXT-68** When a stopped turn carries a notice, the application shall request attention without exposing an answerable question, while routine completion shall remain activity.
+
+### CONTEXT-69.x
+
+**CONTEXT-69** When a provider resumes or later completes routine work, the application shall retain unread notices independently of stopped-turn activity until exact acknowledgement.
+
+### CONTEXT-70.x
+
+**CONTEXT-70** When an agent completes a turn without an ask or notice, the application shall retain its activity and context without marking the worktree as needing attention.
+
+### CONTEXT-71.x
+
+**CONTEXT-71** When an agent reads retained context through the private handoff, the application shall return the owning live host's snapshot and reject snapshots from exited or replaced hosts.
+
+### CONTEXT-72.x
+
+**CONTEXT-72** When the context update command receives sparse JSON, the CLI shall validate changed groups without requiring repeated identity fields and reject unknown top-level fields and unsafe drawings.
+
+### CONTEXT-73.x
+
+**CONTEXT-73** While an unread agent notice exists on Mac or mobile, the application shall display it with dismissal controls and no answer field, including after the agent resumes or a newer routine turn ends.
+
+### CONTEXT-74.x
+
+**CONTEXT-74** When a notice arrives after newer provider progress or routine activity, the application shall retain the notice without rewinding the latest activity or recreating it on a retried receipt.
+
+### CONTEXT-75.x
+
+**CONTEXT-75** When explicit history updates arrive out of order or a receipt is retried after another entry, the application shall retain distinct events in time order and append each receipt at most once.
+
+### CONTEXT-76.x
+
+**CONTEXT-76** While additional agents share a worktree, the application shall preserve the primary agent's retained context and identity while retaining additional agents' explicit result notices.
+
+### CONTEXT-77.x
+
+**CONTEXT-77** When another session submits an explicit ask, the application shall make the newest ask actionable while preserving it across other sessions' routine completions.
+
+### CONTEXT-78.x
+
+**CONTEXT-78** While a valid initialization from the same agent is durably queued, the context command shall accept later sparse updates without waiting for the host snapshot to catch up.
+
+### CONTEXT-79.x
+
+**CONTEXT-79** When a stopped question's pane cannot be resolved, the application shall preserve its unresolved route rather than borrowing another pane's provider request.
+
+### CONTEXT-80.x
+
+**CONTEXT-80** When the host acknowledges a notice, the application shall remove its retained navigation item and dismissal marker from authoritative snapshots while preserving unacknowledged notices as pending during provider progress.
+
+### CONTEXT-81.x
+
+**CONTEXT-81** While a Mac or mobile report preview has unread notices and retained context, the application shall display their messages and omit the next-step section when no next step exists.
+
+### CONTEXT-82.x
+
+**CONTEXT-82** If one context snapshot cannot be published, then the application shall continue publishing other worktrees and keep activity observation independent of that failure.
+
+### CONTEXT-83.x
+
+**CONTEXT-83** When a socket report persists retained context, the application shall refresh its read-back snapshot without requiring another hook, while unchanged tool hooks shall not republish the snapshot.
+
+### CONTEXT-84.x
+
+**CONTEXT-84** When a headless host starts maintenance after restoring its worktrees, the application shall publish their retained context with the current host process identity before accepting further updates.
 
 ## MEM — MEM
 

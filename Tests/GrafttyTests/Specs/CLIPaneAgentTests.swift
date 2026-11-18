@@ -7,10 +7,25 @@ import Testing
 
 @Suite("CLI pane add agent launch")
 struct CLIPaneAgentTests {
+    @Test("@spec ZMX-9.12: When the CLI requests a new pane or worktree from a zmx terminal, the application shall carry the source pane's session identity through request encoding so startup can inherit its controlling client's dimensions.")
+    func startupRequestsCarrySourcePaneIdentity() throws {
+        let environment = ["ZMX_SESSION": "graftty-source"]
+        let pane = try PaneAdd.parse([]).request(path: "/repo", resolvedPrompt: nil, environment: environment)
+        let worktree = try WorktreeAdd.parse(["fix"]).creationRequest(callerWorktree: "/repo",
+            names: ("fix", "fix"), agentRuntime: nil, resolvedPrompt: nil, environment: environment)
+        for request in [pane, worktree] {
+            let decoded = try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(request))
+            switch decoded {
+            case .addPane(let payload): #expect(payload.sourcePaneSessionName == "graftty-source")
+            case .createWorktree(let payload): #expect(payload.sourcePaneSessionName == "graftty-source")
+            default: Issue.record("Unexpected startup request")
+            }
+        }
+    }
     @Test("@spec ATTN-1.24: When `graftty pane add` is invoked with `--agent <codex|claude>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.")
     func agentFlagsBuildAgentRequest() throws {
         let command = try PaneAdd.parse(["review-wt", "--agent", "codex", "--prompt", "Review the diff"])
-        let request = command.request(path: "/repo/.worktrees/review-wt", resolvedPrompt: "Review the diff")
+        let request = command.request(path: "/repo/.worktrees/review-wt", resolvedPrompt: "Review the diff", environment: [:])
         #expect(request == .addPane(path: "/repo/.worktrees/review-wt", direction: .right, command: nil,
                                     agentRuntime: .codex, agentPrompt: "Review the diff"))
 
@@ -65,7 +80,7 @@ struct CLIPaneAgentTests {
     @Test("A plain `pane add --command` request carries no agent fields")
     func commandRequestHasNoAgent() throws {
         let command = try PaneAdd.parse(["--command", "pnpm test"])
-        let request = command.request(path: "/wt", resolvedPrompt: nil)
+        let request = command.request(path: "/wt", resolvedPrompt: nil, environment: [:])
         #expect(request == .addPane(path: "/wt", direction: .right, command: "pnpm test"))
     }
 }

@@ -286,7 +286,8 @@ struct WorktreeAdd: ParsableCommand {
         names: (worktree: String, branch: String),
         agentRuntime: TeamHookRuntime?,
         resolvedPrompt: String?,
-        operationID: String? = nil
+        operationID: String? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> NotificationMessage {
         if let remote {
             let creation = RemoteWorktreeCreation(
@@ -310,7 +311,8 @@ struct WorktreeAdd: ParsableCommand {
             command: command ?? agentRuntime?.rawValue,
             agentRuntime: agentRuntime,
             agentPrompt: resolvedPrompt,
-            operationID: operationID
+            operationID: operationID,
+            sourcePaneSessionName: TeamRegisterPaneResolver.paneSessionName(env: environment)
         )
     }
 

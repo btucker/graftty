@@ -146,6 +146,10 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     public static let maxCatchUpLength = 600
     /// Choices the user can pick to answer `need`; only valid with it.
     public var options: [Option]?
+    /// Present only on sparse authoring receipts, never on composed UI snapshots.
+    public var contextUpdate: WorktreeContextUpdate?
+    /// A result to acknowledge, without answer controls.
+    public var notice: String?
     public var emoji: String?
     public var emojiAlternatives: [String]?
     /// Rename the worktree's purpose only when the task itself changes.
@@ -214,9 +218,12 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     }
 
     public var isValid: Bool {
-        let requiredValid = [(title, 100), (completed, 300), (next, 300)].allSatisfy { text, limit in Self.validText(text, limit: limit) }
+        let updateValid = contextUpdate?.isValid ?? true
+        let requiredValid = [(title, 100), (completed, 300)].allSatisfy { text, limit in Self.validText(text, limit: limit) }
+            && (next.isEmpty || Self.validText(next, limit: 300))
         let contextValid = context.map { Self.validText($0, limit: 200) } ?? true
         let needValid = need.map { Self.validText($0, limit: 300) } ?? true
+        let noticeValid = notice.map { Self.validText($0, limit: 300) && need == nil && options == nil } ?? true
         // A catch-up lays out choices, so a line break must not reject the whole report.
         let catchUpValid = catchUp.map { Self.validText($0.replacingOccurrences(of: "\n", with: " "), limit: Self.maxCatchUpLength) } ?? true
         let candidates = proposedEmojis
@@ -231,7 +238,7 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
         } ?? true
         let iconValid = icon.map { $0.utf8.count <= Self.maxIconBytes } ?? true
         let iconDescriptionValid = iconDescription.map { Self.validText($0, limit: Self.maxIconDescriptionLength) } ?? true
-        return requiredValid && contextValid && needValid && catchUpValid && emojiValid && checkpointValid && decisionsValid && historyValid
+        return updateValid && requiredValid && contextValid && needValid && noticeValid && catchUpValid && emojiValid && checkpointValid && decisionsValid && historyValid
             && iconValid && iconDescriptionValid && hasValidOptions
     }
 }
@@ -261,6 +268,8 @@ public struct SidebarAgentStop: Codable, Sendable, Hashable {
         guard let need = recap?.need, !need.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return need
     }
+    public var notice: String? { recap?.notice }
+    public var requestsAttention: Bool { question != nil || notice != nil }
     public var occurrence: SidebarAttentionOccurrence {
         .init(timestamp: stoppedAt, text: title, source: .agentStop)
     }
@@ -284,6 +293,7 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var paneSlotIDs: [String]?
     public var attentionTimestamps: [String: Double]?
     public var unseenAgentStop: SidebarAgentStop?
+    public var unreadAgentNotices: [SidebarAgentStop]?
     /// Latest recap remains available to clients after acknowledgement.
     public var lastAgentStop: SidebarAgentStop?
     public var brief: WorktreeBrief?
@@ -428,7 +438,7 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     }
     public var needsAttention: Bool {
         guard occurrence != nil, occurrence?.source != .commandFinished else { return false }
-        if let agentStop { return agentStop.question != nil }
+        if let agentStop { return agentStop.requestsAttention }
         return true
     }
 
@@ -602,9 +612,16 @@ public enum SidebarProjection {
             let projectID = projectID(wt)
             let stable = wt.sidebar?.id ?? "\(projectID):\(wt.path)"
             var items: [SidebarActivityItem] = []
-            if let stop = wt.sidebar?.unseenAgentStop {
+            if let stop = wt.sidebar?.unseenAgentStop,
+               !(wt.sidebar?.unreadAgentNotices ?? []).contains(where: { $0.occurrence == stop.occurrence }) {
                 items.append(.init(id: stable + ":stop", projectID: projectID, worktreeID: wt.path, paneID: nil,
                     projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: stop.title,
+                    occurrence: stop.occurrence, isBusy: false, agentStop: stop, worktreeEmoji: wt.effectiveEmoji))
+            }
+            for stop in wt.sidebar?.unreadAgentNotices ?? [] {
+                items.append(.init(id: stable + ":notice:\(stop.timestamp)", projectID: projectID,
+                    worktreeID: wt.path, paneID: nil, projectName: wt.repoDisplayName,
+                    worktreeName: wt.displayName, title: stop.notice ?? stop.title,
                     occurrence: stop.occurrence, isBusy: false, agentStop: stop, worktreeEmoji: wt.effectiveEmoji))
             }
             if var occurrence = wt.attention {

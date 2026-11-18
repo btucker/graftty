@@ -15,7 +15,7 @@ public enum PinnedTileState: Sendable, Equatable {
     public static func resolve(status: SidebarRowStatus, isCached: Bool) -> PinnedTileState {
         if isCached { return .asleep }
         if status.needsAttention { return .waiting }
-        if status.waitsForUser { return .finished }
+        if case .whereWeAre(_, isUnread: true) = status { return .finished }
         if case .working = status { return .working }
         return .idle
     }

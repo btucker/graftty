@@ -45,6 +45,11 @@ public final class SidebarNavigationState {
         retainedReports = defaults.data(forKey: prefix + ".worktreeReports").flatMap {
             try? JSONDecoder().decode([SidebarActivityItem].self, from: $0)
         } ?? workspace.items.filter { $0.agentStop != nil }
+        let retainedCount = retainedReports.count
+        retainedReports.removeAll { $0.agentStop?.notice != nil && !$0.id.hasSuffix(":stop") }
+        if retainedReports.count != retainedCount {
+            defaults.set(try? JSONEncoder().encode(retainedReports), forKey: prefix + ".worktreeReports")
+        }
         rebuildRetainedReportIndex()
     }
     public func opened(_ item: SidebarActivityItem) {
@@ -149,7 +154,7 @@ public final class SidebarNavigationState {
     private func retainReports(_ items: [SidebarActivityItem], worktrees: [WorktreePanes]? = nil,
                                authoritativeProjectIDs: Set<String> = []) {
         var next = retainedReports
-        for item in items where item.agentStop != nil {
+        for item in items where item.agentStop != nil && (item.agentStop?.notice == nil || item.id.hasSuffix(":stop")) {
             if let index = next.firstIndex(where: { $0.id == item.id }) {
                 if item.agentStop!.timestamp >= (next[index].agentStop?.timestamp ?? -.infinity) { next[index] = item }
             } else { next.append(item) }

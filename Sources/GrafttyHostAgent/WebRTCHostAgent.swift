@@ -36,7 +36,7 @@ public actor WebRTCHostAgent {
     private let trustedPeerStore: TrustedPeerStore
     public nonisolated let activeRemotePeers: ActiveRemotePeerRegistry
     private let pagedFactory: PagedTerminalStreamFactory?
-    private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private let streamFactory: @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream
     private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private var panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     private var paneControlMutator: PaneControlChannelHandler.Mutator
@@ -186,13 +186,19 @@ public actor WebRTCHostAgent {
     /// See `RemoteHostConnection.iceGatheringTimeout`.
     private static let iceGatheringTimeout: Duration = .seconds(5)
     private static let authenticationDeadline: Duration = .seconds(30)
-    private static let iceDisconnectedGrace: Duration = .seconds(5)
+    /// Backstop for a transport libwebrtc reports `.disconnected` but never
+    /// `.failed`. ICE only reports `.disconnected` after
+    /// `WebRTCPeerSupport.iceUnwritableTimeout` without check responses, so a
+    /// short grace here would close healthy high-latency links that libwebrtc
+    /// itself is still waiting out. Deriving it from `iceInactiveTimeout`
+    /// keeps the grace at least as long as libwebrtc's own wait for `.failed`.
+    internal static let iceDisconnectedGrace: Duration = WebRTCPeerSupport.iceInactiveTimeout
 
     public init(
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
         activeRemotePeers: ActiveRemotePeerRegistry = ActiveRemotePeerRegistry(),
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        streamFactory: @escaping @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream,
         pagedFactory: PagedTerminalStreamFactory? = nil,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,

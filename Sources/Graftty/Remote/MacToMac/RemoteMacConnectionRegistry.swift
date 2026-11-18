@@ -402,12 +402,13 @@ final class RemoteMacConnectionRegistry {
     func openTerminalSession(
         identity: RemoteMacIdentity,
         sessionName: String,
-        preferPaged: Bool = MacPagedTerminalRenderer.isSupported
+        preferPaged: Bool = MacPagedTerminalRenderer.isSupported,
+        initialGrid: DisplayGrid? = nil
     ) async throws -> any WebSocketClient & Sendable {
         guard let entry = entries[identity] else {
             throw ConnectionError.notConnected(identity)
         }
-        return try await entry.connection.openTerminalClient(sessionName: sessionName, preferPaged: preferPaged)
+        return try await entry.connection.openTerminalClient(sessionName: sessionName, preferPaged: preferPaged, initialGrid: initialGrid)
     }
 
     func forwardedURL(identity: RemoteMacIdentity, host: String, port: Int) async throws -> URL {
@@ -665,7 +666,7 @@ final class RemoteMacConnectionRegistry {
         pendingPaneStores[entryID] = store
         defer { if pendingPaneStores[entryID] === store { pendingPaneStores[entryID] = nil } }
         do {
-            guard try await store.waitForFirstSnapshot(timeout: .seconds(15)) == .received else {
+            guard try await store.waitForFirstSnapshot(timeout: RemoteLinkDeadlines.firstSnapshot) == .received else {
                 throw ConnectionError.paneEnvironmentUnavailable(identity)
             }
             try Task.checkCancellation()

@@ -52,11 +52,11 @@ public protocol PagedTerminalStream: TerminalIO {
     func requestCheckpoint() async throws
 }
 
-public typealias PagedTerminalStreamFactory = @Sendable (String) async throws -> any PagedTerminalStream
+public typealias PagedTerminalStreamFactory = @Sendable (String, DisplayGrid?) async throws -> any PagedTerminalStream
 
 /// Factory the channel handler uses to obtain a stream for a given
 /// session name.
-public typealias TerminalByteStreamFactory = @Sendable (String) async throws -> TerminalByteStream
+public typealias TerminalByteStreamFactory = @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream
 
 /// Optional capability a `TerminalByteStream` conformer can add: reporting
 /// live PTY-size changes. Not folded into `TerminalByteStream` itself

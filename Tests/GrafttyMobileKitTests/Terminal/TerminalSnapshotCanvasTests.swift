@@ -565,6 +565,59 @@ struct MountedTerminalSnapshotCanvasTests {
         scroll.updateScrollbar(try #require(surface.currentScrollbar))
         #expect(abs(scroll.contentOffset.y / rowHeight - 20.5) < 0.05)
     }
+
+    @Test("@spec TERM-12.71: When a mobile follower's scroll crosses a row boundary, the application shall present the scrolled rows in the same main-actor turn that moves its live screen, so no displayed frame shows the text a row away from its scroll position.")
+    func rowCrossingPresentsWithCanvasMove() async throws {
+        let (window, container) = try await Self.mountedFollower()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let terminal = container.terminalView
+        let scroll = container.snapshotScrollView
+        let rowHeight = try Self.followerRowHeight(container)
+        let surface = try #require(terminal.surface)
+        let layer = try Self.surfaceLayer(of: terminal)
+        for row in [UInt64(6), 3, 9] {
+            let contents = layer.contents as AnyObject?
+            let frame = terminal.frame
+            scroll.contentOffset = CGPoint(x: 0, y: (CGFloat(row) + 0.5) * rowHeight)
+            // No suspension since the offset changed: this turn's commit is
+            // the next displayed frame, so it must carry both changes.
+            #expect(terminal.frame != frame)
+            #expect(layer.contents as AnyObject? !== contents)
+            #expect(surface.currentScrollbar?.offset == row)
+        }
+    }
+
+    @Test("@spec TERM-12.72: When a mobile follower's scroll changes the history rows shown above its live screen, the application shall present those rows in the same main-actor turn that moves their display.")
+    func historyRowsPresentWithCanvasMove() async throws {
+        let (window, container) = try await Self.mountedFollower()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let terminal = container.terminalView
+        let scroll = container.snapshotScrollView
+        let rowHeight = try Self.followerRowHeight(container)
+        scroll.showsAdditionalHistory = true
+        scroll.contentOffset = CGPoint(x: 0, y: 40.5 * rowHeight)
+        var history: UITerminalView?
+        for _ in 0..<200 {
+            container.layoutIfNeeded()
+            scroll.refreshAdditionalHistory()
+            history = scroll.subviews.lazy.compactMap { $0 as? UITerminalView }.first { $0 !== terminal }
+            if history != nil, scroll.additionalHistoryTextForTesting?.isEmpty == false { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let display = try #require(history)
+        let layer = try Self.surfaceLayer(of: display)
+        for row in [CGFloat(41), 39] {
+            let contents = layer.contents as AnyObject?
+            let frame = display.frame
+            scroll.contentOffset = CGPoint(x: 0, y: (row + 0.5) * rowHeight)
+            #expect(display.frame != frame)
+            #expect(layer.contents as AnyObject? !== contents)
+        }
+    }
+
+    private static func surfaceLayer(of view: UIView) throws -> CALayer {
+        try #require(view.layer.sublayers?.first { NSStringFromClass(type(of: $0)) == "IOSurfaceLayer" })
+    }
     #endif
 
     @Test("@spec TERM-12.33: When a mobile follower has no live native scrollbar query, the application shall accept native navigation without waiting for a local row acknowledgement.")

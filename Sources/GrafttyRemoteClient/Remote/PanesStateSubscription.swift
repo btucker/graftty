@@ -171,5 +171,5 @@ extension RemoteHostConnection: PanesStateDriverMaking {
 /// Renewal does not infer health from incremental traffic: idle hosts deduplicate it.
 struct PanesStateHealthPolicy: Sendable {
     var renewal: ReplyDeadline = .after(.seconds(60))
-    var initialSnapshot: ReplyDeadline = .after(.seconds(15))
+    var initialSnapshot: ReplyDeadline = .after(RemoteLinkDeadlines.firstSnapshot)
 }

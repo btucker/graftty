@@ -137,6 +137,20 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.markLayoutSettledCount == 1)
     }
 
+    @Test("Background startup inherits the source grid while a mounted pane uses settled layout", arguments: [false, true])
+    func inheritedGridIsUsedOnlyBeforeMountedLayout(background: Bool) throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(terminalID: Self.terminalID(), app: fakeApp(), worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock", zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory, zmxBackendFactory: { _, _, _, _ in backend },
+            inheritedWindowSize: .init(cols: 117, rows: 43)))
+        if background { #expect(handle.startForBackgroundLaunch()) }
+        else { try #require(handle.view as? SurfaceNSView).hostManagedLayoutNotifier?() }
+        #expect(backend.startCount == 1)
+        #expect(backend.initialWindowSize == (background ? .init(cols: 117, rows: 43) : nil))
+    }
+
     @Test("Background launch fails when spawn-time input is rejected")
     func backgroundLaunchReportsRejectedInitialInput() throws {
         let backend = FakeSurfaceHandleZmxBackend()

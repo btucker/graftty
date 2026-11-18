@@ -35,6 +35,8 @@ protocol RemoteWorktreeViewerModel: AnyObject {
     func connectViewer(to remoteMac: RemoteMac) async throws
     func openViewerTerminalSession(identity: RemoteMacIdentity, sessionName: String) async throws
         -> any WebSocketClient & Sendable
+    func openViewerTerminalSession(identity: RemoteMacIdentity, sessionName: String, initialGrid: DisplayGrid?) async throws
+        -> any WebSocketClient & Sendable
     func openWorktree(on remoteMac: RemoteMac, worktreePath: String) async -> WorktreeManagementResponse
     func acknowledgeViewedAttention(on remoteMac: RemoteMac, worktreePath: String, paneSessionName: String?) async
     func sendWorktreeManagement(identity: RemoteMacIdentity, request: WorktreeManagementRequest) async throws
@@ -46,6 +48,7 @@ protocol RemoteWorktreeViewerModel: AnyObject {
 @MainActor
 protocol RemoteWorktreeViewerSurfaces: AnyObject {
     var splitPreserveZoomOnNavigation: Bool { get }
+    func terminalStartupGrid() -> DisplayGrid?
     func hasRemoteSurface(_ terminalID: PaneSlotID) -> Bool
     /// Creates the host-managed surface that proxies `client`. Returns false
     /// when no surface could be created.
@@ -68,6 +71,17 @@ protocol RemoteWorktreeViewerSurfaces: AnyObject {
         when shouldFocus: (() -> Bool)?,
         onFocused: (() -> Void)?
     )
+}
+
+extension RemoteWorktreeViewerModel {
+    func openViewerTerminalSession(identity: RemoteMacIdentity, sessionName: String, initialGrid: DisplayGrid?) async throws
+        -> any WebSocketClient & Sendable {
+        try await openViewerTerminalSession(identity: identity, sessionName: sessionName)
+    }
+}
+
+extension RemoteWorktreeViewerSurfaces {
+    func terminalStartupGrid() -> DisplayGrid? { nil }
 }
 
 @MainActor
@@ -841,7 +855,8 @@ final class RemoteWorktreeViewerController: ObservableObject {
                     try await model.connectViewer(to: remoteMac)
                     let client = try await model.openViewerTerminalSession(
                         identity: identity,
-                        sessionName: leaf.sessionName
+                        sessionName: leaf.sessionName,
+                        initialGrid: surfaces.terminalStartupGrid()
                     )
                     guard remoteTerminalSlots[key] == terminalID else {
                         client.close()
@@ -2042,9 +2057,19 @@ extension RemoteMacsModel: RemoteWorktreeViewerModel {
         -> any WebSocketClient & Sendable {
         try await openTerminalSession(identity: identity, sessionName: sessionName)
     }
+
+    func openViewerTerminalSession(identity: RemoteMacIdentity, sessionName: String, initialGrid: DisplayGrid?) async throws
+        -> any WebSocketClient & Sendable {
+        try await openTerminalSession(identity: identity, sessionName: sessionName, initialGrid: initialGrid)
+    }
 }
 
 extension TerminalManager: RemoteWorktreeViewerSurfaces {
+    func terminalStartupGrid() -> DisplayGrid? {
+        initialWindowSizeForNewSession(inheritingFrom: focusedTerminalID).flatMap {
+            try? DisplayGrid(cols: $0.cols, rows: $0.rows)
+        }
+    }
     func hasRemoteSurface(_ terminalID: PaneSlotID) -> Bool {
         view(for: terminalID) != nil
     }

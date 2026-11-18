@@ -12,7 +12,7 @@ import NIOSSH
 
 /// Callbacks shared by SSH sessions on WebRTC and TCP.
 struct SSHHostSessionConfiguration: Sendable {
-    let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    let streamFactory: @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream
     let pagedFactory: PagedTerminalStreamFactory?
     let panesStateSubscribe: PanesStateChannelHandler.Subscribe
     let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe

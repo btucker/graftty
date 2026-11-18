@@ -60,7 +60,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     public typealias InboundIn = SSHChannelData
     public typealias OutboundOut = SSHChannelData
 
-    private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private let streamFactory: @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream
     private let pagedFactory: PagedTerminalStreamFactory?
     private let bulkChannels: BulkTerminalChannels?
     private var historyChannel: Channel?
@@ -134,7 +134,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private static let maxPendingPTYWriteChunks = 256
 
     public init(
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        streamFactory: @escaping @Sendable (String, DisplayGrid?) async throws -> TerminalByteStream,
         pagedFactory: PagedTerminalStreamFactory? = nil,
         ownershipStore: SessionDisplayOwnershipStore,
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
@@ -337,12 +337,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         // Use the channel's pipeline for outbound events — Channel is
         // Sendable, ChannelHandlerContext is not.
         let pipeline = context.pipeline
+        let ownership = ownershipStore.snapshot(sessionName: sessionName)
+        let initialGrid = ownership.ownerClientID == nil ? ptyGrid : ownership.grid
 
         Task { [weak self] in
             do {
                 let stream: any TerminalIO
-                if let pagedFactory { stream = try await pagedFactory(sessionName) }
-                else { stream = try await factory(sessionName) }
+                if let pagedFactory { stream = try await pagedFactory(sessionName, initialGrid) }
+                else { stream = try await factory(sessionName, initialGrid) }
                 loop.execute { [weak self] in
                     guard let self else {
                         Task { await stream.close() }

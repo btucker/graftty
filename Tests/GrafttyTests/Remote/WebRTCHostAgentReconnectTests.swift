@@ -168,11 +168,12 @@ struct WebRTCHostAgentReconnectTests {
 
     @Test("""
     @spec REMOTE-11.11: When the current host ICE connection does not return \
-    to a connected state within five seconds after disconnecting, the \
+    to a connected state within thirty seconds after disconnecting, the \
     application shall close it and release that device's connection; if ICE \
     recovers first, the application shall keep the connection.
     """)
     func staleDisconnectedTransportReleasesTheHostSlotAfterGrace() async throws {
+        #expect(WebRTCHostAgent.iceDisconnectedGrace == .seconds(30))
         let agent = Self.makeHostAgent()
 
         await agent.beginConnectionLifecycle()
@@ -454,7 +455,7 @@ struct WebRTCHostAgentReconnectTests {
         WebRTCHostAgent(
             hostKey: Curve25519.Signing.PrivateKey(),
             trustedPeerStore: trustedPeerStore ?? TrustedPeerStore(directory: Self.tempDir()),
-            streamFactory: { _ in fatalError("not expected: no data channel opens in this test") },
+            streamFactory: { _, _ in fatalError("not expected: no data channel opens in this test") },
             panesStateSubscribe: { _ in PanesStateChannelHandler.Cancellable(cancel: {}) },
             paneControlMutator: { _ in fatalError("not expected: no data channel opens in this test") },
             displayOwnershipStore: SessionDisplayOwnershipStore(),

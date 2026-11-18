@@ -32,8 +32,26 @@ public enum WebRTCPeerSupport {
         // fallback. Network-interface changes after negotiation require a
         // fresh connection under this policy.
         config.continualGatheringPolicy = .gatherOnce
+        // libwebrtc's defaults assume sub-second round trips: a pair stops
+        // receiving after 2.5s, becomes unwritable (ICE `.disconnected`)
+        // after 5s and five unanswered checks, and times out (ICE `.failed`)
+        // after 15s. On satellite or in-flight links with one-second round
+        // trips and loss bursts those fire on a healthy path, and a single
+        // pair under `gatherOnce` cannot recover from `.failed`.
+        config.iceConnectionReceivingTimeout = Int32(iceReceivingTimeout.wholeMilliseconds)
+        config.iceUnwritableTimeout = NSNumber(value: iceUnwritableTimeout.wholeMilliseconds)
+        config.iceInactiveTimeout = NSNumber(value: iceInactiveTimeout.wholeMilliseconds)
         return config
     }
+
+    /// No inbound traffic for this long marks a candidate pair as not receiving.
+    public static let iceReceivingTimeout: Duration = .seconds(10)
+    /// No check responses for this long (and at least five unanswered checks)
+    /// marks a pair unwritable, which ICE reports as `.disconnected`.
+    public static let iceUnwritableTimeout: Duration = .seconds(10)
+    /// No check responses for this long times a pair out; with no pair left,
+    /// ICE reports `.failed`.
+    public static let iceInactiveTimeout: Duration = .seconds(30)
 
     public static func setLocalDescription(
         _ pc: RTCPeerConnection,
@@ -134,6 +152,14 @@ public final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, 
         let inbox = DataChannelInbox()
         dataChannel.delegate = inbox
         onDataChannel?(ObjectIdentifier(peerConnection), dataChannel, inbox)
+    }
+}
+
+private extension Duration {
+    /// libwebrtc's ICE timing fields take whole milliseconds.
+    var wholeMilliseconds: Int {
+        let parts = components
+        return Int(parts.seconds) * 1_000 + Int(parts.attoseconds / 1_000_000_000_000_000)
     }
 }
 
