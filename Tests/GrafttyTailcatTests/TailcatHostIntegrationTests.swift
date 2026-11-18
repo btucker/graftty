@@ -158,7 +158,7 @@ private func withProductionHost(managementAllowed: Bool = true,
         pairedAt: Date(), lastSeenAt: nil)
     try store.add(peer)
     let registry = SSHConnectionRegistry()
-    let host = DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: store, streamFactory: { _ in ProductionEchoStream() },
+    let host = DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: store, streamFactory: { _, _ in ProductionEchoStream() },
         panesStateSubscribe: { onChange in await onChange(.snapshot([])); return .init {} },
         paneControlMutator: { _ in .ok }, displayOwnershipStore: SessionDisplayOwnershipStore(), sshConnectionRegistry: registry)
     await host.setTeamMessaging(handler: { _, bytes in bytes }, onConnect: { _, _ in }, onDisconnect: { _, _ in })
