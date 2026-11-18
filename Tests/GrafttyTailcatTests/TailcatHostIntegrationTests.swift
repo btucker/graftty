@@ -9,6 +9,31 @@ import Testing
 
 @Suite("Tailcat with the production Graftty SSH host", .serialized)
 struct TailcatHostIntegrationTests {
+    @Test("@spec SSH-1.22: When a Tailcat host restarts with its saved identity and relay region, the application shall reconnect with the previously paired address and SSH keys.", .timeLimit(.minutes(2)))
+    func reconnectsAfterRestart() async throws {
+        let savedIdentity = try JSONEncoder().encode(TailcatServerIdentity.generate())
+        let hostKey = Curve25519.Signing.PrivateKey(), clientKey = Curve25519.Signing.PrivateKey()
+        let pin = RemoteIdentityFingerprint(of: try .init(rawRepresentation: hostKey.publicKey.rawRepresentation))
+        var savedAddress: String?
+        for _ in 0..<2 {
+            let identity = try JSONDecoder().decode(TailcatServerIdentity.self, from: savedIdentity)
+            try await withProductionHost(hostKey: hostKey, clientKey: clientKey, serverFactory: {
+                try TailcatPeer.server(identity: identity, previousAddress: savedAddress)
+            }) { fixture in
+                if savedAddress == nil { savedAddress = try await fixture.server.address() }
+                guard let address = savedAddress else { throw TailcatFailure.invalidInfo }
+                let connection = try await TailcatSSHConnection.connect(address: address, port: 8801, key: clientKey, fingerprint: pin)
+                do {
+                    let control = try await connection.ssh.makePaneControlClient()
+                    try await control.open()
+                    #expect(try await control.send(.equalize(target: "restart")) == .ok)
+                    control.close()
+                } catch { await connection.close(); throw error }
+                await connection.close()
+            }
+        }
+    }
+
     @Test("@spec SSH-1.19: When Tailcat carries a paired SSH session, the application shall dispatch the production host's control, team, and terminal channels without a TCP listener.", .timeLimit(.minutes(2)))
     func dispatchesProductionChannels() async throws {
         try await withProductionHost { fixture in
@@ -146,11 +171,13 @@ private final class ProductionTailcatFixture: @unchecked Sendable {
 }
 
 private func withProductionHost(managementAllowed: Bool = true,
+                                hostKey: Curve25519.Signing.PrivateKey = .init(),
+                                clientKey: Curve25519.Signing.PrivateKey = .init(),
+                                serverFactory: () throws -> TailcatPeer = { try TailcatPeer.server() },
                                 _ body: (ProductionTailcatFixture) async throws -> Void) async throws {
     let directory = URL.temporaryDirectory.appendingPathComponent("tailcat-host-\(UUID())")
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = TrustedPeerStore(directory: directory)
-    let hostKey = Curve25519.Signing.PrivateKey(), clientKey = Curve25519.Signing.PrivateKey()
     let peer = TrustedPeer(id: .init(value: "tailcat-client"), kind: .mac,
         publicKey: try .init(rawRepresentation: clientKey.publicKey.rawRepresentation), displayName: "Tailcat test",
         capabilities: .init(terminalControl: .allowed, portTunnel: .disabled, screenView: .disabled,
@@ -162,7 +189,7 @@ private func withProductionHost(managementAllowed: Bool = true,
         panesStateSubscribe: { onChange in await onChange(.snapshot([])); return .init {} },
         paneControlMutator: { _ in .ok }, displayOwnershipStore: SessionDisplayOwnershipStore(), sshConnectionRegistry: registry)
     await host.setTeamMessaging(handler: { _, bytes in bytes }, onConnect: { _, _ in }, onDisconnect: { _, _ in })
-    let server = try TailcatPeer.server()
+    let server = try serverFactory()
     let fixture: ProductionTailcatFixture
     do {
         fixture = ProductionTailcatFixture(server: server, listener: try await server.listen(port: 8801),

@@ -63,14 +63,57 @@ private final class Resource: @unchecked Sendable {
     }
 }
 
+/// Encoded identities contain both secrets. Store them as credentials.
+public struct TailcatServerIdentity: Codable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    fileprivate let private_key: String
+    fileprivate let preshared_key: String
+    public var description: String { "TailcatServerIdentity(redacted)" }
+    public var debugDescription: String { description }
+
+    public static func generate() throws -> Self {
+        guard tc_abi_version() == 1 else { throw TailcatFailure.incompatibleABI }
+        var output: UnsafeMutablePointer<CChar>?
+        try Runtime.check(tc_key_generate(&output, nil))
+        defer { tc_free(output) }
+        guard let output else { throw TailcatFailure.invalidInfo }
+        return try JSONDecoder().decode(Self.self, from: Data(String(cString: output).utf8))
+    }
+}
+
 public final class TailcatPeer: @unchecked Sendable {
     private let resource: Resource
     private init(_ handle: tc_handle) { resource = Resource(handle) }
 
     public static func server() throws -> TailcatPeer {
+        try server(configuration: "{}")
+    }
+
+    public static func server(identity: TailcatServerIdentity, previousAddress: String? = nil) throws -> TailcatPeer {
+        guard tc_abi_version() == 1 else { throw TailcatFailure.incompatibleABI }
+        guard !identity.private_key.isEmpty, !identity.preshared_key.isEmpty else {
+            throw TailcatFailure.invalidInfo
+        }
+        var configuration: [String: Any] = ["key": identity.private_key, "preshared_key": identity.preshared_key]
+        if let previousAddress {
+            var address = Array(previousAddress.utf8CString)
+            var output: UnsafeMutablePointer<CChar>?
+            try Runtime.check(address.withUnsafeMutableBufferPointer { tc_address_parse($0.baseAddress, &output, nil) })
+            defer { tc_free(output) }
+            guard let output, let metadata = try JSONSerialization.jsonObject(with: Data(String(cString: output).utf8)) as? [String: Any]
+            else { throw TailcatFailure.invalidInfo }
+            if let region = (metadata["regions"] as? [[String: Any]])?.first {
+                configuration["region"] = region
+            } else if let id = metadata["region_id"] as? Int, id > 0 {
+                configuration["region_id"] = id
+            } else { throw TailcatFailure.invalidInfo }
+        }
+        return try server(configuration: String(decoding: JSONSerialization.data(withJSONObject: configuration), as: UTF8.self))
+    }
+
+    private static func server(configuration: String) throws -> TailcatPeer {
         guard tc_abi_version() == 1 else { throw TailcatFailure.incompatibleABI }
         var handle: tc_handle = 0
-        var json = Array("{}".utf8CString)
+        var json = Array(configuration.utf8CString)
         try Runtime.check(json.withUnsafeMutableBufferPointer { tc_server_new($0.baseAddress, &handle, nil) })
         return TailcatPeer(handle)
     }

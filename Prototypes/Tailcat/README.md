@@ -145,9 +145,13 @@ Tailcat addresses contain connection secrets. This harness generates them
 in memory and does not print or persist them. C errors expose numeric status
 only. Do not commit addresses, keys, or unredacted runtime logs.
 
-The prototype does not implement pairing UI, address distribution, persistent
-listener identity, or app connection routing. Production capability checks and
-live peer revocation have passed in the Mac host integration suite.
+The Mac restart test recreates the Tailcat listener and SSH host in one process.
+It restores the serialized private and pre-shared keys, takes the relay from the
+original address, and sends a control request to that address with the same SSH
+keys. The test keeps credentials in memory and seeds the paired-key store for
+each host. App credential storage, pairing, and reconnect after process exit
+still need integration. Production capability checks and live peer revocation
+have passed in the Mac host integration suite.
 Simulator results cannot establish cellular behavior, physical-device power
 use, suspension recovery, or performance across NATs. Those remain migration
 gates, together with a relay hosting plan and upstream compatibility handling.

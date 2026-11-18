@@ -6224,6 +6224,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SSH-1.21** While a paired client connects through Tailcat, the application shall enforce channel capabilities and disconnect the client when its pairing is revoked.
 
+**SSH-1.22** When a Tailcat host restarts with its saved identity and relay region, the application shall reconnect with the previously paired address and SSH keys.
+
 ## TEST — TEST
 
 ### TEST-1.x
