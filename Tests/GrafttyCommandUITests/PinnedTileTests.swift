@@ -3,10 +3,15 @@ import Testing
 @testable import GrafttyCommandUI
 
 struct PinnedTileTests {
-    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall show an orange dot before its name while it asks a question or carries a notification, a pulsing blue dot while an agent works, fade it while its host sleeps, and draw no mark otherwise, including after a turn stops.")
+    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while its status is working, fade it while its host sleeps, and draw no mark otherwise, including for notifications and stopped turns.")
     func tileStates() {
         #expect(PinnedTileState.resolve(status: .question("q", paneID: nil), isCached: false) == .waiting)
-        #expect(PinnedTileState.resolve(status: .notification("n", paneID: nil), isCached: false) == .waiting)
+        for paneID: String? in [nil, "agent"] {
+            let notification = PinnedTileState.resolve(status: .notification("n", paneID: paneID), isCached: false)
+            #expect(notification == .idle)
+            #expect(notification.pip == nil)
+            #expect(PinnedTile.accessibilityLabel(name: "triage", host: nil, state: notification) == "triage")
+        }
         let completed = SidebarRowStatus.whereWeAre("done", isUnread: true)
         let finished = PinnedTileState.resolve(status: completed, isCached: false)
         #expect(finished == .finished)
@@ -18,6 +23,7 @@ struct PinnedTileTests {
         #expect(PinnedTileState.resolve(status: .none, isCached: false) == .idle)
         // A sleeping host's report is old news, even if it once asked.
         #expect(PinnedTileState.resolve(status: .whereWeAre("done", isUnread: true), isCached: true) == .asleep)
+        #expect(PinnedTileState.resolve(status: .question("q", paneID: nil), isCached: true) == .asleep)
         // One small cue per tile, never a frame.
         #expect(PinnedTileState.waiting.pip == .filled)
         #expect(PinnedTileState.finished.pip == nil, "A stopped turn draws nothing")

@@ -3,7 +3,7 @@ import Foundation
 /// @spec LAYOUT-2.225
 /// What a pinned agent's tile shows. A tile never moves: it lights up in place.
 public enum PinnedTileState: Sendable, Equatable {
-    /// A question or a notification: an orange dot.
+    /// A request for user input: an orange dot.
     case waiting
     /// A finished turn the person hasn't opened; the tile draws no mark for it.
     case finished
@@ -14,7 +14,7 @@ public enum PinnedTileState: Sendable, Equatable {
 
     public static func resolve(status: SidebarRowStatus, isCached: Bool) -> PinnedTileState {
         if isCached { return .asleep }
-        if status.needsAttention { return .waiting }
+        if case .question = status { return .waiting }
         if case .whereWeAre(_, isUnread: true) = status { return .finished }
         if case .working = status { return .working }
         return .idle
