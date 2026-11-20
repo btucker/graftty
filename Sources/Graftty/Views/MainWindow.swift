@@ -838,7 +838,7 @@ struct MainWindow: View {
 
     /// The selected worktree's agent pane, local or remote, and the timeline its scrollback map marks.
     private var agentScrollbackMap: AgentScrollbackMap? {
-        guard let context = selectedContext, let session = context.agentPaneID else { return nil }
+        guard let context = selectedContext, let session = context.transcriptPaneID else { return nil }
         let terminalID: PaneSlotID?
         if let remoteIdentity = selectedRemoteIdentity {
             terminalID = remoteViewer.existingTerminalID(identity: remoteIdentity, worktreePath: context.worktree.path,

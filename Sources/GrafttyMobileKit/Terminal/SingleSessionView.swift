@@ -472,7 +472,7 @@ struct SingleSessionView: View {
 
     /// The timeline the scrollback map marks, while this focused pane is its worktree's agent pane.
     private var agentScrollbackTimeline: WorktreeTimeline? {
-        guard isPaneFocused, let context = paneWorktreeContext, context.agentPaneID == step.sessionName else { return nil }
+        guard isPaneFocused, let context = paneWorktreeContext, context.transcriptPaneID == step.sessionName else { return nil }
         return WorktreeTimeline(context)
     }
 

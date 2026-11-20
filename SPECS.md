@@ -5640,6 +5640,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.3** When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass terminal input through the previews.
 
+**CONTEXT-57.4** If the worktree’s retained report points to a missing pane and exactly one active agent remains, then the application shall use that agent’s pane for the scrollback map and history jumps on Mac and mobile.
+
 ### CONTEXT-58.x
 
 **CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its current-state sentence above a dimmer Next line when a next step exists, after the timeline, followed by any waiting question and a status line.

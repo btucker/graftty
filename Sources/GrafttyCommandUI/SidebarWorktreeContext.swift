@@ -31,6 +31,19 @@ public struct SidebarWorktreeContext: Equatable {
         hasUnseenStop ? [] : (worktree.layout?.leaves ?? []).filter(\.isBusy)
     }
 
+    /// A retained report can outlive its pane, such as after closing a reviewer tab.
+    public var transcriptPaneID: String? {
+        if let agentPaneID { return agentPaneID }
+        guard worktree.state == .running, let agents = worktree.agents, let layout = worktree.layout else { return nil }
+        let panes = Set(layout.leaves.map(\.sessionName))
+        let active = Set(agents.compactMap { agent -> String? in
+            guard (agent.status == "running" || agent.status == "waiting"), agent.processObservation != .exited,
+                  let session = agent.sessionName, panes.contains(session) else { return nil }
+            return session
+        })
+        return active.count == 1 ? active.first : nil
+    }
+
     public init(worktree: WorktreePanes, retained: [SidebarActivityItem] = [],
                 isViewed: (SidebarActivityItem) -> Bool = { _ in false }) {
         self.worktree = worktree

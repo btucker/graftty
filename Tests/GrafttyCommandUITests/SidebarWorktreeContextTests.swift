@@ -20,6 +20,32 @@ struct SidebarWorktreeContextTests {
                                          lastAgentStop: last, brief: brief, agentProgressTimes: progress))
     }
 
+    @Test("@spec CONTEXT-57.4: If the worktree’s retained report points to a missing pane and exactly one active agent remains, then the application shall use that agent’s pane for the scrollback map and history jumps on Mac and mobile.")
+    func transcriptUsesTheLiveAgentAfterTheReviewerCloses() {
+        let primary = PaneLayoutNode.leaf(sessionName: "primary", title: "Shell", attentionText: nil,
+                                          isBusy: false, attentionSource: nil)
+        let codex = PaneLayoutNode.leaf(sessionName: "codex", title: "Codex", attentionText: nil,
+                                        isBusy: false, attentionSource: nil)
+        let layout = PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: primary, right: codex)
+        let previousAgent = SidebarAgentStop(agentName: "Claude", stoppedAt: .now, paneSlotID: "closed-slot")
+        let failed = AgentSessionInfo(id: "failed", name: "Primary", provider: "codex",
+                                      status: "failed", sessionName: "primary")
+        let running = AgentSessionInfo(id: "running", name: "Codex", provider: "codex",
+                                       status: "running", sessionName: "codex")
+        let closed = AgentSessionInfo(id: "closed", name: "Claude", provider: "claude",
+                                      status: "closed", sessionName: nil, retainedSessionName: "review")
+        let row = WorktreePanes(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+            sidebar: .init(id: "/wt", projectID: "p", paneIDs: ["primary": "failed-slot", "codex": "live-slot"],
+                           lastAgentStop: previousAgent), agents: [failed, running, closed])
+
+        let context = SidebarWorktreeContext(worktree: row)
+        #expect(context.agentPaneID == nil)
+        #expect(context.transcriptPaneID == "codex")
+        #expect(context.item.agentStop == previousAgent)
+        #expect(SidebarWorktreeContext(worktree: row.with(agents: [failed, closed])).transcriptPaneID == nil)
+    }
+
     @Test("@spec LAYOUT-2.191: When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.")
     func routineStopsAreUpdatesNotRequests() {
         for need: String? in [nil, "", " \n"] {
