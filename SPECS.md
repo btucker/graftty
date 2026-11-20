@@ -2216,6 +2216,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-1.2** If more than one PR in the same repository matches the worktree's branch and state, the application shall associate the worktree with the most recently created one.
 
+**PR-1.3** If a worktree's branch matches no PR/MR head ref by name or tracked upstream, then the application shall associate the worktree with the same-repository PR/MR whose head commit equals the branch's tip commit, preferring the PR/MR whose head ref is the branch's own name, then an open PR/MR, and otherwise the highest number. The application shall skip this fallback for the repository's default branch and for any branch whose tip is the default branch's tip, and shall not match a PR/MR whose head ref is another local branch or another local branch's tracked upstream, so a branch created from another branch's tip does not inherit that branch's PR/MR.
+
+**PR-1.4** When a refresh is requested for a worktree whose branch has no remote but whose tip commit matches a PR/MR in the repository's last snapshot, the application shall refetch the repository's PRs/MRs instead of waiting for the next poll.
+
 ### PR-2.x — Refresh Triggers
 
 **PR-2.1** When a worktree's HEAD reference changes (per GIT-2.4), the application shall drop the worktree's previously cached PR display synchronously and shall trigger a fresh PR resolution for the new branch — rather than waiting for the next polling tick to discover the change. This prevents the previous branch's PR from continuing to display through the polling cadence window after a `git checkout`, rebase, or other HEAD-rewriting operation.

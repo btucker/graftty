@@ -14,6 +14,16 @@ public struct RepoPRSnapshot: Sendable, Equatable {
     public init(prsByBranch: [String: PRInfo]) {
         self.prsByBranch = prsByBranch
     }
+
+    /// Head ref of the PR/MR whose head commit is `sha`, ignoring PRs
+    /// whose head ref is in `excludedHeadRefs`. Prefers open over
+    /// terminal, then the highest number. See `PR-1.3`.
+    public func headRef(forHeadCommit sha: String, excludingHeadRefs excludedHeadRefs: Set<String>) -> String? {
+        prsByBranch
+            .filter { $0.value.headSHA == sha && !excludedHeadRefs.contains($0.key) }
+            .max { ($0.value.state == .open ? 1 : 0, $0.value.number) < ($1.value.state == .open ? 1 : 0, $1.value.number) }?
+            .key
+    }
 }
 
 /// Fetches the PR/MR snapshot for an entire repo in (ideally) one
