@@ -642,7 +642,7 @@ struct RemoteMacsSection: View {
         let isActive = selectedRemoteIdentity == identity && selectedRemoteWorktreePath == worktree.path
         let context = contextForWorktree(worktree)
         let status = SidebarRowStatus.resolve(context: context, worktree: worktree, isCached: tile.isCached)
-        let state = PinnedTileState.resolve(status: status, isCached: tile.isCached)
+        let state = PinnedTileState.resolve(context: context, isCached: tile.isCached)
         let projectID = SidebarProjection.projectID(worktree)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)

@@ -26,6 +26,11 @@ public struct SidebarWorktreeContext: Equatable {
     public let hasUnseenStop: Bool
     public let brief: WorktreeBrief?
 
+    /// An unread stop takes precedence over stale pane liveness.
+    var workingPanes: [PaneLayoutNode.Leaf] {
+        hasUnseenStop ? [] : (worktree.layout?.leaves ?? []).filter(\.isBusy)
+    }
+
     public init(worktree: WorktreePanes, retained: [SidebarActivityItem] = [],
                 isViewed: (SidebarActivityItem) -> Bool = { _ in false }) {
         self.worktree = worktree

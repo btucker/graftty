@@ -843,7 +843,7 @@ struct SidebarView: View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: row.relativeName)
         let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isCached: false)
-        let state = PinnedTileState.resolve(status: status, isCached: false)
+        let state = PinnedTileState.resolve(context: context, isCached: false)
         let isMain = worktree.path == repo.path
         let projectID = localProjectID(repo)
         let project = projects.first { $0.id == projectID }
