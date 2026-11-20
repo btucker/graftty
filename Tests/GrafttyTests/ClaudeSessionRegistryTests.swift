@@ -97,6 +97,23 @@ struct ClaudeSessionRegistryTests {
         }
     }
 
+    @Test("A new session in the pane ends another session's background subagent wait, while compaction keeps it")
+    func sessionStartResolvesSubagentWaits() {
+        let r = registry(json: "[]", ps: "")
+        for pane in ["compacted", "cleared"] {
+            r.recordHook(runtime: .claude, event: .stop, sessionID: "waiting", paneSessionName: pane,
+                         attentionReason: nil, subagentsRunning: true)
+            r.recordHook(runtime: .codex, event: .sessionStart, sessionID: "other", paneSessionName: pane, attentionReason: nil)
+            #expect(r.livenessBySession[pane] == .busy, "Another provider does not replace the Claude session")
+        }
+        r.recordHook(runtime: .claude, event: .sessionStart, sessionID: "waiting", paneSessionName: "compacted", attentionReason: nil)
+        #expect(r.livenessBySession["compacted"] == .busy, "Compaction restarts the waiting session while its subagents work")
+        r.recordHook(runtime: .claude, event: .sessionStart, sessionID: "new", paneSessionName: "cleared", attentionReason: nil)
+        #expect(r.livenessBySession["cleared"] == .idle, "/clear replaces the waiting session, whose final Stop cannot arrive")
+        r.recordHook(runtime: .claude, event: .stop, sessionID: "waiting", paneSessionName: "compacted", attentionReason: nil)
+        #expect(r.livenessBySession["compacted"] == .idle)
+    }
+
     @Test("Hook activity survives failed Claude polling and respects separate provider sessions")
     func hookActivitySurvivesPolling() async {
         let r = registry(json: "invalid", ps: "")

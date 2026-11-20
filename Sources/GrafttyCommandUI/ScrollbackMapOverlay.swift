@@ -18,6 +18,13 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
     public let text: String
     public let timestamp: Double?
     public let sender: String?
+    /// Presentation provenance; the stored map classifies local responses as peers too.
+    let isIncomingPeer: Bool
+
+    init(kind: ScrollbackMap.Kind, text: String, timestamp: Double?, sender: String?, isIncomingPeer: Bool = false) {
+        self.kind = kind; self.text = text; self.timestamp = timestamp; self.sender = sender
+        self.isIncomingPeer = isIncomingPeer
+    }
 
     /// The human input and peer messages of a timeline, by event id.
     public static func entries(in timeline: WorktreeTimeline) -> [String: ScrollbackMapEntry] {
@@ -28,7 +35,8 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
                 entries[event.id] = ScrollbackMapEntry(kind: .input, text: event.completed, timestamp: event.timestamp, sender: nil)
             case .agentMessage, .agentResponse:
                 entries[event.id] = ScrollbackMapEntry(kind: .peer, text: event.completed, timestamp: event.timestamp,
-                                                       sender: event.sourceWorktreeName ?? (event.kind == .agentResponse ? event.title : nil))
+                                                       sender: event.sourceWorktreeName ?? (event.kind == .agentResponse ? event.title : nil),
+                                                       isIncomingPeer: event.kind == .agentMessage)
             case .creation, .checkpoint, .system: break
             }
         }
@@ -81,7 +89,7 @@ public struct ScrollbackMapLayout: Equatable {
         public let y: CGFloat
         let height: CGFloat
         var centerY: CGFloat { y + height / 2 }
-        /// Orange wins over blue so a merged human input never disappears.
+        /// Human input wins so a merged input never disappears.
         public var kind: ScrollbackMap.Kind { marks.contains { $0.kind == .input } ? .input : .peer }
     }
 
@@ -237,6 +245,7 @@ struct ScrollbackMapPalette {
     let backing: Color
     let input: Color
     let peer: Color
+    let incomingPeer: Color
     let viewport: Color
 
     init(scheme: ColorScheme) {
@@ -244,11 +253,12 @@ struct ScrollbackMapPalette {
         backing = Color(white: dark ? 0.12 : 0.96)
         input = dark ? Color(red: 1, green: 0.67, blue: 0.31) : Color(red: 0.52, green: 0.25, blue: 0)
         peer = dark ? Color(red: 0.38, green: 0.89, blue: 0.99) : Color(red: 0.02, green: 0.34, blue: 0.42)
+        incomingPeer = PeerMessageStyle.color(in: scheme)
         viewport = dark ? .white : .black
     }
 
-    func mark(_ kind: ScrollbackMap.Kind, muted: Bool = false) -> Color {
-        (kind == .input ? input : peer).opacity(muted ? 0.82 : 1)
+    func mark(_ kind: ScrollbackMap.Kind, incoming: Bool = false, muted: Bool = false) -> Color {
+        (kind == .input ? input : (incoming ? incomingPeer : peer)).opacity(muted ? 0.82 : 1)
     }
 }
 
@@ -412,7 +422,12 @@ public struct ScrollbackMapOverlay: View {
                 .offset(y: box.y)
             ForEach(marks) { mark in
                 let shape = RoundedRectangle(cornerRadius: mark.cornerRadius)
-                shape.fill(palette.mark(mark.kind, muted: muted))
+                let incoming = if mark.isPreviewed, let previewedMark {
+                    entries[previewedMark.eventID]?.isIncomingPeer == true
+                } else {
+                    mark.cluster.marks.contains { entries[$0.eventID]?.isIncomingPeer == true }
+                }
+                shape.fill(palette.mark(mark.kind, incoming: incoming, muted: muted))
                     .overlay {
                         if mark.isPreviewed {
                             shape.strokeBorder(palette.viewport.opacity(0.9), lineWidth: 0.75)
@@ -499,6 +514,7 @@ public struct ScrollbackMapOverlay: View {
 
 /// The scrubber's label: the human input verbatim, or the peer gist with its sparkle.
 struct ScrollbackMapLabel: View {
+    @Environment(\.colorScheme) private var colorScheme
     static let width: CGFloat = 200
     let entry: ScrollbackMapEntry
     /// Nil for human input, which is never summarized.
@@ -509,7 +525,7 @@ struct ScrollbackMapLabel: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(entry.heading)
                 .font(.caption2.weight(.medium))
-                .foregroundStyle(ScrollbackMapPalette(scheme: colorScheme).mark(entry.kind))
+                .foregroundStyle(ScrollbackMapPalette(scheme: colorScheme).mark(entry.kind, incoming: entry.isIncomingPeer))
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if gist?.isGenerated == true {
                     Image(systemName: "sparkles").font(.caption2).foregroundStyle(.secondary)

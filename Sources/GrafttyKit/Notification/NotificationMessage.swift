@@ -173,11 +173,13 @@ public extension NotificationMessage {
     static func teamHook(callerWorktree: String, callerAgentID: String? = nil, runtime: TeamHookRuntime,
                          event: TeamHookEvent, sessionID: String?, paneSessionName: String?,
                          attentionReason: AgentHookAttentionReason? = nil, stopHookActive: Bool = false,
-                         providerSleepActivity: ProviderSleepActivity? = nil, turnID: String? = nil, fallbackReport: AttentionFileRecapEvent? = nil) -> Self {
+                         providerSleepActivity: ProviderSleepActivity? = nil, turnID: String? = nil, fallbackReport: AttentionFileRecapEvent? = nil,
+                         subagentsRunning: Bool = false) -> Self {
         .teamHook(TeamHookRequest(callerWorktree: callerWorktree, callerAgentID: callerAgentID, runtime: runtime,
                                   event: event, sessionID: sessionID, paneSessionName: paneSessionName,
                                   attentionReason: attentionReason, stopHookActive: stopHookActive,
-                                  providerSleepActivity: providerSleepActivity, turnID: turnID, fallbackReport: fallbackReport))
+                                  providerSleepActivity: providerSleepActivity, turnID: turnID, fallbackReport: fallbackReport,
+                                  subagentsRunning: subagentsRunning))
     }
 
     static func addPane(path: String, direction: PaneSplit, command: String?, agentRuntime: TeamHookRuntime? = nil,

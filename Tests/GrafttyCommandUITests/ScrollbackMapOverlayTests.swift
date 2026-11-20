@@ -306,7 +306,7 @@ private struct MapTerminalRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: MapTerminalFixture, context: Context) { }
 }
 
-@Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks and peer messages and agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.")
+@Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks, incoming agent messages with purple square-ended marks, and local agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.")
 struct ScrollbackMapAppearanceTests {
     @Test func distantMarksRetainTheirColorAndThePreviewMatchesTheMessage() throws {
         let layout = ScrollbackMapLayout(height: 150, totalRows: 150)

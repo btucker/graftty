@@ -70,7 +70,7 @@ public enum SidebarRowStatus: Equatable, Sendable {
            let text = notice.occurrence?.text {
             return .notification(text, paneID: notice.paneID)
         }
-        let working = hasUnreadStop ? [] : (worktree.layout?.leaves ?? []).filter(\.isBusy)
+        let working = context.workingPanes
         if working.count == 1 { return .working(working[0].displayTitle) }
         if working.count > 1 { return .working("\(working.count) agents working") }
         return whereWeAre(isUnread: hasUnreadStop)

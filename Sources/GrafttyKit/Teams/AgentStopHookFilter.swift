@@ -14,6 +14,17 @@ public enum AgentStopHookFilter {
     public static func isSubagentStop(stdinJSON: [String: Any]) -> Bool {
         stdinJSON["agent_id"] is String
     }
+
+    /// A top-level Claude Stop can end the main thread's turn while Agent-tool
+    /// subagents keep working in the background. Claude lists in-flight work
+    /// in `background_tasks`; only `subagent` entries count, because shells
+    /// and monitors can outlive the work indefinitely (a dev server).
+    /// https://code.claude.com/docs/en/hooks#stop-input
+    public static func hasRunningSubagent(stdinJSON: [String: Any]) -> Bool {
+        (stdinJSON["background_tasks"] as? [Any] ?? [])
+            .contains { ($0 as? [String: Any])?["type"] as? String == "subagent" }
+    }
+
     /// Codex supplies a turn ID. Claude supplies a transcript path instead;
     /// its file position distinguishes another reply even when no user-prompt
     /// hook ran (for example, a native peer notification).

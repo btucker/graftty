@@ -1,29 +1,44 @@
 import Foundation
+import GrafttyProtocol
 import Testing
 @testable import GrafttyCommandUI
 
 struct PinnedTileTests {
-    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall show an orange dot before its name while it asks a question or carries a notification, a pulsing blue dot while an agent works, fade it while its host sleeps, and draw no mark otherwise, including after a turn stops.")
+    @Test("@spec LAYOUT-2.225: While a pinned agent is shown as a tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works even if a notification is pending, fade it while its host sleeps, and draw no dot otherwise, including after a turn stops.")
     func tileStates() {
-        #expect(PinnedTileState.resolve(status: .question("q", paneID: nil), isCached: false) == .waiting)
-        #expect(PinnedTileState.resolve(status: .notification("n", paneID: nil), isCached: false) == .waiting)
-        let completed = SidebarRowStatus.whereWeAre("done", isUnread: true)
-        let finished = PinnedTileState.resolve(status: completed, isCached: false)
+        let busy: PaneLayoutNode = .leaf(sessionName: "agent", title: "Tests", attentionText: nil, isBusy: true, attentionSource: nil)
+        let question: PaneLayoutNode = .leaf(sessionName: "question", title: "Agent", attentionText: "Retry?", isBusy: false, attentionSource: .agentStop)
+        let idle: PaneLayoutNode = .leaf(sessionName: "idle", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil)
+        #expect(tileState(layout: question) == .waiting)
+        #expect(tileState(layout: .split(direction: .horizontal, ratio: 0.5, left: busy, right: question), notice: "Build done") == .waiting)
+        #expect(tileState(layout: question, isCached: true) == .asleep)
+        #expect(tileState(layout: busy) == .working)
+        #expect(tileState(layout: .split(direction: .horizontal, ratio: 0.5, left: busy, right: idle), notice: "Build done").pip == .pulse)
+        let notification = tileState(notice: "Build done")
+        #expect(notification == .idle)
+        #expect(notification.pip == nil)
+        #expect(PinnedTile.accessibilityLabel(name: "triage", host: nil, state: notification) == "triage")
+        let stop = SidebarAgentStop(agentName: "Agent", stoppedAt: Date(timeIntervalSince1970: 3))
+        let finished = tileState(layout: busy, stop: stop)
         #expect(finished == .finished)
-        #expect(!completed.needsAttention)
-        #expect(!completed.waitsForUser)
+        var notice = AttentionRecap(title: "Build", completed: "Build done", next: "Review")
+        notice.notice = "Build done"
+        #expect(tileState(stop: SidebarAgentStop(agentName: "Agent", stoppedAt: stop.stoppedAt, recap: notice)) == .idle)
         #expect(PinnedTile.accessibilityLabel(name: "appcast", host: nil, state: finished) == "appcast, finished, not yet opened")
-        #expect(PinnedTileState.resolve(status: .working("tests"), isCached: false) == .working)
-        #expect(PinnedTileState.resolve(status: .whereWeAre("done", isUnread: false), isCached: false) == .idle)
-        #expect(PinnedTileState.resolve(status: .none, isCached: false) == .idle)
-        // A sleeping host's report is old news, even if it once asked.
-        #expect(PinnedTileState.resolve(status: .whereWeAre("done", isUnread: true), isCached: true) == .asleep)
-        // One small cue per tile, never a frame.
         #expect(PinnedTileState.waiting.pip == .filled)
         #expect(PinnedTileState.finished.pip == nil, "A stopped turn draws nothing")
         #expect(PinnedTileState.working.pip == .pulse)
         #expect(PinnedTileState.asleep.pip == nil)
         #expect(PinnedTileState.idle.pip == nil)
+    }
+
+    private func tileState(layout: PaneLayoutNode? = nil, notice: String? = nil, stop: SidebarAgentStop? = nil,
+                           isCached: Bool = false) -> PinnedTileState {
+        let row = WorktreePanes(path: "/w", displayName: "w", repoDisplayName: "app", displayBranch: "w",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: notice,
+            attentionSource: notice == nil ? nil : .userNotify, layout: layout,
+            sidebar: .init(id: "s", projectID: "p", unseenAgentStop: stop))
+        return PinnedTileState.resolve(context: SidebarWorktreeContext(worktree: row), isCached: isCached)
     }
 
     @Test("@spec LAYOUT-2.226: While a pinned agent is shown as a tile, the application shall caption it with its whole worktree name, or the branch name for the default checkout, on one line, ending in an ellipsis only when the name is wider than the tile.", arguments: [
