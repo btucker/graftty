@@ -44,6 +44,7 @@ public struct AddWorktreeSheetView: View {
     @State private var branchMirrorsWorktree: Bool = true
     @State private var branchMode: BranchMode = .newBranch
     @State private var isSubmitting: Bool = false
+    @State private var isPreparingImages = false
     @State private var submissionTask: Task<Void, Never>?
     @State private var agent = WorktreeAgentConfiguration()
     @FocusState private var taskDescriptionFocused: Bool
@@ -232,15 +233,17 @@ public struct AddWorktreeSheetView: View {
                 }
             }
             Section {
-                TextEditor(text: $agent.taskDescription)
-                    .focused($taskDescriptionFocused)
-                    .submitLabel(.return)
-                    .frame(minHeight: 100)
-                    .accessibilityLabel("What do you want to do?")
+                WorktreePromptImages(images: $agent.promptImages, isLoading: $isPreparingImages) {
+                    TextEditor(text: $agent.taskDescription)
+                        .focused($taskDescriptionFocused)
+                        .submitLabel(.return)
+                        .frame(minHeight: 100)
+                        .accessibilityLabel("What do you want to do?")
+                }
             } header: {
                 Text("What do you want to do?")
             } footer: {
-                Text("Optional. Sent as the agent's first message.")
+                Text("Optional. Text and images go to the agent's first turn.")
             }
         }
         .submitLabel(.done)
@@ -248,7 +251,7 @@ public struct AddWorktreeSheetView: View {
     }
 
     private var canSubmit: Bool {
-        guard !isSubmitting, selectedRepoPath != nil else { return false }
+        guard !isSubmitting, !isPreparingImages, selectedRepoPath != nil else { return false }
         return WorktreeNameSuggestion.canSubmit(
             worktreeName: worktreeName, branchName: branchName, existing: branchMode == .existing
         )

@@ -7,9 +7,7 @@ import GrafttyProtocol
 import SwiftUI
 
 /// @spec LAYOUT-2.192
-/// The selected worktree's emoji, drawn behind the window header and the top
-/// row of agent tabs: a blurred smear from the left and a tilted watermark on
-/// the right. Worktrees without an emoji keep the plain header.
+/// While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a fully visible tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
 /// @spec LAYOUT-2.194
 /// The main checkout draws its wash from the project icon, or from the
 /// project's initials in its accent color when the project has no icon.
@@ -68,12 +66,14 @@ public struct WorktreeHeaderWashView: View {
     /// IOS-10.12: Low Power Mode throttles the GPU, so the blurred smear is
     /// left out and only the crisp watermark and gradient are drawn.
     let drawsSmear: Bool
+    private let drawsWatermark: Bool
 
     public init(wash: WorktreeHeaderWash, fadesToBackground: Bool = false,
-                isLowPower: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled) {
+                isLowPower: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled, drawsWatermark: Bool = true) {
         self.wash = wash
         self.fadesToBackground = fadesToBackground
         self.drawsSmear = !isLowPower
+        self.drawsWatermark = drawsWatermark
     }
 
     public var body: some View {
@@ -90,11 +90,9 @@ public struct WorktreeHeaderWashView: View {
                         // its color reaches the header's leading edge.
                         .offset(x: wash.glyph.hasSideBearing ? -110 : -40)
                 }
-                Self.watermark(wash)
-                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: .trailing)
-                    .offset(x: -WorktreeHeaderWash.watermarkTrailingInset)
                 LinearGradient(colors: [wash.background.opacity(0.18), wash.background.opacity(fadesToBackground ? 1 : 0.34)],
                                startPoint: .top, endPoint: .bottom)
+                if drawsWatermark { WorktreeHeaderWatermark(wash: wash) }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .clipped()
@@ -102,14 +100,33 @@ public struct WorktreeHeaderWashView: View {
         }
     }
 
-    /// A crisp mark reads as intentional; a light blur reads as a low-resolution
-    /// image. It dissolves leftward into the smear instead.
-    static func watermark(_ wash: WorktreeHeaderWash) -> some View {
-        WorktreeHeaderWashGlyph(glyph: wash.glyph, size: 114)
-            .opacity(wash.isDark ? 0.62 : 0.52)
-            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.65)],
-                                 startPoint: .leading, endPoint: .trailing))
-            .rotationEffect(.degrees(-12))
+}
+
+/// @spec LAYOUT-2.229
+/// While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.
+public struct WorktreeHeaderWatermark: View {
+    private let wash: WorktreeHeaderWash
+    private static let tilt = Angle.degrees(-12)
+
+    public init(wash: WorktreeHeaderWash) { self.wash = wash }
+
+    public var body: some View {
+        GeometryReader { proxy in
+            let inset = min(WorktreeHeaderWash.watermarkTrailingInset, proxy.size.width / 3)
+            let extent = max(0, min(proxy.size.width - inset - 4, proxy.size.height - 8))
+            let rotationScale = abs(cos(Self.tilt.radians)) + abs(sin(Self.tilt.radians))
+            let size = min(114, extent / rotationScale)
+            if size > 0 {
+                WorktreeHeaderWashGlyph(glyph: wash.glyph, size: wash.glyph.hasSideBearing ? size * 0.85 : size)
+                    .frame(width: size, height: size)
+                    .rotationEffect(Self.tilt)
+                    .frame(width: size * rotationScale, height: proxy.size.height)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, inset)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -153,18 +170,12 @@ enum PlatformImage {
 }
 
 extension WorktreeHeaderWash {
-    /// How far the watermark sits in from the band's trailing edge. On Mac it
-    /// clears the header's trailing controls; on mobile it bleeds off the edge.
+    /// How far the watermark sits in from the band's trailing edge.
     #if os(macOS)
     public static let watermarkTrailingInset: CGFloat = 150
     #else
-    public static let watermarkTrailingInset: CGFloat = -34
+    public static let watermarkTrailingInset: CGFloat = 12
     #endif
-
-    /// How strongly the part of the watermark below the band shows over
-    /// terminal content: enough to read as the same mark, faint enough to
-    /// leave the text readable.
-    public static let spillOpacity: Double = 0.14
 
     /// Header surfaces draw slices of one band in this coordinate space, so
     /// the header and every top-row tab header line up seamlessly.
@@ -202,39 +213,6 @@ extension View {
     /// band, such as tab headers of lower split panes, draw nothing.
     public func worktreeHeaderWash() -> some View {
         overlay { WorktreeHeaderWashSlice() }
-    }
-}
-
-/// @spec LAYOUT-2.229
-/// The part of the watermark that reaches below the header band, drawn
-/// faintly over the content beneath it instead of being cut off. It never
-/// takes clicks.
-public struct WorktreeHeaderWashSpill: View {
-    @Environment(\.worktreeHeaderWashBand) private var band
-
-    public init() {}
-
-    public var body: some View {
-        if let band {
-            GeometryReader { proxy in
-                let origin = proxy.frame(in: .named(WorktreeHeaderWash.coordinateSpace)).origin
-                let bandBottom = band.size.height - band.topExtension - origin.y
-                WorktreeHeaderWashView.watermark(band.wash)
-                    .frame(width: band.size.width, height: band.size.height, alignment: .trailing)
-                    .offset(x: -WorktreeHeaderWash.watermarkTrailingInset)
-                    .offset(x: -origin.x, y: -origin.y - band.topExtension)
-                    .opacity(WorktreeHeaderWash.spillOpacity)
-                    // Within the band the wash already draws the mark.
-                    .mask(alignment: .top) {
-                        VStack(spacing: 0) {
-                            Color.clear.frame(height: max(0, bandBottom))
-                            Color.black
-                        }
-                    }
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
     }
 }
 

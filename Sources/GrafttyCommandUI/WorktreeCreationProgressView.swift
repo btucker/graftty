@@ -5,16 +5,16 @@ import GrafttyProtocol
 /// in the terminal content area, so the status needs no separate click target.
 public struct WorktreeCreationProgressView: View {
     public let progress: WorktreeCreationProgress
-    private let hasRunningAgent: Bool
+    private let isRunning: Bool
 
-    public init(progress: WorktreeCreationProgress, hasRunningAgent: Bool = false) {
+    public init(progress: WorktreeCreationProgress, isRunning: Bool) {
         self.progress = progress
-        self.hasRunningAgent = hasRunningAgent
+        self.isRunning = isRunning
     }
 
     public var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            if progress.showsInSidebar(at: context.date, hasRunningAgent: hasRunningAgent) {
+            if progress.showsInSidebar(at: context.date, isRunning: isRunning) {
                 HStack(spacing: 4) {
                     Image(systemName: progress.creationSymbolName).accessibilityHidden(true)
                     Text(progress.label)

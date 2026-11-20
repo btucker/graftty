@@ -99,10 +99,7 @@ struct WorktreeRow: View {
                             }
                         }
                         if let progress = entry.creationProgress {
-                            WorktreeCreationProgressView(progress: progress, hasRunningAgent: entry.state == .running &&
-                                entry.agents.contains { agent in
-                                    (agent.status == .running || agent.status == .waiting) && agent.processObservation != .exited
-                                })
+                            WorktreeCreationProgressView(progress: progress, isRunning: entry.state == .running)
                                 .foregroundStyle(theme.sidebarSecondaryText)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
