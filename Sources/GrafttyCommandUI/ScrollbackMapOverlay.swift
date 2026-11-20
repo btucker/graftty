@@ -319,6 +319,9 @@ public struct ScrollbackMapOverlay: View {
     private let availableHeight: CGFloat
     private let availableWidth: CGFloat
     @State private var hover: CGFloat?
+    #if os(macOS)
+    @State private var previewArea: CGRect?
+    #endif
     @State private var scrub: CGFloat?
     // GestureState clears on cancellation, so an interrupted touch cannot leave the map expanded.
     @GestureState private var touch: CGFloat?
@@ -390,6 +393,9 @@ public struct ScrollbackMapOverlay: View {
                         previews(layout: layout, focused: mark, focusY: interactionY)
                     }
                 }
+                #if os(macOS)
+                .onPreferenceChange(ScrollbackPreviewArea.self) { previewArea = $0 }
+                #endif
                 .task(id: response) {
                     responseGist = nil
                     if let response, let gist = await Self.gist(for: response, from: gists) {
@@ -406,12 +412,16 @@ public struct ScrollbackMapOverlay: View {
         let gap = railCenter + ScrollbackMapLayout.macLensWidth + 5
         let preferredWidth = ScrollbackMapLabel.defaultWidth
         let maximumShift: CGFloat = 24
+        let maximumGap: CGFloat = 28
+        let maximumSpan: CGFloat = 96
         #else
         let frame = ScrollbackMapLayout.mobileCardFrame(expansion: 1, height: layout.cardHeight)
         let railCenter = ScrollbackMapLayout.mobileTouchWidth - frame.midX
         let gap = ScrollbackMapLayout.mobileTouchWidth + 4
         let preferredWidth: CGFloat = 154
         let maximumShift: CGFloat = 16
+        let maximumGap: CGFloat = 36
+        let maximumSpan: CGFloat = 64
         #endif
         let cardWidth = min(preferredWidth, availableWidth - gap)
         if cardWidth > 24 {
@@ -420,7 +430,8 @@ public struct ScrollbackMapOverlay: View {
                     ScrollbackMapPreview(id: mark.eventID, entry: $0, y: y + ScrollbackMapLayout.stripInset.top)
                 }
             }
-            ScrollbackMapPreviews(previews: previews, height: availableHeight, cardWidth: cardWidth,
+            let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: maximumGap, maximumSpan: maximumSpan)
+            ScrollbackMapPreviews(groups: groups, height: availableHeight, cardWidth: cardWidth,
                                   gap: gap, railCenter: railCenter, focusY: focusY, maximumShift: maximumShift,
                                   focusedID: focused?.eventID, responseGist: responseGist)
                 .allowsHitTesting(false)
@@ -434,6 +445,7 @@ public struct ScrollbackMapOverlay: View {
                             muted: !isActive, growsInward: true, previewedMark: previewedMark)
             .frame(width: ScrollbackMapLayout.macGutterWidth)
         return ScrollbackMapPointerInput(content: AnyView(content), terminalOnLeft: layoutDirection == .leftToRight,
+            previewArea: previewArea,
             onHover: { hover = $0 },
             onScrub: { scrub = $0 },
             onDrag: { drag(at: $0, layout: layout) },
@@ -594,12 +606,21 @@ struct ScrollbackMapLabel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .frame(width: width, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+        .modifier(ScrollbackMapPreviewFrame(width: width))
+    }
+}
+
+struct ScrollbackMapPreviewFrame: ViewModifier {
+    let width: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .frame(width: width, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
     }
 }
 

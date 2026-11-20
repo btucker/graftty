@@ -137,7 +137,7 @@ struct ScrollbackMapPresenceTests {
 @MainActor
 @Suite("@spec CONTEXT-35: When the user hovers over, touches, or drags along the scrollback map, the application shall preview the nearest visible mark using a message of the kind shown by that mark, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.")
 struct ScrollbackMapScrubTests {
-    @Test(arguments: [1.0, 7.0, 13.0])
+    @Test("@spec CONTEXT-57.3: While the Mac pointer moves from an active scrollback rail into its visible previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass terminal input through the previews.", arguments: [1.0, 7.0, 13.0])
     func nativeTerminalAndGutterEachReceiveTheirOwnInput(x: Double) async throws {
         _ = NSApplication.shared
         let terminal = MapTerminalFixture()
@@ -196,7 +196,26 @@ struct ScrollbackMapScrubTests {
         #expect(host.hitTest(previewPoint) === terminal, "Visible preview cards must not capture terminal input")
         pointer.onClick?(ScrollbackMapLayout.stripInset.top + layout.y(forRow: 300))
         #expect(scrollback.scrolled.last == 300)
-        pointer.mouseExited(with: moved)
+        await waitUntil { pointer.previewArea != nil }
+        let area = try #require(pointer.previewArea)
+        #expect(area.minX < 0 && area.maxX == railFrame.width)
+        #expect(host.trackingAreas.contains { $0.owner === pointer }, "Tracking extends over the terminal without intercepting input")
+        func moveEvent(x: CGFloat) throws -> NSEvent {
+            let location = pointer.convert(NSPoint(x: x, y: area.midY), to: nil)
+            return try #require(NSEvent.mouseEvent(with: .mouseMoved, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        }
+        let overCard = try moveEvent(x: area.minX + 1)
+        pointer.mouseExited(with: overCard)
+        pointer.mouseMoved(with: overCard)
+        await Task.yield()
+        host.layoutSubtreeIfNeeded()
+        #expect(pointer.previewArea == area, "Moving off the rail toward the cards keeps the layout fixed")
+        pointer.mouseExited(with: try moveEvent(x: area.minX - 1))
+        await waitUntil { pointer.previewArea == nil }
+        #expect(pointer.previewArea == nil)
+        #expect(!host.trackingAreas.contains { $0.owner === pointer })
         #expect(pointer.convert(pointer.bounds, to: host) == railFrame)
 
         let dragY: CGFloat = 217
@@ -320,7 +339,7 @@ private struct MapTerminalRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: MapTerminalFixture, context: Context) { }
 }
 
-@Suite("@spec CONTEXT-57.1: While the user hovers over, holds, or scrubs the scrollback map, the application shall show separate previews beside the marks for located user messages. When preview cards would overlap, the application shall move them apart with connectors to their marks and prioritize cards near the focus when keeping all of them visible would require long connectors or exceed the pane height.")
+@Suite("@spec CONTEXT-57.1: While the user hovers over, holds, or scrubs the scrollback map, the application shall group close user messages in shared cards beside their marks and connect each group to its span with a gradient. If all cards cannot fit, then the application shall prioritize the focused message and nearby cards.")
 struct ScrollbackMapPreviewTests {
     @Test func previewsAllLocatedInputsAndOnlyTheFocusedAgentMessage() {
         let layout = ScrollbackMapLayout(height: 150, totalRows: 150)
@@ -333,6 +352,53 @@ struct ScrollbackMapPreviewTests {
         let previews = layout.previewAnchors(in: map, focused: focused)
         #expect(previews.map(\.mark) == [first, merged, focused, last])
         #expect(zip(previews.map(\.y), [21, 21, 55, 110]).allSatisfy { abs($0 - $1) < 0.01 })
+    }
+
+    @Test func groupsNearbyInputsWithoutMergingTheFocusedAgentCard() {
+        let previews = [30.0, 36, 52, 76, 100, 192].enumerated().map { index, y in
+            ScrollbackMapPreview(id: String(index),
+                entry: ScrollbackMapEntry(kind: index == 1 ? .peer : .input, text: "Message",
+                                          timestamp: nil, sender: nil),
+                y: y)
+        }
+        let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: 28, maximumSpan: 64)
+        #expect(groups.map { $0.messages.map(\.id) } == [["1"], ["0", "2", "3"], ["4"], ["5"]])
+        #expect(groups[1].startY == 30 && groups[1].endY == 76 && groups[1].y == 53)
+    }
+
+    @Test func capsExcerptsAndKeepsTheFocusedMessageInTheGroup() throws {
+        let messages = (0..<7).map { index in
+            ScrollbackMapPreview(id: String(index),
+                entry: ScrollbackMapEntry(kind: .input, text: "Message", timestamp: nil, sender: nil),
+                y: Double(index) * 4)
+        }
+        let group = try #require(ScrollbackMapPreviewGroup.group(messages, maximumGap: 28, maximumSpan: 96).first)
+        #expect(group.excerpts(focusedID: "1").map(\.id) == ["0", "1", "2"])
+        #expect(group.excerpts(focusedID: nil).map(\.id) == ["4", "5", "6"])
+        #expect(group.messages.count == 7)
+    }
+
+    @MainActor
+    @Test func rendersTheSharedFramesAndTheirRailSpans() throws {
+        let items: [(row: Int, text: String, age: Double)] = [
+            (28, "Check the migration logs", 87300),
+            (43, "Look for the first failed statement", 18200),
+            (62, "Run it against the copy first", 3620),
+            (155, "Can we try the new layout?", 2800),
+            (171, "Keep the current colors", 360),
+            (241, "Did the simulator test pass?", 90),
+        ]
+        let viewport = ScrollbackViewport(offset: 220, length: 50, total: 300)
+        let marks = items.map { ScrollbackMap.Mark(row: $0.row, kind: .input, eventID: String($0.row)) }
+        let entries = Dictionary(uniqueKeysWithValues: items.map {
+            (String($0.row), ScrollbackMapEntry(kind: .input, text: $0.text,
+                timestamp: Date.now.timeIntervalSinceReferenceDate - $0.age, sender: nil))
+        })
+        try render(ScrollbackMapOverlay(map: ScrollbackMap(totalRows: 300, marks: marks), viewport: viewport,
+                                        entries: entries, gists: .shared, availableHeight: 312, availableWidth: 360,
+                                        focusY: 43, scroll: { _ in })
+            .padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing),
+            size: CGSize(width: 380, height: 332), named: "scrollback-map-grouped")
     }
 
     @Test func nudgesOnlyTheOverlappingPair() {
