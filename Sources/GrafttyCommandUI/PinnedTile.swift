@@ -1,7 +1,7 @@
 import Foundation
 
 /// @spec LAYOUT-2.225
-/// What a pinned agent's tile shows. A tile never moves: it lights up in place.
+/// While a pinned agent is shown as a tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works even if a notification is pending, fade it while its host sleeps, and draw no dot otherwise, including after a turn stops.
 public enum PinnedTileState: Sendable, Equatable {
     /// A request for user input: an orange dot.
     case waiting
@@ -12,11 +12,11 @@ public enum PinnedTileState: Sendable, Equatable {
     case asleep
     case idle
 
-    public static func resolve(status: SidebarRowStatus, isCached: Bool) -> PinnedTileState {
+    public static func resolve(context: SidebarWorktreeContext, isCached: Bool) -> PinnedTileState {
         if isCached { return .asleep }
-        if case .question = status { return .waiting }
-        if case .whereWeAre(_, isUnread: true) = status { return .finished }
-        if case .working = status { return .working }
+        if context.question != nil { return .waiting }
+        if !context.workingPanes.isEmpty { return .working }
+        if context.hasUnseenStop, context.worktree.sidebar?.unseenAgentStop?.notice == nil { return .finished }
         return .idle
     }
 
