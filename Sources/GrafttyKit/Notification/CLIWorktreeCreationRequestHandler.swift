@@ -271,13 +271,17 @@ public enum CLIWorktreeCreationRequestHandler {
             // and diagnostics in the caller's retained worktree instead of
             // losing the child's only durable record with that placeholder.
             if let failure, var agent = request.managedAgent,
-               platform.state.worktree(forPath: worktreePath) == nil,
-               let index = platform.state.indices(forWorktreePath: callerPath) {
-                agent.paneSlotID = nil
-                agent.launchFailed(reason: "\(worktreePath): \(failure)")
-                platform.state.repos[index.repo].worktrees[index.worktree].agents.append(agent)
-                do { try platform.saveStateNow() }
-                catch { return "\(failure); could not persist failed agent: \(error.localizedDescription)" }
+               platform.state.worktree(forPath: worktreePath) == nil {
+                agent.promptImageSet?.discard(in: promptDirectory)
+                if let index = platform.state.indices(forWorktreePath: callerPath) {
+                    agent.promptImageSet = nil
+                    agent.launchTargetWorktree = worktreePath
+                    agent.paneSlotID = nil
+                    agent.launchFailed(reason: "\(worktreePath): \(failure)")
+                    platform.state.repos[index.repo].worktrees[index.worktree].agents.append(agent)
+                    do { try platform.saveStateNow() }
+                    catch { return "\(failure); could not persist failed agent: \(error.localizedDescription)" }
+                }
             }
             if let agent = request.managedAgent,
                let index = platform.state.indices(forWorktreePath: worktreePath),

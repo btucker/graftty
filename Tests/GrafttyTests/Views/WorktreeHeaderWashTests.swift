@@ -13,14 +13,18 @@ struct WorktreeHeaderWashTests {
     /// top row starts with a tab header and continues with terminal content.
     private struct Fixture: View {
         let wash: WorktreeHeaderWash?
+        let showsTabs: Bool
         var body: some View {
             MainWindowDetailLayout(headerWash: wash) {
                 Color.clear.frame(height: 40)
                     .background { WorktreeHeaderWashTests.background.worktreeHeaderWash() }
             } content: {
                 VStack(spacing: 0) {
-                    Color.clear.frame(height: 36)
-                        .background { WorktreeHeaderWashTests.background.worktreeHeaderWash() }
+                    if showsTabs {
+                        Color.clear.frame(height: WorktreeHeaderWash.tabRowHeight)
+                            .background { WorktreeHeaderWashTests.background.worktreeHeaderWash() }
+                            .preference(key: WorkspaceTabRowHeightKey.self, value: WorktreeHeaderWash.tabRowHeight)
+                    }
                     WorktreeHeaderWashTests.background
                 }
             }
@@ -30,8 +34,8 @@ struct WorktreeHeaderWashTests {
 
     private struct Pixel { let r, g, b: Double }
 
-    private func render(_ wash: WorktreeHeaderWash?) throws -> (CGImage, (Int, Int) -> Pixel) {
-        let renderer = ImageRenderer(content: Fixture(wash: wash))
+    private func render(_ wash: WorktreeHeaderWash?, showsTabs: Bool = true) throws -> (CGImage, (Int, Int) -> Pixel) {
+        let renderer = ImageRenderer(content: Fixture(wash: wash, showsTabs: showsTabs))
         renderer.scale = 1
         let image = try #require(renderer.cgImage)
         let rep = NSBitmapImageRep(cgImage: image)
@@ -121,5 +125,9 @@ struct WorktreeHeaderWashTests {
         }
         #expect(pixel(718, 80).r < 0.15)
         #expect(pixel(718, 4).r < 0.9)
+
+        let (_, withoutTabs) = try render(wash, showsTabs: false)
+        #expect(withoutTabs(735, 20).r > 0.95)
+        #expect(withoutTabs(720, 38).r < 0.9)
     }
 }

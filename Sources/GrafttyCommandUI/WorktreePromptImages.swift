@@ -113,12 +113,8 @@ public struct WorktreePromptImages<Editor: View>: View {
     }
 
     nonisolated private static func normalizedPNG(_ data: Data) -> Data? {
-        guard let image = thumbnail(from: data, maximumPixelSize: 3072),
-              let output = CFDataCreateMutable(nil, 0),
-              let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil)
-        else { return nil }
-        CGImageDestinationAddImage(destination, image, nil)
-        return CGImageDestinationFinalize(destination) ? output as Data : nil
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return PNGThumbnail.encode(source: source, maxPixelSize: 3072)
     }
 
     nonisolated private static func thumbnail(from data: Data, maximumPixelSize: Int) -> CGImage? {

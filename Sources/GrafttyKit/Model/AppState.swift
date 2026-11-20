@@ -382,18 +382,22 @@ public struct AppState: Codable, Sendable, Equatable {
     /// saves with that error. Reload successfully before resuming persistence.
     public static func loadOrFreshBackingUpCorruption(
         from directory: URL,
+        didLoad: ((AppState) -> Void)? = nil,
         now: () -> Date = { Date() }
     ) -> AppState {
-        loadOrFreshBackingUpCorruption(from: directory, now: now, readData: { try Data(contentsOf: $0) })
+        loadOrFreshBackingUpCorruption(from: directory, didLoad: didLoad, now: now, readData: { try Data(contentsOf: $0) })
     }
 
     static func loadOrFreshBackingUpCorruption(
         from directory: URL,
+        didLoad: ((AppState) -> Void)? = nil,
         now: () -> Date = { Date() },
         readData: (URL) throws -> Data
     ) -> AppState {
         do {
-            return try file(in: directory).decode(readData(directory.appendingPathComponent(fileName)))
+            let state = try file(in: directory).decode(readData(directory.appendingPathComponent(fileName)))
+            didLoad?(state)
+            return state
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return AppState()
         } catch is DecodingError {

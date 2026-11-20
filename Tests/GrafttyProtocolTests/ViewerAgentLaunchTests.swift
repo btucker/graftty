@@ -32,6 +32,17 @@ struct ViewerAgentLaunchTests {
         #expect(WorktreeAgentConfiguration(promptImages: agent.promptImages).initialPrompt != nil)
     }
 
+    @Test func maximumPromptImagesFitTheRelayQueue() throws {
+        let bytes = WorktreeAgentConfiguration.maximumPromptImageBytes
+        let image = Data(repeating: 0xff, count: bytes)
+        #expect(WorktreeAgentConfiguration.promptImageSizeError([image]) == nil)
+        #expect(WorktreeAgentConfiguration.promptImageSizeError([image, Data([1])]) != nil)
+        let request = WorktreeManagementRequest.create(repositoryID: "repo", worktreeName: "images",
+            branchName: "images", existingSource: nil, agent: .init(promptImages: [image]))
+        // Leave space in the 8 MiB relay queue for SSH framing and other writes.
+        #expect(try JSONEncoder().encode(request).count < 7 * 1024 * 1024)
+    }
+
     @Test("@spec GIT-5.35: When a client creates a worktree with an agent choice and optional task description, the application shall preserve the provider and exact multiline description across transport and use the destination's default agent when the provider is omitted.")
     func creationPreservesAgentAndTask() throws {
         let prompt = "Fix the tests.\nKeep $(literal syntax).\n"

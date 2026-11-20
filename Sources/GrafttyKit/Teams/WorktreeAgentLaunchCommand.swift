@@ -48,6 +48,10 @@ public enum WorktreeAgentLaunchCommand {
     }
 
     public static func pruneUnreferencedImages(state: AppState, stateDirectory: URL = AppState.defaultDirectory) {
+        // The user may still recover agent records from a corrupt state backup.
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: stateDirectory.path),
+              files.contains("state.json"),
+              !files.contains(where: { $0.hasPrefix("state.json.corrupt.") }) else { return }
         WorktreePromptImageSet.pruneUnreferenced(
             in: stateDirectory.appendingPathComponent("agent-launch-prompts", isDirectory: true), state: state
         )
@@ -162,7 +166,9 @@ public enum WorktreeAgentLaunchCommand {
             })) else {
                 throw WorktreePromptImageSet.StagingError.invalid("The initial prompt images are no longer available.")
             }
-            let imageReferences = agent == .claude && !imageFiles.isEmpty
+            // Codex splits --image values on commas even if the shell quotes them.
+            let usesImageArguments = agent == .codex && !imageFiles.contains { $0.path.contains(",") }
+            let imageReferences = !usesImageArguments && !imageFiles.isEmpty
                 ? "\n\nRead the following attached images before working on this task:\n"
                     + imageFiles.map { "- " + $0.path }.joined(separator: "\n")
                 : ""
@@ -184,7 +190,7 @@ public enum WorktreeAgentLaunchCommand {
                 throw error
             }
             promptFile = file
-            let imageArguments = agent == .codex
+            let imageArguments = usesImageArguments
                 ? imageFiles.map { " --image " + shellLiteral($0.path) }.joined()
                 : ""
             let invocation = (managedAgent?.paneSessionID == nil ? "exec " : "")

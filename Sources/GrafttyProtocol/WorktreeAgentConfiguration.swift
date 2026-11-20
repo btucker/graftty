@@ -4,7 +4,9 @@ import Foundation
 /// When a client creates a worktree with an agent choice and optional task description, the application shall preserve the provider and exact multiline description across transport and use the destination's default agent when the provider is omitted.
 public struct WorktreeAgentConfiguration: Codable, Equatable, Sendable {
     public static let maximumPromptImageCount = 8
-    public static let maximumPromptImageBytes = ImagePasteMessage.maxImageBytes
+    // Paired hosts send one JSON frame. Base64 and slash escaping must fit
+    // the 8 MiB WebRTC send queue with room for the prompt and SSH framing.
+    public static let maximumPromptImageBytes = 5 * 1024 * 1024 / 2
 
     /// nil selects the owning host's configured default.
     public var provider: String?
@@ -28,7 +30,7 @@ public struct WorktreeAgentConfiguration: Codable, Equatable, Sendable {
         }
         var remaining = maximumPromptImageBytes
         for image in images {
-            guard image.count <= remaining else { return "Prompt images must total 10 MB or less." }
+            guard image.count <= remaining else { return "Prompt images must total 2.5 MB or less." }
             remaining -= image.count
         }
         return nil

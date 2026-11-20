@@ -101,7 +101,10 @@ struct MobileTerminalHeaderWash: View {
                                      .init(color: .black, location: 0.35),
                                      .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
         .overlay {
-            if let wash { WorktreeHeaderWatermark(wash: wash) }
+            if let wash {
+                // The terminal draws text under the header in this presentation.
+                WorktreeHeaderWatermark(wash: wash).opacity(0.28)
+            }
         }
     }
 }
