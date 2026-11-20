@@ -5630,7 +5630,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57** While the user hovers over, touches, or scrubs the scrollback map, the application shall magnify nearby marks inward and along the strip without overlapping other marks or changing their vertical centers, the map height, or the navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
 
-**CONTEXT-57.1** While the user hovers over or touches the scrollback map, the application shall display a scrollable list of their messages from the worktree timeline, and shall jump to a message when its row is known and the user selects it.
+**CONTEXT-57.1** While the user hovers over, holds, or scrubs the scrollback map, the application shall show separate previews beside the marks for located user messages. When preview cards would overlap, the application shall move them apart with connectors to their marks and prioritize cards near the focus when keeping all of them visible would require long connectors or exceed the pane height.
+
+**CONTEXT-57.2** While a scrollback map preview has a message timestamp, the application shall show its elapsed age in whole minutes, hours from one hour, or days from twenty-four hours, and show now for messages less than a minute old.
 
 ### CONTEXT-58.x
 

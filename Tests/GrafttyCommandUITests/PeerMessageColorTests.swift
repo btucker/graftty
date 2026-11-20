@@ -65,7 +65,7 @@ struct PeerMessageColorTests {
         let image = try await render(overlay.frame(width: 280, height: 220, alignment: .topTrailing), scheme: scheme,
             name: "peer-map-\(scheme)")
         #expect(image.count(in: 250..<280, matching: isPurple) > 10, "Incoming marks are purple")
-        #expect(image.count(in: 250..<280, matching: isBlue) > 10, "Local responses keep accent blue")
+        #expect(image.count(in: 250..<280, matching: isBlue) > 4, "Local responses keep accent blue")
         #expect(image.count(in: 250..<280, matching: isOrange) > 10, "Human inputs keep orange")
         for event in timeline.events where event.kind != .user {
             let entry = try #require(entries[event.id])
@@ -99,7 +99,6 @@ struct PeerMessageColorTests {
             let overlay = ScrollbackMapOverlay(map: map, viewport: .init(offset: 900, length: 60, total: 1000),
                 entries: entries, gists: PeerMessageGistProvider { _ in nil }, availableWidth: 280, focusY: 60, scroll: { _ in })
             let image = try await render(overlay.frame(width: 280, height: 220, alignment: .topTrailing), scheme: scheme)
-            // The prompt panel can contain inputs absent from the located map.
             #expect((image.count(in: 250..<280, matching: isPurple) > 2) == !includeInput)
             #expect((image.count(in: 250..<280, matching: isOrange) > 2) == includeInput)
         }

@@ -43,29 +43,22 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
         return entries
     }
 
-    /// You for human input, else the sending worktree, then the time.
-    var heading: String {
-        let who = kind == .input ? "You" : (sender ?? "Peer agent")
-        guard let timestamp else { return who }
-        let date = Date(timeIntervalSinceReferenceDate: timestamp)
-        return "\(who) · \(date.formatted(date: .abbreviated, time: .shortened))"
-    }
-}
+    var speaker: String { kind == .input ? "You" : (sender ?? "Peer agent") }
 
-struct ScrollbackMapPrompt: Identifiable {
-    let id: String
-    let entry: ScrollbackMapEntry
-    let row: Int?
-
-    static func history(entries: [String: ScrollbackMapEntry], map: ScrollbackMap) -> [Self] {
-        let rows = Dictionary(map.marks.map { ($0.eventID, $0.row) }, uniquingKeysWith: min)
-        return entries.compactMap { id, entry in
-            entry.kind == .input ? Self(id: id, entry: entry, row: rows[id]) : nil
-        }.sorted {
-            let lhs = $0.entry.timestamp ?? -.infinity
-            let rhs = $1.entry.timestamp ?? -.infinity
-            return lhs == rhs ? $0.id < $1.id : lhs < rhs
+    func relativeAge(at now: Date) -> String? {
+        guard let timestamp else { return nil }
+        let elapsed = now.timeIntervalSinceReferenceDate - timestamp
+        guard elapsed.isFinite, elapsed < Double(Int.max) else { return nil }
+        switch elapsed {
+        case ..<60: return "now"
+        case ..<3600: return "\(Int(elapsed / 60))m"
+        case ..<86400: return "\(Int(elapsed / 3600))h"
+        default: return "\(Int(elapsed / 86400))d"
         }
+    }
+
+    func heading(relativeTo now: Date = .now) -> String {
+        relativeAge(at: now).map { "\(speaker) · \($0)" } ?? speaker
     }
 }
 
@@ -248,9 +241,14 @@ public struct ScrollbackMapLayout: Equatable {
         max(0, row(forY: y) - max(0, viewportLength) / 2)
     }
 
-    /// The label's top, beside the mark it describes and inside the card's height.
-    public func labelTop(forMarkAt row: Int, labelHeight: CGFloat) -> CGFloat {
-        min(max(0, y(forRow: row) - labelHeight / 2), max(0, height - labelHeight))
+    /// Several inputs can share the orange bar of a merged cluster.
+    func previewAnchors(in map: ScrollbackMap, focused: ScrollbackMap.Mark?) -> [(mark: ScrollbackMap.Mark, y: CGFloat)] {
+        clusters(map.marks).flatMap { cluster in
+            cluster.marks.compactMap { mark in
+                guard mark.kind == .input || mark == focused else { return nil }
+                return (mark, cluster.centerY)
+            }
+        }
     }
 
     /// The next newer (`forward`) or older mark from `current`; the newest when nothing is current.
@@ -325,12 +323,7 @@ public struct ScrollbackMapOverlay: View {
     // GestureState clears on cancellation, so an interrupted touch cannot leave the map expanded.
     @GestureState private var touch: CGFloat?
     @State private var accessibilityMark: String?
-    @State private var gist: PeerMessageGist?
-    @State private var labelHeight: CGFloat = 0
-    @State private var promptAnchor: CGFloat?
-    @State private var promptPanelHovered = false
-    @State private var promptPanelPinned = false
-    @State private var lastPreviewedMark: ScrollbackMap.Mark?
+    @State private var responseGist: (entry: ScrollbackMapEntry, gist: PeerMessageGist)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.layoutDirection) private var layoutDirection
@@ -355,10 +348,6 @@ public struct ScrollbackMapOverlay: View {
 
     private var interactionY: CGFloat? { touch ?? scrub ?? hover }
     private var isActive: Bool { interactionY != nil }
-    private var keepPromptPanel: Bool { isActive || promptPanelHovered || promptPanelPinned }
-    private var showPromptPanel: Bool {
-        (keepPromptPanel || promptAnchor != nil) && entries.values.contains { $0.kind == .input }
-    }
 
     private func focusedMark(in layout: ScrollbackMapLayout) -> ScrollbackMap.Mark? {
         guard let interactionY else { return nil }
@@ -383,8 +372,8 @@ public struct ScrollbackMapOverlay: View {
         #endif
         if !map.marks.isEmpty, layout.height >= ScrollbackMapLayout.markHeight {
             let mark = focusedMark(in: layout)
-            ZStack(alignment: .topTrailing) {
-                inputCard(layout: layout, previewedMark: mark)
+            let response = mark.flatMap { entries[$0.eventID] }.flatMap { $0.kind == .peer ? $0 : nil }
+            inputCard(layout: layout, previewedMark: mark)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Scrollback map")
                 .accessibilityValue(accessibilityValue)
@@ -396,25 +385,46 @@ public struct ScrollbackMapOverlay: View {
                     scroll(mark.row)
                 }
                 .accessibilityIdentifier("terminal.scrollbackMap")
-                if showPromptPanel {
-                    promptPanel(mark: mark ?? lastPreviewedMark)
+                .overlay(alignment: .topTrailing) {
+                    if let interactionY {
+                        previews(layout: layout, focused: mark, focusY: interactionY)
+                    }
+                }
+                .task(id: response) {
+                    responseGist = nil
+                    if let response, let gist = await Self.gist(for: response, from: gists) {
+                        responseGist = (response, gist)
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func previews(layout: ScrollbackMapLayout, focused: ScrollbackMap.Mark?, focusY: CGFloat) -> some View {
+        #if os(macOS)
+        let railCenter = ScrollbackMapLayout.macGutterWidth / 2
+        let gap = railCenter + ScrollbackMapLayout.macLensWidth + 5
+        let preferredWidth = ScrollbackMapLabel.defaultWidth
+        let maximumShift: CGFloat = 24
+        #else
+        let frame = ScrollbackMapLayout.mobileCardFrame(expansion: 1, height: layout.cardHeight)
+        let railCenter = ScrollbackMapLayout.mobileTouchWidth - frame.midX
+        let gap = ScrollbackMapLayout.mobileTouchWidth + 4
+        let preferredWidth: CGFloat = 154
+        let maximumShift: CGFloat = 16
+        #endif
+        let cardWidth = min(preferredWidth, availableWidth - gap)
+        if cardWidth > 24 {
+            let previews = layout.previewAnchors(in: map, focused: focused).compactMap { mark, y in
+                entries[mark.eventID].map {
+                    ScrollbackMapPreview(id: mark.eventID, entry: $0, y: y + ScrollbackMapLayout.stripInset.top)
                 }
             }
-            .onChange(of: mark, initial: true) { _, mark in
-                if let mark { lastPreviewedMark = mark }
-            }
-            .task(id: (mark ?? (showPromptPanel ? lastPreviewedMark : nil))?.eventID) {
-                await loadGist(for: mark ?? (showPromptPanel ? lastPreviewedMark : nil))
-            }
-            .task(id: keepPromptPanel) {
-                if keepPromptPanel {
-                    if promptAnchor == nil && showPromptPanel { promptAnchor = interactionY }
-                } else if promptAnchor != nil {
-                    // Let the pointer cross the gap between the rail and the list.
-                    try? await Task.sleep(for: .milliseconds(300))
-                    if !Task.isCancelled { promptAnchor = nil }
-                }
-            }
+            ScrollbackMapPreviews(previews: previews, height: availableHeight, cardWidth: cardWidth,
+                                  gap: gap, railCenter: railCenter, focusY: focusY, maximumShift: maximumShift,
+                                  focusedID: focused?.eventID, responseGist: responseGist)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
     }
 
@@ -430,9 +440,6 @@ public struct ScrollbackMapOverlay: View {
             onClick: { click(at: $0, layout: layout) }
         )
         .frame(width: ScrollbackMapLayout.macGutterWidth, height: layout.cardHeight)
-        .overlay(alignment: .topLeading) {
-            if !showPromptPanel { label(layout: layout, mark: previewedMark).offset(x: -12) }
-        }
         #else
         return mobileInputCard(layout: layout, previewedMark: previewedMark)
         #endif
@@ -454,18 +461,12 @@ public struct ScrollbackMapOverlay: View {
                          muted: false, previewedMark: previewedMark)
                 .frame(width: frame.width, height: frame.height)
                 .background(ScrollbackMapPalette(scheme: colorScheme).backing, in: shape)
-                .overlay(alignment: .topLeading) {
-                    if !showPromptPanel { label(layout: layout, mark: previewedMark, fixedVertically: true) }
-                }
                 .offset(x: frame.minX)
                 .frame(width: ScrollbackMapLayout.mobileTouchWidth, height: frame.height, alignment: .topLeading)
         }
         .animation(ScrollbackMapLayout.interactionAnimation(reduceMotion: reduceMotion), value: isActive)
         .contentShape(Rectangle())
         .gesture(scrubGesture(layout: layout))
-        .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
-            if showPromptPanel { promptPanelPinned = true }
-        })
         .onContinuousHover { phase in
             switch phase {
             case .active(let point): hover = point.y
@@ -544,43 +545,6 @@ public struct ScrollbackMapOverlay: View {
         scroll(target?.row ?? layout.scrubTopRow(atY: y, viewportLength: viewport.length))
     }
 
-    private func promptPanel(mark: ScrollbackMap.Mark?) -> some View {
-        let prompts = ScrollbackMapPrompt.history(entries: entries, map: map)
-        #if os(macOS)
-        let gap: CGFloat = 34
-        #else
-        let gap: CGFloat = 48
-        #endif
-        let height = min(availableHeight, 320, 108 + CGFloat(prompts.count) * 64)
-        let anchor = ScrollbackMapLayout.stripY(forCardY: promptAnchor ?? interactionY ?? 0, height: availableHeight)
-        return ScrollbackMapPromptPanel(
-            prompts: prompts,
-            selectedID: mark?.kind == .input ? mark?.eventID : nil,
-            response: mark?.kind == .peer ? mark.flatMap { entries[$0.eventID] } : nil,
-            gist: gist,
-            pinned: promptPanelPinned,
-            dismiss: { promptPanelPinned = false; promptAnchor = nil },
-            scroll: scroll
-        )
-        .frame(width: max(1, min(320, availableWidth - gap)), height: height)
-        .onHover { promptPanelHovered = $0 }
-        .padding(.trailing, gap)
-        .padding(.top, min(max(0, anchor - height / 2), availableHeight - height))
-    }
-
-    @ViewBuilder
-    private func label(layout: ScrollbackMapLayout, mark: ScrollbackMap.Mark?, fixedVertically: Bool = false) -> some View {
-        if let mark, let entry = entries[mark.eventID] {
-            ScrollbackMapLabel(entry: entry, gist: entry.kind == .peer ? (gist ?? .immediate(entry.text)) : nil)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { labelHeight = $0 }
-                .offset(x: -(ScrollbackMapLabel.width + 6),
-                        y: ScrollbackMapLayout.stripInset.top + (fixedVertically ? 0 :
-                            layout.labelTop(forMarkAt: mark.row, labelHeight: labelHeight)))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-    }
-
     private var accessibilityValue: String {
         let mark = accessibilityMark.flatMap { id in map.marks.first { $0.eventID == id } }
             ?? map.nearestMark(toRow: viewport.offset)
@@ -588,12 +552,7 @@ public struct ScrollbackMapOverlay: View {
             return "\(map.marks.count) messages"
         }
         let text = entry.kind == .peer ? PeerMessageGist.immediate(entry.text).text : entry.text
-        return "\(index + 1) of \(map.marks.count), \(entry.heading): \(text)"
-    }
-
-    private func loadGist(for mark: ScrollbackMap.Mark?) async {
-        gist = nil
-        if let loaded = await Self.gist(for: mark.flatMap { entries[$0.eventID] }, from: gists) { gist = loaded }
+        return "\(index + 1) of \(map.marks.count), \(entry.heading()): \(text)"
     }
 
     /// A peer entry's gist; nil for human input, or once the label's task was
@@ -605,94 +564,26 @@ public struct ScrollbackMapOverlay: View {
     }
 }
 
-private struct ScrollbackMapPromptPanel: View {
-    let prompts: [ScrollbackMapPrompt]
-    let selectedID: String?
-    let response: ScrollbackMapEntry?
-    let gist: PeerMessageGist?
-    let pinned: Bool
-    let dismiss: () -> Void
-    let scroll: (Int) -> Void
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let palette = ScrollbackMapPalette(scheme: colorScheme)
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Your messages").font(.headline)
-                Text(prompts.count.formatted()).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if pinned {
-                    Button(action: dismiss) { Image(systemName: "xmark") }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Close messages")
-                }
-            }
-            .padding(10)
-            Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(prompts) { prompt in
-                            let row = VStack(alignment: .leading, spacing: 3) {
-                                Text(prompt.entry.heading).font(.caption2.weight(.medium)).foregroundStyle(palette.input)
-                                Text(prompt.entry.text).font(.callout)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(6)
-                            .background(palette.input.opacity(selectedID == prompt.id ? 0.16 : 0),
-                                        in: RoundedRectangle(cornerRadius: 5))
-                            .contentShape(Rectangle())
-                            if let target = prompt.row {
-                                Button { scroll(target) } label: { row }
-                                    .buttonStyle(.plain)
-                                    .accessibilityIdentifier("terminal.scrollbackMap.prompt.row.\(target)")
-                                    .id(prompt.id)
-                            } else {
-                                row.id(prompt.id)
-                            }
-                        }
-                    }
-                    .padding(5)
-                }
-                .onChange(of: selectedID, initial: true) { _, id in
-                    if let id { proxy.scrollTo(id) }
-                }
-            }
-            if let response {
-                Divider()
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(response.heading).font(.caption2.weight(.medium))
-                        .foregroundStyle(palette.mark(.peer, incoming: response.isIncomingPeer))
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        if gist?.isGenerated == true { Image(systemName: "sparkles").foregroundStyle(.secondary) }
-                        Text(gist?.text ?? PeerMessageGist.immediate(response.text).text).lineLimit(3)
-                    }
-                    .font(.caption)
-                }
-                .padding(10)
-            }
-        }
-        .background(palette.backing, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.18)).allowsHitTesting(false))
-        .accessibilityIdentifier("terminal.scrollbackMap.prompts")
-    }
-}
-
 /// The scrubber's label: the human input verbatim, or the peer gist with its sparkle.
 struct ScrollbackMapLabel: View {
-    static let width: CGFloat = 200
+    static let defaultWidth: CGFloat = 200
     let entry: ScrollbackMapEntry
     /// Nil for human input, which is never summarized.
     let gist: PeerMessageGist?
+    var width = ScrollbackMapLabel.defaultWidth
+    var now = Date.now
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(entry.heading)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(ScrollbackMapPalette(scheme: colorScheme).mark(entry.kind, incoming: entry.isIncomingPeer))
+            HStack(spacing: 4) {
+                Text(entry.speaker).lineLimit(1)
+                if let age = entry.relativeAge(at: now) {
+                    Text("· \(age)").monospacedDigit().fixedSize().foregroundStyle(Color.secondary)
+                }
+            }
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(ScrollbackMapPalette(scheme: colorScheme).mark(entry.kind, incoming: entry.isIncomingPeer))
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if gist?.isGenerated == true {
                     Image(systemName: "sparkles").font(.caption2).foregroundStyle(.secondary)
@@ -705,7 +596,7 @@ struct ScrollbackMapLabel: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .frame(width: Self.width, alignment: .leading)
+        .frame(width: width, alignment: .leading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.2), radius: 6, y: 2)

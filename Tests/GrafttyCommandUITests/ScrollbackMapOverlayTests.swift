@@ -192,6 +192,8 @@ struct ScrollbackMapScrubTests {
         host.layoutSubtreeIfNeeded()
         #expect(pointer.convert(pointer.bounds, to: host) == railFrame)
         #expect(terminal.convert(terminal.bounds, to: host) == terminalFrame)
+        let previewPoint = terminal.convert(NSPoint(x: 220, y: 36), to: host.superview)
+        #expect(host.hitTest(previewPoint) === terminal, "Visible preview cards must not capture terminal input")
         pointer.onClick?(ScrollbackMapLayout.stripInset.top + layout.y(forRow: 300))
         #expect(scrollback.scrolled.last == 300)
         pointer.mouseExited(with: moved)
@@ -246,21 +248,14 @@ struct ScrollbackMapScrubTests {
         #expect(layout.previewTarget(in: map, atY: 41, isIncoming: { $0 == incoming.eventID }) == incoming)
     }
 
-    @Test func labelSitsBesideItsMarkInsideTheCard() {
-        let layout = ScrollbackMapLayout(height: 100, totalRows: 1000)
-        #expect(layout.labelTop(forMarkAt: 500, labelHeight: 40) == 30)
-        #expect(layout.labelTop(forMarkAt: 0, labelHeight: 40) == 0)
-        #expect(layout.labelTop(forMarkAt: 1000, labelHeight: 40) == 60)
-    }
-
     @Test func labelNamesTheSpeakerAndKeepsHumanInputVerbatim() throws {
         let timeline = sampleTimeline()
         let entries = ScrollbackMapEntry.entries(in: timeline)
         let input = try #require(entries[timeline.events[0].id])
         let peer = try #require(entries[timeline.events[1].id])
         #expect(input.kind == .input && input.text == "open a pr for the sidebar fix")
-        #expect(input.heading.hasPrefix("You · "))
-        #expect(peer.kind == .peer && peer.heading.hasPrefix("layout · "))
+        #expect(input.heading().hasPrefix("You · "))
+        #expect(peer.kind == .peer && peer.heading().hasPrefix("layout · "))
     }
 
     @Test func aGistThatFinishesAfterFocusMovesIsDropped() async {
@@ -289,11 +284,13 @@ struct ScrollbackMapScrubTests {
         let map = ScrollbackMap.locate(ScrollbackMap.messages(in: timeline), rows: sampleRows())
         let entries = ScrollbackMapEntry.entries(in: timeline)
         let viewport = ScrollbackViewport(offset: 270, length: 60, total: 600)
-        let layout = ScrollbackMapLayout(map: map, viewport: viewport)
+        let cardHeight: CGFloat = 210
+        let layout = ScrollbackMapLayout(height: cardHeight - 12, map: map, viewport: viewport)
         let gists = PeerMessageGistProvider { _ in "Layout agent found no sidebar regressions" }
         for (name, row) in [("scrollback-map-scrub-input", 40), ("scrollback-map-scrub-peer", 300)] {
             try render(ScrollbackMapOverlay(map: map, viewport: viewport, entries: entries, gists: gists,
-                                            availableWidth: 300, focusY: layout.y(forRow: row), scroll: { _ in })
+                                            availableHeight: cardHeight, availableWidth: 300,
+                                            focusY: layout.y(forRow: row), scroll: { _ in })
                 .padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing),
                 size: CGSize(width: 320, height: 240), named: name)
         }
@@ -323,17 +320,58 @@ private struct MapTerminalRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: MapTerminalFixture, context: Context) { }
 }
 
-@Test("@spec CONTEXT-57.1: While the user hovers over or touches the scrollback map, the application shall display a scrollable list of their messages from the worktree timeline, and shall jump to a message when its row is known and the user selects it.")
-func promptHistoryIncludesUnlocatedInputsAndOmitsAgentMessages() {
-    let entries = [
-        "old": ScrollbackMapEntry(kind: .input, text: "Earlier prompt", timestamp: 1, sender: nil),
-        "reply": ScrollbackMapEntry(kind: .peer, text: "Agent reply", timestamp: 2, sender: "Agent"),
-        "new": ScrollbackMapEntry(kind: .input, text: "Later prompt", timestamp: 3, sender: nil),
-    ]
-    let map = ScrollbackMap(totalRows: 100, marks: [.init(row: 60, kind: .input, eventID: "new")])
-    let prompts = ScrollbackMapPrompt.history(entries: entries, map: map)
-    #expect(prompts.map(\.id) == ["old", "new"])
-    #expect(prompts.map(\.row) == [nil, 60])
+@Suite("@spec CONTEXT-57.1: While the user hovers over, holds, or scrubs the scrollback map, the application shall show separate previews beside the marks for located user messages. When preview cards would overlap, the application shall move them apart with connectors to their marks and prioritize cards near the focus when keeping all of them visible would require long connectors or exceed the pane height.")
+struct ScrollbackMapPreviewTests {
+    @Test func previewsAllLocatedInputsAndOnlyTheFocusedAgentMessage() {
+        let layout = ScrollbackMapLayout(height: 150, totalRows: 150)
+        let first = ScrollbackMap.Mark(row: 20, kind: .input, eventID: "first")
+        let merged = ScrollbackMap.Mark(row: 21, kind: .input, eventID: "merged")
+        let peer = ScrollbackMap.Mark(row: 22, kind: .peer, eventID: "peer")
+        let focused = ScrollbackMap.Mark(row: 55, kind: .peer, eventID: "focused")
+        let last = ScrollbackMap.Mark(row: 110, kind: .input, eventID: "last")
+        let map = ScrollbackMap(totalRows: 150, marks: [first, merged, peer, focused, last])
+        let previews = layout.previewAnchors(in: map, focused: focused)
+        #expect(previews.map(\.mark) == [first, merged, focused, last])
+        #expect(zip(previews.map(\.y), [21, 21, 55, 110]).allSatisfy { abs($0 - $1) < 0.01 })
+    }
+
+    @Test func nudgesOnlyTheOverlappingPair() {
+        let tops = ScrollbackPreviewStack.tops(anchors: [45, 136, 152, 260], heights: [30, 40, 32, 32],
+                                               height: 310, focusY: 77, maximumShift: 24)
+        #expect(tops == [30, 103, 149, 244])
+    }
+
+    @Test func fitsThePaneAndPrioritizesTheAreaBeingExplored() {
+        let tops = ScrollbackPreviewStack.tops(anchors: [5, 75, 140, 148], heights: [35, 35, 50, 30],
+                                               height: 138, focusY: 140, maximumShift: .infinity)
+        #expect(tops == [nil, 11, 52, 108])
+        #expect(ScrollbackPreviewStack.tops(anchors: [10], heights: [40], height: 20, focusY: 10, maximumShift: 16) == [nil])
+    }
+
+    @Test func omitsCardsThatWouldNeedLongConnectors() {
+        let tops = ScrollbackPreviewStack.tops(anchors: [55, 67, 79, 130], heights: [36, 36, 36, 36],
+                                               height: 190, focusY: 67, maximumShift: 16)
+        #expect(tops == [22, 64, nil, 112])
+    }
+
+    @Test func theFocusedMessageWinsWhenSeveralInputsShareAMark() {
+        let tops = ScrollbackPreviewStack.tops(anchors: [70, 70, 70, 70], heights: [36, 36, 36, 36],
+                                               height: 150, focusY: 70, maximumShift: 16, focusedIndex: 2)
+        #expect(tops == [nil, nil, 52, nil])
+    }
+
+    @Test("@spec CONTEXT-57.2: While a scrollback map preview has a message timestamp, the application shall show its elapsed age in whole minutes, hours from one hour, or days from twenty-four hours, and show now for messages less than a minute old.",
+          arguments: [(-60.0, "now"), (59, "now"), (60, "1m"), (3599, "59m"), (3600, "1h"),
+                      (86399, "23h"), (86400, "1d"), (259200, "3d")])
+    func showsCompactRelativeAge(seconds: Double, age: String) {
+        for kind in [ScrollbackMap.Kind.input, .peer] {
+            let entry = ScrollbackMapEntry(kind: kind, text: "Message", timestamp: 0, sender: "Layout agent")
+            let name = kind == .input ? "You" : "Layout agent"
+            #expect(entry.heading(relativeTo: Date(timeIntervalSinceReferenceDate: seconds)) == "\(name) · \(age)")
+        }
+        let undated = ScrollbackMapEntry(kind: .input, text: "Message", timestamp: nil, sender: nil)
+        #expect(undated.heading(relativeTo: Date(timeIntervalSinceReferenceDate: 60)) == "You")
+    }
 }
 
 @Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks, incoming agent messages with purple square-ended marks, and local agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.")
