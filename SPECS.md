@@ -5624,7 +5624,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-57.x
 
-**CONTEXT-57** While the user interacts with the scrollback map on Mac or mobile, the application shall keep its height and the vertical positions of the marks fixed, and use those positions for navigation. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
+**CONTEXT-57** While the user hovers over or touches the scrollback map, the application shall enlarge nearby marks around their fixed centers without overlapping other marks or changing the map height or navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
 
 ### CONTEXT-58.x
 

@@ -324,7 +324,7 @@ struct ScrollbackMapAppearanceTests {
     }
 }
 
-@Suite("@spec CONTEXT-57: While the user interacts with the scrollback map on Mac or mobile, the application shall keep its height and the vertical positions of the marks fixed, and use those positions for navigation. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.")
+@Suite("@spec CONTEXT-57: While the user hovers over or touches the scrollback map, the application shall enlarge nearby marks around their fixed centers without overlapping other marks or changing the map height or navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.")
 struct ScrollbackMapFixedPositionTests {
     @Test(arguments: [63.0, 138.0, 380.0])
     func drawingAndNavigationUseTheSameLinearScale(height: CGFloat) {
@@ -334,6 +334,37 @@ struct ScrollbackMapFixedPositionTests {
         #expect(layout.tapTarget(in: ScrollbackMap(totalRows: 1000, marks: [target]), atY: y) == target)
         #expect(layout.scrubTopRow(atY: y + 0.0001, viewportLength: 40) == 680)
         #expect(layout.row(forY: height) == 999)
+    }
+
+    @Test func magnificationFollowsThePointerWithoutMovingTargets() throws {
+        let layout = ScrollbackMapLayout(height: 150, totalRows: 150)
+        let marks = [20, 26, 43, 120].map { ScrollbackMap.Mark(row: $0, kind: .input, eventID: "\($0)") }
+        func bars(near focus: CGFloat?) -> [CGRect] {
+            layout.presentedMarks(marks, width: 9, maximumWidth: 12, focusY: focus).map(\.frame)
+        }
+        let idle = bars(near: nil)
+        let early = bars(near: 20)
+        let later = bars(near: 43)
+        try #require(idle.count == 4 && early.count == 4 && later.count == 4)
+        #expect(early.map(\.midY) == idle.map(\.midY))
+        #expect(later.map(\.midY) == idle.map(\.midY))
+        #expect(early[0].width > idle[0].width && early[0].height > idle[0].height)
+        #expect(early[0].height > early[1].height)
+        #expect(later[2].height > early[2].height)
+        #expect(early[3] == idle[3] && later[3] == idle[3])
+        #expect(layout.scrubTopRow(atY: early[0].midY, viewportLength: 10) == 15)
+    }
+
+    @Test func magnifiedMarksStayInsideTheStripAndApartInDenseRegions() {
+        let layout = ScrollbackMapLayout(height: 42, totalRows: 42)
+        let marks = stride(from: 0, through: 42, by: 3).map {
+            ScrollbackMap.Mark(row: $0, kind: .peer, eventID: "\($0)")
+        }
+        for focus in [CGFloat(0), 21, 42] {
+            let bars = layout.presentedMarks(marks, width: 8, maximumWidth: 8, focusY: focus).map(\.frame)
+            #expect(bars.allSatisfy { $0.minY >= 0 && $0.maxY <= 42 && $0.width <= 8 })
+            #expect(zip(bars, bars.dropFirst()).allSatisfy { $0.maxY <= $1.minY })
+        }
     }
 
     @Test func reduceMotionDropsTheMobileExpansionAnimation() {

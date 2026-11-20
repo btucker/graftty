@@ -51,6 +51,7 @@ public struct ScrollbackMapLayout: Equatable {
     static let mobileTouchWidth: CGFloat = 44
     static let mobileCollapsedWidth: CGFloat = 8
     static let macGutterWidth: CGFloat = 14
+    private static let focusRadius: CGFloat = 32
     public static let stripInset = EdgeInsets(top: 6, leading: 7, bottom: 6, trailing: 7)
     public static let mergeDistance: CGFloat = 3
     public static let markHeight: CGFloat = 3
@@ -78,8 +79,15 @@ public struct ScrollbackMapLayout: Equatable {
         /// The top of the drawn mark, kept inside the strip.
         public let y: CGFloat
         let height: CGFloat
+        var centerY: CGFloat { y + height / 2 }
         /// Orange wins over blue so a merged human input never disappears.
         public var kind: ScrollbackMap.Kind { marks.contains { $0.kind == .input } ? .input : .peer }
+    }
+
+    struct PresentedMark: Identifiable {
+        let cluster: Cluster
+        let frame: CGRect
+        var id: String { cluster.id }
     }
 
     public let height: CGFloat
@@ -143,6 +151,27 @@ public struct ScrollbackMapLayout: Equatable {
     private func cluster(_ marks: [ScrollbackMap.Mark], centeredAt center: CGFloat) -> Cluster {
         let size = min(height, Self.markHeight)
         return Cluster(marks: marks, y: min(max(0, center - size / 2), height - size), height: size)
+    }
+
+    /// Grow bars around their existing centers, stopping at the midpoint to either neighbor.
+    /// The clusters and row mapping stay independent of pointer position.
+    func presentedMarks(_ marks: [ScrollbackMap.Mark], width: CGFloat, maximumWidth: CGFloat,
+                        focusY: CGFloat?, muted: Bool = false) -> [PresentedMark] {
+        let clusters = clusters(marks)
+        return clusters.indices.map { index in
+            let cluster = clusters[index]
+            let center = cluster.centerY
+            let influence = focusY.map { max(0, 1 - abs($0 - center) / Self.focusRadius) } ?? 0
+            let strength = influence * influence
+            let top = index > 0 ? (clusters[index - 1].centerY + center) / 2 : 0
+            let bottom = index + 1 < clusters.count ? (center + clusters[index + 1].centerY) / 2 : height
+            let baseHeight = muted ? min(2, cluster.height) : cluster.height
+            let halfHeight = min(baseHeight * (1 + 0.8 * strength) / 2, center - top, bottom - center)
+            let baseWidth = width * (cluster.kind == .input ? 0.85 : 0.55)
+            let barWidth = min(maximumWidth, baseWidth * (1 + 0.65 * strength))
+            return PresentedMark(cluster: cluster, frame: CGRect(x: -barWidth / 2, y: center - halfHeight,
+                                                                 width: barWidth, height: halfHeight * 2))
+        }
     }
 
     /// The viewport box's top and height, at least `minimumViewportHeight` and inside the strip.
@@ -305,7 +334,7 @@ public struct ScrollbackMapOverlay: View {
 
     private func inputCard(layout: ScrollbackMapLayout) -> some View {
         #if os(macOS)
-        let content = strip(layout: layout, width: 9, muted: !isActive)
+        let content = strip(layout: layout, width: 9, maximumMarkWidth: 12, muted: !isActive)
             .frame(width: ScrollbackMapLayout.macGutterWidth)
         return ScrollbackMapPointerInput(content: AnyView(content), terminalOnLeft: layoutDirection == .leftToRight,
             onHover: { hover = $0 },
@@ -346,19 +375,23 @@ public struct ScrollbackMapOverlay: View {
         }
     }
 
-    private func strip(layout: ScrollbackMapLayout, width: CGFloat, muted: Bool) -> some View {
+    private func strip(layout: ScrollbackMapLayout, width: CGFloat, maximumMarkWidth: CGFloat? = nil,
+                       muted: Bool) -> some View {
         let palette = ScrollbackMapPalette(scheme: colorScheme)
         let box = layout.viewportBox(viewport)
+        let focusY = interactionY.map { ScrollbackMapLayout.stripY(forCardY: $0, height: layout.height) }
+        let marks = layout.presentedMarks(map.marks, width: width, maximumWidth: maximumMarkWidth ?? width,
+                                         focusY: focusY, muted: muted)
         return ZStack(alignment: .top) {
             if !muted {
                 Rectangle().fill(palette.viewport.opacity(0.18)).frame(width: 1)
             }
-            ForEach(layout.clusters(map.marks)) { cluster in
-                let height = muted ? min(2, cluster.height) : cluster.height
+            ForEach(marks) { mark in
+                let kind = mark.cluster.kind
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(muted ? Color.primary.opacity(cluster.kind == .input ? 0.46 : 0.34) : palette.mark(cluster.kind))
-                    .frame(width: width * (cluster.kind == .input ? 0.85 : 0.55), height: height)
-                    .offset(y: cluster.y + (cluster.height - height) / 2)
+                    .fill(muted ? Color.primary.opacity(kind == .input ? 0.46 : 0.34) : palette.mark(kind))
+                    .frame(width: mark.frame.width, height: mark.frame.height)
+                    .offset(y: mark.frame.minY)
             }
             RoundedRectangle(cornerRadius: 3)
                 .strokeBorder(palette.viewport.opacity(muted ? 0.65 : 0.9), lineWidth: 1)
