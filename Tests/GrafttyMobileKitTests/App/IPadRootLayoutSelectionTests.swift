@@ -243,6 +243,62 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.focusedPaneId == "session-b")
     }
 
+    @Test("A same-path worktree on another host restores that host's last selected tab")
+    func sameWorktreePathOnAnotherHostRestoresItsLastSelectedTab() {
+        let appState = freshAppState()
+        let firstHost = sampleHost(label: "first").id
+        let secondHost = sampleHost(label: "second").id
+        func leaf(_ name: String) -> PaneLayoutNode {
+            .leaf(sessionName: name, title: name, attentionText: nil, isBusy: false, attentionSource: nil)
+        }
+        func worktree(_ layout: PaneLayoutNode) -> WorktreePanes {
+            WorktreePanes(path: "/repo/feat", displayName: "feat", repoDisplayName: "repo", displayBranch: "feat",
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout)
+        }
+        let mine = worktree(leaf("first-a"))
+        let theirs = worktree(.split(direction: .horizontal, ratio: 0.5, left: leaf("second-a"), right: leaf("second-b")))
+        appState.workspaceStore.update(hostID: secondHost, worktree: theirs) { $0.select("second-b") }
+        appState.selectedHostId = firstHost
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: mine)
+        #expect(appState.focusedPaneId == "first-a")
+
+        // The sidebar adopts the row's host before selecting the worktree.
+        appState.selectedHostId = secondHost
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: theirs)
+
+        #expect(appState.focusedPaneId == "second-b")
+    }
+
+    @Test("@spec IPAD-1.36: When the user returns to a worktree, the application shall focus the tab last selected in that worktree's workspace rather than the worktree's first pane.")
+    func returningToWorktreeRestoresLastSelectedTab() {
+        let appState = freshAppState()
+        let hostID = sampleHost().id
+        appState.selectedHostId = hostID
+        func leaf(_ name: String) -> PaneLayoutNode {
+            .leaf(sessionName: name, title: name, attentionText: nil, isBusy: false, attentionSource: nil)
+        }
+        func worktree(_ path: String, _ layout: PaneLayoutNode) -> WorktreePanes {
+            WorktreePanes(path: path, displayName: path, repoDisplayName: "repo", displayBranch: path,
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout)
+        }
+        let agents = ["session-a", "session-b"].map {
+            AgentSessionInfo(id: $0, name: $0, provider: "claude", status: "running", sessionName: $0)
+        }
+        let feature = worktree("/repo/feat", .split(direction: .horizontal, ratio: 0.5,
+            left: leaf("session-a"), right: leaf("session-b"))).with(agents: agents)
+        let other = worktree("/repo/other", leaf("session-other"))
+        appState.latestWorktrees = [feature, other]
+
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: feature)
+        appState.workspaceStore.update(hostID: hostID, worktree: feature) { $0.select("session-b") }
+        appState.focusedPaneId = "session-b"
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: other)
+        #expect(appState.focusedPaneId == "session-other")
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: feature)
+
+        #expect(appState.focusedPaneId == "session-b")
+    }
+
     @Test("""
 @spec IPAD-1.5: While `IPadRootLayout` is presented, the sidebar's row text (worktree name, secondary branch label, type icon for closed/creating/deleting states, pane `↳` arrow and pane title, section titles, and the Section repository header) shall be colored from `appState.theme` rather than system label colors, sharing the same opacity ladder the Mac sidebar applies via `GhosttyThemeColors.sidebarPrimaryText`/`sidebarSecondaryText`/`sidebarDimIcon`/`sidebarStaleText`/`paneArrow`/`paneTitle`.
 """)
