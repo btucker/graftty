@@ -1106,6 +1106,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.45** When a retried agent launch starts in a worktree whose creation failed, the application shall mark that creation complete so the failure no longer replaces the worktree's content.
 
+**GIT-5.46** While an agent is running in a worktree, the application shall hide a previous creation failure from its sidebar row and retain the recorded diagnostics.
+
 ### GIT-6.x — Auto-tracking Pinned Agents
 
 **GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.

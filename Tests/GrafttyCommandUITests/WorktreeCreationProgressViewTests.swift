@@ -31,5 +31,18 @@ struct WorktreeCreationProgressViewTests {
             #expect(height(progress) > 0)
         }
     }
+
+    @Test("@spec GIT-5.46: While an agent is running in a worktree, the application shall hide a previous creation failure from its sidebar row and retain the recorded diagnostics.")
+    func runningAgentHidesAFailedCreationBadge() {
+        var progress = WorktreeCreationProgress()
+        progress.transition(to: .failed, error: "Pane startup failed")
+        func height(hasRunningAgent: Bool) -> CGFloat {
+            NSHostingView(rootView: WorktreeCreationProgressView(progress: progress, hasRunningAgent: hasRunningAgent)
+                .frame(width: 240).fixedSize(horizontal: false, vertical: true)).fittingSize.height
+        }
+        #expect(height(hasRunningAgent: false) > 0)
+        #expect(height(hasRunningAgent: true) == 0)
+        #expect(progress.error == "Pane startup failed")
+    }
 }
 #endif

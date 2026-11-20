@@ -234,7 +234,10 @@ struct WorktreeRowContent: View {
                     }
                 }
                 if let progress = worktree.creationProgress {
-                    WorktreeCreationProgressView(progress: progress)
+                    WorktreeCreationProgressView(progress: progress, hasRunningAgent: worktree.state == .running &&
+                        worktree.agents?.contains { agent in
+                            (agent.status == "running" || agent.status == "waiting") && agent.processObservation != .exited
+                        } == true)
                         .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
                 }
             }

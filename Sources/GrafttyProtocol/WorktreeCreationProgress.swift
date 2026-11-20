@@ -23,8 +23,9 @@ public struct WorktreeCreationProgress: Codable, Sendable, Hashable {
 
     public var isPending: Bool { phase == .preparing || phase == .git || phase == .startingPane }
 
-    public func showsInSidebar(at now: Date) -> Bool {
-        phase != .ready || now.timeIntervalSince(finishedAt ?? startedAt) < 60
+    public func showsInSidebar(at now: Date, hasRunningAgent: Bool = false) -> Bool {
+        if phase == .failed && hasRunningAgent { return false }
+        return phase != .ready || now.timeIntervalSince(finishedAt ?? startedAt) < 60
     }
 
     /// Pending creation occupies the terminal area. A terminal explicitly
