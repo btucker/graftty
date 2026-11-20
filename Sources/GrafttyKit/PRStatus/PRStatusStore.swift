@@ -168,7 +168,19 @@ public final class PRStatusStore {
     public func refresh(worktreePath: String, repoPath: String, branch: String) {
         guard Self.isFetchableBranch(branch) else { return }
         guard hasRemoteBranch(repoPath: repoPath, branch: branch) else {
-            markLocallyUnpushed(worktreePath)
+            // A branch without a remote has nothing to poll unless its tip
+            // matched a PR/MR in the last snapshot (PR-1.3); keep that
+            // badge and refetch it (PR-1.4).
+            let lastSnapshot = RepoPRSnapshot(prsByBranch: prsByRepoBranch[repoPath] ?? [:])
+            let matched = tipCommitFallback(repoPath: repoPath)
+                .headRef(for: branch, in: lastSnapshot)
+                .flatMap { lastSnapshot.prsByBranch[$0] }
+            if matched == nil || infos[worktreePath]?.headSHA != matched?.headSHA {
+                markLocallyUnpushed(worktreePath)
+            }
+            if matched != nil {
+                dispatchRepoFetch(repoPath: repoPath, force: true)
+            }
             return
         }
         dispatchRepoFetch(repoPath: repoPath, force: true)
@@ -264,6 +276,53 @@ public final class PRStatusStore {
         let prLookupBranch: String
     }
 
+    /// `PR-1.3` tip-commit fallback inputs for one repo, read from its
+    /// latest local-ref scan.
+    private struct TipCommitFallback {
+        let localTips: [String: String]
+        let defaultBranch: String?
+        /// Head refs that belong to a local branch, by name or by tracked
+        /// upstream, so another branch sharing their tip doesn't inherit
+        /// their PR/MR.
+        let ownedHeadRefs: Set<String>
+
+        init(refs: RemoteBranchSnapshot?) {
+            localTips = refs?.localTips ?? [:]
+            defaultBranch = refs?.defaultBranch
+            var owned = Set(refs?.localBranches.map(\.name) ?? [])
+            if let refs { owned.formUnion(refs.upstreams.values) }
+            ownedHeadRefs = owned
+        }
+
+        /// Head ref of the PR/MR in `snapshot` whose head commit is
+        /// `branch`'s tip. A PR/MR whose head ref is `branch` itself wins.
+        /// Nil for the default branch and for any branch still at the
+        /// default branch's tip.
+        func headRef(for branch: String, in snapshot: RepoPRSnapshot) -> String? {
+            guard let tip = localTips[branch], branch != defaultBranch,
+                  tip != defaultBranch.flatMap({ localTips[$0] }) else { return nil }
+            if snapshot.prsByBranch[branch]?.headSHA == tip { return branch }
+            return snapshot.headRef(forHeadCommit: tip, excludingHeadRefs: ownedHeadRefs)
+        }
+    }
+
+    private func tipCommitFallback(repoPath: String) -> TipCommitFallback {
+        TipCommitFallback(refs: remoteBranchStore?.branchesByRepo[repoPath])
+    }
+
+    /// Snapshot key for `wt`'s PR/MR: its push target by name
+    /// (`PR-8.23`), else its tip commit (`PR-1.3`).
+    private func matchedHeadRef(
+        for wt: WorktreeView,
+        in snapshot: RepoPRSnapshot,
+        fallback: TipCommitFallback
+    ) -> String? {
+        if wt.hasRemote, snapshot.prsByBranch[wt.prLookupBranch] != nil {
+            return wt.prLookupBranch
+        }
+        return fallback.headRef(for: wt.branch, in: snapshot)
+    }
+
     /// Worktrees for `repoPath` from the current model. Re-read at
     /// apply time (not snapshotted at dispatch) so a
     /// `branchDidChange` between dispatch and result lands on the
@@ -315,11 +374,14 @@ public final class PRStatusStore {
             return
         }
 
-        let branchesOfInterest = Set(
-            currentWorktreeViews(repoPath: repoPath)
-                .filter { Self.isFetchableBranch($0.branch) && $0.hasRemote }
-                .map(\.prLookupBranch)
-        )
+        let views = currentWorktreeViews(repoPath: repoPath)
+            .filter { Self.isFetchableBranch($0.branch) }
+        // PR-1.3: head refs matched by tip commit last time join the hint
+        // so GitLab's per-MR detail fan-out covers them too.
+        let lastSnapshot = RepoPRSnapshot(prsByBranch: prsByRepoBranch[repoPath] ?? [:])
+        let fallback = tipCommitFallback(repoPath: repoPath)
+        let branchesOfInterest = Set(views.filter(\.hasRemote).map(\.prLookupBranch))
+            .union(views.compactMap { matchedHeadRef(for: $0, in: lastSnapshot, fallback: fallback) })
 
         let snapshot: RepoPRSnapshot
         do {
@@ -348,16 +410,18 @@ public final class PRStatusStore {
         repoPath: String,
         origin: HostingOrigin?
     ) {
+        let fallback = tipCommitFallback(repoPath: repoPath)
         for wt in currentWorktreeViews(repoPath: repoPath) {
             if !Self.isFetchableBranch(wt.branch) {
                 clear(worktreePath: wt.path)
                 continue
             }
-            if !wt.hasRemote {
-                markLocallyUnpushed(wt.path)
-                continue
-            }
-            guard let pr = snapshot.prsByBranch[wt.prLookupBranch] else {
+            guard let pr = matchedHeadRef(for: wt, in: snapshot, fallback: fallback)
+                .flatMap({ snapshot.prsByBranch[$0] }) else {
+                if !wt.hasRemote {
+                    markLocallyUnpushed(wt.path)
+                    continue
+                }
                 if infos[wt.path] != nil {
                     infos.removeValue(forKey: wt.path)
                 }

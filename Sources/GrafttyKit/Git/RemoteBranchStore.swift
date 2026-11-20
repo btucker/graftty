@@ -28,17 +28,22 @@ public struct RemoteBranchSnapshot: Sendable, Equatable {
     /// the combined local-ref scan, with a main/master/develop ref fallback.
     /// `nil` when no default branch can be identified.
     public let defaultBranch: String?
+    /// Tip commit SHA of each local branch, keyed by local branch name.
+    /// @spec PR-1.3
+    public let localTips: [String: String]
 
     public init(
         remoteBranches: [BranchRef] = [],
         localBranches: [BranchRef] = [],
         upstreams: [String: String] = [:],
-        defaultBranch: String? = nil
+        defaultBranch: String? = nil,
+        localTips: [String: String] = [:]
     ) {
         self.remoteBranches = remoteBranches
         self.localBranches = localBranches
         self.upstreams = upstreams
         self.defaultBranch = defaultBranch
+        self.localTips = localTips
     }
 
     /// Back-compat: callers that previously read `branches: Set<String>`
@@ -272,6 +277,7 @@ public final class RemoteBranchStore {
         var remoteBranches: [BranchRef] = []
         var localBranches: [BranchRef] = []
         var upstreams: [String: String] = [:]
+        var localTips: [String: String] = [:]
         var defaultBranch: String?
 
         for raw in output.split(whereSeparator: \.isNewline) {
@@ -287,6 +293,9 @@ public final class RemoteBranchStore {
                     name: localName,
                     lastCommitDate: parseCommitDate(dateString, refName: localName)
                 ))
+                if parts.count >= 5, !parts[4].isEmpty {
+                    localTips[localName] = String(parts[4])
+                }
 
                 let upstreamRef = String(parts[2])
                 if upstreamRef.hasPrefix(remotePrefix) {
@@ -328,7 +337,8 @@ public final class RemoteBranchStore {
             remoteBranches: remoteBranches,
             localBranches: localBranches,
             upstreams: upstreams,
-            defaultBranch: defaultBranch
+            defaultBranch: defaultBranch,
+            localTips: localTips
         )
     }
 
@@ -360,7 +370,7 @@ public final class RemoteBranchStore {
             let output = try await GitRunner.run(
                 args: [
                     "for-each-ref",
-                    "--format=%(refname)\t%(committerdate:unix)\t%(upstream)\t%(symref)",
+                    "--format=%(refname)\t%(committerdate:unix)\t%(upstream)\t%(symref)\t%(objectname)",
                     "refs/heads/",
                     "refs/remotes/origin",
                 ],
