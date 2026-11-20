@@ -6,6 +6,7 @@ set -euo pipefail
 : "${TEST_ARGUMENTS:?TEST_ARGUMENTS is required}"
 
 SIMULATOR_DEVICE_TYPE="${SIMULATOR_DEVICE_TYPE:-iPhone 17}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 XCTESTRUN_PATHS=(.derivedData/Build/Products/*.xctestrun)
 if [[ ! -e "${XCTESTRUN_PATHS[0]}" ]]; then
@@ -62,7 +63,7 @@ create_and_boot_simulator() {
 }
 
 run_test_shard() {
-  xcodebuild \
+  python3 -B "$SCRIPT_DIR/ci/run-ios-xcodebuild.py" xcodebuild \
     -xctestrun "${XCTESTRUN_PATHS[0]}" \
     -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
     -destination-timeout 60 \
@@ -74,8 +75,8 @@ run_test_shard() {
 run_with_recovery() {
   # xcodebuild occasionally loses a freshly booted simulator when CoreSimulator
   # restarts after first-boot data migration. Preserve every ordinary build/test
-  # failure, but recover once when exit 70 coincides with either the selected UDID
-  # disappearing from the available device set or Xcode rejecting its destination.
+  # failure, but recover once when exit 70 coincides with a missing or rejected
+  # destination, or the launcher detects that xcodebuild never emitted output.
   run_test_shard 1 2>&1 | tee "$FIRST_ATTEMPT_LOG"
   PIPELINE_STATUSES=("${PIPESTATUS[@]}")
   TEST_STATUS="${PIPELINE_STATUSES[0]}"
@@ -86,14 +87,14 @@ run_with_recovery() {
   if [[ "$TEST_STATUS" -eq 0 ]]; then
     return 0
   fi
-  if [[ "$TEST_STATUS" -ne 70 ]]; then
-    return "$TEST_STATUS"
-  fi
-  if simulator_is_available && ! destination_resolution_failed; then
+  if [[ "$TEST_STATUS" -eq 124 ]] && grep -Fq '::warning::xcodebuild produced no startup output' "$FIRST_ATTEMPT_LOG"; then
+    echo "::warning::Recreating simulator $SIMULATOR_UDID after silent xcodebuild startup; retrying shard once"
+  elif [[ "$TEST_STATUS" -eq 70 ]] && { ! simulator_is_available || destination_resolution_failed; }; then
+    echo "::warning::iOS simulator $SIMULATOR_UDID became unavailable to xcodebuild; recreating it and retrying shard once"
+  else
     return "$TEST_STATUS"
   fi
 
-  echo "::warning::iOS simulator $SIMULATOR_UDID became unavailable to xcodebuild; recreating it and retrying shard once"
   delete_simulator "$SIMULATOR_UDID"
   create_and_boot_simulator || return $?
   run_test_shard 2

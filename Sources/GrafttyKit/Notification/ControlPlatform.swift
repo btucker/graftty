@@ -22,7 +22,8 @@ public protocol ControlPlatform: ControlTeamPlatform {
                           activity: ProviderSleepActivity, runtime: TeamHookRuntime)
     /// Provider hook busy/idle state for a pane tracked in the caller's worktree.
     func recordHookLiveness(runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?,
-                            paneSessionName: String, attentionReason: AgentHookAttentionReason?)
+                            paneSessionName: String, attentionReason: AgentHookAttentionReason?,
+                            subagentsRunning: Bool)
     func instructionsDefaultBranch(repoPath: String, hint: String?) -> String?
     func paneTitle(for slot: PaneSlotID, in worktree: WorktreeEntry) -> String?
     func postAgentNotification(_ content: AgentStopNotificationContent, worktreePath: String)

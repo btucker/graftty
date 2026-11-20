@@ -21,6 +21,8 @@ struct MobileBrowserProjectTests {
         let ordinary = try target("GrafttyMobileKitTests", in: objects)
         #expect(try sourceNames(hosted, in: objects).filter { $0 == "ChromeTabViewerTests.swift" }.count == 1)
         #expect(try sourceNames(hosted, in: objects).contains("HostBrowserProxyTests.swift"))
+        #expect(try sourceNames(hosted, in: objects).contains("PeerMessageColorTests.swift"))
+        #expect(try !sourceNames(ordinary, in: objects).contains("PeerMessageColorTests.swift"))
         #expect(try !sourceNames(ordinary, in: objects).contains("ChromeTabViewerTests.swift"))
         #expect(try sourceNames(ordinary, in: objects).contains("LocalBrowserSessionTests.swift"))
         let configurationList = try #require(hosted["buildConfigurationList"] as? String)
@@ -51,7 +53,7 @@ struct MobileBrowserProjectTests {
                 try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try FileManager.default.copyItem(at: repository.appendingPathComponent(path), to: destination)
             }
-            for path in ["Apps/GrafttyMobile/GrafttyMobile/GrafttyMobileApp.swift", "Apps/GrafttyMobile/GrafttyMobileTestHost/GrafttyMobileTestHost.swift", "Tests/GrafttyMobileKitTests/UI/ChromeTabViewerTests.swift", "Tests/GrafttyMobileKitTests/UI/HostBrowserProxyTests.swift", "Tests/GrafttyMobileKitTests/UI/RemoteBrowserButtonTests.swift", "Tests/GrafttyMobileKitTests/UI/WorktreeRowAlignmentTests.swift", "Tests/GrafttyMobileKitTests/App/IPadRootLayoutLandscapeTests.swift", "Tests/GrafttyMobileKitTests/App/LayoutPassProbe.swift", "Tests/GrafttyMobileKitTests/Auth/VirtualClock.swift", "Tests/GrafttyMobileInteractionTests/BrowserControlInteractionTests.swift", "Tests/GrafttyTests/AgentIntegration/AgentIntegrationWire.swift", "Tests/GrafttyMobileKitTests/Session/LocalBrowserSessionTests.swift", "Tests/GrafttyRemoteClientTests/Placeholder.swift", "Package.swift"] {
+            for path in ["Apps/GrafttyMobile/GrafttyMobile/GrafttyMobileApp.swift", "Apps/GrafttyMobile/GrafttyMobileTestHost/GrafttyMobileTestHost.swift", "Tests/GrafttyMobileKitTests/UI/ChromeTabViewerTests.swift", "Tests/GrafttyMobileKitTests/UI/HostBrowserProxyTests.swift", "Tests/GrafttyMobileKitTests/UI/RemoteBrowserButtonTests.swift", "Tests/GrafttyMobileKitTests/UI/WorktreeRowAlignmentTests.swift", "Tests/GrafttyCommandUITests/PeerMessageColorTests.swift", "Tests/GrafttyMobileKitTests/App/IPadRootLayoutLandscapeTests.swift", "Tests/GrafttyMobileKitTests/App/LayoutPassProbe.swift", "Tests/GrafttyMobileKitTests/Auth/VirtualClock.swift", "Tests/GrafttyMobileInteractionTests/BrowserControlInteractionTests.swift", "Tests/GrafttyTests/AgentIntegration/AgentIntegrationWire.swift", "Tests/GrafttyMobileKitTests/Session/LocalBrowserSessionTests.swift", "Tests/GrafttyRemoteClientTests/Placeholder.swift", "Package.swift"] {
                 let destination = fixture.appendingPathComponent(path)
                 try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try "// Project-generation fixture\n".write(to: destination, atomically: true, encoding: .utf8)

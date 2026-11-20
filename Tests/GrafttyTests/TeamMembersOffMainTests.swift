@@ -40,7 +40,7 @@ private final class PresenceListPlatform: ControlPlatform {
     func providerActivity(path: String, paneSessionName: String?, sessionID: String?, activity: ProviderSleepActivity,
                           runtime: TeamHookRuntime) {}
     func recordHookLiveness(runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?, paneSessionName: String,
-                            attentionReason: AgentHookAttentionReason?) {}
+                            attentionReason: AgentHookAttentionReason?, subagentsRunning: Bool) {}
     func instructionsDefaultBranch(repoPath: String, hint: String?) -> String? { hint }
     func paneTitle(for slot: PaneSlotID, in worktree: WorktreeEntry) -> String? { nil }
     func postAgentNotification(_ content: AgentStopNotificationContent, worktreePath: String) {}
