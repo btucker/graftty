@@ -226,15 +226,24 @@ private struct ScrollbackFixture: UIViewControllerRepresentable {
 
 private struct TranscriptMapFixture: View {
     @State private var requestedRow = -1
+    private let timeline: WorktreeTimeline = {
+        var history = WorktreeHistory()
+        let start = Date(timeIntervalSince1970: 1000)
+        history.record(.init(text: "Earlier prompt", at: start))
+        history.record(.init(text: "Later prompt", at: start.addingTimeInterval(60)))
+        return WorktreeTimeline(history: history, brief: nil)
+    }()
 
     var body: some View {
+        let prompts = timeline.events.filter { $0.kind == .user }
         ScrollbackFixture()
             .overlay(alignment: .topTrailing) {
                 ScrollbackMapOverlay(map: ScrollbackMap(totalRows: 1000, marks: [
-                    .init(row: 230, kind: .input, eventID: "first"),
+                    .init(row: 230, kind: .input, eventID: prompts[0].id),
                     .init(row: 500, kind: .peer, eventID: "middle"),
-                    .init(row: 800, kind: .input, eventID: "last"),
-                ]), viewport: .init(offset: 960, length: 40, total: 1000), entries: [:]) {
+                    .init(row: 800, kind: .input, eventID: prompts[1].id),
+                ]), viewport: .init(offset: 960, length: 40, total: 1000),
+                    entries: ScrollbackMapEntry.entries(in: timeline)) {
                     requestedRow = $0
                 }
                 .padding(.top, 110)

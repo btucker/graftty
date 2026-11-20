@@ -5548,7 +5548,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-35.x
 
-**CONTEXT-35** When the user hovers over, touches, or drags along the scrollback map, the application shall show the nearest mark's message to its left, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.
+**CONTEXT-35** When the user hovers over, touches, or drags along the scrollback map, the application shall preview the nearest visible mark using a message of the kind shown by that mark, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.
 
 ### CONTEXT-36.x
 
@@ -5629,6 +5629,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-57.x
 
 **CONTEXT-57** While the user hovers over, touches, or scrubs the scrollback map, the application shall magnify nearby marks inward and along the strip without overlapping other marks or changing their vertical centers, the map height, or the navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
+
+**CONTEXT-57.1** While the user hovers over or touches the scrollback map, the application shall display a scrollable list of their messages from the worktree timeline, and shall jump to a message when its row is known and the user selects it.
 
 ### CONTEXT-58.x
 

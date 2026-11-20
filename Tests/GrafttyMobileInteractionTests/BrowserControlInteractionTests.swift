@@ -330,6 +330,21 @@ final class ScrollbackInteractionTests: XCTestCase {
         XCTAssertEqual(requestedRow.label, "800", "An idle tap still targets the same in-range mark")
     }
 
+    func testHoldingAnywhereOnTheMapShowsYourMessages() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--transcript-map-fixture"]
+        app.launch()
+        defer { app.terminate() }
+        let map = app.descendants(matching: .any)["terminal.scrollbackMap"]
+        XCTAssertTrue(map.waitForExistence(timeout: 5))
+        map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.6)
+        let later = app.buttons["terminal.scrollbackMap.prompt.row.800"]
+        XCTAssertTrue(later.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["terminal.scrollbackMap.prompt.row.230"].exists)
+        later.tap()
+        XCTAssertEqual(app.staticTexts["transcript-map.requested-row"].label, "800")
+    }
+
     private func exerciseScrollback(follower: Bool) throws {
         let app = XCUIApplication()
         app.launchArguments = ["--scrollback-fixture"] + (follower ? ["--follower"] : [])
