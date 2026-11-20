@@ -1126,8 +1126,7 @@ public struct WorktreeListContent: View {
         let wt = row.row
         let context = navigation.worktreeContext(wt)
         let isCached = row.availability == .wakeable
-        let state = PinnedTileState.resolve(status: SidebarRowStatus.resolve(context: context, worktree: wt, isCached: isCached),
-                                            isCached: isCached)
+        let state = PinnedTileState.resolve(context: context, isCached: isCached)
         let memberID = SidebarProjection.projectID(wt)
         let project = feed.state.projects.first { $0.id == memberID }
             ?? SidebarProject(id: memberID, repositoryID: wt.repositoryID ?? memberID, name: wt.repoDisplayName)

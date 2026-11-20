@@ -230,8 +230,7 @@ jobs:
     # Standard hosted arm64 runner, so iOS does not queue behind Mac on mini-m1.
     needs: native-deps
     runs-on: xcode-27
-    # Retain thirty minutes for build, boot, and result upload outside the
-    # forty-minute combined unit and integration test step.
+    # Leave thirty minutes for the build, simulator boot, and result upload.
     timeout-minutes: 70
     strategy:
       fail-fast: false
@@ -321,8 +320,7 @@ jobs:
           xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
       - name: Test GrafttyMobile shard without rebuilding
-        # The all shard runs unit tests plus three integration batches in order.
-        # Twenty minutes expired before the final two batches could finish.
+        # The all shard runs the unit batch and three integration batches in order.
         timeout-minutes: 40
         env:
           SHARD_NAME: ${{ matrix.shard }}

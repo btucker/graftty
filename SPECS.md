@@ -416,7 +416,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.224** When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.
 
-**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall show an orange dot before its name while it asks a question or carries a notification, a pulsing blue dot while an agent works, fade it while its host sleeps, and draw no mark otherwise, including after a turn stops.
+**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works even if a notification is pending, fade it while its host sleeps, and draw no dot otherwise, including after a turn stops.
 
 **LAYOUT-2.226** While a pinned agent is shown as a tile, the application shall caption it with its whole worktree name, or the branch name for the default checkout, on one line, ending in an ellipsis only when the name is wider than the tile.
 
@@ -1674,7 +1674,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TECH-6.x
 
-**TECH-6.1** If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
+**TECH-6.1** If an iOS CI test shard loses access to its selected simulator or `xcodebuild` produces no output before its startup deadline, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
 
 **TECH-6.2** While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.
 
