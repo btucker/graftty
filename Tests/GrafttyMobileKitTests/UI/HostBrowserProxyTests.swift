@@ -701,7 +701,20 @@ struct HostBrowserProxyTests {
         }
         // A background scene can keep its browser view and lease while its
         // coordinator has closed. Do not stop the second browser here.
-        try await expectPage("active-window", url: url, configuration: configuration)
+        if targetHost == "127.0.0.1" {
+            // WebKit bypasses SOCKS for loopback. Exercise the same listener
+            // directly so WebKit startup cannot stall this lease fallback check.
+            let socket = NWConnection(host: "127.0.0.1", port: 32129, using: .tcp)
+            let deadline = DispatchWorkItem { socket.cancel() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: deadline)
+            defer { deadline.cancel(); socket.cancel() }
+            socket.start(queue: DispatchQueue(label: "graftty.browser.loopback.test"))
+            try await BrowserProxy.send(Data("GET / HTTP/1.1\r\nHost: 127.0.0.1:32129\r\nConnection: close\r\n\r\n".utf8), to: socket)
+            let expected = Data("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\nConnection: close\r\n\r\nactive-window".utf8)
+            #expect(try await Self.receive(expected.count, from: socket) == expected)
+        } else {
+            try await expectPage("active-window", url: url, configuration: configuration)
+        }
     }
 
     @Test func conflictingMacCannotTakeOverAnotherHostsEndpoint() async throws {
