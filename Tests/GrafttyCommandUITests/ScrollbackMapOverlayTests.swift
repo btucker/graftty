@@ -137,7 +137,7 @@ struct ScrollbackMapPresenceTests {
 @MainActor
 @Suite("@spec CONTEXT-35: When the user hovers over, touches, or drags along the scrollback map, the application shall preview the nearest visible mark using a message of the kind shown by that mark, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.")
 struct ScrollbackMapScrubTests {
-    @Test("@spec CONTEXT-57.3: While the Mac pointer moves from an active scrollback rail into its visible previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass terminal input through the previews.", arguments: [1.0, 7.0, 13.0])
+    @Test("@spec CONTEXT-57.3: When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass terminal input through the previews.", arguments: [1.0, 7.0, 13.0])
     func nativeTerminalAndGutterEachReceiveTheirOwnInput(x: Double) async throws {
         _ = NSApplication.shared
         let terminal = MapTerminalFixture()
@@ -167,6 +167,10 @@ struct ScrollbackMapScrubTests {
         let terminalFrame = terminal.convert(terminal.bounds, to: host)
         #expect(railFrame.minX == terminalFrame.maxX)
         #expect(pointer.bounds.height == 264)
+        #expect(pointer.previewArea == nil, "The fixture begins with the rail idle")
+        let idleTracking = try #require(host.trackingAreas.first { $0.owner === pointer },
+            "The window must pick up pointer motion before the first preview is displayed")
+        #expect(idleTracking.options.contains(.mouseMoved))
         let layout = ScrollbackMapLayout(height: 252, map: map, viewport: viewport)
         let markY = layout.y(forRow: 40)
         let point = pointer.convert(NSPoint(x: x, y: ScrollbackMapLayout.stripInset.top + markY), to: nil)
@@ -199,7 +203,7 @@ struct ScrollbackMapScrubTests {
         await waitUntil { pointer.previewArea != nil }
         let area = try #require(pointer.previewArea)
         #expect(area.minX < 0 && area.maxX == railFrame.width)
-        #expect(host.trackingAreas.contains { $0.owner === pointer }, "Tracking extends over the terminal without intercepting input")
+        #expect(host.trackingAreas.contains { $0 === idleTracking }, "Showing previews keeps the original tracking area")
         func moveEvent(x: CGFloat) throws -> NSEvent {
             let location = pointer.convert(NSPoint(x: x, y: area.midY), to: nil)
             return try #require(NSEvent.mouseEvent(with: .mouseMoved, location: location, modifierFlags: [],
@@ -207,15 +211,14 @@ struct ScrollbackMapScrubTests {
                 context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
         }
         let overCard = try moveEvent(x: area.minX + 1)
-        pointer.mouseExited(with: overCard)
         pointer.mouseMoved(with: overCard)
         await Task.yield()
         host.layoutSubtreeIfNeeded()
         #expect(pointer.previewArea == area, "Moving off the rail toward the cards keeps the layout fixed")
-        pointer.mouseExited(with: try moveEvent(x: area.minX - 1))
+        pointer.mouseMoved(with: try moveEvent(x: area.minX - 1))
         await waitUntil { pointer.previewArea == nil }
         #expect(pointer.previewArea == nil)
-        #expect(!host.trackingAreas.contains { $0.owner === pointer })
+        #expect(host.trackingAreas.contains { $0 === idleTracking }, "The idle rail remains ready to open again")
         #expect(pointer.convert(pointer.bounds, to: host) == railFrame)
 
         let dragY: CGFloat = 217

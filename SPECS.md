@@ -5634,7 +5634,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.2** While a scrollback map preview has a message timestamp, the application shall show its elapsed age in whole minutes, hours from one hour, or days from twenty-four hours, and show now for messages less than a minute old.
 
-**CONTEXT-57.3** While the Mac pointer moves from an active scrollback rail into its visible previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass terminal input through the previews.
+**CONTEXT-57.3** When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass terminal input through the previews.
 
 ### CONTEXT-58.x
 

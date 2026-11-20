@@ -25,25 +25,23 @@ struct ScrollbackMapPointerInput: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: ScrollbackMapPointerView, coordinator: ()) {
-        view.previewArea = nil
+        view.removePointerTracking()
     }
 }
 
 final class ScrollbackMapPointerView: NSView {
     let content: NSHostingView<AnyView>
     var terminalOnLeft = true
-    var previewArea: CGRect? {
-        didSet { if previewArea != oldValue { updatePreviewTracking() } }
-    }
+    var previewArea: CGRect?
     var onHover: ((CGFloat?) -> Void)?
     var onScrub: ((CGFloat?) -> Void)?
     var onDrag: ((CGFloat) -> Void)?
     var onClick: ((CGFloat) -> Void)?
     private var press: NSPoint?
     private var dragged = false
-    private var pointerTracking: NSTrackingArea?
-    private weak var previewTrackingHost: NSView?
-    private var previewTracking: NSTrackingArea?
+    private var hoverY: CGFloat?
+    private weak var trackingHost: NSView?
+    private var trackingArea: NSTrackingArea?
 
     init(content: AnyView) {
         self.content = NSHostingView(rootView: content)
@@ -58,17 +56,17 @@ final class ScrollbackMapPointerView: NSView {
     override func layout() {
         super.layout()
         content.frame = bounds
-        updatePreviewTracking()
+        installPointerTracking()
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
-        removePreviewTracking()
+        removePointerTracking()
         super.viewWillMove(toWindow: newWindow)
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        updatePreviewTracking()
+        installPointerTracking()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -79,66 +77,56 @@ final class ScrollbackMapPointerView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        updatePreviewTracking()
-        // AppKit updates this tracking area when the pane resizes.
-        guard pointerTracking == nil else { return }
-        let tracking = NSTrackingArea(rect: bounds,
-            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved], owner: self)
-        addTrackingArea(tracking)
-        pointerTracking = tracking
-    }
-
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 
-    private func updatePreviewTracking() {
-        guard let previewArea, let host = window?.contentView else {
-            removePreviewTracking()
-            return
-        }
-        // The previews extend beyond this view. Track them from the window's
-        // content view so the gutter remains the only interactive input area.
-        let rect = host.convert(previewArea, from: self).intersection(host.bounds)
-        guard !rect.isNull, !rect.isEmpty else {
-            removePreviewTracking()
-            return
-        }
-        if previewTrackingHost === host, previewTracking?.rect == rect { return }
-        removePreviewTracking()
-        let tracking = NSTrackingArea(rect: rect, options: [.activeAlways, .mouseEnteredAndExited, .mouseMoved], owner: self)
-        host.addTrackingArea(tracking)
-        previewTrackingHost = host
-        previewTracking = tracking
+    private func installPointerTracking() {
+        guard let host = window?.contentView else { return }
+        if trackingHost === host, let trackingArea,
+           host.trackingAreas.contains(where: { $0 === trackingArea }) { return }
+        removePointerTracking()
+
+        // The gutter is an overlay, and its native visible rect can be clipped
+        // by the terminal. The window already covers both the idle gutter and
+        // any cards that extend into the terminal.
+        let area = NSTrackingArea(rect: .zero,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved], owner: self)
+        host.addTrackingArea(area)
+        trackingHost = host
+        trackingArea = area
     }
 
-    private func removePreviewTracking() {
-        if let previewTracking { previewTrackingHost?.removeTrackingArea(previewTracking) }
-        previewTracking = nil
-        previewTrackingHost = nil
+    fileprivate func removePointerTracking() {
+        if let trackingArea { trackingHost?.removeTrackingArea(trackingArea) }
+        trackingArea = nil
+        trackingHost = nil
+    }
+
+    private func setHover(_ y: CGFloat?) {
+        guard hoverY != y else { return }
+        hoverY = y
+        onHover?(y)
     }
 
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if bounds.contains(point) {
-            onHover?(point.y)
+        if isHiddenOrHasHiddenAncestor {
+            setHover(nil)
+        } else if bounds.contains(point) {
+            setHover(point.y)
         } else if previewArea?.contains(point) != true {
-            onHover?(nil)
+            setHover(nil)
         }
     }
 
-    override func mouseExited(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        if !bounds.contains(point), previewArea?.contains(point) != true { onHover?(nil) }
-    }
+    override func mouseExited(with event: NSEvent) { setHover(nil) }
 
     override func scrollWheel(with event: NSEvent) {
         // Re-hit-test a point just inside the terminal beside the gutter.
         guard let root = window?.contentView else { return }
         let location = convert(event.locationInWindow, from: nil)
-        if bounds.contains(location) { onHover?(location.y) }
+        if bounds.contains(location) { setHover(location.y) }
         let x = terminalOnLeft ? bounds.minX - 1 : bounds.maxX + 1
         let point = convert(NSPoint(x: x, y: location.y), to: root.superview)
         let target = root.hitTest(point)
@@ -165,7 +153,7 @@ final class ScrollbackMapPointerView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         if dragged { onDrag?(point.y) } else { onClick?(point.y) }
         press = nil
-        onHover?(bounds.contains(point) || previewArea?.contains(point) == true ? point.y : nil)
+        setHover(bounds.contains(point) || previewArea?.contains(point) == true ? point.y : nil)
         onScrub?(nil)
     }
 }
