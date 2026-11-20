@@ -145,6 +145,7 @@
 		FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */; };
 		FF99CD7CE5915384657B470A /* IPadWorktreeFeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2902569AF8C29643CA0A9827 /* IPadWorktreeFeedTests.swift */; };
 		AE3912D4534448BF311A5354 /* HostRouteResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FBA22EAEF78D5E65C38CB2 /* HostRouteResolverTests.swift */; };
+		D98894DD5ECC63CC4040CCC8 /* PeerMessageColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CFDB857E5AA67BA1595B7CF /* PeerMessageColorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -301,6 +302,7 @@
 		FFA9EBD5ED690FBE824B636C /* PanesStateConvergenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanesStateConvergenceTests.swift; sourceTree = "<group>"; };
 		9921D790A6A82071FF565D5D /* DownstreamHostConnectionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownstreamHostConnectionsTests.swift; sourceTree = "<group>"; };
 		89FBA22EAEF78D5E65C38CB2 /* HostRouteResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostRouteResolverTests.swift; sourceTree = "<group>"; };
+		5CFDB857E5AA67BA1595B7CF /* PeerMessageColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PeerMessageColorTests.swift; path = ../../Tests/GrafttyCommandUITests/PeerMessageColorTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -427,6 +429,7 @@
 				0A379083AF16EC70EFAF3BF7 /* GrafttyMobileTestHost */,
 				1694309529DAE1B693C4F1BC /* GrafttyRemoteClientTests */,
 				EBBD8BB4335B09E0E1E21C3F /* Packages */,
+				3537AC77437091B59C9236A4 /* SharedCommandUITests */,
 				A781B60C40AAB68787FE5C9A /* SharedTestSupport */,
 				613F14AB8D46A81479D6B00A /* Products */,
 			);
@@ -653,6 +656,14 @@
 				FC7EA399ECADF096350F5971 /* SSH */,
 			);
 			path = Remote;
+			sourceTree = "<group>";
+		};
+		3537AC77437091B59C9236A4 /* SharedCommandUITests */ = {
+			isa = PBXGroup;
+			children = (
+				5CFDB857E5AA67BA1595B7CF /* PeerMessageColorTests.swift */,
+			);
+			name = SharedCommandUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -1020,6 +1031,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6B398E06DA82E2584FB5E129 /* ChromeTabViewerTests.swift in Sources */,
+				D98894DD5ECC63CC4040CCC8 /* PeerMessageColorTests.swift in Sources */,
 				47453C7702697742D415A0AB /* HostBrowserProxyTests.swift in Sources */,
 				3138F25737D902148EBC6862 /* IPadRootLayoutLandscapeTests.swift in Sources */,
 				132AF2CB2F76CA9F44FB7DB4 /* LayoutPassProbe.swift in Sources */,
