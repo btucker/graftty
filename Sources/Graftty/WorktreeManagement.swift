@@ -113,7 +113,7 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
             operationID: operationID, selectTab: false, existingBranchSource: source)
             .withPrimaryAgent(provider: provider, operationID: operationID)
         let response = await CLIWorktreeCreationRequestHandler.begin(request,
-            creationOrigin: .init(date: Date(), source: .user), platform: self)
+            creationOrigin: .init(date: Date(), source: .user), promptImages: agent.promptImages, platform: self)
         switch response {
         case .worktreeCreate(let status): return .success(status)
         case .error(let message): return .failure(.invalidInput(message))

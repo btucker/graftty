@@ -91,16 +91,21 @@ struct MobileTerminalHeaderWash: View {
     @Environment(\.worktreeDrawingCache) private var worktreeDrawingCache
 
     var body: some View {
+        let wash = MobileWorktreeIdentity.wash(for: worktree, icons: projectIconCache?.icons,
+            drawings: worktreeDrawingCache?.images, background: theme.background, isDark: theme.isDark)
         ZStack {
             theme.background
-            if let wash = MobileWorktreeIdentity.wash(for: worktree, icons: projectIconCache?.icons, drawings: worktreeDrawingCache?.images,
-                                                      background: theme.background, isDark: theme.isDark) {
-                WorktreeHeaderWashView(wash: wash)
-            }
+            if let wash { WorktreeHeaderWashView(wash: wash, drawsWatermark: false) }
         }
         .mask(LinearGradient(stops: [.init(color: .black, location: 0),
                                      .init(color: .black, location: 0.35),
                                      .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+        .overlay {
+            if let wash {
+                // The terminal draws text under the header in this presentation.
+                WorktreeHeaderWatermark(wash: wash).opacity(0.28)
+            }
+        }
     }
 }
 

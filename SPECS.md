@@ -350,7 +350,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.191** When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.
 
-**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
+**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a fully visible tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
 
 **LAYOUT-2.193** While an agent has a live input request, the application shall use the same waiting state in its sidebar and tab, retain the question when its worktree opens, and clear that state when the request is dismissed or its provider resumes.
 
@@ -424,7 +424,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.228** When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.
 
-**LAYOUT-2.229** While the header watermark reaches below the header band, the application shall draw that part faintly over the content beneath instead of cutting it off, without taking clicks.
+**LAYOUT-2.229** While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.
 
 **LAYOUT-2.230** While a worktree row is shown, the application shall give its identity a 60 by 40 point slot that a wide drawing fills, start the row's text after that slot, and keep emoji and project icons at most 32 points.
 
@@ -1076,7 +1076,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.30** When a creating worktree is selected, the application shall display its progress and output in the terminal content area, switch to the terminal on success, and retain failed or interrupted diagnostics until a terminal is explicitly opened.
 
-**GIT-5.31** When worktree creation succeeds on Mac or mobile, the application shall hide the sidebar's Creation complete status one minute after completion while retaining creation diagnostics and keeping pending, failed, and interrupted statuses visible.
+**GIT-5.31** When worktree creation succeeds on Mac or mobile, the application shall hide the sidebar's Creation complete status one minute after completion. While a worktree is running, the application shall hide prior failed or interrupted creation statuses in the sidebar and retain their diagnostics.
 
 **GIT-5.32** When pulling the default checkout before worktree creation, the application shall bound branch validation to five seconds and retain the fast-forward pull's twenty-second timeout.
 
@@ -1105,6 +1105,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-5.44** When the user opens a terminal from a failed creation whose worktree exists, the application shall start a shell there even when a failed agent launch is recorded.
 
 **GIT-5.45** When a retried agent launch starts in a worktree whose creation failed, the application shall mark that creation complete so the failure no longer replaces the worktree's content.
+
+**GIT-5.46** When the user pastes images into the initial worktree prompt on Mac or mobile, the application shall preserve the images in order with the optional text and send them to the owning host for the first agent turn.
 
 ### GIT-6.x — Auto-tracking Pinned Agents
 

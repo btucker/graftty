@@ -76,6 +76,7 @@ public enum CLIWorktreeCreationRequestHandler {
     public static func begin(
         _ request: CreateWorktreeRequest,
         creationOrigin: WorktreeHistory.Origin? = nil,
+        promptImages: [Data] = [],
         platform: any CLIWorktreeCreationPlatform
     ) async -> ResponseMessage {
         var request = request
@@ -128,6 +129,23 @@ public enum CLIWorktreeCreationRequestHandler {
         ) {
             return .error(error)
         }
+        let promptDirectory = platform.agentPromptDirectory
+        var stagedImages: WorktreePromptImageSet?
+        var committed = false
+        defer {
+            if !committed { stagedImages?.discard(in: promptDirectory) }
+        }
+        if !promptImages.isEmpty {
+            guard request.managedAgent != nil, agentRuntime != nil, request.command == nil else {
+                return .error("Prompt images require a managed agent.")
+            }
+            do {
+                stagedImages = try WorktreePromptImageSet.stage(promptImages, in: promptDirectory)
+                request.managedAgent?.promptImageSet = stagedImages
+            } catch {
+                return .error("Could not prepare prompt images. \(error.localizedDescription)")
+            }
+        }
         let launch: PreparedWorktreeAgentLaunch
         if let agentRuntime,
            CLIWorktreeCreationPolicy.shouldStageAgentPrompt(
@@ -136,7 +154,7 @@ public enum CLIWorktreeCreationRequestHandler {
             do {
                 launch = try WorktreeAgentLaunchCommand.prepare(
                     agent: agentRuntime, prompt: agentPrompt, exactCommand: nil, managedAgent: request.managedAgent,
-                    promptDirectory: platform.agentPromptDirectory
+                    promptDirectory: promptDirectory
                 )
             } catch {
                 return .error("could not stage agent prompt: \(error.localizedDescription)")
@@ -227,6 +245,7 @@ public enum CLIWorktreeCreationRequestHandler {
                 return .error("could not save initial agent task: \(error.localizedDescription)")
             }
         }
+        committed = true
         platform.creationDidBegin(repoPath: repo.path, worktreePath: worktreePath, operationID: operationID)
         let plan = CLIWorktreeCreationPlan(
             repoPath: repo.path,
@@ -252,13 +271,17 @@ public enum CLIWorktreeCreationRequestHandler {
             // and diagnostics in the caller's retained worktree instead of
             // losing the child's only durable record with that placeholder.
             if let failure, var agent = request.managedAgent,
-               platform.state.worktree(forPath: worktreePath) == nil,
-               let index = platform.state.indices(forWorktreePath: callerPath) {
-                agent.paneSlotID = nil
-                agent.launchFailed(reason: "\(worktreePath): \(failure)")
-                platform.state.repos[index.repo].worktrees[index.worktree].agents.append(agent)
-                do { try platform.saveStateNow() }
-                catch { return "\(failure); could not persist failed agent: \(error.localizedDescription)" }
+               platform.state.worktree(forPath: worktreePath) == nil {
+                agent.promptImageSet?.discard(in: promptDirectory)
+                if let index = platform.state.indices(forWorktreePath: callerPath) {
+                    agent.promptImageSet = nil
+                    agent.launchTargetWorktree = worktreePath
+                    agent.paneSlotID = nil
+                    agent.launchFailed(reason: "\(worktreePath): \(failure)")
+                    platform.state.repos[index.repo].worktrees[index.worktree].agents.append(agent)
+                    do { try platform.saveStateNow() }
+                    catch { return "\(failure); could not persist failed agent: \(error.localizedDescription)" }
+                }
             }
             if let agent = request.managedAgent,
                let index = platform.state.indices(forWorktreePath: worktreePath),

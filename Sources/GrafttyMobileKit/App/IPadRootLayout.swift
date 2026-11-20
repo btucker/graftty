@@ -1523,7 +1523,7 @@ struct IPadDetailColumn: View {
             // the top row of tabs; each surface draws its slice.
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
             .coordinateSpace(name: WorktreeHeaderWash.coordinateSpace)
-            .environment(\.worktreeHeaderWashBand, washBand(for: worktree))
+            .environment(\.worktreeHeaderWashBand, washBand(for: worktree, host: host))
             .id("\(host.id)-\(worktree.path)")
         } else {
             ContentUnavailableView(
@@ -1544,13 +1544,16 @@ struct IPadDetailColumn: View {
         appState.workspaceStore.layout(hostID: host.id, worktree: worktree).drawerVisible
     }
 
-    private func washBand(for worktree: WorktreePanes) -> WorktreeHeaderWashBand? {
+    private func washBand(for worktree: WorktreePanes, host: Host) -> WorktreeHeaderWashBand? {
         guard let wash = MobileWorktreeIdentity.wash(for: worktree, icons: projectIconCache?.icons, drawings: worktreeDrawingCache?.images,
                                                      background: appState.theme.background, isDark: appState.theme.isDark)
         else { return nil }
         // The toolbar and status bar sit above the identity bar.
         let toolbar: CGFloat = 96
-        return WorktreeHeaderWashBand(wash: wash, size: CGSize(width: detailWidth, height: toolbar + identityHeight + 44),
+        let workspace = appState.workspaceStore.layout(hostID: host.id, worktree: worktree)
+        let hasTabs = !worktree.showsCreationProgress
+            && workspace.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) != nil
+        return WorktreeHeaderWashBand(wash: wash, size: CGSize(width: detailWidth, height: toolbar + identityHeight + (hasTabs ? 44 : 0)),
                                       topExtension: toolbar)
     }
 

@@ -63,6 +63,9 @@ public final class HeadlessHostRuntime {
         launcher = ZmxLauncher(executable: configuration.zmxExecutable, zmxDir: configuration.zmxDirectory)
         self.terminals = terminals ?? ZmxHostTerminalDriver(launcher: launcher)
         state = try initialState ?? AppState.load(from: configuration.stateDirectory)
+        if initialState == nil {
+            WorktreeAgentLaunchCommand.pruneUnreferencedImages(state: state, stateDirectory: configuration.stateDirectory)
+        }
         inbox = TeamInbox(rootDirectory: configuration.stateDirectory.appendingPathComponent("team-inbox"))
         presence = TeamPresenceStorage(rootDirectory: configuration.stateDirectory.appendingPathComponent("teams"))
     }

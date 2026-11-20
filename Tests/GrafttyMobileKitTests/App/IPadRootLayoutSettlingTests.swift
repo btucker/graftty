@@ -97,25 +97,22 @@ struct IPadRootLayoutSettlingTests {
         #expect(IPadAppState(defaults: fixture.defaults).sidebarWidth == fixture.state.sidebarWidth)
     }
 
-    /// Hosts the root directly in the historical regular-width geometry with
-    /// native landscape's trait pair, and returns once it has appeared and
-    /// its split view has delivered a sidebar width: a measured one when it
-    /// shows host content, otherwise the zero a hostless sidebar leaves in
-    /// place (#706). Persistence observes the same delivery, so its decision
-    /// is recorded by then. Nothing waits on wall-clock time. The split view
-    /// delivers its widths within its first three layout passes, so the
-    /// window detaches after IPAD-1.27's 24-pass bound instead of hosting a
-    /// loaded cold-mount storm (#704) of up to a thousand inert passes; these
-    /// tests do not assert settling.
+    /// Mounts the root with regular-width landscape traits. With host
+    /// content, wait for a measured width. A hostless sidebar can stay at its
+    /// initial width through the persistence debounce (#706).
+    /// Detach after 24 layout passes to bound cold-mount storms (#704).
     private func mountRegularWidth(_ fixture: SplitLayoutFixture, publishesSidebarWidth: Bool) async throws -> UIWindow {
         let appeared = XCTestExpectation(description: "The regular-width root appeared")
         appeared.assertForOverFulfill = false
-        let delivered = XCTestExpectation(description: "The split view delivered its sidebar width")
+        let delivered = XCTestExpectation(description: "The split view resolved its sidebar width")
         delivered.assertForOverFulfill = false
         let host = LayoutPassHost(rootView: fixture.root
             .onAppear { appeared.fulfill() }
-            .onPreferenceChange(SidebarWidthKey.self) { width in
-                if width > 0 || !publishesSidebarWidth { delivered.fulfill() }
+            .backgroundPreferenceValue(SidebarWidthKey.self) { width in
+                // A hostless sidebar can start and stay at the default zero.
+                Color.clear.onChange(of: width, initial: true) { _, width in
+                    if width > 0 || !publishesSidebarWidth { delivered.fulfill() }
+                }
             })
         host.limit = 24
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1194, height: 834))
