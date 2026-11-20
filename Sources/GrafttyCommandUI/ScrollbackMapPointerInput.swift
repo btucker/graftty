@@ -76,9 +76,10 @@ final class ScrollbackMapPointerView: NSView {
     override func scrollWheel(with event: NSEvent) {
         // Re-hit-test a point just inside the terminal beside the gutter.
         guard let root = window?.contentView else { return }
-        let y = convert(event.locationInWindow, from: nil).y
+        let location = convert(event.locationInWindow, from: nil)
+        if bounds.contains(location) { onHover?(location.y) }
         let x = terminalOnLeft ? bounds.minX - 1 : bounds.maxX + 1
-        let point = convert(NSPoint(x: x, y: y), to: root.superview)
+        let point = convert(NSPoint(x: x, y: location.y), to: root.superview)
         let target = root.hitTest(point)
         if target !== self { target?.scrollWheel(with: event) }
     }

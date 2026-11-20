@@ -5548,7 +5548,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-36.x
 
-**CONTEXT-36** While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While the Mac map is idle, the application shall display muted marks and a viewport outline without a card background. While the user interacts with either map, the application shall give the previewed message the strongest emphasis, distinguish nearby human input with orange and nearby peer messages and agent responses with blue, and mute distant marks. While the mobile map is idle, the application shall keep these colors readable against its background.
+**CONTEXT-36** While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks and peer messages and agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.
 
 ### CONTEXT-37.x
 
@@ -5624,7 +5624,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-57.x
 
-**CONTEXT-57** While the user hovers over or touches the scrollback map, the application shall enlarge nearby marks around their fixed centers without overlapping other marks or changing the map height or navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
+**CONTEXT-57** While the user hovers over, touches, or scrubs the scrollback map, the application shall magnify nearby marks inward and along the strip without overlapping other marks or changing their vertical centers, the map height, or the navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
 
 ### CONTEXT-58.x
 

@@ -306,9 +306,9 @@ private struct MapTerminalRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: MapTerminalFixture, context: Context) { }
 }
 
-@Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While the Mac map is idle, the application shall display muted marks and a viewport outline without a card background. While the user interacts with either map, the application shall give the previewed message the strongest emphasis, distinguish nearby human input with orange and nearby peer messages and agent responses with blue, and mute distant marks. While the mobile map is idle, the application shall keep these colors readable against its background.")
+@Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks and peer messages and agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.")
 struct ScrollbackMapAppearanceTests {
-    @Test func thePreviewedMessageStandsOutFromNearAndDistantMarks() throws {
+    @Test func distantMarksRetainTheirColorAndThePreviewMatchesTheMessage() throws {
         let layout = ScrollbackMapLayout(height: 150, totalRows: 150)
         let input = ScrollbackMap.Mark(row: 38, kind: .input, eventID: "input")
         let peer = ScrollbackMap.Mark(row: 39, kind: .peer, eventID: "peer")
@@ -316,11 +316,18 @@ struct ScrollbackMapAppearanceTests {
                                   .init(row: 119, kind: .input, eventID: "distant")]
         let idle = layout.presentedMarks(marks, width: 9, maximumWidth: 12, focusY: nil)
         let hovered = layout.presentedMarks(marks, width: 9, maximumWidth: 12, focusY: 39, previewedMark: peer)
-        #expect(idle.map(\.emphasis) == [.idle, .idle, .idle])
-        #expect(hovered.map(\.emphasis) == [.previewed, .nearby, .distant])
+        #expect(idle.allSatisfy { !$0.isPreviewed })
+        #expect(hovered.filter(\.isPreviewed).count == 1)
+        let palette = ScrollbackMapPalette(scheme: .dark)
+        let environment = EnvironmentValues()
+        let distant = try #require(hovered.last)
+        #expect(palette.mark(distant.kind, muted: false).resolve(in: environment) == palette.input.resolve(in: environment))
         #expect(hovered.map { $0.frame.midY } == idle.map { $0.frame.midY })
         let selected = try #require(hovered.first)
         #expect(selected.kind == .peer, "A mixed group uses the color of the message in the preview")
+        #expect(selected.isPreviewed)
+        #expect(selected.cornerRadius == 0)
+        #expect(distant.cornerRadius > 0)
     }
 
     @Test(arguments: [ColorScheme.light, .dark])
@@ -339,7 +346,7 @@ struct ScrollbackMapAppearanceTests {
     }
 }
 
-@Suite("@spec CONTEXT-57: While the user hovers over or touches the scrollback map, the application shall enlarge nearby marks around their fixed centers without overlapping other marks or changing the map height or navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.")
+@Suite("@spec CONTEXT-57: While the user hovers over, touches, or scrubs the scrollback map, the application shall magnify nearby marks inward and along the strip without overlapping other marks or changing their vertical centers, the map height, or the navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.")
 struct ScrollbackMapFixedPositionTests {
     @Test(arguments: [63.0, 138.0, 380.0])
     func drawingAndNavigationUseTheSameLinearScale(height: CGFloat) {
@@ -355,7 +362,7 @@ struct ScrollbackMapFixedPositionTests {
         let layout = ScrollbackMapLayout(height: 150, totalRows: 150)
         let marks = [20, 26, 43, 120].map { ScrollbackMap.Mark(row: $0, kind: .input, eventID: "\($0)") }
         func bars(near focus: CGFloat?) -> [CGRect] {
-            layout.presentedMarks(marks, width: 9, maximumWidth: 12, focusY: focus).map(\.frame)
+            layout.presentedMarks(marks, width: 9, maximumWidth: 26, focusY: focus).map(\.frame)
         }
         let idle = bars(near: nil)
         let early = bars(near: 20)
@@ -363,9 +370,10 @@ struct ScrollbackMapFixedPositionTests {
         try #require(idle.count == 4 && early.count == 4 && later.count == 4)
         #expect(early.map(\.midY) == idle.map(\.midY))
         #expect(later.map(\.midY) == idle.map(\.midY))
-        #expect(early[0].width > idle[0].width && early[0].height > idle[0].height)
-        #expect(early[0].height > early[1].height)
-        #expect(later[2].height > early[2].height)
+        #expect(early[0].width > idle[0].width * 2 && early[0].height > idle[0].height)
+        #expect(early[0].width > early[1].width)
+        #expect(early[0].maxX <= 9 / 2, "Wide marks grow into the terminal side of the rail")
+        #expect(later[2].height > idle[2].height * 2 && later[2].height > early[2].height)
         #expect(early[3] == idle[3] && later[3] == idle[3])
         #expect(layout.scrubTopRow(atY: early[0].midY, viewportLength: 10) == 15)
     }
