@@ -72,8 +72,9 @@ final class HostMaintenance: WorktreeMonitorDelegate {
 }
 
 public extension HeadlessHostRuntime {
-    func startMaintenance() {
+    func startMaintenance(handoff: AttentionFileHandoff = AttentionFileHandoff()) {
         guard maintenance == nil else { return }
+        state.publishContextSnapshots(handoff: handoff)
         let coordinator = HostMaintenance(runtime: self)
         maintenance = coordinator
         coordinator.start()
@@ -130,7 +131,7 @@ public extension HeadlessHostRuntime {
             agentLiveness.recordFileActivity(event, in: state)
             switch event {
             case .recap(let report):
-                state.recordAgentRecap(report.recap, callerPath: report.worktree, reportedAt: report.reportedAt)
+                state.recordAgentRecap(report.recap, callerPath: report.worktree, reportedAt: report.reportedAt, callerAgentID: report.agentID)
             case .response(let response):
                 guard let index = state.indices(forWorktreePath: response.worktree) else { return }
                 state.repos[index.repo].worktrees[index.worktree].recordAgentResponse(response.response)
@@ -150,6 +151,9 @@ public extension HeadlessHostRuntime {
                 }
             }
             try save()
+            if event.publishesContextSnapshot {
+                try? state.publishContextSnapshot(worktree: event.worktreePath, handoff: handoff)
+            }
         }
     }
 }

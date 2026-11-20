@@ -72,7 +72,7 @@ struct HostBrowserProxyTests {
             : [(Data(), true)]
         var received = 0
         var responses: [Data] = []
-        try await Self.servePage("fixture-page", reply: Data(), receive: { maximumLength in
+        try await Self.servePage("fixture-page", receive: { maximumLength in
             try #require(received < chunks.count, "The fixture read beyond the supplied request")
             #expect(responses.isEmpty, "The fixture must not respond before the complete request arrives")
             let chunk = chunks[received]
@@ -663,20 +663,32 @@ struct HostBrowserProxyTests {
         let deadline = DispatchWorkItem { socket.cancel() }
         DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: deadline)
         defer { deadline.cancel() }
-        try await servePage(body, reply: reply, receive: { maximumLength in
+        if !reply.isEmpty { try await BrowserProxy.send(reply, to: socket) }
+        func receive(_ maximumLength: Int) async throws -> (Data, Bool) {
             try await withCheckedThrowingContinuation { continuation in
                 socket.receive(minimumIncompleteLength: 1, maximumLength: maximumLength) { data, _, complete, error in
                     if let error { continuation.resume(throwing: error) }
                     else { continuation.resume(returning: (data ?? Data(), complete)) }
                 }
             }
-        }, send: { try await BrowserProxy.send($0, to: socket) })
+        }
+        try await servePage(body, receive: receive, send: { response in
+            // Send a TCP FIN with the response. Wait for the client to close
+            // before cancelling the connection, with the deadline as a fallback.
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                socket.send(content: response, contentContext: .finalMessage, isComplete: true,
+                            completion: .contentProcessed { error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                })
+            }
+            while let (_, complete) = try? await receive(16_384), !complete {}
+        })
     }
 
-    private static func servePage(_ body: String, reply: Data,
+    private static func servePage(_ body: String,
                                   receive: (Int) async throws -> (Data, Bool),
                                   send: (Data) async throws -> Void) async throws {
-        if !reply.isEmpty { try await send(reply) }
         guard !(try await readRequest(receive: receive)).isEmpty else { return }
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
         try await send(Data(response.utf8))
@@ -728,7 +740,21 @@ struct HostBrowserProxyTests {
         }
         // A background scene can keep its browser view and lease while its
         // coordinator has closed. Do not stop the second browser here.
-        try await expectPage("active-window", url: url, configuration: configuration)
+        if targetHost == "127.0.0.1" {
+            // WebKit bypasses SOCKS for loopback. Exercise the same listener
+            // directly so WebKit startup cannot stall this lease fallback check.
+            let socket = NWConnection(host: "127.0.0.1", port: 32129, using: .tcp)
+            let deadline = DispatchWorkItem { socket.cancel() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: deadline)
+            defer { deadline.cancel(); socket.cancel() }
+            socket.start(queue: DispatchQueue(label: "graftty.browser.loopback.test"))
+            try await BrowserProxy.send(Data("GET / HTTP/1.1\r\nHost: 127.0.0.1:32129\r\nConnection: close\r\n\r\n".utf8), to: socket)
+            let expected = Data("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\nConnection: close\r\n\r\nactive-window".utf8)
+            #expect(try await Self.receive(expected.count, from: socket) == expected)
+            #expect(try await Self.receive(1, from: socket).isEmpty, "The response must end with TCP EOF")
+        } else {
+            try await expectPage("active-window", url: url, configuration: configuration)
+        }
     }
 
     @Test func conflictingMacCannotTakeOverAnotherHostsEndpoint() async throws {

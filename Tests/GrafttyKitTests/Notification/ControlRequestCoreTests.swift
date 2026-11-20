@@ -31,6 +31,12 @@ struct ControlRequestCoreTests {
         var instructionsDirectory: URL { root }
         var drawingThemeContext: String?
         var stateChanges = 0
+        var contextPublications: [String] = []
+        var contextHandoff: AttentionFileHandoff { .init(rootDirectory: root.appendingPathComponent("context-handoff")) }
+        func publishContextSnapshot(worktree: String) {
+            contextPublications.append(worktree)
+            try? state.publishContextSnapshot(worktree: worktree, handoff: contextHandoff)
+        }
         var hostStart = ProcessIdentityReader.currentProcessStart
         var liveness: [(TeamHookEvent, String)] = []
         var notifications: [AgentStopNotificationContent] = []
@@ -120,6 +126,19 @@ struct ControlRequestCoreTests {
             try teamInbox.appendAgentCompletion(teamID: repo.path, teamName: repo.displayName,
                 to: parent, completionID: completionID, body: body)
         }
+    }
+
+    @Test("@spec CONTEXT-83: When a socket report persists retained context, the application shall refresh its read-back snapshot without requiring another hook, while unchanged tool hooks shall not republish the snapshot.")
+    func socketReportsRefreshSnapshotsWithoutPerToolPublication() async throws {
+        let platform = try RecordingPlatform()
+        try platform.state.publishContextSnapshot(worktree: "/repo", handoff: platform.contextHandoff)
+        let recap = AttentionRecap(title: "Fix", completed: "Tested.", next: "Review.")
+        _ = await ControlRequestCore.handleRequest(.attentionReport(callerWorktree: "/repo", callerAgentID: "one", recap: recap), platform: platform)
+        #expect(try platform.contextHandoff.context(worktree: "/repo").brief?.completed == "Tested.")
+        #expect(platform.contextPublications == ["/repo"])
+        _ = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "one", runtime: .codex, event: .postToolUse, sessionID: "session", paneSessionName: nil), platform: platform)
+        _ = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "one", runtime: .codex, event: .preToolUse, sessionID: "session", paneSessionName: nil), platform: platform)
+        #expect(platform.contextPublications == ["/repo"])
     }
 
     @Test("@spec AGENT-3.30: When the app receives an Attention recap, it shall persist the brief immediately while reserving stopped attention and its notification for the actual Stop hook.")

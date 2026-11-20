@@ -18,12 +18,12 @@ public enum SidebarRowStatus: Equatable, Sendable {
         }
     }
 
-    /// Everything waiting for the person: a request, or a finished turn they
-    /// haven't opened. This is what Needs you, tile borders, and counts show.
+    /// Explicit requests and notices shown in Needs you and attention counts.
+    /// Unread routine completions remain activity.
     public var waitsForUser: Bool {
         switch self {
         case .question, .notification: return true
-        case .whereWeAre(_, let isUnread): return isUnread
+        case .whereWeAre: return false
         case .working, .none: return false
         }
     }
@@ -57,17 +57,20 @@ public enum SidebarRowStatus: Equatable, Sendable {
         // It outranks pane liveness, which lags behind it, unless the agent resumed.
         let hasUnreadStop = context.hasUnseenStop
         func whereWeAre(isUnread: Bool) -> SidebarRowStatus {
-            // A stop without a recap still waits for the user, so it says who stopped.
+            // A stop without a recap still names who stopped.
             if completed.isEmpty, isUnread, let stop = worktree.sidebar?.unseenAgentStop { return .whereWeAre(stop.title, isUnread: true) }
             return completed.isEmpty ? .none : .whereWeAre(completed, isUnread: isUnread)
         }
         if isCached { return whereWeAre(isUnread: false) }
         if let question = context.question { return .question(question, paneID: context.questionPaneID) }
+        if let notice = context.pending.first(where: { $0.agentStop?.notice != nil }) {
+            return .notification(notice.agentStop?.notice ?? notice.title, paneID: notice.paneID)
+        }
         if let notice = context.pending.first(where: { $0.agentStop == nil && $0.occurrence?.source != .agentStop }),
            let text = notice.occurrence?.text {
             return .notification(text, paneID: notice.paneID)
         }
-        let working = hasUnreadStop ? [] : (worktree.layout?.leaves ?? []).filter(\.isBusy)
+        let working = context.workingPanes
         if working.count == 1 { return .working(working[0].displayTitle) }
         if working.count > 1 { return .working("\(working.count) agents working") }
         return whereWeAre(isUnread: hasUnreadStop)

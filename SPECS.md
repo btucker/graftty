@@ -386,7 +386,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.209** While a status line asks for input, the application shall keep its text at 4.5:1 or better against its tint on both light and dark backgrounds.
 
-**LAYOUT-2.210** While a project has worktrees waiting for the user, pinned or not, with a question, a notification, or a finished turn the user has not opened, the application shall show how many as a count in the attention color rather than a hand.
+**LAYOUT-2.210** While a project has worktrees waiting for the user, pinned or not, with a question, a notification, or an explicit agent notice, the application shall show how many as a count in the attention color rather than a hand.
 
 **LAYOUT-2.211** While a worktree row shows its identity, the application shall draw it at full strength while the worktree waits for the user, including a finished turn the user has not opened, or works, and fade it otherwise.
 
@@ -398,7 +398,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.215** While the sidebar shows a worktree row, the application shall draw its name at no less than 80 percent of the theme foreground, and at full foreground when the row is selected, brighter than the status line beneath it.
 
-**LAYOUT-2.216** While a worktree row waits for the user, the application shall offer Dismiss Request in that row's or tile's menu, and dismissing shall move it out of Needs You until a later request or finished turn arrives.
+**LAYOUT-2.216** While a worktree row waits for the user, the application shall offer Dismiss Request in that row's or tile's menu, and dismissing shall move it out of Needs You until a later request or notice arrives.
 
 **LAYOUT-2.217** When the user right-clicks a macOS worktree's status line, the application shall open that worktree's row menu.
 
@@ -416,7 +416,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.224** When a row shows its host, the application shall place the host name after the worktree name on one line within the available width.
 
-**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall show an orange dot before its name while it asks a question or carries a notification, a pulsing blue dot while an agent works, fade it while its host sleeps, and draw no mark otherwise, including after a turn stops.
+**LAYOUT-2.225** While a pinned agent is shown as a tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works even if a notification is pending, fade it while its host sleeps, and draw no dot otherwise, including after a turn stops.
 
 **LAYOUT-2.226** While a pinned agent is shown as a tile, the application shall caption it with its whole worktree name, or the branch name for the default checkout, on one line, ending in an ellipsis only when the name is wider than the tile.
 
@@ -1502,7 +1502,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.6** While Graftty is active, agent Attention notifications shall display native banners and sounds using the user's macOS notification settings.
 
-**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once if it requests input. The application shall ignore duplicate deliveries and stops older than a recorded stop or that provider's progress.
+**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall retain its completion and post a desktop notification once for an ask or explicit notice, ignore duplicate deliveries, and ignore ordinary stops older than recorded activity or provider progress.
 
 **NOTIF-1.8** When a connected Remote Mac records a stopped turn that requests input, the application shall send one macOS notification with its stable purpose title and worktree identity. The application shall keep routine completions, repeated snapshots, initial snapshots, and superseded prompts at the same target silent.
 
@@ -1674,7 +1674,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TECH-6.x
 
-**TECH-6.1** If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
+**TECH-6.1** If an iOS CI test shard loses access to its selected simulator or `xcodebuild` produces no output before its startup deadline, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
 
 **TECH-6.2** While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.
 
@@ -2786,7 +2786,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.3** While a pinned worktree has a working agent, the application shall keep it in Pinned, so Working holds only temporary worktrees.
 
-**IOS-13.4** While a temporary worktree has a finished turn the user has not opened, the application shall list it under Needs you, and list a finished turn that asks a question there once.
+**IOS-13.4** When a temporary worktree finishes a routine turn, the application shall list it under Recent and reserve Needs you for explicit requests and notices.
 
 **IOS-13.5** While a worktree is being created, the application shall list it under Working so it stays near the top of the list.
 
@@ -4984,7 +4984,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.23** When a staged recap lacks an emoji, the Stop hook shall preserve the legacy recap without requesting a correction turn.
 
-**AGENT-3.24** When a user turn starts, the application shall remind the agent to report an Attention recap during that turn without requesting another final response or acknowledging routine team notifications.
+**AGENT-3.24** When a user turn starts, the application shall remind the agent to submit changed context groups or a no-change acknowledgement during that turn without requesting another final response or acknowledging routine team notifications.
 
 **AGENT-3.25** When an absolute GRAFTTY_ATTENTION_DIR is configured, the application shall use that directory for Attention handoff so isolated provider tests cannot publish into the user's notification queue.
 
@@ -5006,7 +5006,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.35** When the application records a recap that carried a drawing, it shall store and broadcast that recap without the drawing.
 
-**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, varied compositions, its palette tokens and the redraw rule while still requiring an emoji.
+**AGENT-3.36** When the application renders agent recap guidance, it shall explain the optional worktree drawing, varied compositions, its palette tokens and the redraw rule while retaining assigned identity between updates.
 
 **AGENT-3.37** When an Attention report carries a drawing that fails validation, the CLI shall reject the report with the specific reason before staging it.
 
@@ -5016,7 +5016,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.40** When a client asks a host to explain a stopped agent's question, the host shall type the catch-up prompt into that agent's pane and submit it, and shall refuse a pane it cannot find or one waiting at its harness's own prompt.
 
-**AGENT-3.41** When the application renders agent recap guidance, it shall ask for a one-sentence plain completed state, short plain history headlines, and, for a question with clear choices, options with a few words of cost each in place of a catch-up paragraph, without lengthening the per-turn guidance.
+**AGENT-3.41** When the application renders context-update guidance, it shall request sparse updates with a summary in one plain sentence, short history headlines, and explicit asks with options, brief costs, and background, within the existing per-turn guidance limit.
 
 **AGENT-3.42** When an agent submits a worktree drawing, the application shall accept a wide 96-by-64 canvas as well as the older 64-unit square, reject any other canvas, and know which canvas a stored drawing uses.
 
@@ -5174,7 +5174,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load Graftty skills for Attention recaps, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji independently of cached skill instructions.
+**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load Graftty skills for sparse context updates, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji on initialization independently of cached skill instructions.
 
 **AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that routes finished review artifacts through graftty preview and documents external file opening, URL routing, worktree scope and mobile limits.
 
@@ -5400,7 +5400,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.145** When a mobile conversation restarts with the same terminal name, the application shall discard the retained previous-assignment client before attaching even if its process-end event has not arrived.
 
-**AGENT-6.146** When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to report again before each final response.
+**AGENT-6.146** When Graftty installs the recap skill, the application shall ask agents to send their first Attention report as soon as they understand the task, before starting long work, and to send changed groups or acknowledge no change before each final response.
 
 **AGENT-6.147** While an agent is the primary agent of a worktree, the application shall keep it available for ongoing work and reserve task-completion instructions and parent cleanup obligations for CLI-added additional agents in existing worktrees.
 
@@ -5678,7 +5678,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-58.x
 
-**CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its completed sentence above a dimmer Next line, after the timeline, followed by any waiting question and a status line.
+**CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its current-state sentence above a dimmer Next line when a next step exists, after the timeline, followed by any waiting question and a status line.
 
 ### CONTEXT-59.x
 
@@ -5699,6 +5699,90 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-63.x
 
 **CONTEXT-63** While Context starts below a workspace's tab row on desktop, the application shall paint the space above it with the tab row's background and header wash, so the tab strip continues across the window instead of leaving a blank band.
+
+### CONTEXT-64.x
+
+**CONTEXT-64** When an agent submits a current-state update, the application shall replace its summary and optional next step while retaining omitted purpose, identity, decisions, and history.
+
+### CONTEXT-65.x
+
+**CONTEXT-65** When updates to different retained groups arrive out of order, the application shall compare freshness per group and preserve newer values within each group.
+
+### CONTEXT-66.x
+
+**CONTEXT-66** When an agent acknowledges no change or submits only attention, the application shall preserve the retained brief and its content timestamp.
+
+### CONTEXT-67.x
+
+**CONTEXT-67** When an agent submits an attention request, the application shall validate asks and notices separately and reject contradictory or empty updates.
+
+### CONTEXT-68.x
+
+**CONTEXT-68** When a stopped turn carries a notice, the application shall request attention without exposing an answerable question, while routine completion shall remain activity.
+
+### CONTEXT-69.x
+
+**CONTEXT-69** When a provider resumes or later completes routine work, the application shall retain unread notices independently of stopped-turn activity until exact acknowledgement.
+
+### CONTEXT-70.x
+
+**CONTEXT-70** When an agent completes a turn without an ask or notice, the application shall retain its activity and context without marking the worktree as needing attention.
+
+### CONTEXT-71.x
+
+**CONTEXT-71** When an agent reads retained context through the private handoff, the application shall return the owning live host's snapshot and reject snapshots from exited or replaced hosts.
+
+### CONTEXT-72.x
+
+**CONTEXT-72** When the context update command receives sparse JSON, the CLI shall validate changed groups without requiring repeated identity fields and reject unknown top-level fields and unsafe drawings.
+
+### CONTEXT-73.x
+
+**CONTEXT-73** While an unread agent notice exists on Mac or mobile, the application shall display it with dismissal controls and no answer field, including after the agent resumes or a newer routine turn ends.
+
+### CONTEXT-74.x
+
+**CONTEXT-74** When a notice arrives after newer provider progress or routine activity, the application shall retain the notice without rewinding the latest activity or recreating it on a retried receipt.
+
+### CONTEXT-75.x
+
+**CONTEXT-75** When explicit history updates arrive out of order or a receipt is retried after another entry, the application shall retain distinct events in time order and append each receipt at most once.
+
+### CONTEXT-76.x
+
+**CONTEXT-76** While additional agents share a worktree, the application shall preserve the primary agent's retained context and identity while retaining additional agents' explicit result notices.
+
+### CONTEXT-77.x
+
+**CONTEXT-77** When another session submits an explicit ask, the application shall make the newest ask actionable while preserving it across other sessions' routine completions.
+
+### CONTEXT-78.x
+
+**CONTEXT-78** While a valid initialization from the same agent is durably queued, the context command shall accept later sparse updates without waiting for the host snapshot to catch up.
+
+### CONTEXT-79.x
+
+**CONTEXT-79** When a stopped question's pane cannot be resolved, the application shall preserve its unresolved route rather than borrowing another pane's provider request.
+
+### CONTEXT-80.x
+
+**CONTEXT-80** When the host acknowledges a notice, the application shall remove its retained navigation item and dismissal marker from authoritative snapshots while preserving unacknowledged notices as pending during provider progress.
+
+### CONTEXT-81.x
+
+**CONTEXT-81** While a Mac or mobile report preview has unread notices and retained context, the application shall display their messages and omit the next-step section when no next step exists.
+
+### CONTEXT-82.x
+
+**CONTEXT-82** If one context snapshot cannot be published, then the application shall continue publishing other worktrees and keep activity observation independent of that failure.
+
+### CONTEXT-83.x
+
+**CONTEXT-83** When a socket report persists retained context, the application shall refresh its read-back snapshot without requiring another hook, while unchanged tool hooks shall not republish the snapshot.
+
+### CONTEXT-84.x
+
+**CONTEXT-84** When a headless host starts maintenance after restoring its worktrees, the application shall publish their retained context with the current host process identity before accepting further updates.
 
 ## MEM — MEM
 

@@ -435,7 +435,9 @@ public struct WorktreeListContent: View {
     private func syncNavigation() {
         let rows = feed.state.rows
         let merged = merged
-        navigation.reconcile(worktrees: rows, projects: feed.state.projects)
+        let authoritativeProjectIDs = Set(feed.state.hostIDs.filter { feed.state.isLive($0) }
+            .flatMap { feed.state.snapshot(of: $0)?.projects ?? [] }.filter(\.isAvailable).map(\.id))
+        navigation.reconcile(worktrees: rows, projects: feed.state.projects, authoritativeProjectIDs: authoritativeProjectIDs)
         let selected = selectedMergedID(in: merged)
         if selected == nil {
             navigation.selectedProjectID = rows.first(where: isSelected).map { merged.mergedID(forMember: SidebarProjection.projectID($0)) }
@@ -1124,8 +1126,7 @@ public struct WorktreeListContent: View {
         let wt = row.row
         let context = navigation.worktreeContext(wt)
         let isCached = row.availability == .wakeable
-        let state = PinnedTileState.resolve(status: SidebarRowStatus.resolve(context: context, worktree: wt, isCached: isCached),
-                                            isCached: isCached)
+        let state = PinnedTileState.resolve(context: context, isCached: isCached)
         let memberID = SidebarProjection.projectID(wt)
         let project = feed.state.projects.first { $0.id == memberID }
             ?? SidebarProject(id: memberID, repositoryID: wt.repositoryID ?? memberID, name: wt.repoDisplayName)

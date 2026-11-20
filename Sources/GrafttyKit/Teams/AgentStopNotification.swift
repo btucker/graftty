@@ -76,11 +76,11 @@ public enum AgentStopNotification {
         runtime: TeamHookRuntime, worktreeName: String, worktreePath: String,
         sessionID: String, paneSessionName: String?, stop: SidebarAgentStop, emoji: String?, purposeTitle: String? = nil
     ) -> AgentStopNotificationContent? {
-        guard let recap = stop.recap, let question = stop.question else { return nil }
+        guard let recap = stop.recap, let text = stop.question ?? stop.notice else { return nil }
         return AgentStopNotificationContent(
             title: purposeTitle ?? recap.title,
             subtitle: [emoji, worktreeName].compactMap { $0 }.joined(separator: " "),
-            body: question,
+            body: text,
             userInfo: payloadMetadata(runtime: runtime, worktreePath: worktreePath, sessionID: sessionID,
                                       paneSessionName: paneSessionName, timestamp: stop.stoppedAt),
             identifier: "agent-attention:\(worktreePath)"

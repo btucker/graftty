@@ -290,16 +290,7 @@ struct MainWindow: View {
                     )
                 }
             } inspector: {
-                if showsWorktreeContext, let context = selectedContext {
-                    WorktreeContextPanel(context: context, theme: terminalManager.theme.core, hostLabel: selectedHostLabel,
-                        readTranscript: transcriptReader, showAgent: agentTabOpener, onClose: { showsWorktreeContext = false })
-                        .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
-                            openContextWorktree(path, remoteIdentity: identity)
-                        }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
-                            await revealInTerminal(request, remoteIdentity: identity)
-                        }, answerQuestion: contextAnswer))
-                        .frame(width: 360)
-                }
+                contextInspector
             }
             .ignoresSafeArea(.container, edges: .top)
         }
@@ -585,6 +576,19 @@ struct MainWindow: View {
         }
     }
 
+    @ViewBuilder private var contextInspector: some View {
+        if showsWorktreeContext, let context = selectedContext {
+            WorktreeContextPanel(context: context, theme: terminalManager.theme.core, hostLabel: selectedHostLabel,
+                readTranscript: transcriptReader, showAgent: agentTabOpener, onClose: { showsWorktreeContext = false })
+                .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
+                    openContextWorktree(path, remoteIdentity: identity)
+                }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
+                    await revealInTerminal(request, remoteIdentity: identity)
+                }, answerQuestion: contextAnswer, dismissNotice: contextNoticeDismissal))
+                .frame(width: 360)
+        }
+    }
+
     /// Answers go to this Mac's own pane, or through the selected remote Mac.
     private var contextAnswer: (@MainActor (AttentionAnswer) async -> String?)? {
         if let identity = selectedRemoteIdentity {
@@ -599,6 +603,21 @@ struct MainWindow: View {
         }
         guard let localAttentionAnswer else { return nil }
         return { answer in AttentionAnswer.failureMessage(for: await localAttentionAnswer(answer)) }
+    }
+
+    private var contextNoticeDismissal: @MainActor (WorktreePanes, SidebarAttentionOccurrence) async -> String? {
+        if let identity = selectedRemoteIdentity {
+            return { [remoteMacsModel] worktree, occurrence in
+                do {
+                    return try await remoteMacsModel.sendWorktreeManagement(identity: identity,
+                        request: .acknowledgeOccurrence(worktreeID: worktree.path, paneID: nil, occurrence: occurrence)).errorMessage
+                } catch { return "Couldn't reach that Mac to dismiss the notice." }
+            }
+        }
+        return { worktree, occurrence in
+            SidebarHostNavigation.acknowledge(in: &appState, worktreeID: worktree.path, paneID: nil, occurrence: occurrence)
+                ? nil : "This notice has already cleared."
+        }
     }
 
     private var transcriptReader: (@MainActor (String) async -> String?)? {

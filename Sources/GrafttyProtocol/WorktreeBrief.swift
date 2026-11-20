@@ -19,6 +19,9 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
     public private(set) var decisions: [String]
     public private(set) var updatedAt: Double
     public private(set) var history: [Checkpoint]
+    /// Optional for saved briefs from before sparse updates.
+    private var groupUpdatedAt: [String: Double]?
+    private var historyReceipts: [UUID]?
 
     public init(recap: AttentionRecap, at date: Date) {
         title = recap.title
@@ -28,10 +31,16 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
         decisions = recap.decisions ?? []
         updatedAt = date.timeIntervalSinceReferenceDate
         history = []
-        recordHistory(recap, at: updatedAt, purposeChanged: recap.purposeChanged == true, boundary: nil)
+        groupUpdatedAt = ["purpose": updatedAt, "now": updatedAt, "decisions": updatedAt, "history": updatedAt]
+        recordHistory(recap, at: updatedAt, purposeChanged: recap.contextUpdate == nil && recap.purposeChanged == true,
+                      boundary: nil, receiptID: recap.contextUpdate?.receiptID)
     }
 
     public mutating func update(_ recap: AttentionRecap, at date: Date, preservingCheckpointBefore boundary: Date? = nil) {
+        if let update = recap.contextUpdate {
+            apply(update, at: date, boundary: boundary)
+            return
+        }
         let timestamp = date.timeIntervalSinceReferenceDate
         guard timestamp >= updatedAt else { return }
         let newTitle = recap.purposeChanged == true ? recap.title : title
@@ -44,11 +53,48 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
         next = recap.next
         decisions = newDecisions
         updatedAt = timestamp
+        groupUpdatedAt = ["purpose": timestamp, "now": timestamp, "decisions": timestamp, "history": timestamp]
         recordHistory(recap, at: timestamp, purposeChanged: purposeChanged, boundary: boundary)
     }
 
+    private mutating func apply(_ update: WorktreeContextUpdate, at date: Date, boundary: Date?) {
+        guard update.isValid, update.unchanged != true else { return }
+        let timestamp = date.timeIntervalSinceReferenceDate
+        var times = groupUpdatedAt ?? ["purpose": updatedAt, "now": updatedAt, "decisions": updatedAt, "history": updatedAt]
+        var changed = false
+        if let purpose = update.purpose, timestamp > (times["purpose"] ?? -.infinity) {
+            title = purpose.title; context = purpose.context
+            times["purpose"] = timestamp; changed = true
+        }
+        if let now = update.now, timestamp > (times["now"] ?? -.infinity) {
+            completed = now.summary; next = now.next ?? ""
+            times["now"] = timestamp; changed = true
+        }
+        if let values = update.decisions, timestamp > (times["decisions"] ?? -.infinity) {
+            decisions = values
+            times["decisions"] = timestamp; changed = true
+        }
+        if let entry = update.historyEntry {
+            var event = AttentionRecap(title: title, completed: completed, next: next)
+            event.historyEntry = entry
+            let previous = history
+            recordHistory(event, at: timestamp, purposeChanged: false, boundary: boundary, receiptID: update.receiptID)
+            changed = changed || history != previous
+        }
+        if changed { groupUpdatedAt = times; updatedAt = max(updatedAt, timestamp) }
+    }
+
+    /// Complete retained context plus this turn's attention, for every client.
+    public func snapshot(attentionFrom recap: AttentionRecap) -> AttentionRecap {
+        var result = recap
+        result.title = title; result.context = context; result.completed = completed; result.next = next
+        result.decisions = decisions.isEmpty && recap.decisions == nil ? nil : decisions
+        result.contextUpdate = nil
+        return result
+    }
+
     private mutating func recordHistory(_ recap: AttentionRecap, at timestamp: Double,
-                                        purposeChanged: Bool, boundary: Date?) {
+                                        purposeChanged: Bool, boundary: Date?, receiptID: UUID? = nil) {
         let heading: String
         let detail: String
         let isExplicit: Bool
@@ -67,20 +113,26 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
         } else {
             return
         }
-        let last = history.last
+        if let receiptID {
+            guard !(historyReceipts ?? []).contains(receiptID) else { return }
+            historyReceipts = Array(((historyReceipts ?? []) + [receiptID]).suffix(128))
+        }
+        let previousIndex = history.lastIndex { $0.timestamp <= timestamp }
+        let last = previousIndex.map { history[$0] }
         let canMerge = boundary.map { (last?.timestamp ?? -.infinity) > $0.timeIntervalSinceReferenceDate } ?? true
         if !purposeChanged, canMerge, last?.title == heading,
            (last?.isExplicitEntry == true) == isExplicit {
             // Retrying a report or updating only its brief must not move history.
             if last?.completed == detail { return }
-            if !isExplicit {
-                history[history.count - 1].timestamp = timestamp
-                history[history.count - 1].completed = detail
+            if !isExplicit, let previousIndex {
+                history[previousIndex].timestamp = timestamp
+                history[previousIndex].completed = detail
                 return
             }
         }
-        history.append(Checkpoint(id: UUID(), timestamp: timestamp, title: heading,
+        history.append(Checkpoint(id: receiptID ?? UUID(), timestamp: timestamp, title: heading,
                                   completed: detail, decisions: [], isExplicitEntry: isExplicit ? true : nil))
+        history.sort { $0.timestamp < $1.timestamp }
         if history.count > 32 { history.removeFirst(history.count - 32) }
     }
 }

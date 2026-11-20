@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@Suite("@spec TECH-6.1: If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
+@Suite("@spec TECH-6.1: If an iOS CI test shard loses access to its selected simulator or `xcodebuild` produces no output before its startup deadline, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
 struct IOSTestShardRunnerTests {
     @Test("@spec TECH-6.4: When an iOS CI runner executes multiple test batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.")
     func preservesProcessBoundariesAndFailuresAcrossBatches() throws {
@@ -119,6 +119,18 @@ struct IOSTestShardRunnerTests {
         #expect(result.simulatorsRemaining == 0)
     }
 
+    @Test("recovers once from a silent xcodebuild startup", arguments: [false, true])
+    func retriesSilentStartup(retryAlsoStalls: Bool) throws {
+        let result = try runFixture(firstExitCode: 0, removeSimulator: false,
+            silentAttempts: retryAlsoStalls ? 2 : 1)
+
+        #expect(result.exitCode == (retryAlsoStalls ? 124 : 0))
+        #expect(result.xcodebuildAttempts == 2)
+        #expect(result.simulatorsCreated == 2)
+        #expect(result.simulatorsRemaining == 0)
+        #expect(result.resultBundles == ["batch-1-attempt-1.xcresult", "batch-1-attempt-2.xcresult"])
+    }
+
     private func runFixture(
         firstExitCode: Int32,
         removeSimulator: Bool,
@@ -127,6 +139,7 @@ struct IOSTestShardRunnerTests {
         availableTrailingLines: Int = 0,
         minimumDestinationTimeout: Int = 0,
         secondExitCode: Int32 = 0,
+        silentAttempts: Int = 0,
         existingResults: Bool = false,
         testArguments: String = "-only-testing:FixtureTests"
     ) throws -> FixtureResult {
@@ -184,6 +197,8 @@ struct IOSTestShardRunnerTests {
             reportDestinationResolutionFailure ? "1" : "0"
         environment["FAKE_AVAILABLE_TRAILING_LINES"] = String(availableTrailingLines)
         environment["FAKE_MINIMUM_DESTINATION_TIMEOUT"] = String(minimumDestinationTimeout)
+        environment["FAKE_SILENT_ATTEMPTS"] = String(silentAttempts)
+        environment["IOS_XCODEBUILD_STARTUP_TIMEOUT_SECONDS"] = "1"
         environment["GITHUB_ENV"] = root.appendingPathComponent("github-env").path
         environment["SHARD_NAME"] = "fixture"
         environment["SIMULATOR_UDID"] = "sim-1"
@@ -307,6 +322,10 @@ struct IOSTestShardRunnerTests {
     if [[ "$destination_timeout" -lt "$FAKE_MINIMUM_DESTINATION_TIMEOUT" ]]; then
       echo "xcodebuild: error: Unable to find a device matching the provided destination specifier:" >&2
       exit 70
+    fi
+    if [[ "$count" -le "$FAKE_SILENT_ATTEMPTS" ]]; then
+      sleep 3
+      exit 0
     fi
     if [[ "$count" -eq 1 ]]; then
       if [[ "$FAKE_REMOVE_SIMULATOR" == "1" ]]; then

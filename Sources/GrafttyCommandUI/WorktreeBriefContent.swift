@@ -52,7 +52,7 @@ public struct WorktreeBriefContent: View {
                     .padding(.leading, 12)
                     .overlay(alignment: .leading) { Rectangle().fill(.orange).frame(width: 2) }
                 }
-                section("Up next", text: brief.next)
+                if !brief.next.isEmpty { section("Up next", text: brief.next) }
                 if !compact {
                     HStack(spacing: 4) {
                         if context.isRunning { Text("Agent running ·") }
@@ -67,6 +67,9 @@ public struct WorktreeBriefContent: View {
                 Text(context.pending.first?.title ?? "Agent reports will build a current brief and decision history here.")
                     .font(.callout).foregroundStyle(secondary)
                 if let question = context.question { section("Waiting for you", text: question) }
+            }
+            if context.pending.contains(where: { $0.agentStop?.notice != nil }) {
+                WorktreeContextNotices(context: context, secondary: secondary)
             }
             let timeline = WorktreeTimeline(context)
             if !timeline.events.isEmpty {

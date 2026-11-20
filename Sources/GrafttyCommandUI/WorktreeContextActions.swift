@@ -10,13 +10,16 @@ public struct WorktreeContextActions {
     /// Types an answer into the asking agent's pane on its host. Returns nil once
     /// the host accepts it, else the message to show; nil when this client can't answer.
     public let answerQuestion: (@MainActor (AttentionAnswer) async -> String?)?
+    public let dismissNotice: (@MainActor (WorktreePanes, SidebarAttentionOccurrence) async -> String?)?
 
     public init(openWorktree: @escaping (String, WorktreePanes) -> Bool,
                 revealInTerminal: (@MainActor (TerminalRevealRequest) async -> Bool)? = nil,
-                answerQuestion: (@MainActor (AttentionAnswer) async -> String?)? = nil) {
+                answerQuestion: (@MainActor (AttentionAnswer) async -> String?)? = nil,
+                dismissNotice: (@MainActor (WorktreePanes, SidebarAttentionOccurrence) async -> String?)? = nil) {
         self.openWorktree = openWorktree
         self.revealInTerminal = revealInTerminal
         self.answerQuestion = answerQuestion
+        self.dismissNotice = dismissNotice
     }
 
     /// A path from another Mac must never select a same-named local worktree.
