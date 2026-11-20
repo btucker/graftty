@@ -20,6 +20,25 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(viewer.model.startupGrids == [expected])
         #expect(surfaces.live.count == 1)
     }
+    @Test("@spec REMOTE-24.16: When the viewer returns to a remote worktree without naming a pane, it shall focus the session last selected in that worktree's workspace rather than the worktree's first pane.")
+    func returningToWorktreeRestoresLastSelectedSession() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let row = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        var layout = viewer.controller.workspaceLayout(identity: viewer.identity, worktree: row)
+        layout.select("b")
+        viewer.controller.saveWorkspaceLayout(layout, identity: viewer.identity, worktreePath: row.path)
+        let other = row.with(path: "/repo/other", layout: Layout.split(.leaf("c"), .leaf("d")).node)
+        viewer.model.worktreePanesByRemote = [viewer.identity: [row, other]]
+        viewer.controller.reconcile(worktreePanesByRemote: viewer.model.worktreePanesByRemote)
+        viewer.controller.selectRemoteWorktree(viewer.mac, worktreePath: other.path, acknowledging: false)
+        await viewer.settle()
+        #expect(viewer.controller.selectedRemotePaneSessionName == "c")
+        viewer.controller.selectRemoteWorktree(viewer.mac, worktreePath: row.path, acknowledging: false)
+        await viewer.settle()
+        #expect(viewer.controller.selectedRemotePaneSessionName == "b")
+        #expect(viewer.controller.focusedTerminalID == viewer.surfaces.liveTerminal(forSession: "b"))
+    }
+
     @Test("A newer explicit open prevents adoption of an older recovery")
     func explicitOpenCancelsOldRouteRecovery() async throws {
         let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
@@ -893,6 +912,7 @@ private final class ViewerHarness {
         controller = RemoteWorktreeViewerController(
             model: model,
             surfaces: surfaces,
+            workspaceDefaults: UserDefaults(suiteName: "RemoteWorktreeViewerControllerTests-\(UUID().uuidString)")!,
             presentError: { [errors] in errors.messages.append($0) },
             viewportBounds: { CGRect(x: 0, y: 0, width: 1000, height: 600) },
             sleep: { [clock] in await clock.sleep($0) }

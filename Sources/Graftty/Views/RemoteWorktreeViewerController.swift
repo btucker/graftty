@@ -101,24 +101,25 @@ final class RemoteWorktreeViewerController: ObservableObject {
 
     func workspaceLayout(identity: RemoteMacIdentity, worktree: WorktreePanes) -> WorkspaceLayout<String> {
         let key = WorktreeKey(identity: identity, worktreePath: worktree.path)
-        var layout: WorkspaceLayout<String>
-        if let cached = workspaceLayouts[key] {
-            layout = cached
-        } else {
-            let storageKey = workspaceKey(identity: identity, path: worktree.path)
-            let legacyKey = "remote.workspace.\(identity).\(worktree.path)"
-            let stored = workspaceDefaults.data(forKey: storageKey)
-            let legacy = stored == nil ? workspaceDefaults.data(forKey: legacyKey) : nil
-            layout = (stored ?? legacy)
-                .flatMap { try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0) } ?? .initial(for: worktree)
-            if let legacy {
-                workspaceDefaults.set(legacy, forKey: storageKey)
-                workspaceDefaults.removeObject(forKey: legacyKey)
-            }
-        }
+        var layout = storedWorkspaceLayout(key) ?? .initial(for: worktree)
         layout.reconcile(with: worktree, preservingSelection: true)
         workspaceLayouts[key] = layout
         return layout
+    }
+
+    /// The cached or saved layout, not yet reconciled with a snapshot.
+    /// Migrates a layout saved under the legacy key.
+    private func storedWorkspaceLayout(_ key: WorktreeKey) -> WorkspaceLayout<String>? {
+        if let cached = workspaceLayouts[key] { return cached }
+        let storageKey = workspaceKey(identity: key.identity, path: key.worktreePath)
+        let legacyKey = "remote.workspace.\(key.identity).\(key.worktreePath)"
+        let stored = workspaceDefaults.data(forKey: storageKey)
+        let legacy = stored == nil ? workspaceDefaults.data(forKey: legacyKey) : nil
+        if let legacy {
+            workspaceDefaults.set(legacy, forKey: storageKey)
+            workspaceDefaults.removeObject(forKey: legacyKey)
+        }
+        return (stored ?? legacy).flatMap { try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0) }
     }
 
     func saveWorkspaceLayout(_ layout: WorkspaceLayout<String>, identity: RemoteMacIdentity, worktreePath: String) {
@@ -822,13 +823,15 @@ final class RemoteWorktreeViewerController: ObservableObject {
             selectedRemotePaneSessionName = newestSplitSessionName
             pendingRemoteFocusTarget = focusTarget
         }
-        let focusedSession = newestSplitSessionName ?? preferredSessionName.flatMap {
-            visibleSessionNames.contains($0) ? $0 : nil
-        } ?? selectedRemotePaneSessionName.flatMap {
-            visibleSessionNames.contains($0) ? $0 : nil
-        } ?? layout.leaves.lazy.map(\.sessionName).first {
-            visibleSessionNames.contains($0)
+        func visible(_ session: String?) -> String? {
+            session.flatMap { visibleSessionNames.contains($0) ? $0 : nil }
         }
+        // REMOTE-24.16: returning to a worktree without a named pane restores
+        // its last selected tab. `??` reads the saved layout only when needed.
+        let focusedSession = newestSplitSessionName ?? visible(preferredSessionName)
+            ?? visible(selectedRemotePaneSessionName)
+            ?? visible(storedWorkspaceLayout(focusTarget)?.focusedSession)
+            ?? layout.leaves.lazy.map(\.sessionName).first { visibleSessionNames.contains($0) }
         selectedRemotePaneSessionName = focusedSession
 
         for leaf in layout.leaves

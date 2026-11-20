@@ -328,11 +328,18 @@ public struct IPadRootLayout: View {
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
         guard !worktree.state.isInFlight || worktree.showsCreationProgress else { return }
         let leaves = worktree.layout?.leaves ?? []
-        let focused = appState.selectedWorktreePath == worktree.path
-            ? appState.focusedPaneId.flatMap { id in
+        func presentable(_ session: String?) -> String? {
+            session.flatMap { id in
                 leaves.contains(where: { $0.sessionName == id }) || worktree.agents?.contains(where: { $0.presentationSessionName == id }) == true ? id : nil
             }
-            : nil
+        }
+        // IPAD-1.36: without a current pane here, restore the worktree's last
+        // selected tab. A matching path can name another host's worktree,
+        // whose focused pane then fails the presentable check.
+        let current = appState.selectedWorktreePath == worktree.path ? presentable(appState.focusedPaneId) : nil
+        let focused = current ?? presentable(appState.selectedHostId.flatMap {
+            appState.workspaceStore.layout(hostID: $0, worktree: worktree).focusedSession
+        })
         appState.select(hostID: appState.selectedHostId, worktreePath: worktree.path,
                         paneID: focused ?? leaves.first?.sessionName,
                         requestsTerminalFocus: !worktree.showsCreationProgress)

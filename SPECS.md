@@ -2910,6 +2910,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.35** While the iPad sidebar displays a worktree, the application shall draw its name at 13 points, smaller than the 15 points used on iPhone, so the sidebar fits more.
 
+**IPAD-1.36** When the user returns to a worktree, the application shall focus the tab last selected in that worktree's workspace rather than the worktree's first pane.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render device-local tabs, splits, and a terminal drawer over the worktree's complete host session inventory.
@@ -4243,6 +4245,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-24.14** If a dispatched remote pane mutation has no reply after thirty seconds, then the viewer shall report the timeout, abandon that worktree's queued mutations, release the queue for other Macs, and ignore the expired dispatch's late result.
 
 **REMOTE-24.15** When a snapshot reveals a split-created pane after the split response, the viewer shall focus the created pane unless a newer user intent superseded the split.
+
+**REMOTE-24.16** When the viewer returns to a remote worktree without naming a pane, it shall focus the session last selected in that worktree's workspace rather than the worktree's first pane.
 
 ### REMOTE-25.x — Dev Container environments
 
