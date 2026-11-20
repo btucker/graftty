@@ -3052,6 +3052,56 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.10** Fixed Graftty pane and worktree chords shall be provenance-independent, host tab-action chords shall be additional when noncolliding, and both SwiftUI and responder projections shall use the same normalized input-and-modifier collision winners with precedence fixed worktree over fixed pane over host.
 
+## WATCH — Apple Watch companion
+
+### WATCH-1.x — Watch inbox and replies
+
+**WATCH-1.1** When Apple Watch receives an attention snapshot, the application shall preserve each question's host, worktree, context, choices, and exact reply target across encoding and decoding.
+
+**WATCH-1.2** If refreshing the watch inbox fails, then the application shall retain the last snapshot and show the failure instead of showing an empty inbox.
+
+**WATCH-1.3** When a watch reply is accepted by the host, the application shall mark that exact question as sent and prevent another submission while allowing a later question in the same worktree to be answered.
+
+**WATCH-1.4** While a watch reply awaits host acknowledgement, the application shall prevent duplicate submissions and show Sent only after the host accepts the answer.
+
+**WATCH-1.5** If a watch card is obsolete, cannot accept a text answer, or has a blank reply, then the application shall refuse to submit it.
+
+**WATCH-1.6** If the host rejects a watch reply, then the application shall preserve the question and display the host's failure without marking the answer sent.
+
+**WATCH-1.7** When a newer watch inbox snapshot has arrived, the application shall ignore an older snapshot that finishes later.
+
+**WATCH-1.8** If an attention snapshot exceeds the watch transfer budget, then the application shall keep the newest cards within the budget and report the number of omitted requests.
+
+**WATCH-1.9** When a watch question is answered, the application shall use the same 60000-byte encoded request budget on both devices and report an oversized reply before sending it.
+
+### WATCH-2.x — iPhone relay
+
+**WATCH-2.1** When a paired iPhone projects a worktree's stopped question for Apple Watch, the application shall include its context and choices and preserve the host-validated occurrence and asking pane for replies.
+
+**WATCH-2.2** If a watch reply's host, question, occurrence, or pane no longer matches a fresh authenticated snapshot, then the iPhone shall refuse the reply before delivering it.
+
+**WATCH-2.3** While an attention request belongs to a harness permission prompt, the watch shall display the request without offering a text reply; resumed agents and routine recaps shall not appear as questions.
+
+**WATCH-2.4** If a paired host becomes unavailable, then the iPhone shall retain its last watch questions with an unavailable label, remove forgotten hosts' questions, and avoid repeating a worktree delivered by a live route.
+
+**WATCH-2.5** While the phone foreground or any enabled watch request needs a host connection, the application shall share its connection coordinator and keep access until the final consumer releases it.
+
+**WATCH-2.6** When watch access is disabled or a watch request expires, the application shall release that request's connection lease without closing connections still needed by the foreground or another request, and shall refuse disabled or cancelled requests.
+
+### WATCH-3.x — Terminal viewing
+
+**WATCH-3.1** When a paired client reads terminal output, the host shall resolve the pane within the requested running worktree and read at most 200 recent lines without sending input, resizing the terminal, or acknowledging attention.
+
+**WATCH-3.2** If terminal output exceeds the watch text budget, then the host shall retain the newest complete UTF-8 characters within 24000 bytes.
+
+**WATCH-3.3** When a watch terminal refresh succeeds, the application shall display the returned output for the selected pane and retain it with an error if a later refresh fails.
+
+**WATCH-3.4** While a watch terminal read is pending, the application shall prevent overlapping reads and ignore its result after the terminal view stops or the returned pane does not match.
+
+**WATCH-3.5** When the watch browses terminals, the iPhone shall include running panes even without a question, link attention cards to their asking pane, and refuse terminal reads whose host, worktree, or pane is no longer present.
+
+**WATCH-3.6** When terminal text is requested through a paired relay, the application shall translate both worktree and pane aliases to the owning host and refuse a pane from another worktree.
+
 ## TEAM — Agent Teams
 
 ### TEAM-1.x — Settings & Enablement
