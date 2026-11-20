@@ -49,12 +49,11 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
 public struct ScrollbackMapLayout: Equatable {
     public static let cardSize = CGSize(width: 34, height: 150)
     static let mobileTouchWidth: CGFloat = 44
-    static let mobileCollapsedWidth: CGFloat = 4
+    static let mobileCollapsedWidth: CGFloat = 8
+    static let macGutterWidth: CGFloat = 14
     public static let stripInset = EdgeInsets(top: 6, leading: 7, bottom: 6, trailing: 7)
     public static let mergeDistance: CGFloat = 3
     public static let markHeight: CGFloat = 3
-    static let maximumGrowth: CGFloat = 52
-    private static let magnificationRadius: CGFloat = 48
     public static let minimumViewportHeight: CGFloat = 4
     /// How close a click must land to a mark to jump to it rather than scrub.
     public static let tapTolerance: CGFloat = 6
@@ -62,9 +61,9 @@ public struct ScrollbackMapLayout: Equatable {
     public static var stripHeight: CGFloat { cardSize.height - stripInset.top - stripInset.bottom }
 
     /// The mobile drawing expands inside a fixed touch width at the pane's right edge.
-    static func mobileCardFrame(magnification: CGFloat, height: CGFloat) -> CGRect {
-        let width = mobileCollapsedWidth + (cardSize.width - mobileCollapsedWidth) * magnification
-        let trailing: CGFloat = 6 * magnification
+    static func mobileCardFrame(expansion: CGFloat, height: CGFloat) -> CGRect {
+        let width = mobileCollapsedWidth + (cardSize.width - mobileCollapsedWidth) * expansion
+        let trailing: CGFloat = 6 * expansion
         return CGRect(x: mobileTouchWidth - width - trailing, y: 0, width: width, height: height)
     }
 
@@ -79,7 +78,6 @@ public struct ScrollbackMapLayout: Equatable {
         /// The top of the drawn mark, kept inside the strip.
         public let y: CGFloat
         let height: CGFloat
-        let widthScale: CGFloat
         /// Orange wins over blue so a merged human input never disappears.
         public var kind: ScrollbackMap.Kind { marks.contains { $0.kind == .input } ? .input : .peer }
     }
@@ -87,30 +85,10 @@ public struct ScrollbackMapLayout: Equatable {
     public let height: CGFloat
     public let totalRows: Int
     var cardHeight: CGFloat { height + Self.stripInset.top + Self.stripInset.bottom }
-    private let restingHeight: CGFloat
-    private let entryY: CGFloat
-    private let tailScale: CGFloat
-    private let focusY: CGFloat?
-    private let magnification: CGFloat
 
     public init(height: CGFloat = ScrollbackMapLayout.stripHeight, totalRows: Int) {
-        self.init(height: height, totalRows: totalRows, focusY: nil, entryY: nil)
-    }
-
-    init(height: CGFloat, totalRows: Int, focusY: CGFloat?, entryY: CGFloat?,
-         magnification: CGFloat = 1,
-         availableGrowth: CGFloat = ScrollbackMapLayout.maximumGrowth) {
-        let magnification = min(1, max(0, magnification))
-        let anchor = min(height, max(0, entryY ?? focusY ?? 0))
-        let tail = height - anchor
-        let growth = focusY == nil ? 0 : min(availableGrowth, Self.maximumGrowth, tail) * magnification
-        self.height = height + growth
+        self.height = height
         self.totalRows = max(1, totalRows)
-        restingHeight = height
-        self.entryY = anchor
-        tailScale = tail > 0 ? growth / tail : 0
-        self.focusY = focusY.map { min(height + growth, max(0, $0)) }
-        self.magnification = magnification
     }
 
     /// Rows can grow past the last scan, so the live viewport total wins when larger.
@@ -119,16 +97,7 @@ public struct ScrollbackMapLayout: Equatable {
     }
 
     public func y(forRow row: Int) -> CGFloat {
-        let restingY = CGFloat(min(max(row, 0), totalRows)) / CGFloat(totalRows) * restingHeight
-        // Extend below the entry point so opening the card keeps the row there under the pointer.
-        let y = restingY + max(0, restingY - entryY) * tailScale
-        guard let focusY else { return y }
-        let delta = y - focusY
-        let radius = min(Self.magnificationRadius, delta < 0 ? focusY : height - focusY)
-        guard radius > 0 else { return y }
-        let influence = max(0, 1 - abs(delta) / radius)
-        // This curve fixes the focus and both ends of the strip, and preserves row order.
-        return y + 2.4 * magnification * delta * influence * influence
+        CGFloat(min(max(row, 0), totalRows)) / CGFloat(totalRows) * height
     }
 
     public func row(forY y: CGFloat) -> Int {
@@ -172,11 +141,8 @@ public struct ScrollbackMapLayout: Equatable {
     }
 
     private func cluster(_ marks: [ScrollbackMap.Mark], centeredAt center: CGFloat) -> Cluster {
-        let influence = focusY.map { max(0, 1 - abs(center - $0) / Self.magnificationRadius) } ?? 0
-        let strength = magnification * influence * influence
-        let size = min(height, Self.markHeight * (1 + 0.9 * strength))
-        return Cluster(marks: marks, y: min(max(0, center - size / 2), height - size),
-                       height: size, widthScale: 1 + 0.5 * strength)
+        let size = min(height, Self.markHeight)
+        return Cluster(marks: marks, y: min(max(0, center - size / 2), height - size), height: size)
     }
 
     /// The viewport box's top and height, at least `minimumViewportHeight` and inside the strip.
@@ -216,9 +182,6 @@ public struct ScrollbackMapLayout: Equatable {
         return map.marks.indices.contains(next) ? map.marks[next] : map.marks[index]
     }
 
-    /// The card draws at 40 percent opacity while idle and fully opaque while hovered or scrubbed.
-    public static func opacity(isActive: Bool) -> Double { isActive ? 1 : 0.4 }
-
     public static func interactionAnimation(reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : .smooth(duration: 0.22)
     }
@@ -230,7 +193,25 @@ public struct ScrollbackMapLayout: Equatable {
     }
 }
 
-/// Supplies each animation frame's geometry to both drawing and native input.
+/// Opaque, appearance-aware colors keep the marks legible against terminal output.
+struct ScrollbackMapPalette {
+    let backing: Color
+    let input: Color
+    let peer: Color
+    let viewport: Color
+
+    init(scheme: ColorScheme) {
+        let dark = scheme == .dark
+        backing = Color(white: dark ? 0.12 : 0.96)
+        input = dark ? Color(red: 1, green: 0.82, blue: 0.57) : Color(red: 0.53, green: 0.26, blue: 0)
+        peer = dark ? Color(red: 0.66, green: 0.84, blue: 1) : Color(red: 0.07, green: 0.36, blue: 0.59)
+        viewport = dark ? .white : .black
+    }
+
+    func mark(_ kind: ScrollbackMap.Kind) -> Color { kind == .input ? input : peer }
+}
+
+/// Animates only the mobile card's horizontal expansion.
 private struct ScrollbackMapExpansion<Content: View>: View, Animatable {
     var amount: CGFloat
     var content: (CGFloat) -> Content
@@ -246,75 +227,67 @@ private struct ScrollbackMapExpansion<Content: View>: View, Animatable {
 }
 
 /// @spec CONTEXT-34
-/// While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks merged when their displayed centers are closer than 3 points or their bars overlap, and a box showing the current viewport, and shall hide the card while no message is located.
+/// While an agent pane contains located messages, the application shall show a map of the entire scrollback with marks for human inputs, peer messages, and agent responses, merge marks closer than three points or whose bars overlap, and outline the visible rows. If no message is located, then the application shall hide the map.
 public struct ScrollbackMapOverlay: View {
-    private struct Interaction {
-        let cardY: CGFloat
-        let entryCardY: CGFloat
-    }
-
-    private struct Touch {
-        let interaction: Interaction
-        let initialLayout: ScrollbackMapLayout
-    }
-
     let map: ScrollbackMap
     let viewport: ScrollbackViewport
     let entries: [String: ScrollbackMapEntry]
     let gists: PeerMessageGistProvider
     let scroll: (Int) -> Void
     private let availableHeight: CGFloat
-    @State private var hover: Interaction?
-    @State private var scrub: Interaction?
-    @State private var lastInteraction: Interaction?
-    @State private var touchStartLayout: ScrollbackMapLayout?
-    // GestureState also clears on cancellation, so an interrupted touch cannot leave the map expanded.
-    @GestureState private var touch: Touch?
+    @State private var hover: CGFloat?
+    @State private var scrub: CGFloat?
+    // GestureState clears on cancellation, so an interrupted touch cannot leave the map expanded.
+    @GestureState private var touch: CGFloat?
     @State private var accessibilityMark: String?
     @State private var gist: PeerMessageGist?
     @State private var labelHeight: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.layoutDirection) private var layoutDirection
 
     public init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
-                gists: PeerMessageGistProvider = .shared, availableHeight: CGFloat = .infinity, scroll: @escaping (Int) -> Void) {
+                gists: PeerMessageGistProvider = .shared, availableHeight: CGFloat = ScrollbackMapLayout.cardSize.height,
+                scroll: @escaping (Int) -> Void) {
         self.init(map: map, viewport: viewport, entries: entries, gists: gists, availableHeight: availableHeight,
                   focusY: nil, scroll: scroll)
     }
 
     /// `focusY` starts the overlay mid-scrub, for rendering tests.
     init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
-         gists: PeerMessageGistProvider, availableHeight: CGFloat = .infinity, focusY: CGFloat?, scroll: @escaping (Int) -> Void) {
+         gists: PeerMessageGistProvider, availableHeight: CGFloat = ScrollbackMapLayout.cardSize.height,
+         focusY: CGFloat?, scroll: @escaping (Int) -> Void) {
         self.map = map; self.viewport = viewport; self.entries = entries; self.gists = gists; self.scroll = scroll
         self.availableHeight = availableHeight
-        _scrub = State(initialValue: focusY.map {
-            let cardY = $0 + ScrollbackMapLayout.stripInset.top
-            return Interaction(cardY: cardY, entryCardY: cardY)
-        })
+        _scrub = State(initialValue: focusY.map { $0 + ScrollbackMapLayout.stripInset.top })
     }
 
-    private var interaction: Interaction? { touch?.interaction ?? scrub ?? hover }
-    private var isActive: Bool { interaction != nil }
-    private var restingHeight: CGFloat { min(availableHeight, ScrollbackMapLayout.cardSize.height) }
+    private var interactionY: CGFloat? { touch ?? scrub ?? hover }
+    private var isActive: Bool { interactionY != nil }
+
     private func focusedMark(in layout: ScrollbackMapLayout) -> ScrollbackMap.Mark? {
-        guard let interaction else { return nil }
-        return layout.nearestMark(in: map, toY: ScrollbackMapLayout.stripY(forCardY: interaction.cardY, height: layout.height))
+        guard let interactionY else { return nil }
+        return layout.nearestMark(in: map, toY: ScrollbackMapLayout.stripY(forCardY: interactionY, height: layout.height))
     }
 
-    private func layout(for interaction: Interaction?, magnification: CGFloat) -> ScrollbackMapLayout {
+    private func layout(cardHeight: CGFloat) -> ScrollbackMapLayout {
         let inset = ScrollbackMapLayout.stripInset
-        return ScrollbackMapLayout(height: max(0, restingHeight - inset.top - inset.bottom),
-                                   totalRows: max(map.totalRows, viewport.total),
-                                   focusY: interaction.map { $0.cardY - inset.top },
-                                   entryY: interaction.map { $0.entryCardY - inset.top },
-                                   magnification: magnification,
-                                   availableGrowth: max(0, availableHeight - restingHeight))
+        return ScrollbackMapLayout(height: max(0, cardHeight - inset.top - inset.bottom), map: map, viewport: viewport)
+    }
+
+    private var mobileLayout: ScrollbackMapLayout {
+        layout(cardHeight: min(availableHeight, ScrollbackMapLayout.cardSize.height))
     }
 
     public var body: some View {
-        if !map.marks.isEmpty, layout(for: nil, magnification: 0).height >= ScrollbackMapLayout.markHeight {
-            animatedCard { layout, amount in
-                let focusedMark = focusedMark(in: layout)
-                inputCard(layout: layout, magnification: amount)
+        #if os(macOS)
+        let layout = layout(cardHeight: availableHeight)
+        #else
+        let layout = mobileLayout
+        #endif
+        if !map.marks.isEmpty, layout.height >= ScrollbackMapLayout.markHeight {
+            let mark = focusedMark(in: layout)
+            inputCard(layout: layout)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Scrollback map")
                 .accessibilityValue(accessibilityValue)
@@ -326,115 +299,91 @@ public struct ScrollbackMapOverlay: View {
                     scroll(mark.row)
                 }
                 .accessibilityIdentifier("terminal.scrollbackMap")
-                .task(id: focusedMark?.eventID) { await loadGist(for: focusedMark) }
-            }
+                .task(id: mark?.eventID) { await loadGist(for: mark) }
         }
     }
 
-    private func animatedCard<Content: View>(
-        @ViewBuilder content: @escaping (ScrollbackMapLayout, CGFloat) -> Content
-    ) -> some View {
-        ScrollbackMapExpansion(amount: isActive ? 1 : 0) { amount in
-            content(layout(for: interaction ?? lastInteraction, magnification: amount), amount)
-        }
-        .animation(ScrollbackMapLayout.interactionAnimation(reduceMotion: reduceMotion), value: isActive)
-    }
-
-    private func inputCard(layout: ScrollbackMapLayout, magnification: CGFloat) -> some View {
+    private func inputCard(layout: ScrollbackMapLayout) -> some View {
         #if os(macOS)
-        let content = visualCard(layout: layout, magnification: magnification)
-            .frame(maxHeight: .infinity, alignment: .top)
-        return ScrollbackMapPointerInput(content: AnyView(content),
-            onHover: { updateHover($0, magnification: magnification) },
-            onScrub: { updateScrub($0, magnification: magnification) },
-            onDrag: { drag(pointerInteraction(at: $0, magnification: magnification), magnification: magnification) },
+        let content = strip(layout: layout, width: 9, muted: !isActive)
+            .frame(width: ScrollbackMapLayout.macGutterWidth)
+        return ScrollbackMapPointerInput(content: AnyView(content), terminalOnLeft: layoutDirection == .leftToRight,
+            onHover: { hover = $0 },
+            onScrub: { scrub = $0 },
+            onDrag: { drag(at: $0, layout: layout) },
             onClick: { click(at: $0, layout: layout) }
         )
-        .frame(width: ScrollbackMapLayout.cardSize.width, height: layout.cardHeight)
+        .frame(width: ScrollbackMapLayout.macGutterWidth, height: layout.cardHeight)
+        .overlay(alignment: .topLeading) { label(layout: layout) }
         #else
-        return mobileInputCard(layout: layout, magnification: magnification)
+        return mobileInputCard(layout: layout)
         #endif
     }
 
     /// Kept available on Mac for rendering and layout regression tests of the mobile presentation.
-    var mobileInputCard: some View {
-        animatedCard { layout, amount in mobileInputCard(layout: layout, magnification: amount) }
-    }
+    var mobileInputCard: some View { mobileInputCard(layout: mobileLayout) }
 
-    private func mobileInputCard(layout: ScrollbackMapLayout, magnification: CGFloat) -> some View {
-        let frame = ScrollbackMapLayout.mobileCardFrame(magnification: magnification, height: layout.cardHeight)
-        return visualCard(layout: layout, magnification: magnification, isMobile: true)
-            .offset(x: frame.minX)
-            .frame(width: ScrollbackMapLayout.mobileTouchWidth, height: frame.height, alignment: .topLeading)
-            .contentShape(Rectangle())
-            .gesture(scrubGesture(layout: layout, magnification: magnification))
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let point): updateHover(point.y, magnification: magnification)
-                case .ended: updateHover(nil, magnification: magnification)
-                }
+    private func mobileInputCard(layout: ScrollbackMapLayout) -> some View {
+        ScrollbackMapExpansion(amount: isActive ? 1 : 0) { expansion in
+            let frame = ScrollbackMapLayout.mobileCardFrame(expansion: expansion, height: layout.cardHeight)
+            let inset = ScrollbackMapLayout.stripInset.leading * expansion
+            let shape = RoundedRectangle(cornerRadius: 3 + 6 * expansion)
+            return strip(layout: layout, width: frame.width - inset * 2, muted: false)
+                .frame(width: frame.width, height: frame.height)
+                .background(ScrollbackMapPalette(scheme: colorScheme).backing, in: shape)
+                .overlay(alignment: .topLeading) { label(layout: layout, fixedVertically: true) }
+                .offset(x: frame.minX)
+                .frame(width: ScrollbackMapLayout.mobileTouchWidth, height: frame.height, alignment: .topLeading)
+        }
+        .animation(ScrollbackMapLayout.interactionAnimation(reduceMotion: reduceMotion), value: isActive)
+        .contentShape(Rectangle())
+        .gesture(scrubGesture(layout: layout))
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point): hover = point.y
+            case .ended: hover = nil
             }
+        }
     }
 
-    private func visualCard(layout: ScrollbackMapLayout, magnification: CGFloat, isMobile: Bool = false) -> some View {
+    private func strip(layout: ScrollbackMapLayout, width: CGFloat, muted: Bool) -> some View {
+        let palette = ScrollbackMapPalette(scheme: colorScheme)
         let box = layout.viewportBox(viewport)
-        let expansion: CGFloat = isMobile ? magnification : 1
-        let width = ScrollbackMapLayout.mobileCardFrame(magnification: expansion, height: layout.cardHeight).width
-        let horizontalInset = ScrollbackMapLayout.stripInset.leading * expansion
-        let stripWidth = width - horizontalInset * 2
-        let cornerRadius: CGFloat = 2 + 7 * expansion
-        let idleOpacity = ScrollbackMapLayout.opacity(isActive: false)
-        return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 1).fill(Color.primary.opacity(0.12))
-                .frame(width: 2).frame(maxWidth: .infinity)
+        return ZStack(alignment: .top) {
+            if !muted {
+                Rectangle().fill(palette.viewport.opacity(0.18)).frame(width: 1)
+            }
             ForEach(layout.clusters(map.marks)) { cluster in
+                let height = muted ? min(2, cluster.height) : cluster.height
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(cluster.kind == .input ? Color.orange : Color.accentColor)
-                    .frame(width: stripWidth * cluster.widthScale, height: cluster.height)
-                    .frame(maxWidth: .infinity)
-                    .offset(y: cluster.y)
+                    .fill(muted ? Color.primary.opacity(cluster.kind == .input ? 0.46 : 0.34) : palette.mark(cluster.kind))
+                    .frame(width: width * (cluster.kind == .input ? 0.85 : 0.55), height: height)
+                    .offset(y: cluster.y + (cluster.height - height) / 2)
             }
             RoundedRectangle(cornerRadius: 3)
-                .fill(Color.primary.opacity(0.08))
-                .strokeBorder(Color.primary.opacity(0.45), lineWidth: 1)
+                .strokeBorder(palette.viewport.opacity(muted ? 0.65 : 0.9), lineWidth: 1)
                 .frame(height: box.height)
-                .padding(.horizontal, -3 * expansion)
                 .offset(y: box.y)
         }
-        .frame(width: stripWidth, height: layout.height, alignment: .top)
+        .frame(width: width, height: layout.height, alignment: .top)
         .padding(.vertical, ScrollbackMapLayout.stripInset.top)
-        .padding(.horizontal, horizontalInset)
-        .frame(width: width, height: layout.cardHeight)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
-        .overlay(RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.25 * expansion), radius: 8, y: 3)
-        .overlay(alignment: .topLeading) { label(layout: layout) }
-        .opacity(idleOpacity + (1 - idleOpacity) * Double(magnification))
     }
 
-    private func scrubGesture(layout: ScrollbackMapLayout, magnification: CGFloat) -> some Gesture {
-        return DragGesture(minimumDistance: 0)
+    private func scrubGesture(layout: ScrollbackMapLayout) -> some Gesture {
+        DragGesture(minimumDistance: 0)
             .simultaneously(with: SpatialTapGesture())
             .updating($touch) { gestures, touch, _ in
-                if let drag = gestures.first {
-                    touch = Touch(interaction: touchInteraction(drag, magnification: magnification),
-                                  initialLayout: touch?.initialLayout ?? layout)
-                }
+                touch = gestures.first?.location.y
             }
             .onChanged { gestures in
-                guard let value = gestures.first else { return }
-                touchStartLayout = touch?.initialLayout ?? layout
-                let interaction = touchInteraction(value, magnification: magnification)
-                lastInteraction = interaction
-                if hasMoved(value) { drag(interaction, magnification: magnification) }
+                if let value = gestures.first, hasMoved(value) { drag(at: value.location.y, layout: layout) }
             }
             .onEnded { gestures in
-                let tapLayout = gestures.first == nil ? layout : (touchStartLayout ?? layout)
-                touchStartLayout = nil
-                if let drag = gestures.first, hasMoved(drag) { return }
-                guard let y = gestures.second?.location.y else { return }
-                // A tap aims at the map as it looked before the finger touched it.
-                click(at: y, layout: tapLayout)
+                if let value = gestures.first, hasMoved(value) {
+                    drag(at: value.location.y, layout: layout)
+                } else if let y = gestures.second?.location.y {
+                    click(at: y, layout: layout)
+                }
             }
     }
 
@@ -442,30 +391,8 @@ public struct ScrollbackMapOverlay: View {
         abs(value.translation.height) >= 2 || abs(value.translation.width) >= 2
     }
 
-    private func updateHover(_ y: CGFloat?, magnification: CGFloat) {
-        hover = y.map { pointerInteraction(at: $0, magnification: magnification) }
-        if let hover { lastInteraction = hover }
-    }
-
-    private func updateScrub(_ y: CGFloat?, magnification: CGFloat) {
-        scrub = y.map { pointerInteraction(at: $0, magnification: magnification) }
-        if let scrub { lastInteraction = scrub }
-    }
-
-    private func pointerInteraction(at y: CGFloat, magnification: CGFloat) -> Interaction {
-        let entry = interaction?.entryCardY ?? (magnification > 0 ? lastInteraction?.entryCardY : nil) ?? y
-        return Interaction(cardY: y, entryCardY: entry)
-    }
-
-    private func touchInteraction(_ value: DragGesture.Value, magnification: CGFloat) -> Interaction {
-        let entry = touch?.interaction.entryCardY ?? hover?.entryCardY
-            ?? (magnification > 0 ? lastInteraction?.entryCardY : nil) ?? value.startLocation.y
-        return Interaction(cardY: value.location.y, entryCardY: entry)
-    }
-
-    private func drag(_ interaction: Interaction, magnification: CGFloat) {
-        let layout = layout(for: interaction, magnification: magnification)
-        let y = ScrollbackMapLayout.stripY(forCardY: interaction.cardY, height: layout.height)
+    private func drag(at cardY: CGFloat, layout: ScrollbackMapLayout) {
+        let y = ScrollbackMapLayout.stripY(forCardY: cardY, height: layout.height)
         scroll(layout.scrubTopRow(atY: y, viewportLength: viewport.length))
     }
 
@@ -476,12 +403,13 @@ public struct ScrollbackMapOverlay: View {
     }
 
     @ViewBuilder
-    private func label(layout: ScrollbackMapLayout) -> some View {
+    private func label(layout: ScrollbackMapLayout, fixedVertically: Bool = false) -> some View {
         if let mark = focusedMark(in: layout), let entry = entries[mark.eventID] {
             ScrollbackMapLabel(entry: entry, gist: entry.kind == .peer ? (gist ?? .immediate(entry.text)) : nil)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { labelHeight = $0 }
                 .offset(x: -(ScrollbackMapLabel.width + 6),
-                        y: ScrollbackMapLayout.stripInset.top + layout.labelTop(forMarkAt: mark.row, labelHeight: labelHeight))
+                        y: ScrollbackMapLayout.stripInset.top + (fixedVertically ? 0 :
+                            layout.labelTop(forMarkAt: mark.row, labelHeight: labelHeight)))
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
@@ -674,3 +602,27 @@ public struct ScrollbackMapOverlayHost: View {
         .onChange(of: isVisible) { _, visible in model.setVisible(visible) }
     }
 }
+
+#if os(macOS)
+public extension View {
+    /// Keep the gutter outside the terminal grid even before the first scrollback scan finishes.
+    @MainActor
+    func macScrollbackMapGutter(timeline: WorktreeTimeline?, model: ScrollbackMapModel,
+                                background: Color, topInset: CGFloat) -> some View {
+        padding(.trailing, timeline == nil ? 0 : ScrollbackMapLayout.macGutterWidth)
+            .background(alignment: .trailing) {
+                if timeline != nil {
+                    background.frame(width: ScrollbackMapLayout.macGutterWidth).allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if let timeline {
+                    ScrollbackMapOverlayHost(model: model, timeline: timeline)
+                        .padding(.vertical, ScrollbackMapLayout.stripInset.top)
+                        .padding(.top, topInset)
+                        .frame(width: ScrollbackMapLayout.macGutterWidth)
+                }
+            }
+    }
+}
+#endif

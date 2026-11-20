@@ -175,13 +175,11 @@ struct TerminalContentView: View {
                     .overlay(alignment: .bottom) {
                         MacPagedHistoryBanner(presentation: handle.pagedHistory).padding(12)
                     }
-                    .overlay(alignment: .topTrailing) {
-                        if let map = agentScrollbackMap, map.terminalID == terminalID {
-                            ScrollbackMapOverlayHost(model: handle.scrollbackMapModel, timeline: map.timeline)
-                                .padding(10)
-                                .padding(.top, inputRequestHeights[terminalID] ?? 0)
-                        }
-                    }
+                    .macScrollbackMapGutter(
+                        timeline: agentScrollbackMap?.terminalID == terminalID ? agentScrollbackMap?.timeline : nil,
+                        model: handle.scrollbackMapModel, background: theme.background,
+                        topInset: inputRequestHeights[terminalID] ?? 0
+                    )
                     // A retry replaces the native view while preserving the
                     // pane ID. Rebuild the wrapper for the new surface too.
                     .id(ObjectIdentifier(handle))

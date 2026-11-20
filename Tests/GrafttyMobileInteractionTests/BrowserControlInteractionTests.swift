@@ -305,7 +305,7 @@ final class ScrollbackInteractionTests: XCTestCase {
     func testLeaderScrollbackGestures() throws { try exerciseScrollback(follower: false) }
     func testFollowerScrollbackGestures() throws { try exerciseScrollback(follower: true) }
 
-    func testTranscriptMapTapAndDragIntoExpandedArea() {
+    func testTranscriptMapTapAndDragKeepTheSameVerticalScale() {
         let app = XCUIApplication()
         app.launchArguments = ["--transcript-map-fixture"]
         app.launch()
@@ -314,20 +314,20 @@ final class ScrollbackInteractionTests: XCTestCase {
         let map = app.descendants(matching: .any)["terminal.scrollbackMap"]
         let requestedRow = app.staticTexts["transcript-map.requested-row"]
         XCTAssertTrue(map.waitForExistence(timeout: 5))
-        let idleHeight = map.frame.height
-        XCTAssertEqual(idleHeight, 150, accuracy: 1)
+        let idleFrame = map.frame
+        XCTAssertEqual(idleFrame.height, 150, accuracy: 1)
+        XCTAssertEqual(idleFrame.width, 44, accuracy: 1)
         let start = map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
         start.tap()
         XCTAssertEqual(requestedRow.label, "230")
 
-        let end = start.withOffset(CGVector(dx: 0, dy: 140))
+        let end = map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
         let row = Int(requestedRow.label) ?? -1
-        XCTAssertTrue((875...905).contains(row), "Expected a row in the expanded map, got \(row)")
-        let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            abs(map.frame.height - idleHeight) <= 1
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 3), .completed)
+        XCTAssertTrue((795...817).contains(row), "Expected the row centered at 80% of the idle map, got \(row)")
+        XCTAssertEqual(map.frame, idleFrame)
+        end.tap()
+        XCTAssertEqual(requestedRow.label, "800", "An idle tap still targets the same in-range mark")
     }
 
     private func exerciseScrollback(follower: Bool) throws {

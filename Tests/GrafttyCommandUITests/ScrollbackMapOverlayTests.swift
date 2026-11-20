@@ -67,7 +67,7 @@ private func render(_ view: some View, size: CGSize, named name: String) throws 
 }
 
 @MainActor
-@Suite("@spec CONTEXT-34: While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks merged when their displayed centers are closer than 3 points or their bars overlap, and a box showing the current viewport, and shall hide the card while no message is located.")
+@Suite("@spec CONTEXT-34: While an agent pane contains located messages, the application shall show a map of the entire scrollback with marks for human inputs, peer messages, and agent responses, merge marks closer than three points or whose bars overlap, and outline the visible rows. If no message is located, then the application shall hide the map.")
 struct ScrollbackMapPresenceTests {
     @Test func rowsMapProportionallyOntoTheStrip() {
         let layout = ScrollbackMapLayout(height: 100, totalRows: 1000)
@@ -115,29 +115,30 @@ struct ScrollbackMapPresenceTests {
         #expect(grown.totalRows == 1000, "Rows added since the last scan still fit on the strip")
     }
 
-    @Test func cardHasTheDefaultSizeAndHidesWithoutMarks() throws {
+    @Test func macRailFillsTheAvailableHeightAndHidesWithoutMarks() throws {
         let timeline = sampleTimeline()
         let map = ScrollbackMap.locate(ScrollbackMap.messages(in: timeline), rows: sampleRows())
         #expect(map.marks.map(\.kind) == [.input, .peer, .input])
         let entries = ScrollbackMapEntry.entries(in: timeline)
         let viewport = ScrollbackViewport(offset: 520, length: 60, total: 600)
-        let shown = NSHostingView(rootView: ScrollbackMapOverlay(map: map, viewport: viewport, entries: entries, scroll: { _ in }))
-        #expect(abs(shown.fittingSize.width - ScrollbackMapLayout.cardSize.width) < 1)
-        #expect(abs(shown.fittingSize.height - ScrollbackMapLayout.cardSize.height) < 1)
+        let shown = NSHostingView(rootView: ScrollbackMapOverlay(map: map, viewport: viewport, entries: entries,
+                                                                 availableHeight: 264, scroll: { _ in }))
+        #expect(shown.fittingSize.width == 14)
+        #expect(shown.fittingSize.height == 264)
         let empty = NSHostingView(rootView: ScrollbackMapOverlay(map: ScrollbackMap(totalRows: 600, marks: []), viewport: viewport,
                                                                  entries: entries, scroll: { _ in }))
         #expect(empty.fittingSize == .zero)
-        try render(ScrollbackMapOverlay(map: map, viewport: viewport, entries: entries, scroll: { _ in })
+        try render(ScrollbackMapOverlay(map: map, viewport: viewport, entries: entries, availableHeight: 180, scroll: { _ in })
             .padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing),
             size: CGSize(width: 320, height: 200), named: "scrollback-map-idle")
     }
 }
 
 @MainActor
-@Suite("@spec CONTEXT-35: When the user hovers over the scrollback map card including its padding on Mac or with a pointer on mobile, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.")
+@Suite("@spec CONTEXT-35: When the user hovers over, touches, or drags along the scrollback map, the application shall show the nearest mark's message to its left, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.")
 struct ScrollbackMapScrubTests {
-    @Test(arguments: [2.0, 17.0, 32.0])
-    func clickingTheWholeCardAboveANativeTerminalScrolls(x: Double) async throws {
+    @Test(arguments: [1.0, 7.0, 13.0])
+    func nativeTerminalAndGutterEachReceiveTheirOwnInput(x: Double) async throws {
         _ = NSApplication.shared
         let terminal = MapTerminalFixture()
         let timeline = sampleTimeline()
@@ -147,10 +148,7 @@ struct ScrollbackMapScrubTests {
         let model = ScrollbackMapModel(terminal: scrollback, debounce: .zero)
         model.update(viewport: viewport)
         let content = MapTerminalRepresentable(view: terminal)
-            .overlay(alignment: .topTrailing) {
-                ScrollbackMapOverlayHost(model: model, timeline: timeline)
-                    .padding(10)
-            }
+            .macScrollbackMapGutter(timeline: timeline, model: model, background: .black, topInset: 24)
             .onTapGesture { }
         let host = NSHostingView(rootView: content)
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 400, height: 300),
@@ -165,10 +163,15 @@ struct ScrollbackMapScrubTests {
         #expect(host.hitTest(terminalPoint) === terminal, "The map host must leave the rest of the terminal available for input")
         func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
         let pointer = try #require(descendants(host).compactMap { $0 as? ScrollbackMapPointerView }.first)
-        let markY = ScrollbackMapLayout(map: map, viewport: viewport).y(forRow: 40)
+        let railFrame = pointer.convert(pointer.bounds, to: host)
+        let terminalFrame = terminal.convert(terminal.bounds, to: host)
+        #expect(railFrame.minX == terminalFrame.maxX)
+        #expect(pointer.bounds.height == 264)
+        let layout = ScrollbackMapLayout(height: 252, map: map, viewport: viewport)
+        let markY = layout.y(forRow: 40)
         let point = pointer.convert(NSPoint(x: x, y: ScrollbackMapLayout.stripInset.top + markY), to: nil)
         let hit = host.hitTest(host.superview?.convert(point, from: nil) ?? point)
-        #expect(hit === pointer, "The map must own hit testing above the represented terminal")
+        #expect(hit === pointer, "The map owns hit testing in the gutter")
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
@@ -176,34 +179,25 @@ struct ScrollbackMapScrubTests {
             window.sendEvent(event)
         }
         try await Task.sleep(for: .milliseconds(100))
-        #expect(scrollback.scrolled == [40], "The full visible card must receive clicks above the native terminal, including its padding")
+        #expect(scrollback.scrolled == [40], "The full gutter width receives clicks")
         #expect(terminal.clicks == 0, "Map clicks must not reach the terminal")
 
         pointer.scrollWheel(with: MapWheelEvent(point: point))
-        #expect(terminal.wheels == 1, "Wheel scrolling over the map must reach the terminal behind it")
+        #expect(terminal.wheels == 1, "Wheel scrolling over the map must reach the adjacent terminal")
 
         let moved = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
             context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
-        pointer.mouseExited(with: moved)
-        await waitUntil { pointer.bounds.height == ScrollbackMapLayout.cardSize.height }
         pointer.mouseMoved(with: moved)
-        await waitUntil { pointer.bounds.height > ScrollbackMapLayout.cardSize.height }
-        let amount = (pointer.bounds.height - ScrollbackMapLayout.cardSize.height) / ScrollbackMapLayout.maximumGrowth
-        #expect(amount > 0 && amount <= 1)
-        let presented = ScrollbackMapLayout(height: ScrollbackMapLayout.stripHeight, totalRows: 600,
-                                           focusY: markY, entryY: markY, magnification: amount)
-        pointer.onClick?(ScrollbackMapLayout.stripInset.top + presented.y(forRow: 300))
-        #expect(scrollback.scrolled.last == 300, "Clicks must use the geometry of the displayed animation frame")
-        await waitUntil { pointer.bounds.height >= ScrollbackMapLayout.cardSize.height + ScrollbackMapLayout.maximumGrowth }
-        let expandedPoint = pointer.convert(NSPoint(x: x, y: 175), to: nil)
-        #expect(host.hitTest(host.superview?.convert(expandedPoint, from: nil) ?? expandedPoint) === pointer)
+        host.layoutSubtreeIfNeeded()
+        #expect(pointer.convert(pointer.bounds, to: host) == railFrame)
+        #expect(terminal.convert(terminal.bounds, to: host) == terminalFrame)
+        pointer.onClick?(ScrollbackMapLayout.stripInset.top + layout.y(forRow: 300))
+        #expect(scrollback.scrolled.last == 300)
         pointer.mouseExited(with: moved)
-        await waitUntil { pointer.bounds.height == ScrollbackMapLayout.cardSize.height }
-        #expect(host.hitTest(host.superview?.convert(expandedPoint, from: nil) ?? expandedPoint) !== pointer)
+        #expect(pointer.convert(pointer.bounds, to: host) == railFrame)
 
-        let dragY: CGFloat = 169
-        let active = ScrollbackMapLayout(height: ScrollbackMapLayout.stripHeight, totalRows: 600, focusY: dragY, entryY: markY)
+        let dragY: CGFloat = 217
         for (type, y) in [(NSEvent.EventType.leftMouseDown, markY), (.leftMouseDragged, dragY), (.leftMouseUp, dragY)] {
             let y = ScrollbackMapLayout.stripInset.top + y
             let location = pointer.convert(NSPoint(x: x, y: y), to: nil)
@@ -211,12 +205,9 @@ struct ScrollbackMapScrubTests {
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                 context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
             window.sendEvent(event)
-            if type == .leftMouseDown {
-                await waitUntil { pointer.bounds.height >= ScrollbackMapLayout.cardSize.height + ScrollbackMapLayout.maximumGrowth }
-            }
         }
         let scrolled = try #require(scrollback.scrolled.last)
-        #expect(abs(scrolled - active.scrubTopRow(atY: dragY, viewportLength: viewport.length)) <= 1,
+        #expect(abs(scrolled - layout.scrubTopRow(atY: dragY, viewportLength: viewport.length)) <= 1,
                 "Native event coordinates may round to the nearest pixel")
         #expect(terminal.clicks == 0)
     }
@@ -315,91 +306,39 @@ private struct MapTerminalRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: MapTerminalFixture, context: Context) { }
 }
 
-@Suite("@spec CONTEXT-36: While the pointer is not over the scrollback map and no drag is in progress, the application shall draw the card at 40 percent opacity, and shall draw it fully opaque while it is hovered, dragged, or touched, changing without animation when Reduce Motion is on.")
-struct ScrollbackMapFadeTests {
-    @Test func idleCardFades() {
-        #expect(ScrollbackMapLayout.opacity(isActive: false) == 0.4)
-        #expect(ScrollbackMapLayout.opacity(isActive: true) == 1)
-    }
-
-    @Test func reduceMotionDropsTheFadeAnimation() {
-        #expect(ScrollbackMapLayout.interactionAnimation(reduceMotion: true) == nil)
-        #expect(ScrollbackMapLayout.interactionAnimation(reduceMotion: false) != nil)
+@Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While the Mac map is idle, the application shall display muted marks and a viewport outline without a card background. While the user interacts with either map, the application shall distinguish human input with orange and peer messages and agent responses with blue. While the mobile map is idle, the application shall keep these colors readable against its background.")
+struct ScrollbackMapAppearanceTests {
+    @Test(arguments: [ColorScheme.light, .dark])
+    func mobileMarksContrastWithTheirBackingInBothAppearances(scheme: ColorScheme) {
+        let palette = ScrollbackMapPalette(scheme: scheme)
+        let environment = EnvironmentValues()
+        func luminance(_ color: Color) -> Double {
+            let c = color.resolve(in: environment)
+            return 0.2126 * Double(c.linearRed) + 0.7152 * Double(c.linearGreen) + 0.0722 * Double(c.linearBlue)
+        }
+        let backing = luminance(palette.backing)
+        for color in [palette.input, palette.peer] {
+            let mark = luminance(color)
+            #expect((max(mark, backing) + 0.05) / (min(mark, backing) + 0.05) >= 4.5)
+        }
     }
 }
 
-@Suite("@spec CONTEXT-57: While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the displayed geometry for navigation throughout the animation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.")
-struct ScrollbackMapMagnificationTests {
-    @Test func expansionKeepsTheEntryRowUnderThePointer() {
-        let idle = ScrollbackMapLayout(height: 100, totalRows: 1000)
-        let active = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: 50, entryY: 50)
-        #expect(active.height > idle.height)
-        #expect(active.y(forRow: 500) == idle.y(forRow: 500))
-        #expect(active.row(forY: 50) == 500)
-        #expect(active.y(forRow: 0) == 0)
-        #expect(active.y(forRow: 1000) == active.height)
-    }
-
-    @Test func theLensSeparatesNearbyMarksAndMovesWithThePointer() throws {
-        let map = ScrollbackMap(totalRows: 1000, marks: [
-            .init(row: 50, kind: .input, eventID: "far"),
-            .init(row: 480, kind: .peer, eventID: "near"),
-            .init(row: 500, kind: .input, eventID: "focus"),
-        ])
-        let idle = ScrollbackMapLayout(height: 100, totalRows: 1000)
-        let active = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: 50, entryY: 50)
-        #expect(idle.clusters(map.marks).count == 2)
-        let clusters = active.clusters(map.marks)
-        #expect(clusters.map(\.id) == ["far", "near", "focus"])
-        let focused = try #require(clusters.last)
-        let far = try #require(clusters.first)
-        #expect(focused.height > far.height)
-        #expect(focused.widthScale > far.widthScale)
-
-        let moved = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: 5, entryY: 50)
-        #expect(moved.clusters(map.marks).first?.height == focused.height)
-        #expect(moved.height == active.height)
-    }
-
-    @Test(arguments: [0.0, 5.0, 50.0, 95.0, 100.0])
-    func drawnRowsStayOrderedAndNavigationUsesTheirPositions(entryY: CGFloat) {
-        let active = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: entryY, entryY: entryY)
-        let positions = (0...1000).map(active.y(forRow:))
-        #expect(zip(positions, positions.dropFirst()).allSatisfy { $0 < $1 })
-        let y = (positions[700] + positions[701]) / 2
-        let map = ScrollbackMap(totalRows: 1000, marks: [.init(row: 700, kind: .input, eventID: "target")])
-        #expect(active.tapTarget(in: map, atY: y)?.row == 700)
-        #expect(active.scrubTopRow(atY: y, viewportLength: 40) == 680)
-        let box = active.viewportBox(ScrollbackViewport(offset: 700, length: 40, total: 1000))
-        #expect(abs(box.y - positions[700]) < 1)
-        #expect(abs(box.y + box.height - positions[740]) < ScrollbackMapLayout.minimumViewportHeight)
-    }
-
-    @Test func growthFitsTheAvailableSpace() {
-        let active = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: 20, entryY: 20, availableGrowth: 12)
-        #expect(active.height == 112)
-    }
-
-    @Test(arguments: [0.0, 5.0, 50.0, 95.0, 100.0])
-    func magnifiedClustersRemainDisjointAtTheEdgesAndInDenseRegions(focusY: CGFloat) {
-        let layout = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: focusY, entryY: 50)
-        let marks = stride(from: 0, through: 1000, by: 12).map {
-            ScrollbackMap.Mark(row: $0, kind: .peer, eventID: "\($0)")
-        }
-        let clusters = layout.clusters(marks)
-        #expect(clusters.flatMap(\.marks) == marks)
-        #expect(zip(clusters, clusters.dropFirst()).allSatisfy { $0.y + $0.height <= $1.y })
-    }
-
-    @Test(arguments: [0.0, 0.25, 0.5, 0.75, 1.0])
-    func intermediateExpansionUsesTheSameGeometryForDrawingAndNavigation(amount: CGFloat) {
-        let layout = ScrollbackMapLayout(height: 100, totalRows: 1000, focusY: 50, entryY: 50, magnification: amount)
-        #expect(layout.height == 100 + 50 * amount)
-        #expect(layout.y(forRow: 500) == 50)
-        let map = ScrollbackMap(totalRows: 1000, marks: [.init(row: 700, kind: .input, eventID: "target")])
-        let y = layout.y(forRow: 700)
-        #expect(layout.tapTarget(in: map, atY: y)?.row == 700)
+@Suite("@spec CONTEXT-57: While the user interacts with the scrollback map on Mac or mobile, the application shall keep its height and the vertical positions of the marks fixed, and use those positions for navigation. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.")
+struct ScrollbackMapFixedPositionTests {
+    @Test(arguments: [63.0, 138.0, 380.0])
+    func drawingAndNavigationUseTheSameLinearScale(height: CGFloat) {
+        let layout = ScrollbackMapLayout(height: height, totalRows: 1000)
+        let target = ScrollbackMap.Mark(row: 700, kind: .input, eventID: "target")
+        let y = height * 0.7
+        #expect(layout.tapTarget(in: ScrollbackMap(totalRows: 1000, marks: [target]), atY: y) == target)
         #expect(layout.scrubTopRow(atY: y + 0.0001, viewportLength: 40) == 680)
+        #expect(layout.row(forY: height) == 999)
+    }
+
+    @Test func reduceMotionDropsTheMobileExpansionAnimation() {
+        #expect(ScrollbackMapLayout.interactionAnimation(reduceMotion: true) == nil)
+        #expect(ScrollbackMapLayout.interactionAnimation(reduceMotion: false) != nil)
     }
 }
 
@@ -414,7 +353,7 @@ func scrollbackMapClearsMobileControls(controlsHeight: Double) {
 }
 
 @MainActor
-@Suite("@spec CONTEXT-49: While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge. While the map is visible, the application shall retain a 44-point-wide touch target. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.")
+@Suite("@spec CONTEXT-49: While the mobile scrollback map is idle, the application shall show an eight-point strip flush with the pane's right edge. While the map is visible, the application shall keep a 44-point-wide touch target and limit the map height to 150 points. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.")
 struct ScrollbackMapMobileCollapseTests {
     @Test func idleAndExpandedCardsKeepTheSameTouchWidth() throws {
         let timeline = sampleTimeline()
@@ -426,17 +365,17 @@ struct ScrollbackMapMobileCollapseTests {
                 focusY: active ? 70 : nil, scroll: { _ in })
             let host = NSHostingView(rootView: overlay.mobileInputCard)
             #expect(host.fittingSize.width == 44)
-            #expect(host.fittingSize.height == (active ? 202 : 150))
+            #expect(host.fittingSize.height == 150)
             try render(overlay.mobileInputCard.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing),
                        size: CGSize(width: 390, height: 240), named: active ? "scrollback-map-mobile-expanded" : "scrollback-map-mobile-collapsed")
         }
     }
 
-    @Test func presentationExpandsInwardAndDownwardFromTheSameOrigin() {
-        let idle = ScrollbackMapLayout.mobileCardFrame(magnification: 0, height: 150)
-        let active = ScrollbackMapLayout.mobileCardFrame(magnification: 1, height: 202)
-        #expect(idle == CGRect(x: 40, y: 0, width: 4, height: 150))
-        #expect(active == CGRect(x: 4, y: 0, width: 34, height: 202))
+    @Test func presentationExpandsOnlyInward() {
+        let idle = ScrollbackMapLayout.mobileCardFrame(expansion: 0, height: 150)
+        let active = ScrollbackMapLayout.mobileCardFrame(expansion: 1, height: 150)
+        #expect(idle == CGRect(x: 36, y: 0, width: 8, height: 150))
+        #expect(active == CGRect(x: 4, y: 0, width: 34, height: 150))
         #expect(idle.minY == active.minY)
         #expect(ScrollbackMapLayout.stripY(forCardY: 70) == 64)
     }

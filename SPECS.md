@@ -5540,15 +5540,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-34.x
 
-**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks merged when their displayed centers are closer than 3 points or their bars overlap, and a box showing the current viewport, and shall hide the card while no message is located.
+**CONTEXT-34** While an agent pane contains located messages, the application shall show a map of the entire scrollback with marks for human inputs, peer messages, and agent responses, merge marks closer than three points or whose bars overlap, and outline the visible rows. If no message is located, then the application shall hide the map.
 
 ### CONTEXT-35.x
 
-**CONTEXT-35** When the user hovers over the scrollback map card including its padding on Mac or with a pointer on mobile, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.
+**CONTEXT-35** When the user hovers over, touches, or drags along the scrollback map, the application shall show the nearest mark's message to its left, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.
 
 ### CONTEXT-36.x
 
-**CONTEXT-36** While the pointer is not over the scrollback map and no drag is in progress, the application shall draw the card at 40 percent opacity, and shall draw it fully opaque while it is hovered, dragged, or touched, changing without animation when Reduce Motion is on.
+**CONTEXT-36** While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While the Mac map is idle, the application shall display muted marks and a viewport outline without a card background. While the user interacts with either map, the application shall distinguish human input with orange and peer messages and agent responses with blue. While the mobile map is idle, the application shall keep these colors readable against its background.
 
 ### CONTEXT-37.x
 
@@ -5596,7 +5596,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-49.x
 
-**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge. While the map is visible, the application shall retain a 44-point-wide touch target. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.
+**CONTEXT-49** While the mobile scrollback map is idle, the application shall show an eight-point strip flush with the pane's right edge. While the map is visible, the application shall keep a 44-point-wide touch target and limit the map height to 150 points. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.
 
 ### CONTEXT-50.x
 
@@ -5624,7 +5624,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-57.x
 
-**CONTEXT-57** While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the displayed geometry for navigation throughout the animation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.
+**CONTEXT-57** While the user interacts with the scrollback map on Mac or mobile, the application shall keep its height and the vertical positions of the marks fixed, and use those positions for navigation. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
 
 ### CONTEXT-58.x
 

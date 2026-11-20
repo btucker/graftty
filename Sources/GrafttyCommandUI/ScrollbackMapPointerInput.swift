@@ -2,10 +2,10 @@
 import AppKit
 import SwiftUI
 
-/// A native input plane keeps the map above the represented terminal in AppKit's
-/// hit testing. SwiftUI-only gestures can pass through to that terminal view.
+/// A native input plane handles AppKit events inside the map gutter.
 struct ScrollbackMapPointerInput: NSViewRepresentable {
     var content: AnyView
+    var terminalOnLeft: Bool
     var onHover: (CGFloat?) -> Void
     var onScrub: (CGFloat?) -> Void
     var onDrag: (CGFloat) -> Void
@@ -15,6 +15,7 @@ struct ScrollbackMapPointerInput: NSViewRepresentable {
 
     func updateNSView(_ view: ScrollbackMapPointerView, context: Context) {
         view.content.rootView = content
+        view.terminalOnLeft = terminalOnLeft
         view.onHover = onHover
         view.onScrub = onScrub
         view.onDrag = onDrag
@@ -24,6 +25,7 @@ struct ScrollbackMapPointerInput: NSViewRepresentable {
 
 final class ScrollbackMapPointerView: NSView {
     let content: NSHostingView<AnyView>
+    var terminalOnLeft = true
     var onHover: ((CGFloat?) -> Void)?
     var onScrub: ((CGFloat?) -> Void)?
     var onDrag: ((CGFloat) -> Void)?
@@ -31,7 +33,6 @@ final class ScrollbackMapPointerView: NSView {
     private var press: NSPoint?
     private var dragged = false
     private var pointerTracking: NSTrackingArea?
-    private var forwardingWheel = false
 
     init(content: AnyView) {
         self.content = NSHostingView(rootView: content)
@@ -49,7 +50,7 @@ final class ScrollbackMapPointerView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard !isHidden, !forwardingWheel, bounds.contains(convert(point, from: superview)) else { return nil }
+        guard !isHidden, bounds.contains(convert(point, from: superview)) else { return nil }
         return self
     }
 
@@ -58,7 +59,7 @@ final class ScrollbackMapPointerView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        // AppKit updates an in-visible-rect area as the card grows and shrinks.
+        // AppKit updates this tracking area when the pane resizes.
         guard pointerTracking == nil else { return }
         let tracking = NSTrackingArea(rect: bounds,
             options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved], owner: self)
@@ -73,12 +74,11 @@ final class ScrollbackMapPointerView: NSView {
     override func mouseExited(with event: NSEvent) { onHover?(nil) }
 
     override func scrollWheel(with event: NSEvent) {
-        // The terminal is a sibling below the overlay, outside our responder
-        // chain. Re-hit-test without this input plane to preserve its scrolling.
+        // Re-hit-test a point just inside the terminal beside the gutter.
         guard let root = window?.contentView else { return }
-        forwardingWheel = true
-        defer { forwardingWheel = false }
-        let point = root.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+        let y = convert(event.locationInWindow, from: nil).y
+        let x = terminalOnLeft ? bounds.minX - 1 : bounds.maxX + 1
+        let point = convert(NSPoint(x: x, y: y), to: root.superview)
         let target = root.hitTest(point)
         if target !== self { target?.scrollWheel(with: event) }
     }
