@@ -96,6 +96,26 @@ struct AttentionFileHandoffTests {
             sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "second") == .requestRecap)
     }
 
+    @Test("A resumed turn's Stop after a background subagent wait is not fenced as a duplicate when no turn ID is available")
+    func subagentWaitDoesNotFenceTheResumedStop() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        for subagentsRunning in [true, false] {
+            #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .claude, sessionID: "s",
+                paneSessionName: nil, stopHookActive: true, subagentsRunning: subagentsRunning) == .queued)
+        }
+        var stops: [AttentionFileStopEvent] = []
+        #expect(try handoff.consumeStops { stops.append($0) } == 2, "The final Stop is what ends Running")
+        #expect(stops.compactMap(\.subagentsRunning) == [true])
+
+        try handoff.acknowledgeSocketStop(worktree: "/repo", agentID: "agent", sessionID: "s", turnID: nil,
+                                          reportedAt: nil, subagentsRunning: true)
+        _ = try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .claude, sessionID: "s",
+                             paneSessionName: nil, stopHookActive: true)
+        #expect(try handoff.consumeStops { _ in } == 1, "A socket-recorded wait does not fence the final file Stop")
+    }
+
     @Test("Socket completion retires only its report and fences duplicate file Stops")
     func socketCompletionAcknowledgesMatchingReceipt() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

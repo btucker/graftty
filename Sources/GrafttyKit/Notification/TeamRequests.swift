@@ -83,8 +83,12 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
     public var fallbackReport: AttentionFileRecapEvent?
     public var providerSleepActivity: ProviderSleepActivity?
     /// True on a Claude Stop whose background subagents are still working.
+    public var subagentsRunning: Bool {
+        get { subagentsRunningFlag == true }
+        set { subagentsRunningFlag = newValue ? true : nil }
+    }
     /// Absent rather than false so older hosts and fixtures see no new key.
-    public var subagentsRunning: Bool?
+    private var subagentsRunningFlag: Bool?
 
     public init(callerWorktree: String, callerAgentID: String? = nil, runtime: TeamHookRuntime,
                 event: TeamHookEvent, sessionID: String?, paneSessionName: String?,
@@ -102,7 +106,7 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
         self.turnID = turnID
         self.fallbackReport = fallbackReport
         self.providerSleepActivity = providerSleepActivity
-        self.subagentsRunning = subagentsRunning ? true : nil
+        self.subagentsRunning = subagentsRunning
     }
 
     enum CodingKeys: String, CodingKey {
@@ -116,7 +120,7 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
         case turnID = "turn_id"
         case fallbackReport = "fallback_report"
         case providerSleepActivity = "provider_sleep_activity"
-        case subagentsRunning = "subagents_running"
+        case subagentsRunningFlag = "subagents_running"
     }
 
     public init(from decoder: Decoder) throws {
@@ -136,7 +140,7 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
                 .flatMap(ProviderSleepActivity.init(rawValue:)),
             turnID: try container.decodeIfPresent(String.self, forKey: .turnID),
             fallbackReport: try container.decodeIfPresent(AttentionFileRecapEvent.self, forKey: .fallbackReport),
-            subagentsRunning: try container.decodeIfPresent(Bool.self, forKey: .subagentsRunning) ?? false
+            subagentsRunning: try container.decodeIfPresent(Bool.self, forKey: .subagentsRunningFlag) ?? false
         )
     }
 }

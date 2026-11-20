@@ -1349,7 +1349,7 @@ struct HeadlessHostRuntimeTests {
         #expect(runtime.agentLiveness.livenessBySession[pane] == nil)
     }
 
-    @Test("@spec AGENT-2.12: When a Claude Stop hook reports a background subagent still in flight, the application shall keep the pane in Running until a later Stop reports no running subagents.")
+    @Test("@spec AGENT-2.12: When a Claude Stop hook reports a background subagent still in flight, the application shall keep the pane in Running until a later Stop reports no running subagents or a different Claude session starts in that pane.")
     func stopWithRunningSubagentKeepsRunningActivity() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

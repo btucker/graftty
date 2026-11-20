@@ -263,7 +263,12 @@ struct ControlSocketWireFixtureTests {
         #expect(fields["subagents_running"] as? Bool == true)
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: encoded) == .teamHook(request))
         #expect(try JSONDecoder().decode(TeamHookRequest.self, from: Data(Self.frozenHookWithRecap.utf8))
-            .subagentsRunning == nil)
+            .subagentsRunning == false)
+
+        request.subagentsRunning = false
+        let cleared = try JSONEncoder().encode(NotificationMessage.teamHook(request))
+        #expect((try JSONSerialization.jsonObject(with: cleared) as? [String: Any])?["subagents_running"] == nil)
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: cleared) == .teamHook(request))
     }
 
     @Test func knownAndNullHookEnumsPreserveRequest() throws {

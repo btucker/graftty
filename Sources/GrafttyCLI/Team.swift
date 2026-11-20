@@ -339,7 +339,7 @@ struct TeamHook: ParsableCommand {
                     // cannot turn that success into another correction request.
                     try? AttentionFileHandoff().acknowledgeSocketStop(
                         worktree: worktreePath, agentID: fallbackAgentID, sessionID: resolvedSessionID,
-                        turnID: stopTurnID, reportedAt: fallbackReport?.reportedAt)
+                        turnID: stopTurnID, reportedAt: fallbackReport?.reportedAt, subagentsRunning: subagentsRunning)
                 }
                 print(output)
             case .error, .serverBusy:

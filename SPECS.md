@@ -4886,7 +4886,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.11** While the Mac application is inactive, the application shall continue polling provider activity so Mobile receives current Working status.
 
-**AGENT-2.12** When a Claude Stop hook reports a background subagent still in flight, the application shall keep the pane in Running until a later Stop reports no running subagents.
+**AGENT-2.12** When a Claude Stop hook reports a background subagent still in flight, the application shall keep the pane in Running until a later Stop reports no running subagents or a different Claude session starts in that pane.
 
 ### AGENT-3.x
 

@@ -16,6 +16,8 @@ public final class ClaudeSessionRegistry {
     @ObservationIgnored private var additionalStates: [String: [String: AgentLiveness]] = [:]
     @ObservationIgnored private var hookLiveness: [String: [String: AgentLiveness]] = [:]
     @ObservationIgnored private var hookTimes: [String: [String: Date]] = [:]
+    /// Hook keys per pane whose main thread stopped while background subagents work (AGENT-2.12).
+    @ObservationIgnored private var subagentWaits: [String: Set<String>] = [:]
     @ObservationIgnored private var paneClearedAt: [String: Date] = [:]
 
     @ObservationIgnored private let executor: CLIExecutor
@@ -74,7 +76,7 @@ public final class ClaudeSessionRegistry {
                            sessionID: String?, paneSessionName: String,
                            attentionReason: AgentHookAttentionReason?, subagentsRunning: Bool = false,
                            occurredAt: Date = Date()) {
-        let state: AgentLiveness
+        var state: AgentLiveness
         if attentionReason != nil { state = .idle }
         else {
             switch event {
@@ -90,6 +92,17 @@ public final class ClaudeSessionRegistry {
               occurredAt > (paneClearedAt[paneSessionName] ?? .distantPast) else { return }
         hookTimes[paneSessionName, default: [:]][key] = occurredAt
         additionalStates[paneSessionName]?[key] = nil
+        var waits = subagentWaits[paneSessionName] ?? []
+        if event == .sessionStart {
+            // /clear or /resume replaces a waiting session, whose final Stop
+            // can no longer arrive; compacting the waiting session keeps it.
+            let superseded = waits.filter { $0 != key && $0.hasPrefix(runtime.rawValue + ":") }
+            for stale in superseded { hookLiveness[paneSessionName]?[stale] = nil }
+            waits.subtract(superseded)
+            if waits.contains(key) { state = .busy }
+        }
+        if state == .busy, event == .stop || event == .sessionStart { waits.insert(key) } else { waits.remove(key) }
+        subagentWaits[paneSessionName] = waits.isEmpty ? nil : waits
         hookLiveness[paneSessionName, default: [:]][key] = state == .busy ? .busy : nil
         publishLiveness()
     }
@@ -130,6 +143,7 @@ public final class ClaudeSessionRegistry {
         paneClearedAt[sessionName] = Date()
         hookTimes[sessionName] = nil
         hookLiveness[sessionName] = nil
+        subagentWaits[sessionName] = nil
         polledLiveness[sessionName] = nil
         additionalStates[sessionName] = nil
         publishLiveness()

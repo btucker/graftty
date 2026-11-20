@@ -50,6 +50,11 @@ struct ClaudeRunningSubagentDetectionTests {
         #expect(AgentStopHookFilter.hasRunningSubagent(stdinJSON: payload))
     }
 
+    @Test func malformedSiblingEntryDoesNotHideASubagent() {
+        let payload: [String: Any] = ["background_tasks": [NSNull(), ["type": "subagent", "status": "running"]]]
+        #expect(AgentStopHookFilter.hasRunningSubagent(stdinJSON: payload))
+    }
+
     @Test func otherBackgroundWorkIsNotASubagent() {
         let payloads: [[String: Any]] = [
             [:],

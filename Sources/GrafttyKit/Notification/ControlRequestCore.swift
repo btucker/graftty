@@ -112,7 +112,7 @@ public enum ControlRequestCore {
                                   runtime: request.runtime, event: request.event, sessionID: request.sessionID,
                                   paneSessionName: request.paneSessionName, attentionReason: request.attentionReason,
                                   stopHookActive: request.stopHookActive, turnID: request.turnID, fallbackReport: request.fallbackReport,
-                                  subagentsRunning: request.subagentsRunning == true, platform: platform)
+                                  subagentsRunning: request.subagentsRunning, platform: platform)
         case .capabilities:
             // ATTN-2.27
             let supported = platform.controlCapabilities

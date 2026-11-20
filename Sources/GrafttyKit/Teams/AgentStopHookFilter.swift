@@ -21,8 +21,8 @@ public enum AgentStopHookFilter {
     /// and monitors can outlive the work indefinitely (a dev server).
     /// https://code.claude.com/docs/en/hooks#stop-input
     public static func hasRunningSubagent(stdinJSON: [String: Any]) -> Bool {
-        (stdinJSON["background_tasks"] as? [[String: Any]] ?? [])
-            .contains { $0["type"] as? String == "subagent" }
+        (stdinJSON["background_tasks"] as? [Any] ?? [])
+            .contains { ($0 as? [String: Any])?["type"] as? String == "subagent" }
     }
 
     /// Codex supplies a turn ID. Claude supplies a transcript path instead;

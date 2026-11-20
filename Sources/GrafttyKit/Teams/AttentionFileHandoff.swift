@@ -227,7 +227,7 @@ public struct AttentionFileHandoff: Sendable {
     /// A socket completion must also retire its matching file receipt. Never
     /// delete a newer report that arrived while the socket request was running.
     public func acknowledgeSocketStop(worktree: String, agentID: String?, sessionID: String?,
-                                      turnID: String?, reportedAt: Date?) throws {
+                                      turnID: String?, reportedAt: Date?, subagentsRunning: Bool = false) throws {
         try ensureDirectory()
         let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
         defer { withExtendedLifetime(lease) {} }
@@ -236,7 +236,7 @@ public struct AttentionFileHandoff: Sendable {
             try FileManager.default.removeItem(at: reportURL(worktree: worktree, agentID: agentID))
         }
         if agentID != nil || sessionID != nil || turnID != nil {
-            try Data((turnID ?? "current").utf8).write(
+            try Data(Self.completedTurn(turnID, subagentsRunning: subagentsRunning).utf8).write(
                 to: markerURL(worktree: worktree, agentID: agentID, sessionID: sessionID), options: .atomic)
         }
     }
@@ -257,7 +257,7 @@ public struct AttentionFileHandoff: Sendable {
         defer { withExtendedLifetime(lease) {} }
         let marker = agentID != nil || sessionID != nil || turnID != nil
             ? markerURL(worktree: worktree, agentID: agentID, sessionID: sessionID) : nil
-        let completedTurn = turnID ?? "current"
+        let completedTurn = Self.completedTurn(turnID, subagentsRunning: subagentsRunning)
         if let marker, (try? String(contentsOf: marker, encoding: .utf8)) == completedTurn {
             return .queued
         }
@@ -502,6 +502,12 @@ public struct AttentionFileHandoff: Sendable {
         try JSONEncoder().encode(event).write(
             to: rootDirectory.appendingPathComponent(name), options: .atomic
         )
+    }
+
+    /// AGENT-2.12: a Stop that waited on background subagents does not fence
+    /// the resumed turn's final Stop when the provider supplies no turn ID.
+    private static func completedTurn(_ turnID: String?, subagentsRunning: Bool) -> String {
+        (turnID ?? "current") + (subagentsRunning ? "\0subagents" : "")
     }
 
     private func markerURL(worktree: String, agentID: String?, sessionID: String?) -> URL {
