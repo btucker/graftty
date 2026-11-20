@@ -29,6 +29,37 @@ struct ViewerAgentLaunchTests {
         #expect(plans.first?.initialCommand?.contains(agent.id) == true)
     }
 
+    @Test(arguments: [TeamHookRuntime.codex, .claude])
+    func pastedImageReachesProviderLaunch(provider: TeamHookRuntime) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aE9sAAAAASUVORK5CYII="))
+        var plan: CLIWorktreeCreationPlan?
+        platform.finishCreation = { plan = $0; return nil }
+        let result = await ViewerAgentLaunch.create(repository: "/repo", name: "images", branch: "images", existingSource: nil,
+            agent: .init(promptImages: [png]), platform: platform, configuredProvider: { provider })
+        guard case .created(let path, _) = result else { Issue.record("Expected worktree creation: \(result)"); return }
+        let agent = try #require(platform.state.worktree(forPath: path)?.agents.first)
+        let attachments = try #require(agent.promptImageSet)
+        let image = try #require(attachments.files(in: platform.agentPromptDirectory).first)
+        #expect(try Data(contentsOf: image) == png)
+        #expect(try FileManager.default.attributesOfItem(atPath: image.path)[.posixPermissions] as? Int == 0o600)
+        let command = try #require(plan?.initialCommand)
+        #expect(command.contains("--image") == (provider == .codex))
+        if provider == .codex { #expect(command.contains(image.lastPathComponent)) }
+        let promptFile = try #require(WorktreeAgentLaunchCommand.recoveryPromptFiles(in: platform.agentPromptDirectory).first)
+        let prompt = try String(contentsOf: promptFile, encoding: .utf8)
+        #expect(prompt.contains("Review the attached images."))
+        if provider == .claude { #expect(prompt.contains(image.path)) }
+
+        let recovered = try JSONDecoder().decode(ManagedAgent.self, from: JSONEncoder().encode(agent))
+        #expect(recovered.promptImageSet == attachments)
+        #expect(recovered.summary().promptImageSet == nil)
+        var retry = recovered
+        retry.launchFailed(reason: "Provider startup failed")
+        try retry.retryLaunch()
+        #expect(retry.promptImageSet == attachments)
+    }
+
     @Test("@spec AGENT-6.149: When a paired viewer adds an agent to a worktree with no panes, the application shall launch the requested provider without changing host selection and reuse that launch when the operation is retried.", arguments: [WorktreeState.closed, .running])
     func emptyWorktreeLaunchIsIdempotent(state: WorktreeState) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()

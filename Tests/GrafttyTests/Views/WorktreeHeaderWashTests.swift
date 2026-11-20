@@ -41,7 +41,7 @@ struct WorktreeHeaderWashTests {
         })
     }
 
-    @Test("@spec LAYOUT-2.192: While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.")
+    @Test("@spec LAYOUT-2.192: While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a fully visible tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.")
     func washCoversHeaderAndTopTabsOnly() throws {
         let (_, plain) = try render(nil)
         let (_, washed) = try render(WorktreeHeaderWash(emoji: "🔥", background: Self.background, isDark: true))
@@ -59,7 +59,7 @@ struct WorktreeHeaderWashTests {
             #expect(p.r > p.b + 0.04, "smear is not tinted by the emoji at (\(x), \(y)): \(p)")
         }
         // The watermark sits toward the right of the band, clear of the header's trailing controls.
-        let mark = washed(700, 40)
+        let mark = washed(720, 40)
         #expect(abs(mark.r - base.r) + abs(mark.g - base.g) + abs(mark.b - base.b) > 0.1, "watermark missing: \(mark)")
         // Terminal content below the watermark stays untouched.
         for (x, y) in [(60, 140), (700, 160), (870, 140), (450, 260)] {
@@ -88,7 +88,7 @@ struct WorktreeHeaderWashTests {
             let p = iconed(x, y)
             #expect(p.b - base.b > 0.06 && p.b > p.r + 0.04, "icon smear missing or not blue at (\(x), \(y)): \(p)")
         }
-        let mark = iconed(700, 40)
+        let mark = iconed(720, 40)
         #expect(mark.b - base.b > 0.06, "icon watermark missing: \(mark)")
 
         // Without an icon, the wash falls back to the project's green accent.
@@ -103,18 +103,23 @@ struct WorktreeHeaderWashTests {
             iconData: png, background: Self.background, isDark: true) == nil)
     }
 
-    @Test("@spec LAYOUT-2.229: While the header watermark reaches below the header band, the application shall draw that part faintly over the content beneath instead of cutting it off, without taking clicks.")
-    func watermarkSpillsFaintlyBelowTheBand() throws {
-        let (_, plain) = try render(nil)
-        let (_, washed) = try render(WorktreeHeaderWash(emoji: "🔥", background: Self.background, isDark: true))
-        let base = plain(450, 200)
-        func deviation(_ p: Pixel) -> Double { abs(p.r - base.r) + abs(p.g - base.g) + abs(p.b - base.b) }
-        // Below the 76-point band, under the watermark.
-        let spill = (78...110).flatMap { y in stride(from: 620, through: 780, by: 4).map { washed($0, y) } }.map(deviation)
-        let strongest = try #require(spill.max())
-        #expect(strongest > 0.02, "watermark cut off at the band: \(strongest)")
-        #expect(strongest < 0.35, "spill is too strong for terminal text: \(strongest)")
-        // Within the band, the mark is much stronger than its spill.
-        #expect(deviation(washed(700, 40)) > strongest)
+    @Test("@spec LAYOUT-2.229: While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.")
+    func watermarkFitsInsideTheBandAtUniformOpacity() throws {
+        let project = SidebarProject(id: "repo", repositoryID: "/repo", name: "Graftty", accentHex: "22cc44")
+        let image = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            return true
+        }
+        let png = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
+            .representation(using: .png, properties: [:]))
+        let wash = try #require(WorktreeHeaderWash(identity: .project, project: project, iconData: png,
+            background: Self.background, isDark: true))
+        let (_, pixel) = try render(wash)
+        for point in [(702, 38), (718, 21), (733, 38), (718, 55)] {
+            #expect(pixel(point.0, point.1).r > 0.95, "Faded or clipped watermark at \(point)")
+        }
+        #expect(pixel(718, 80).r < 0.15)
+        #expect(pixel(718, 4).r < 0.9)
     }
 }

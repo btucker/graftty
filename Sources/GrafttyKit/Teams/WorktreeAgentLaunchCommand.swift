@@ -47,6 +47,12 @@ public enum WorktreeAgentLaunchCommand {
         prompt.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? bootstrapPrompt
     }
 
+    public static func pruneUnreferencedImages(state: AppState, stateDirectory: URL = AppState.defaultDirectory) {
+        WorktreePromptImageSet.pruneUnreferenced(
+            in: stateDirectory.appendingPathComponent("agent-launch-prompts", isDirectory: true), state: state
+        )
+    }
+
     public static func validationError(prompt: String?) -> String? {
         guard let prompt else { return nil }
         if prompt.utf8.contains(0) {
@@ -150,9 +156,23 @@ public enum WorktreeAgentLaunchCommand {
                 : "codex resume \(shellLiteral(conversation))"
         } else {
             let file = promptDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("prompt")
-            let contextualTask = managedAgent?.launchPrompt(prompt) ?? initialPrompt(prompt)
+            let imageFiles = managedAgent?.promptImageSet?.files(in: promptDirectory) ?? []
+            guard managedAgent?.promptImageSet == nil || (!imageFiles.isEmpty && imageFiles.allSatisfy({
+                fileManager.isReadableFile(atPath: $0.path)
+            })) else {
+                throw WorktreePromptImageSet.StagingError.invalid("The initial prompt images are no longer available.")
+            }
+            let imageReferences = agent == .claude && !imageFiles.isEmpty
+                ? "\n\nRead the following attached images before working on this task:\n"
+                    + imageFiles.map { "- " + $0.path }.joined(separator: "\n")
+                : ""
+            let task = initialPrompt(prompt) + imageReferences
+            if let error = validationError(prompt: task) {
+                throw WorktreePromptImageSet.StagingError.invalid(error)
+            }
+            let contextualTask = managedAgent?.launchPrompt(task) ?? task
             // Lifecycle identity also arrives through SessionStart. Preserve the task's full budget.
-            let initialTask = contextualTask.utf8.count <= maximumPromptBytes ? contextualTask : initialPrompt(prompt)
+            let initialTask = contextualTask.utf8.count <= maximumPromptBytes ? contextualTask : task
             guard fileManager.createFile(atPath: file.path, contents: Data(initialTask.utf8),
                 attributes: [.posixPermissions: NSNumber(value: Int16(0o600))]) else {
                 throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: file.path])
@@ -164,8 +184,11 @@ public enum WorktreeAgentLaunchCommand {
                 throw error
             }
             promptFile = file
+            let imageArguments = agent == .codex
+                ? imageFiles.map { " --image " + shellLiteral($0.path) }.joined()
+                : ""
             let invocation = (managedAgent?.paneSessionID == nil ? "exec " : "")
-                + "\(agent.rawValue) -- \"$_graftty_agent_prompt\""
+                + "\(agent.rawValue)\(imageArguments) -- \"$_graftty_agent_prompt\""
             // The sentinel preserves trailing newlines stripped by command substitution.
             loader = "_graftty_agent_prompt_file=\(shellLiteral(file.path)); _graftty_agent_prompt=\"$(/bin/cat \"$_graftty_agent_prompt_file\"; _graftty_status=$?; /usr/bin/printf x; exit \"$_graftty_status\")\" && /bin/rm -f \"$_graftty_agent_prompt_file\" && _graftty_agent_prompt=\"${_graftty_agent_prompt%x}\" && \(invocation)"
         }

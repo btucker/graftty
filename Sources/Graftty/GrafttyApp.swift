@@ -203,6 +203,7 @@ struct GrafttyApp: App {
         UserDefaults.standard.register(defaults: DefaultPrompts.registrations)
 
         let loaded = AppState.loadOrFreshBackingUpCorruption(from: AppState.defaultDirectory)
+        WorktreeAgentLaunchCommand.pruneUnreferencedImages(state: loaded)
         _appState = State(initialValue: loaded)
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("graftty.sock").path

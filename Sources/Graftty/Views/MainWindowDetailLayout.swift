@@ -28,7 +28,6 @@ struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: Vie
             HStack(spacing: 0) {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay { WorktreeHeaderWashSpill() }
                     .onPreferenceChange(WorkspaceTabRowHeightKey.self) { tabRowHeight = $0 }
                 // Starts below the content's tab row, when the content has one (CONTEXT-55).
                 inspector

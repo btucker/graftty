@@ -76,6 +76,7 @@ public enum CLIWorktreeCreationRequestHandler {
     public static func begin(
         _ request: CreateWorktreeRequest,
         creationOrigin: WorktreeHistory.Origin? = nil,
+        promptImages: [Data] = [],
         platform: any CLIWorktreeCreationPlatform
     ) async -> ResponseMessage {
         var request = request
@@ -128,6 +129,23 @@ public enum CLIWorktreeCreationRequestHandler {
         ) {
             return .error(error)
         }
+        let promptDirectory = platform.agentPromptDirectory
+        var stagedImages: WorktreePromptImageSet?
+        var committed = false
+        defer {
+            if !committed { stagedImages?.discard(in: promptDirectory) }
+        }
+        if !promptImages.isEmpty {
+            guard request.managedAgent != nil, agentRuntime != nil, request.command == nil else {
+                return .error("Prompt images require a managed agent.")
+            }
+            do {
+                stagedImages = try WorktreePromptImageSet.stage(promptImages, in: promptDirectory)
+                request.managedAgent?.promptImageSet = stagedImages
+            } catch {
+                return .error("Could not prepare prompt images. \(error.localizedDescription)")
+            }
+        }
         let launch: PreparedWorktreeAgentLaunch
         if let agentRuntime,
            CLIWorktreeCreationPolicy.shouldStageAgentPrompt(
@@ -136,7 +154,7 @@ public enum CLIWorktreeCreationRequestHandler {
             do {
                 launch = try WorktreeAgentLaunchCommand.prepare(
                     agent: agentRuntime, prompt: agentPrompt, exactCommand: nil, managedAgent: request.managedAgent,
-                    promptDirectory: platform.agentPromptDirectory
+                    promptDirectory: promptDirectory
                 )
             } catch {
                 return .error("could not stage agent prompt: \(error.localizedDescription)")
@@ -227,6 +245,7 @@ public enum CLIWorktreeCreationRequestHandler {
                 return .error("could not save initial agent task: \(error.localizedDescription)")
             }
         }
+        committed = true
         platform.creationDidBegin(repoPath: repo.path, worktreePath: worktreePath, operationID: operationID)
         let plan = CLIWorktreeCreationPlan(
             repoPath: repo.path,

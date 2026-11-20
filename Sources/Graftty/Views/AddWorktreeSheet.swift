@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import GrafttyCommandUI
 import GrafttyKit
 import GrafttyProtocol
 
@@ -23,6 +24,7 @@ struct AddWorktreeSheet: View {
 
     @State private var controller: AddWorktreeFormController
     @State private var isSubmitting: Bool = false
+    @State private var isPreparingImages = false
     @State private var isPullingDefaultBranch: Bool = false
     @State private var defaultBranchOfferDismissed: Bool = false
     @State private var errorMessage: String?
@@ -40,6 +42,7 @@ struct AddWorktreeSheet: View {
         onSubmit: @escaping (String, BranchSelection, WorktreeAgentConfiguration) async -> String?,
         onCancel: @escaping () -> Void,
         existingBranch: String? = nil,
+        initialAgent: WorktreeAgentConfiguration = .init(),
         hostContext: AddWorktreeHostContext? = nil
     ) {
         self.repoDisplayName = repoDisplayName
@@ -52,6 +55,7 @@ struct AddWorktreeSheet: View {
         self.hostContext = hostContext
         let controller = AddWorktreeFormController(initialWorktreeName: initialWorktreeName)
         controller.carry(existingBranch: existingBranch, entries: branchEntries)
+        controller.agent = initialAgent
         _controller = State(initialValue: controller)
     }
 
@@ -69,7 +73,7 @@ struct AddWorktreeSheet: View {
                             get: { hostContext.selectedID },
                             set: { id in
                                 guard id != hostContext.selectedID else { return }
-                                hostContext.onSelect(id, controller.worktreeName, controller.existingSelection?.name)
+                                hostContext.onSelect(id, controller.worktreeName, controller.existingSelection?.name, controller.agent)
                             }
                         )) {
                             ForEach(hostContext.choices) { choice in
@@ -77,7 +81,7 @@ struct AddWorktreeSheet: View {
                             }
                         }
                         .labelsHidden()
-                        .disabled(isSubmitting)
+                        .disabled(isSubmitting || isPreparingImages)
                     }
                 }
                 GridRow {
@@ -155,14 +159,16 @@ struct AddWorktreeSheet: View {
             .disabled(isSubmitting)
             VStack(alignment: .leading, spacing: 6) {
                 Text("What do you want to do?").foregroundStyle(.secondary)
-                TextEditor(text: $controller.agent.taskDescription)
-                    .focused($taskFieldFocused)
-                    .font(.body)
-                    .frame(height: 100)
-                    .padding(4)
-                    .border(Color.secondary.opacity(0.3))
-                    .accessibilityLabel("What do you want to do?")
-                Text("Optional. Sent as the agent's first message.")
+                WorktreePromptImages(images: $controller.agent.promptImages, isLoading: $isPreparingImages) {
+                    TextEditor(text: $controller.agent.taskDescription)
+                        .focused($taskFieldFocused)
+                        .font(.body)
+                        .frame(height: 100)
+                        .padding(4)
+                        .border(Color.secondary.opacity(0.3))
+                        .accessibilityLabel("What do you want to do?")
+                }
+                Text("Optional. Text and images go to the agent's first turn.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .disabled(isSubmitting)
@@ -181,7 +187,7 @@ struct AddWorktreeSheet: View {
                             defaultBranchOfferDismissed = true
                             startSubmission()
                         }
-                        .disabled(isPullingDefaultBranch || isSubmitting || !controller.canSubmit)
+                        .disabled(isPullingDefaultBranch || isSubmitting || isPreparingImages || !controller.canSubmit)
                     }
                 }
                 .padding(10)
@@ -213,7 +219,7 @@ struct AddWorktreeSheet: View {
                     }
                 }
                 .keyboardShortcut(.return, modifiers: taskFieldFocused ? .command : [])
-                .disabled(!controller.canSubmit || isSubmitting || isPullingDefaultBranch || shouldOfferDefaultBranchPull)
+                .disabled(!controller.canSubmit || isSubmitting || isPreparingImages || isPullingDefaultBranch || shouldOfferDefaultBranchPull)
             }
         }
         .padding(20)
@@ -230,7 +236,8 @@ struct AddWorktreeSheet: View {
     }
 
     private func startSubmission() {
-        guard controller.canSubmit, !isSubmitting, !isPullingDefaultBranch, !shouldOfferDefaultBranchPull else { return }
+        guard controller.canSubmit, !isSubmitting, !isPreparingImages,
+              !isPullingDefaultBranch, !shouldOfferDefaultBranchPull else { return }
         errorMessage = nil
         isSubmitting = true
         submissionTask = Task { @MainActor in

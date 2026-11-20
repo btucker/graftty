@@ -290,7 +290,8 @@ extension WorktreeManagementRequest: Codable {
             // Older peers ignore unknown fields on `create`. Require them to
             // reject configured launches before they can discard the task.
             let configured = launchDefaultAgent && agent != .init()
-            try c.encode(configured ? "create_with_agent" : "create", forKey: .type)
+            let type = agent.promptImages.isEmpty ? (configured ? "create_with_agent" : "create") : "create_with_prompt_images"
+            try c.encode(type, forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
             try c.encode(worktreeName, forKey: .worktreeName)
             try c.encode(branchName, forKey: .branchName)
@@ -369,7 +370,7 @@ extension WorktreeManagementRequest: Codable {
                     forKey: .fingerprint
                 )
             )
-        case "create", "create_with_agent":
+        case "create", "create_with_agent", "create_with_prompt_images":
             self = .create(
                 repositoryID: try c.decode(String.self, forKey: .repositoryID),
                 worktreeName: try c.decode(String.self, forKey: .worktreeName),
