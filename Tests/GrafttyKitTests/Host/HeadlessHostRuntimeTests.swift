@@ -1349,6 +1349,37 @@ struct HeadlessHostRuntimeTests {
         #expect(runtime.agentLiveness.livenessBySession[pane] == nil)
     }
 
+    @Test("@spec AGENT-2.12: When a Claude Stop hook reports a background subagent still in flight, the application shall keep the pane in Running until a later Stop reports no running subagents.")
+    func stopWithRunningSubagentKeepsRunningActivity() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let pane = try await runtime.openWorktree(root.path)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        func running() -> Int { SidebarActivityFilter.running.apply(to: SidebarProjection.activity(runtime.snapshot())).count }
+
+        try handoff.progress(worktree: root.path, agentID: "agent", runtime: .claude, sessionID: "session",
+            paneSessionName: pane, hookEvent: .userPromptSubmit)
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        _ = try handoff.stop(worktree: root.path, agentID: "agent", runtime: .claude, sessionID: "session",
+            paneSessionName: pane, stopHookActive: true, turnID: "turn-1", subagentsRunning: true)
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.agentLiveness.livenessBySession[pane] == .busy)
+        #expect(running() == 1)
+
+        // The socket path carries the same evidence; the subagent's report-back
+        // resumes the main thread, whose final Stop has nothing left in flight.
+        runtime.agentLiveness.recordHook(runtime: .claude, event: .stop, sessionID: "session",
+            paneSessionName: pane, attentionReason: nil, subagentsRunning: true)
+        #expect(runtime.agentLiveness.livenessBySession[pane] == .busy)
+        runtime.agentLiveness.recordHook(runtime: .claude, event: .userPromptSubmit, sessionID: "session",
+            paneSessionName: pane, attentionReason: nil)
+        runtime.agentLiveness.recordHook(runtime: .claude, event: .stop, sessionID: "session",
+            paneSessionName: pane, attentionReason: nil)
+        #expect(runtime.agentLiveness.livenessBySession[pane] == .idle)
+        #expect(running() == 0)
+    }
+
     @Test("Waiting hook files remove agents from Running without clearing existing attention", arguments: [AgentHookAttentionReason.question, .planReview, .permission])
     func fileWaitingUpdatesRunningActivity(reason: AgentHookAttentionReason) async throws {
         let (root, config, state) = try fixture()

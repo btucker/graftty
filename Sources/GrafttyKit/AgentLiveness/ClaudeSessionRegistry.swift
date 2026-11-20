@@ -68,14 +68,18 @@ public final class ClaudeSessionRegistry {
         publishLiveness()
     }
 
+    /// AGENT-2.12: a Stop with `subagentsRunning` keeps the pane busy; the
+    /// subagent's report-back resumes the main thread, whose later Stop ends it.
     public func recordHook(runtime: TeamHookRuntime, event: TeamHookEvent,
                            sessionID: String?, paneSessionName: String,
-                           attentionReason: AgentHookAttentionReason?, occurredAt: Date = Date()) {
+                           attentionReason: AgentHookAttentionReason?, subagentsRunning: Bool = false,
+                           occurredAt: Date = Date()) {
         let state: AgentLiveness
         if attentionReason != nil { state = .idle }
         else {
             switch event {
-            case .sessionStart, .stop: state = .idle
+            case .stop: state = subagentsRunning ? .busy : .idle
+            case .sessionStart: state = .idle
             case .userPromptSubmit, .preToolUse, .postToolUse, .postToolUseFailure: state = .busy
             case .permissionRequest: return // Codex may approve this without involving the user.
             }
@@ -100,6 +104,7 @@ public final class ClaudeSessionRegistry {
         let pane: String?
         let occurredAt: Date
         let attentionReason: AgentHookAttentionReason?
+        var subagentsRunning = false
         switch activity {
         case .progress(let progress):
             guard let hook = progress.hookEvent else { return }
@@ -111,13 +116,13 @@ public final class ClaudeSessionRegistry {
             path = stop.worktree; runtime = stop.runtime; event = .stop
             sessionID = stop.sessionID ?? stop.agentID
             pane = stop.paneSessionName; occurredAt = stop.stoppedAt
-            attentionReason = nil
+            attentionReason = nil; subagentsRunning = stop.subagentsRunning == true
         case .recap, .response:
             return
         }
         guard let pane, appState.worktree(forPath: path)?.paneSlot(forSessionName: pane) != nil else { return }
         recordHook(runtime: runtime, event: event, sessionID: sessionID, paneSessionName: pane,
-                   attentionReason: attentionReason, occurredAt: occurredAt)
+                   attentionReason: attentionReason, subagentsRunning: subagentsRunning, occurredAt: occurredAt)
     }
 
     public func removePane(_ sessionName: String) {

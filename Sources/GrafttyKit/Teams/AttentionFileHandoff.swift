@@ -26,6 +26,8 @@ public struct AttentionFileStopEvent: Codable, Sendable {
     public let stoppedAt: Date
     public var recapReportedAt: Date? = nil
     public var turnID: String? = nil
+    // Optional so stop files queued by older CLIs remain readable.
+    public var subagentsRunning: Bool? = nil
 }
 
 /// The CLI publishes this independently of the provider's eventual Stop.
@@ -247,6 +249,7 @@ public struct AttentionFileHandoff: Sendable {
         paneSessionName: String?,
         stopHookActive: Bool,
         turnID: String? = nil,
+        subagentsRunning: Bool = false,
         stoppedAt: Date = Date()
     ) throws -> AttentionFileStopAction {
         try ensureDirectory()
@@ -284,7 +287,8 @@ public struct AttentionFileHandoff: Sendable {
             recap: recap,
             stoppedAt: stoppedAt,
             recapReportedAt: published?.reportedAt,
-            turnID: turnID
+            turnID: turnID,
+            subagentsRunning: subagentsRunning ? true : nil
         )
         try enqueueStop(event)
         if let marker { try? Data(completedTurn.utf8).write(to: marker, options: .atomic) }

@@ -280,6 +280,9 @@ struct TeamHook: ParsableCommand {
             stageAttentionProgress()
         }
         let stopTurnID = event == .stop ? AgentStopHookFilter.turnID(stdinJSON: stdinPayload) : nil
+        // AGENT-2.12: background subagents keep the worktree running past this Stop.
+        let subagentsRunning = runtime == .claude && event == .stop
+            && AgentStopHookFilter.hasRunningSubagent(stdinJSON: stdinPayload)
         let providerSleepActivity: ProviderSleepActivity = runtime == .claude
             ? .claudeHook(payload: stdinPayload, event: event.camelCaseKey)
             : .unknown
@@ -300,7 +303,8 @@ struct TeamHook: ParsableCommand {
                 sessionID: resolvedSessionID,
                 paneSessionName: paneSessionName,
                 stopHookActive: stopHookActive,
-                turnID: stopTurnID
+                turnID: stopTurnID,
+                subagentsRunning: subagentsRunning
            ) {
             print(action == .requestRecap ? TeamHookRenderer.requestRecap() : "{}")
             return
@@ -324,7 +328,8 @@ struct TeamHook: ParsableCommand {
                     stopHookActive: stopHookActive,
                     providerSleepActivity: providerSleepActivity,
                     turnID: stopTurnID,
-                    fallbackReport: fallbackReport
+                    fallbackReport: fallbackReport,
+                    subagentsRunning: subagentsRunning
                 )
             )
             switch response {

@@ -4886,6 +4886,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.11** While the Mac application is inactive, the application shall continue polling provider activity so Mobile receives current Working status.
 
+**AGENT-2.12** When a Claude Stop hook reports a background subagent still in flight, the application shall keep the pane in Running until a later Stop reports no running subagents.
+
 ### AGENT-3.x
 
 **AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.

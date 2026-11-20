@@ -29,9 +29,11 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
     func providerActivity(path: String, paneSessionName: String?, sessionID: String?,
                           activity: ProviderSleepActivity, runtime: TeamHookRuntime) {}
     func recordHookLiveness(runtime provider: TeamHookRuntime, event: TeamHookEvent, sessionID: String?,
-                            paneSessionName: String, attentionReason: AgentHookAttentionReason?) {
+                            paneSessionName: String, attentionReason: AgentHookAttentionReason?,
+                            subagentsRunning: Bool) {
         runtime.agentLiveness.recordHook(runtime: provider, event: event, sessionID: sessionID,
-                                         paneSessionName: paneSessionName, attentionReason: attentionReason)
+                                         paneSessionName: paneSessionName, attentionReason: attentionReason,
+                                         subagentsRunning: subagentsRunning)
     }
     func instructionsDefaultBranch(repoPath: String, hint: String?) -> String? {
         runtime.repositoryBranches[repoPath]?.defaultBranch ?? hint

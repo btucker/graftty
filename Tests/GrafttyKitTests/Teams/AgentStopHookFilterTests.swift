@@ -39,3 +39,28 @@ struct AgentStopHookFilterTests {
         #expect(!AgentStopHookFilter.isSubagentStop(stdinJSON: payload))
     }
 }
+
+@Suite("Claude Stop payloads report background subagents still in flight")
+struct ClaudeRunningSubagentDetectionTests {
+    @Test func runningSubagentIsDetected() {
+        let payload: [String: Any] = ["background_tasks": [
+            ["id": "t1", "type": "shell", "status": "running", "command": "npm run dev"],
+            ["id": "t2", "type": "subagent", "status": "running", "agent_type": "Explore"],
+        ]]
+        #expect(AgentStopHookFilter.hasRunningSubagent(stdinJSON: payload))
+    }
+
+    @Test func otherBackgroundWorkIsNotASubagent() {
+        let payloads: [[String: Any]] = [
+            [:],
+            ["background_tasks": []],
+            ["background_tasks": NSNull()],
+            ["background_tasks": "invalid"],
+            ["background_tasks": [["type": "shell", "status": "running"], ["type": "monitor", "status": "running"]]],
+            ["background_tasks": [], "session_crons": [["id": "c1", "recurring": true]]],
+        ]
+        for payload in payloads {
+            #expect(!AgentStopHookFilter.hasRunningSubagent(stdinJSON: payload))
+        }
+    }
+}

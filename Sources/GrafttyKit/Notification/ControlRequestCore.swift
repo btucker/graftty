@@ -111,7 +111,8 @@ public enum ControlRequestCore {
             return await teamHook(callerPath: request.callerWorktree, callerAgentID: request.callerAgentID,
                                   runtime: request.runtime, event: request.event, sessionID: request.sessionID,
                                   paneSessionName: request.paneSessionName, attentionReason: request.attentionReason,
-                                  stopHookActive: request.stopHookActive, turnID: request.turnID, fallbackReport: request.fallbackReport, platform: platform)
+                                  stopHookActive: request.stopHookActive, turnID: request.turnID, fallbackReport: request.fallbackReport,
+                                  subagentsRunning: request.subagentsRunning == true, platform: platform)
         case .capabilities:
             // ATTN-2.27
             let supported = platform.controlCapabilities
@@ -173,11 +174,13 @@ public enum ControlRequestCore {
     /// in the caller's worktree.
     public static func recordHookLiveness(callerPath: String, runtime: TeamHookRuntime, event: TeamHookEvent,
                                           sessionID: String?, paneSessionName: String?,
-                                          attentionReason: AgentHookAttentionReason?, platform: any ControlPlatform) {
+                                          attentionReason: AgentHookAttentionReason?, subagentsRunning: Bool = false,
+                                          platform: any ControlPlatform) {
         guard let paneSessionName,
               platform.state.worktree(forPath: callerPath)?.paneSlot(forSessionName: paneSessionName) != nil else { return }
         platform.recordHookLiveness(runtime: runtime, event: event, sessionID: sessionID,
-                                    paneSessionName: paneSessionName, attentionReason: attentionReason)
+                                    paneSessionName: paneSessionName, attentionReason: attentionReason,
+                                    subagentsRunning: subagentsRunning)
     }
 
     /// Records a stopped turn and posts its request for input, if present.
@@ -280,7 +283,7 @@ public enum ControlRequestCore {
     private static func teamHook(callerPath: String, callerAgentID: String?, runtime: TeamHookRuntime,
                                  event: TeamHookEvent, sessionID: String?, paneSessionName: String?,
                                  attentionReason: AgentHookAttentionReason?, stopHookActive: Bool, turnID: String?,
-                                 fallbackReport: AttentionFileRecapEvent?,
+                                 fallbackReport: AttentionFileRecapEvent?, subagentsRunning: Bool,
                                  platform: any ControlPlatform) async -> ResponseMessage {
         if event != .sessionStart {
             // Identity enrichment must not block activity, attention, or inbox delivery.
@@ -289,7 +292,8 @@ public enum ControlRequestCore {
                 paneSessionName: paneSessionName, provider: runtime, providerSessionID: sessionID, platform: platform)
         }
         recordHookLiveness(callerPath: callerPath, runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,
-                           paneSessionName: paneSessionName, attentionReason: attentionReason, platform: platform)
+                           paneSessionName: paneSessionName, attentionReason: attentionReason,
+                           subagentsRunning: subagentsRunning, platform: platform)
         let action = AgentHookAttentionTransition.action(event: event, reason: attentionReason)
         switch action {
         case .recordStoppedTurn:
