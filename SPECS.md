@@ -5542,7 +5542,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-34.x
 
-**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks merged when their displayed centers are closer than 3 points or their bars overlap, and a box showing the current viewport, and shall hide the card while no message is located.
+**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, purple marks and sender headings for incoming agent messages, accent marks and headings for local responses, marks merged when their displayed centers are closer than 3 points or their bars overlap with human input taking color priority followed by incoming messages, and a box showing the current viewport, and shall hide the card while no message is located.
 
 ### CONTEXT-35.x
 
@@ -5735,6 +5735,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-84.x
 
 **CONTEXT-84** When a headless host starts maintenance after restoring its worktrees, the application shall publish their retained context with the current host process identity before accepting further updates.
+
+### CONTEXT-85.x
+
+**CONTEXT-85** While Context history displays messages on Mac or mobile, the application shall use a readable purple rail marker and sender identity for incoming agent messages, retain secondary markers for local agent responses and orange for human input, and keep message text neutral.
 
 ## MEM — MEM
 

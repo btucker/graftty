@@ -18,6 +18,13 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
     public let text: String
     public let timestamp: Double?
     public let sender: String?
+    /// Presentation provenance; the stored map classifies local responses as peers too.
+    let isIncomingPeer: Bool
+
+    init(kind: ScrollbackMap.Kind, text: String, timestamp: Double?, sender: String?, isIncomingPeer: Bool = false) {
+        self.kind = kind; self.text = text; self.timestamp = timestamp; self.sender = sender
+        self.isIncomingPeer = isIncomingPeer
+    }
 
     /// The human input and peer messages of a timeline, by event id.
     public static func entries(in timeline: WorktreeTimeline) -> [String: ScrollbackMapEntry] {
@@ -28,7 +35,8 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
                 entries[event.id] = ScrollbackMapEntry(kind: .input, text: event.completed, timestamp: event.timestamp, sender: nil)
             case .agentMessage, .agentResponse:
                 entries[event.id] = ScrollbackMapEntry(kind: .peer, text: event.completed, timestamp: event.timestamp,
-                                                       sender: event.sourceWorktreeName ?? (event.kind == .agentResponse ? event.title : nil))
+                                                       sender: event.sourceWorktreeName ?? (event.kind == .agentResponse ? event.title : nil),
+                                                       isIncomingPeer: event.kind == .agentMessage)
             case .creation, .checkpoint, .system: break
             }
         }
@@ -80,7 +88,7 @@ public struct ScrollbackMapLayout: Equatable {
         public let y: CGFloat
         let height: CGFloat
         let widthScale: CGFloat
-        /// Orange wins over blue so a merged human input never disappears.
+        /// Human input wins so a merged input never disappears.
         public var kind: ScrollbackMap.Kind { marks.contains { $0.kind == .input } ? .input : .peer }
     }
 
@@ -246,7 +254,7 @@ private struct ScrollbackMapExpansion<Content: View>: View, Animatable {
 }
 
 /// @spec CONTEXT-34
-/// While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks merged when their displayed centers are closer than 3 points or their bars overlap, and a box showing the current viewport, and shall hide the card while no message is located.
+/// While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, purple marks and sender headings for incoming agent messages, accent marks and headings for local responses, marks merged when their displayed centers are closer than 3 points or their bars overlap with human input taking color priority followed by incoming messages, and a box showing the current viewport, and shall hide the card while no message is located.
 public struct ScrollbackMapOverlay: View {
     private struct Interaction {
         let cardY: CGFloat
@@ -274,6 +282,7 @@ public struct ScrollbackMapOverlay: View {
     @State private var gist: PeerMessageGist?
     @State private var labelHeight: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     public init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
                 gists: PeerMessageGistProvider = .shared, availableHeight: CGFloat = .infinity, scroll: @escaping (Int) -> Void) {
@@ -389,7 +398,7 @@ public struct ScrollbackMapOverlay: View {
                 .frame(width: 2).frame(maxWidth: .infinity)
             ForEach(layout.clusters(map.marks)) { cluster in
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(cluster.kind == .input ? Color.orange : Color.accentColor)
+                    .fill(color(for: cluster))
                     .frame(width: stripWidth * cluster.widthScale, height: cluster.height)
                     .frame(maxWidth: .infinity)
                     .offset(y: cluster.y)
@@ -410,6 +419,14 @@ public struct ScrollbackMapOverlay: View {
         .shadow(color: .black.opacity(0.25 * expansion), radius: 8, y: 3)
         .overlay(alignment: .topLeading) { label(layout: layout) }
         .opacity(idleOpacity + (1 - idleOpacity) * Double(magnification))
+    }
+
+    private func color(for cluster: ScrollbackMapLayout.Cluster) -> Color {
+        if cluster.kind == .input { return .orange }
+        if cluster.marks.contains(where: { entries[$0.eventID]?.isIncomingPeer == true }) {
+            return PeerMessageStyle.color(in: colorScheme)
+        }
+        return .accentColor
     }
 
     private func scrubGesture(layout: ScrollbackMapLayout, magnification: CGFloat) -> some Gesture {
@@ -513,6 +530,7 @@ public struct ScrollbackMapOverlay: View {
 
 /// The scrubber's label: the human input verbatim, or the peer gist with its sparkle.
 struct ScrollbackMapLabel: View {
+    @Environment(\.colorScheme) private var colorScheme
     static let width: CGFloat = 200
     let entry: ScrollbackMapEntry
     /// Nil for human input, which is never summarized.
@@ -522,7 +540,8 @@ struct ScrollbackMapLabel: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(entry.heading)
                 .font(.caption2.weight(.medium))
-                .foregroundStyle(entry.kind == .input ? Color.orange : Color.accentColor)
+                .foregroundStyle(entry.kind == .input ? Color.orange :
+                    (entry.isIncomingPeer ? PeerMessageStyle.color(in: colorScheme) : .accentColor))
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if gist?.isGenerated == true {
                     Image(systemName: "sparkles").font(.caption2).foregroundStyle(.secondary)
