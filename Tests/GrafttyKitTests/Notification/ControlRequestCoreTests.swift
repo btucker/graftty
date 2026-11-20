@@ -39,6 +39,7 @@ struct ControlRequestCoreTests {
         }
         var hostStart = ProcessIdentityReader.currentProcessStart
         var liveness: [(TeamHookEvent, String)] = []
+        var subagentsRunning: [Bool] = []
         var notifications: [AgentStopNotificationContent] = []
         var platformRequests: [NotificationMessage] = []
         var platformResponse: ResponseMessage = .ok
@@ -77,8 +78,10 @@ struct ControlRequestCoreTests {
         func providerActivity(path: String, paneSessionName: String?, sessionID: String?,
                               activity: ProviderSleepActivity, runtime: TeamHookRuntime) {}
         func recordHookLiveness(runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?,
-                                paneSessionName: String, attentionReason: AgentHookAttentionReason?) {
+                                paneSessionName: String, attentionReason: AgentHookAttentionReason?,
+                                subagentsRunning: Bool) {
             liveness.append((event, paneSessionName))
+            self.subagentsRunning.append(subagentsRunning)
         }
         func instructionsDefaultBranch(repoPath: String, hint: String?) -> String? { hint }
         func paneTitle(for slot: PaneSlotID, in worktree: WorktreeEntry) -> String? { "editor" }
@@ -353,5 +356,9 @@ struct ControlRequestCoreTests {
         #expect(stop.agentName == "Codex")
         #expect(stop.paneTitle == "editor")
         #expect(platform.notifications.isEmpty)
+
+        _ = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", runtime: .claude, event: .stop,
+            sessionID: "c", paneSessionName: pane, stopHookActive: true, subagentsRunning: true), platform: platform)
+        #expect(platform.subagentsRunning == [false, false, true])
     }
 }

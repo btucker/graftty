@@ -164,6 +164,8 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
+      - path: ../../Tests/GrafttyCommandUITests/PeerMessageColorTests.swift
+        group: SharedCommandUITests
       - path: ../../Tests/GrafttyMobileKitTests/App/IPadRootLayoutLandscapeTests.swift
         group: GrafttyMobileBrowserTests
       - path: ../../Tests/GrafttyMobileKitTests/App/LayoutPassProbe.swift

@@ -35,8 +35,8 @@ struct WorktreeHistoryContentTests {
         try capture(host, named: "harness-reply-\(Int(width))-\(scheme == .dark ? "dark" : "light")")
     }
 
-    @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall put the sender, the message line and the time on one baseline beside a quiet timeline rail, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two one-line gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0])
-    func humanInputAndPeerMessages(width: Double) async throws {
+    @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall put the sender, the message line and the time on one baseline beside a quiet timeline rail, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two one-line gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0], [ColorScheme.dark, .light])
+    func humanInputAndPeerMessages(width: Double, scheme: ColorScheme) async throws {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
         let firstPeer = UUID(), longPeer = UUID()
         let peerText = String(repeating: "The agent checked the layout and kept the full investigation available. ", count: 25)
@@ -55,19 +55,19 @@ struct WorktreeHistoryContentTests {
                 openWorktree: { openedPaths.append($0); return true }, gists: gists)
                 .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true)
                 .background(Color(nsColor: .windowBackgroundColor))
-                .environment(\.colorScheme, .dark)
+                .environment(\.colorScheme, scheme)
         }
         let host = NSHostingView(rootView: content(peerText))
         let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         window.contentView = host
         window.orderFront(nil)
         defer { window.close() }
         host.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(200))
         host.layoutSubtreeIfNeeded()
-        try capture(host, named: "messages-collapsed-\(Int(width))")
+        try capture(host, named: "messages-collapsed-\(Int(width))-\(scheme)")
         let collapsedHeight = host.fittingSize.height
         // Rows are one line each, so controls sit at fixed offsets above the collapsed bottom;
         // nothing above an expanded message moves.
@@ -95,7 +95,7 @@ struct WorktreeHistoryContentTests {
         #expect(host.fittingSize.height > expandedHeight + 15, "The earlier control must reveal the older message")
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
-        try capture(host, named: "messages-expanded-\(Int(width))")
+        try capture(host, named: "messages-expanded-\(Int(width))-\(scheme)")
     }
 
     @Test("@spec CONTEXT-43: While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall show it as one line, the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on activation without shifting later rows when generation finishes.")
