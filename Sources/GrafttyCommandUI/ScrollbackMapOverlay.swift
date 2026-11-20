@@ -85,8 +85,14 @@ public struct ScrollbackMapLayout: Equatable {
     }
 
     struct PresentedMark: Identifiable {
+        enum Emphasis: Equatable {
+            case idle, nearby, distant, previewed
+        }
+
         let cluster: Cluster
         let frame: CGRect
+        let kind: ScrollbackMap.Kind
+        let emphasis: Emphasis
         var id: String { cluster.id }
     }
 
@@ -156,21 +162,30 @@ public struct ScrollbackMapLayout: Equatable {
     /// Grow bars around their existing centers, stopping at the midpoint to either neighbor.
     /// The clusters and row mapping stay independent of pointer position.
     func presentedMarks(_ marks: [ScrollbackMap.Mark], width: CGFloat, maximumWidth: CGFloat,
-                        focusY: CGFloat?, muted: Bool = false) -> [PresentedMark] {
+                        focusY: CGFloat?, previewedMark: ScrollbackMap.Mark? = nil,
+                        muted: Bool = false) -> [PresentedMark] {
         let clusters = clusters(marks)
         return clusters.indices.map { index in
             let cluster = clusters[index]
+            let selectedMark = previewedMark.flatMap { cluster.marks.contains($0) ? $0 : nil }
+            let previewed = selectedMark != nil
             let center = cluster.centerY
             let influence = focusY.map { max(0, 1 - abs($0 - center) / Self.focusRadius) } ?? 0
-            let strength = influence * influence
+            let strength = previewed ? 1 : influence * influence
             let top = index > 0 ? (clusters[index - 1].centerY + center) / 2 : 0
             let bottom = index + 1 < clusters.count ? (center + clusters[index + 1].centerY) / 2 : height
             let baseHeight = muted ? min(2, cluster.height) : cluster.height
             let halfHeight = min(baseHeight * (1 + 0.8 * strength) / 2, center - top, bottom - center)
-            let baseWidth = width * (cluster.kind == .input ? 0.85 : 0.55)
-            let barWidth = min(maximumWidth, baseWidth * (1 + 0.65 * strength))
-            return PresentedMark(cluster: cluster, frame: CGRect(x: -barWidth / 2, y: center - halfHeight,
-                                                                 width: barWidth, height: halfHeight * 2))
+            let kind = selectedMark?.kind ?? cluster.kind
+            let baseWidth = width * (kind == .input ? 0.85 : 0.55)
+            let barWidth = previewed ? maximumWidth : min(maximumWidth, baseWidth * (1 + 0.65 * strength))
+            let emphasis: PresentedMark.Emphasis
+            if previewed { emphasis = .previewed }
+            else if focusY == nil { emphasis = .idle }
+            else if influence > 0 { emphasis = .nearby }
+            else { emphasis = .distant }
+            let frame = CGRect(x: -barWidth / 2, y: center - halfHeight, width: barWidth, height: halfHeight * 2)
+            return PresentedMark(cluster: cluster, frame: frame, kind: kind, emphasis: emphasis)
         }
     }
 
@@ -238,6 +253,19 @@ struct ScrollbackMapPalette {
     }
 
     func mark(_ kind: ScrollbackMap.Kind) -> Color { kind == .input ? input : peer }
+
+    func mark(_ mark: ScrollbackMapLayout.PresentedMark, muted: Bool) -> Color {
+        switch mark.emphasis {
+        case .idle:
+            muted ? Color.primary.opacity(mark.kind == .input ? 0.46 : 0.34) : self.mark(mark.kind)
+        case .nearby:
+            self.mark(mark.kind).opacity(0.68)
+        case .distant:
+            viewport.opacity(0.26)
+        case .previewed:
+            self.mark(mark.kind)
+        }
+    }
 }
 
 /// Animates only the mobile card's horizontal expansion.
@@ -316,7 +344,7 @@ public struct ScrollbackMapOverlay: View {
         #endif
         if !map.marks.isEmpty, layout.height >= ScrollbackMapLayout.markHeight {
             let mark = focusedMark(in: layout)
-            inputCard(layout: layout)
+            inputCard(layout: layout, previewedMark: mark)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Scrollback map")
                 .accessibilityValue(accessibilityValue)
@@ -332,9 +360,10 @@ public struct ScrollbackMapOverlay: View {
         }
     }
 
-    private func inputCard(layout: ScrollbackMapLayout) -> some View {
+    private func inputCard(layout: ScrollbackMapLayout, previewedMark: ScrollbackMap.Mark?) -> some View {
         #if os(macOS)
-        let content = strip(layout: layout, width: 9, maximumMarkWidth: 12, muted: !isActive)
+        let content = strip(layout: layout, width: 9, maximumMarkWidth: 12, muted: !isActive,
+                            previewedMark: previewedMark)
             .frame(width: ScrollbackMapLayout.macGutterWidth)
         return ScrollbackMapPointerInput(content: AnyView(content), terminalOnLeft: layoutDirection == .leftToRight,
             onHover: { hover = $0 },
@@ -343,24 +372,27 @@ public struct ScrollbackMapOverlay: View {
             onClick: { click(at: $0, layout: layout) }
         )
         .frame(width: ScrollbackMapLayout.macGutterWidth, height: layout.cardHeight)
-        .overlay(alignment: .topLeading) { label(layout: layout) }
+        .overlay(alignment: .topLeading) { label(layout: layout, mark: previewedMark) }
         #else
-        return mobileInputCard(layout: layout)
+        return mobileInputCard(layout: layout, previewedMark: previewedMark)
         #endif
     }
 
     /// Kept available on Mac for rendering and layout regression tests of the mobile presentation.
-    var mobileInputCard: some View { mobileInputCard(layout: mobileLayout) }
+    var mobileInputCard: some View {
+        let layout = mobileLayout
+        return mobileInputCard(layout: layout, previewedMark: focusedMark(in: layout))
+    }
 
-    private func mobileInputCard(layout: ScrollbackMapLayout) -> some View {
+    private func mobileInputCard(layout: ScrollbackMapLayout, previewedMark: ScrollbackMap.Mark?) -> some View {
         ScrollbackMapExpansion(amount: isActive ? 1 : 0) { expansion in
             let frame = ScrollbackMapLayout.mobileCardFrame(expansion: expansion, height: layout.cardHeight)
             let inset = ScrollbackMapLayout.stripInset.leading * expansion
             let shape = RoundedRectangle(cornerRadius: 3 + 6 * expansion)
-            return strip(layout: layout, width: frame.width - inset * 2, muted: false)
+            return strip(layout: layout, width: frame.width - inset * 2, muted: false, previewedMark: previewedMark)
                 .frame(width: frame.width, height: frame.height)
                 .background(ScrollbackMapPalette(scheme: colorScheme).backing, in: shape)
-                .overlay(alignment: .topLeading) { label(layout: layout, fixedVertically: true) }
+                .overlay(alignment: .topLeading) { label(layout: layout, mark: previewedMark, fixedVertically: true) }
                 .offset(x: frame.minX)
                 .frame(width: ScrollbackMapLayout.mobileTouchWidth, height: frame.height, alignment: .topLeading)
         }
@@ -376,20 +408,24 @@ public struct ScrollbackMapOverlay: View {
     }
 
     private func strip(layout: ScrollbackMapLayout, width: CGFloat, maximumMarkWidth: CGFloat? = nil,
-                       muted: Bool) -> some View {
+                       muted: Bool, previewedMark: ScrollbackMap.Mark?) -> some View {
         let palette = ScrollbackMapPalette(scheme: colorScheme)
         let box = layout.viewportBox(viewport)
         let focusY = interactionY.map { ScrollbackMapLayout.stripY(forCardY: $0, height: layout.height) }
         let marks = layout.presentedMarks(map.marks, width: width, maximumWidth: maximumMarkWidth ?? width,
-                                         focusY: focusY, muted: muted)
+                                         focusY: focusY, previewedMark: previewedMark, muted: muted)
         return ZStack(alignment: .top) {
             if !muted {
-                Rectangle().fill(palette.viewport.opacity(0.18)).frame(width: 1)
+                Rectangle().fill(palette.viewport.opacity(focusY == nil ? 0.18 : 0.08)).frame(width: 1)
             }
             ForEach(marks) { mark in
-                let kind = mark.cluster.kind
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(muted ? Color.primary.opacity(kind == .input ? 0.46 : 0.34) : palette.mark(kind))
+                let shape = RoundedRectangle(cornerRadius: 1.5)
+                shape.fill(palette.mark(mark, muted: muted))
+                    .overlay {
+                        if mark.emphasis == .previewed {
+                            shape.strokeBorder(palette.viewport.opacity(0.9), lineWidth: 0.75)
+                        }
+                    }
                     .frame(width: mark.frame.width, height: mark.frame.height)
                     .offset(y: mark.frame.minY)
             }
@@ -436,8 +472,8 @@ public struct ScrollbackMapOverlay: View {
     }
 
     @ViewBuilder
-    private func label(layout: ScrollbackMapLayout, fixedVertically: Bool = false) -> some View {
-        if let mark = focusedMark(in: layout), let entry = entries[mark.eventID] {
+    private func label(layout: ScrollbackMapLayout, mark: ScrollbackMap.Mark?, fixedVertically: Bool = false) -> some View {
+        if let mark, let entry = entries[mark.eventID] {
             ScrollbackMapLabel(entry: entry, gist: entry.kind == .peer ? (gist ?? .immediate(entry.text)) : nil)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { labelHeight = $0 }
                 .offset(x: -(ScrollbackMapLabel.width + 6),

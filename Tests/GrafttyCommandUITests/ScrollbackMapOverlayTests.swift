@@ -306,8 +306,23 @@ private struct MapTerminalRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: MapTerminalFixture, context: Context) { }
 }
 
-@Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While the Mac map is idle, the application shall display muted marks and a viewport outline without a card background. While the user interacts with either map, the application shall distinguish human input with orange and peer messages and agent responses with blue. While the mobile map is idle, the application shall keep these colors readable against its background.")
+@Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While the Mac map is idle, the application shall display muted marks and a viewport outline without a card background. While the user interacts with either map, the application shall give the previewed message the strongest emphasis, distinguish nearby human input with orange and nearby peer messages and agent responses with blue, and mute distant marks. While the mobile map is idle, the application shall keep these colors readable against its background.")
 struct ScrollbackMapAppearanceTests {
+    @Test func thePreviewedMessageStandsOutFromNearAndDistantMarks() throws {
+        let layout = ScrollbackMapLayout(height: 150, totalRows: 150)
+        let input = ScrollbackMap.Mark(row: 38, kind: .input, eventID: "input")
+        let peer = ScrollbackMap.Mark(row: 39, kind: .peer, eventID: "peer")
+        let marks = [input, peer, .init(row: 48, kind: .input, eventID: "nearby"),
+                                  .init(row: 119, kind: .input, eventID: "distant")]
+        let idle = layout.presentedMarks(marks, width: 9, maximumWidth: 12, focusY: nil)
+        let hovered = layout.presentedMarks(marks, width: 9, maximumWidth: 12, focusY: 39, previewedMark: peer)
+        #expect(idle.map(\.emphasis) == [.idle, .idle, .idle])
+        #expect(hovered.map(\.emphasis) == [.previewed, .nearby, .distant])
+        #expect(hovered.map { $0.frame.midY } == idle.map { $0.frame.midY })
+        let selected = try #require(hovered.first)
+        #expect(selected.kind == .peer, "A mixed group uses the color of the message in the preview")
+    }
+
     @Test(arguments: [ColorScheme.light, .dark])
     func mobileMarksContrastWithTheirBackingInBothAppearances(scheme: ColorScheme) {
         let palette = ScrollbackMapPalette(scheme: scheme)

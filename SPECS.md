@@ -5548,7 +5548,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-36.x
 
-**CONTEXT-36** While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While the Mac map is idle, the application shall display muted marks and a viewport outline without a card background. While the user interacts with either map, the application shall distinguish human input with orange and peer messages and agent responses with blue. While the mobile map is idle, the application shall keep these colors readable against its background.
+**CONTEXT-36** While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While the Mac map is idle, the application shall display muted marks and a viewport outline without a card background. While the user interacts with either map, the application shall give the previewed message the strongest emphasis, distinguish nearby human input with orange and nearby peer messages and agent responses with blue, and mute distant marks. While the mobile map is idle, the application shall keep these colors readable against its background.
 
 ### CONTEXT-37.x
 
