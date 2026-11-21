@@ -424,7 +424,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.228** When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.
 
-**LAYOUT-2.229** While the application draws a header watermark, it shall size the tilted icon to the full height of the header band, letting its corners run slightly past the band's top and bottom edges, and show it at uniform opacity.
+**LAYOUT-2.229** While the application draws a header watermark, it shall size the tilted icon to nearly twice the height of the header band, cropping it at the band's top and bottom edges, and show it at uniform opacity.
 
 **LAYOUT-2.230** While a worktree row is shown, the application shall give its identity a 60 by 40 point slot that a wide drawing fills, start the row's text after that slot, and keep emoji and project icons at most 32 points.
 
@@ -441,6 +441,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.242** While pinned agents are shown as tiles on Mac or mobile, the application shall place them in one shared niche, darker than the sidebar and inset into it, and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.
 
 **LAYOUT-2.243** When a connected remote worktree advertises a drawing, the Mac application shall fetch its matching revision through the delivering host, cache the image, and show it in sidebar rows, pinned tiles, and the selected worktree header, while preserving user-chosen emoji and home checkout icons.
+
+**LAYOUT-2.244** While header text overlaps the header watermark, the application shall shade the watermark beneath that text, leaving the rest of the watermark and the header outside it unshaded.
 
 ### LAYOUT-3.x — Adding Repositories
 

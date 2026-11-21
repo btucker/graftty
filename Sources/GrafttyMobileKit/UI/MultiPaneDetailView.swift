@@ -214,7 +214,7 @@ struct MultiPaneDetailView: View {
                             }
                             Text(sessionTitle(session)).lineLimit(1)
                                 .fontWeight(group.selected == session ? .medium : .regular)
-                        }.padding(.horizontal, 10).frame(minHeight: 44)
+                        }.worktreeHeaderWashText().padding(.horizontal, 10).frame(minHeight: 44)
                             .foregroundStyle(theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                             .overlay(alignment: .bottom) {
                                 Rectangle().fill(group.selected == session ? theme.foreground.opacity(0.55) : .clear)

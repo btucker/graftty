@@ -142,7 +142,7 @@ struct WorkspaceContentView: View {
                                     if agent(tab) == nil, worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
                                     }
-                                }.padding(.horizontal, 12).padding(.vertical, 9)
+                                }.worktreeHeaderWashText().padding(.horizontal, 12).padding(.vertical, 9)
                                     .foregroundStyle(theme.foreground.opacity(agent(tab)?.completion != nil || agent(tab)?.status == .closed ? 0.4 : group?.selected == tab ? 1 : 0.65))
                                     .overlay(alignment: .bottom) {
                                         Rectangle().fill(group?.selected == tab ? theme.foreground.opacity(0.55) : .clear)
@@ -161,7 +161,7 @@ struct WorkspaceContentView: View {
                                 })
                                 .contextMenu { tabMenu(tab, group: group?.id) }
                         }
-                        newAgentMenu.menuStyle(.borderlessButton)
+                        newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText()
                     }
                 }
             }.font(.system(size: 13))

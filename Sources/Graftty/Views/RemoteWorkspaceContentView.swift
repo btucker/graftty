@@ -288,7 +288,7 @@ struct RemoteWorkspaceContentView: View {
                                 }
                                 Text(title(session)).lineLimit(1)
                                     .fontWeight(group.selected == session ? .medium : .regular)
-                            }.padding(.horizontal, 12).padding(.vertical, 9)
+                            }.worktreeHeaderWashText().padding(.horizontal, 12).padding(.vertical, 9)
                                 .foregroundStyle(terminalManager.theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                                 .overlay(alignment: .bottom) {
                                     Rectangle().fill(group.selected == session ? terminalManager.theme.foreground.opacity(0.55) : .clear)
@@ -320,7 +320,7 @@ struct RemoteWorkspaceContentView: View {
                                 }
                             }
                     }
-                    newAgentMenu.menuStyle(.borderlessButton)
+                    newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText()
                 }
             }.font(.system(size: 13))
                 .background { terminalManager.theme.background.worktreeHeaderWash() }

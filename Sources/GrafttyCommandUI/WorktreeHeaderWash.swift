@@ -67,10 +67,14 @@ public struct WorktreeHeaderWashView: View {
     /// left out and only the crisp watermark and gradient are drawn.
     let drawsSmear: Bool
     private let drawsWatermark: Bool
+    /// Header text frames in this view's coordinates; the watermark is shaded beneath them.
+    private let textFrames: [CGRect]
 
     public init(wash: WorktreeHeaderWash, fadesToBackground: Bool = false,
-                isLowPower: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled, drawsWatermark: Bool = true) {
+                isLowPower: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled, drawsWatermark: Bool = true,
+                textFrames: [CGRect] = []) {
         self.wash = wash
+        self.textFrames = textFrames
         self.fadesToBackground = fadesToBackground
         self.drawsSmear = !isLowPower
         self.drawsWatermark = drawsWatermark
@@ -92,7 +96,13 @@ public struct WorktreeHeaderWashView: View {
                 }
                 LinearGradient(colors: [wash.background.opacity(0.18), wash.background.opacity(fadesToBackground ? 1 : 0.34)],
                                startPoint: .top, endPoint: .bottom)
-                if drawsWatermark { WorktreeHeaderWatermark(wash: wash) }
+                if drawsWatermark {
+                    WorktreeHeaderWatermark(wash: wash)
+                    if !textFrames.isEmpty {
+                        WorktreeHeaderTextShade(frames: textFrames, color: wash.background)
+                            .mask(WorktreeHeaderWatermark(wash: wash))
+                    }
+                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .clipped()
@@ -103,7 +113,7 @@ public struct WorktreeHeaderWashView: View {
 }
 
 /// @spec LAYOUT-2.229
-/// While the application draws a header watermark, it shall size the tilted icon to the full height of the header band, letting its corners run slightly past the band's top and bottom edges, and show it at uniform opacity.
+/// While the application draws a header watermark, it shall size the tilted icon to nearly twice the height of the header band, cropping it at the band's top and bottom edges, and show it at uniform opacity.
 public struct WorktreeHeaderWatermark: View {
     private let wash: WorktreeHeaderWash
     private static let tilt = Angle.degrees(-12)
@@ -114,9 +124,8 @@ public struct WorktreeHeaderWatermark: View {
         GeometryReader { proxy in
             let inset = min(WorktreeHeaderWash.watermarkTrailingInset, proxy.size.width / 3)
             let rotationScale = abs(cos(Self.tilt.radians)) + abs(sin(Self.tilt.radians))
-            // The unrotated icon matches the band height, so the tilted
-            // corners run slightly past the top and bottom and are clipped.
-            let size = max(0, min(140, proxy.size.height, (proxy.size.width - inset - 4) / rotationScale))
+            // Nearly twice the band height, so the band crops the icon's top and bottom.
+            let size = max(0, min(150, proxy.size.height * 1.9, (proxy.size.width - inset - 4) / rotationScale))
             if size > 0 {
                 WorktreeHeaderWashGlyph(glyph: wash.glyph, size: wash.glyph.hasSideBearing ? size * 0.85 : size)
                     .frame(width: size, height: size)
@@ -129,6 +138,26 @@ public struct WorktreeHeaderWatermark: View {
         .clipped()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// @spec LAYOUT-2.244
+/// While header text overlaps the header watermark, the application shall shade the watermark beneath that text, leaving the rest of the watermark and the header outside it unshaded.
+/// Soft patches under header text; the caller masks them to the watermark.
+private struct WorktreeHeaderTextShade: View {
+    let frames: [CGRect]
+    let color: Color
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(frames.enumerated()), id: \.offset) { _, frame in
+                Capsule().fill(color.opacity(0.85))
+                    .frame(width: frame.width + 12, height: frame.height + 4)
+                    .offset(x: frame.minX - 6, y: frame.minY - 2)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .blur(radius: 4)
     }
 }
 
@@ -191,6 +220,8 @@ public struct WorktreeHeaderWashBand: Equatable {
     /// Space above the coordinate origin the band also covers, such as a
     /// navigation bar the header extends beneath.
     public let topExtension: CGFloat
+    /// Frames of header text in the band's coordinate space.
+    public var textFrames: [CGRect] = []
 
     public init(wash: WorktreeHeaderWash, size: CGSize, topExtension: CGFloat = 0) {
         self.wash = wash
@@ -210,11 +241,54 @@ extension EnvironmentValues {
     }
 }
 
+/// Header text frames reported to the band provider.
+private struct WorktreeHeaderTextFramesKey: PreferenceKey {
+    static let defaultValue: [CGRect] = []
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) { value += nextValue() }
+}
+
 extension View {
+    /// Provides one header wash band to the surfaces below, measured in the
+    /// band's coordinate space, with the header text frames it shades.
+    public func worktreeHeaderWashBand(_ band: WorktreeHeaderWashBand?) -> some View {
+        modifier(WorktreeHeaderWashBandProvider(band: band))
+    }
+
+    /// Marks header text so the wash shades the watermark beneath it.
+    public func worktreeHeaderWashText() -> some View {
+        modifier(WorktreeHeaderWashTextFrame())
+    }
+
     /// Overlays this surface's slice of the header band. Surfaces outside the
     /// band, such as tab headers of lower split panes, draw nothing.
     public func worktreeHeaderWash() -> some View {
         overlay { WorktreeHeaderWashSlice() }
+    }
+}
+
+private struct WorktreeHeaderWashBandProvider: ViewModifier {
+    let band: WorktreeHeaderWashBand?
+    @State private var textFrames: [CGRect] = []
+
+    func body(content: Content) -> some View {
+        content
+            .onPreferenceChange(WorktreeHeaderTextFramesKey.self) { textFrames = $0 }
+            .coordinateSpace(name: WorktreeHeaderWash.coordinateSpace)
+            .environment(\.worktreeHeaderWashBand, band.map {
+                var band = $0
+                band.textFrames = textFrames
+                return band
+            })
+    }
+}
+
+private struct WorktreeHeaderWashTextFrame: ViewModifier {
+    @State private var frame: CGRect?
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(WorktreeHeaderWash.coordinateSpace)) } action: { frame = $0 }
+            .preference(key: WorktreeHeaderTextFramesKey.self, value: frame.map { [$0] } ?? [])
     }
 }
 
@@ -226,7 +300,9 @@ private struct WorktreeHeaderWashSlice: View {
             GeometryReader { proxy in
                 let origin = proxy.frame(in: .named(WorktreeHeaderWash.coordinateSpace)).origin
                 if origin.y < band.size.height - band.topExtension {
-                    WorktreeHeaderWashView(wash: band.wash)
+                    WorktreeHeaderWashView(wash: band.wash, textFrames: band.textFrames.map {
+                        $0.offsetBy(dx: 0, dy: band.topExtension)
+                    })
                         .frame(width: band.size.width, height: band.size.height)
                         .offset(x: -origin.x, y: -origin.y - band.topExtension)
                 }
