@@ -103,7 +103,7 @@ public struct WorktreeHeaderWashView: View {
 }
 
 /// @spec LAYOUT-2.229
-/// While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.
+/// While the application draws a header watermark, it shall size the tilted icon to the full height of the header band, letting its corners run slightly past the band's top and bottom edges, and show it at uniform opacity.
 public struct WorktreeHeaderWatermark: View {
     private let wash: WorktreeHeaderWash
     private static let tilt = Angle.degrees(-12)
@@ -113,9 +113,10 @@ public struct WorktreeHeaderWatermark: View {
     public var body: some View {
         GeometryReader { proxy in
             let inset = min(WorktreeHeaderWash.watermarkTrailingInset, proxy.size.width / 3)
-            let extent = max(0, min(proxy.size.width - inset - 4, proxy.size.height - 8))
             let rotationScale = abs(cos(Self.tilt.radians)) + abs(sin(Self.tilt.radians))
-            let size = min(114, extent / rotationScale)
+            // The unrotated icon matches the band height, so the tilted
+            // corners run slightly past the top and bottom and are clipped.
+            let size = max(0, min(140, proxy.size.height, (proxy.size.width - inset - 4) / rotationScale))
             if size > 0 {
                 WorktreeHeaderWashGlyph(glyph: wash.glyph, size: wash.glyph.hasSideBearing ? size * 0.85 : size)
                     .frame(width: size, height: size)
@@ -125,6 +126,7 @@ public struct WorktreeHeaderWatermark: View {
                     .padding(.trailing, inset)
             }
         }
+        .clipped()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

@@ -424,7 +424,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.228** When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.
 
-**LAYOUT-2.229** While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.
+**LAYOUT-2.229** While the application draws a header watermark, it shall size the tilted icon to the full height of the header band, letting its corners run slightly past the band's top and bottom edges, and show it at uniform opacity.
 
 **LAYOUT-2.230** While a worktree row is shown, the application shall give its identity a 60 by 40 point slot that a wide drawing fills, start the row's text after that slot, and keep emoji and project icons at most 32 points.
 

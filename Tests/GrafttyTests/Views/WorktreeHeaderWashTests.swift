@@ -107,7 +107,7 @@ struct WorktreeHeaderWashTests {
             iconData: png, background: Self.background, isDark: true) == nil)
     }
 
-    @Test("@spec LAYOUT-2.229: While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.")
+    @Test("@spec LAYOUT-2.229: While the application draws a header watermark, it shall size the tilted icon to the full height of the header band, letting its corners run slightly past the band's top and bottom edges, and show it at uniform opacity.")
     func watermarkFitsInsideTheBandAtUniformOpacity() throws {
         let project = SidebarProject(id: "repo", repositoryID: "/repo", name: "Graftty", accentHex: "22cc44")
         let image = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
@@ -119,15 +119,18 @@ struct WorktreeHeaderWashTests {
             .representation(using: .png, properties: [:]))
         let wash = try #require(WorktreeHeaderWash(identity: .project, project: project, iconData: png,
             background: Self.background, isDark: true))
+        // The 76-point band (breadcrumb plus tab row) holds a 76-point icon
+        // tilted so its corners run past the band's top and bottom edges.
         let (_, pixel) = try render(wash)
-        for point in [(702, 38), (718, 21), (733, 38), (718, 55)] {
-            #expect(pixel(point.0, point.1).r > 0.95, "Faded or clipped watermark at \(point)")
+        for point in [(705, 38), (705, 2), (705, 74), (672, 38), (738, 38)] {
+            #expect(pixel(point.0, point.1).r > 0.95, "Faded or undersized watermark at \(point)")
         }
-        #expect(pixel(718, 80).r < 0.15)
-        #expect(pixel(718, 4).r < 0.9)
+        // The overflow is clipped at the band; terminal content stays clear.
+        #expect(pixel(705, 80).r < 0.15)
 
         let (_, withoutTabs) = try render(wash, showsTabs: false)
-        #expect(withoutTabs(735, 20).r > 0.95)
-        #expect(withoutTabs(720, 38).r < 0.9)
+        #expect(withoutTabs(729, 20).r > 0.95)
+        #expect(withoutTabs(729, 2).r > 0.95)
+        #expect(withoutTabs(729, 46).r < 0.15)
     }
 }
