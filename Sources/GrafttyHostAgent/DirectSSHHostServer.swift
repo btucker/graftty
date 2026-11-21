@@ -6,14 +6,21 @@ import CryptoKit
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
+import NIOConcurrencyHelpers
 import NIOCore
 import NIOPosix
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 public typealias AuthenticatedSkillMutator = @Sendable (RemoteSkillTransferRequest, RemoteMacConnectionSummary.ID) async -> WorktreeManagementResponse
 
 public typealias AuthenticatedPlacementMutator = @Sendable (HostPlacementRequest, RemoteMacConnectionSummary.ID) async -> WorktreeManagementResponse
 
-/// Accepts Graftty SSH sessions directly over TCP. This is separate from OpenSSH.
+/// Accepts Graftty SSH sessions over TCP or an externally established byte stream.
+/// Both transports use the same pairing, authorization, and subsystem handlers.
 public actor DirectSSHHostServer {
     public static let defaultPort = 8801
     public nonisolated let activeRemotePeers: ActiveRemotePeerRegistry
@@ -25,6 +32,7 @@ public actor DirectSSHHostServer {
     private var group: MultiThreadedEventLoopGroup?
     private var connections: DirectSSHConnections?
     private var starting = false
+    private var streamsStarted = false
     private var generation: UInt64 = 0
 
     public init(
@@ -92,64 +100,117 @@ public actor DirectSSHHostServer {
         guard (0...65535).contains(port) else { throw ServerError.invalidPort }
         try Task.checkCancellation()
         starting = true
-        generation &+= 1
+        let wasRunning = group != nil
+        let (group, connections) = prepareTransport()
         let generation = generation
+        var boundChannel: Channel?
+        do {
+            let channel = try await ServerBootstrap(group: group)
+                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                .childChannelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
+                .childChannelInitializer(connectionInitializer(connections: connections))
+                .bind(numericOrResolvedHost: host, port: port).get()
+            boundChannel = channel
+            try Task.checkCancellation()
+            guard self.generation == generation else { throw CancellationError() }
+            guard let boundPort = channel.localAddress?.port else { throw ServerError.missingBoundPort }
+            listener = channel
+            starting = false
+            return boundPort
+        } catch {
+            try? await boundChannel?.close().get()
+            if self.generation == generation {
+                starting = false
+                // Stream admission may have claimed the shared group while the
+                // bind was suspended, even if this bind originally created it.
+                if !wasRunning, !streamsStarted { await close() }
+            }
+            throw error
+        }
+    }
+
+    /// Admit a stream from a transport such as Tailcat without opening a TCP listener.
+    /// The caller retains its handles; this server owns duplicates until SSH closes.
+    public func accept(input: FileHandle, output: FileHandle) async throws {
+        try Task.checkCancellation()
+        let reader = fcntl(input.fileDescriptor, F_DUPFD_CLOEXEC, 0)
+        guard reader >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let writer = fcntl(output.fileDescriptor, F_DUPFD_CLOEXEC, 0)
+        guard writer >= 0 else {
+            let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            closeSSHDescriptor(reader)
+            throw error
+        }
+        let (group, connections) = prepareTransport()
+        streamsStarted = true
+        let generation = generation
+        let initialize = connectionInitializer(connections: connections)
+        let initialized = NIOLockedValueBox(false)
+        let channel: Channel
+        do {
+            channel = try await NIOPipeBootstrap(group: group).channelInitializer { channel in
+                initialized.withLockedValue { $0 = true }
+                return initialize(channel)
+            }.takingOwnershipOfDescriptors(input: reader, output: writer).get()
+        } catch {
+            // Validation failures retain caller ownership. After initialization,
+            // NIO closes the duplicates even if pipeline setup fails.
+            if !initialized.withLockedValue({ $0 }) { closeSSHDescriptor(reader); closeSSHDescriptor(writer) }
+            throw error
+        }
+        guard self.generation == generation, !Task.isCancelled else {
+            try? await channel.close().get()
+            throw CancellationError()
+        }
+    }
+
+    private func prepareTransport() -> (MultiThreadedEventLoopGroup, DirectSSHConnections) {
+        if let group, let connections { return (group, connections) }
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let connections = DirectSSHConnections()
         self.group = group
         self.connections = connections
+        generation &+= 1
+        return (group, connections)
+    }
+
+    private func connectionInitializer(connections: DirectSSHConnections) -> @Sendable (Channel) -> EventLoopFuture<Void> {
         let config = configuration
         let key = hostKey
         let store = trustedPeerStore
         let active = activeRemotePeers
         let registry = sshConnectionRegistry
-        do {
-            let channel = try await ServerBootstrap(group: group)
-                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-                .childChannelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
-                .childChannelInitializer { channel in
-                    guard connections.insert(channel) else {
-                        return channel.eventLoop.makeFailedFuture(ChannelError.ioOnClosedChannel)
-                    }
-                    let session = DirectSSHSession(channel: channel, store: store, registry: registry, allowReplicationOnly: config.gitControl != nil)
-                    let deadline = channel.eventLoop.scheduleTask(in: .seconds(30)) { channel.close(promise: nil) }
-                    channel.closeFuture.whenComplete { _ in
-                        deadline.cancel()
-                        connections.remove(channel)
-                        Task { await session.close() }
-                    }
-                    let handler = config.makeHandler(
-                        channel: channel, hostKey: key, trustedPeerStore: store,
-                        activeRemotePeers: active, peerBox: AuthenticatedPeerBox(),
-                        closeTransport: { await session.close() },
-                        onAuthenticatedPeer: { peer in
-                            deadline.cancel()
-                            Task { await session.register(peer: peer) }
-                        }
-                    )
-                    return channel.eventLoop.makeCompletedFuture {
-                        try channel.pipeline.syncOperations.addHandler(handler)
-                        try channel.pipeline.syncOperations.addHandler(DirectSSHErrorHandler())
-                    }
-                }.bind(numericOrResolvedHost: host, port: port).get()
-            try Task.checkCancellation()
-            guard self.generation == generation else {
-                try? await channel.close().get()
-                throw CancellationError()
+        return { channel in
+            guard connections.insert(channel) else {
+                return channel.eventLoop.makeFailedFuture(ChannelError.ioOnClosedChannel)
             }
-            listener = channel
-            starting = false
-            guard let boundPort = channel.localAddress?.port else { throw ServerError.missingBoundPort }
-            return boundPort
-        } catch {
-            if self.generation == generation { await close() }
-            throw error
+            let session = DirectSSHSession(channel: channel, store: store, registry: registry, allowReplicationOnly: config.gitControl != nil)
+            let deadline = channel.eventLoop.scheduleTask(in: .seconds(30)) { channel.close(promise: nil) }
+            channel.closeFuture.whenComplete { _ in
+                deadline.cancel()
+                connections.remove(channel)
+                Task { await session.close() }
+            }
+            let handler = config.makeHandler(
+                channel: channel, hostKey: key, trustedPeerStore: store,
+                activeRemotePeers: active, peerBox: AuthenticatedPeerBox(),
+                closeTransport: { await session.close() },
+                onAuthenticatedPeer: { peer in
+                    deadline.cancel()
+                    Task { await session.register(peer: peer) }
+                }
+            )
+            return channel.eventLoop.makeCompletedFuture {
+                try channel.pipeline.syncOperations.addHandler(handler)
+                try channel.pipeline.syncOperations.addHandler(DirectSSHErrorHandler())
+            }
         }
     }
 
     public func close() async {
         generation &+= 1
         starting = false
+        streamsStarted = false
         let listener = listener
         self.listener = nil
         let group = group
@@ -166,7 +227,7 @@ public actor DirectSSHHostServer {
     public enum ServerError: Error { case alreadyStarted, invalidPort, missingBoundPort }
 }
 
-/// Registration is scoped to one TCP channel, so a late close cannot deregister a reconnect.
+/// Registration is scoped to one channel, so a late close cannot deregister a reconnect.
 private actor DirectSSHSession {
     let channel: Channel
     let store: TrustedPeerStore
@@ -228,3 +289,5 @@ private final class DirectSSHErrorHandler: ChannelInboundHandler, Sendable {
     typealias InboundIn = ByteBuffer
     func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }
+
+private func closeSSHDescriptor(_ descriptor: Int32) { _ = close(descriptor) }
