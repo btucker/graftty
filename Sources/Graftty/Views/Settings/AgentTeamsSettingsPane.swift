@@ -74,6 +74,8 @@ struct AgentTeamsSettingsPane: View {
                     prepareProviderPlugins()
                 }
                 .disabled(pluginSetupIsBusy)
+                Button("Install Antigravity Plugin") { installAntigravityPlugin() }
+                    .disabled(pluginSetupIsBusy)
                 if preparedPluginPlan != nil {
                     Button("Install Prepared Plugins…") {
                         showingPluginInstallOffer = true
@@ -210,6 +212,21 @@ struct AgentTeamsSettingsPane: View {
             )
             pluginInstallInProgress = false
             pluginSetupStatus = report.summary
+        }
+    }
+
+    private func installAntigravityPlugin() {
+        guard !pluginSetupIsBusy else { return }
+        pluginInstallInProgress = true
+        pluginSetupStatus = "Installing Antigravity plugin…"
+        Task {
+            defer { pluginInstallInProgress = false }
+            do {
+                try await AgentPluginInstaller(grafttyCLIPath: GrafttyApp.agentHookCLIPath()).installAntigravity()
+                pluginSetupStatus = "Installed the Graftty plugin. Start a new Antigravity session to load it."
+            } catch {
+                pluginSetupStatus = "Could not install the Antigravity plugin. Install the agy CLI and try again. \(error.localizedDescription)"
+            }
         }
     }
 }

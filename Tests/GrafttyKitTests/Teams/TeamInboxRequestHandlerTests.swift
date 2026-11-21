@@ -593,10 +593,10 @@ struct TeamInboxRequestHandlerTests {
                 repos: [repo]
             )
 
-            #expect(output.contains("graftty agent add <name> --provider <codex|claude> --prompt-stdin"))
+            #expect(output.contains("graftty agent add <name> --provider <codex|claude|antigravity> --prompt-stdin"))
             #expect(output.contains("`graftty-team` skill"))
             #expect(output.contains("one implementer per worktree"))
-            #expect(output.contains("graftty agent add <name> --worktree <worktree> --provider <codex|claude> --prompt-stdin"))
+            #expect(output.contains("graftty agent add <name> --worktree <worktree> --provider <codex|claude|antigravity> --prompt-stdin"))
             #expect(output.contains("queued before launch"))
             #expect(output.contains("<graftty-peer-message agent=\\\"\\/repo\\\" id=\\\"0001\\\">"))
             #expect(!output.lowercased().contains("untrusted peer"))

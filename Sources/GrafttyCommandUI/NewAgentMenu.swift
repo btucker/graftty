@@ -31,6 +31,9 @@ public struct NewAgentMenu: View {
                 Button { start("claude") } label: {
                     Label { Text("New Claude agent") } icon: { AgentProviderIcon(provider: "claude") }
                 }
+                Button { start("antigravity") } label: {
+                    Label { Text("New Antigravity agent") } icon: { AgentProviderIcon(provider: "antigravity") }
+                }
             }
             .disabled(launching)
         } label: {

@@ -164,7 +164,7 @@ public enum ControlRequestCore {
         case .preToolUse, .permissionRequest, .userPromptSubmit, .postToolUseFailure:
             return true
         case .postToolUse:
-            return runtime == .codex
+            return runtime != .claude
         case .sessionStart, .stop:
             return false
         }

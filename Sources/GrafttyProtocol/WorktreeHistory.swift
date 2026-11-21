@@ -307,8 +307,14 @@ public struct WorktreeTimeline: Sendable {
             }
         }
         result += (history?.responses ?? []).map { response in
-            Event(id: response.id, kind: .agentResponse, timestamp: response.timestamp,
-                  title: response.runtime == "claude" ? "Claude" : "Codex",
+            let title: String
+            switch response.runtime {
+            case "claude": title = "Claude"
+            case "antigravity": title = "Antigravity"
+            default: title = "Codex"
+            }
+            return Event(id: response.id, kind: .agentResponse, timestamp: response.timestamp,
+                  title: title,
                   completed: response.text + (response.wasTruncated ? "…" : ""), decisions: [],
                   responseSessionID: response.runtime + ":" + (response.sessionID ?? "legacy"),
                   isFinalResponse: response.isFinal)
@@ -338,7 +344,8 @@ public struct WorktreeTimeline: Sendable {
               !sender.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
         if let separator = sender.lastIndex(of: "#") {
             let agent = sender[sender.index(after: separator)...]
-            if agent == "codex" || agent == "claude" || agent.hasPrefix("codex-") || agent.hasPrefix("claude-") {
+            if agent == "codex" || agent == "claude" || agent == "antigravity"
+                || agent.hasPrefix("codex-") || agent.hasPrefix("claude-") || agent.hasPrefix("antigravity-") {
                 return String(sender[..<separator])
             }
         }

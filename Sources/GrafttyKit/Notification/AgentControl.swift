@@ -68,7 +68,14 @@ public enum AgentControl {
         func needsObservation() -> Bool {
             guard let worktree = platform.state.worktree(forPath: path),
                   let slot = worktree.paneSlot(forSessionName: session) else { return false }
-            return !worktree.agents.contains { $0.paneSlotID == slot && $0.status != .closed && ($0.providerSessionID != nil || providerSessionID == nil) }
+            guard let agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) else {
+                return true
+            }
+            guard agent.provider == provider, let providerSessionID else { return false }
+            // A resumed provider may only send a hook once its first turn
+            // starts, even though we already know its saved conversation ID.
+            return agent.providerSessionID == nil
+                || (agent.status == .starting && agent.resumingSessionID == providerSessionID)
         }
         guard needsObservation() else { return }
         let presence = platform.teamPresence

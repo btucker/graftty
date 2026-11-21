@@ -59,6 +59,8 @@ public extension RemoteSkillSnapshot {
                 Source(base: workspace, relative: ".agents/skills", destination: ".agents/skills", scope: .project),
                 Source(base: workspace, relative: ".codex/skills", destination: ".codex/skills", scope: .project)
             ]
+        case .antigravity:
+            throw RemoteSkillError("Antigravity skill transfer is not supported")
         case .claude:
             sources = [
                 Source(base: try configHome("CLAUDE_CONFIG_DIR", fallback: ".claude"), relative: "skills", destination: ".claude/skills", scope: .user),

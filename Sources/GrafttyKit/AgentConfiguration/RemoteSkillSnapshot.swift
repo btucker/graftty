@@ -61,6 +61,7 @@ public struct RemoteSkillSnapshot: Codable, Sendable, Equatable {
     }
 
     public func validate(limits: Limits = .init()) throws {
+        guard runtime != .antigravity else { throw RemoteSkillError("Antigravity skill transfer is not supported") }
         guard version == 1 else { throw RemoteSkillError("Unsupported skill snapshot version") }
         guard limits.maxFiles >= 0, limits.maxFileBytes >= 0, limits.maxTotalBytes >= 0,
               files.count <= limits.maxFiles else { throw RemoteSkillError("Skill snapshot exceeds the file count limit") }

@@ -98,6 +98,8 @@ public enum AgentPluginInstallerError: Error, Equatable {
 }
 
 public struct AgentPluginInstaller: Sendable {
+    private static let marketplaceProviders: [TeamHookRuntime] = [.codex, .claude]
+
     /// Bump when the integration changes enough to re-offer first-time setup
     /// to users who declined it. Completed installations refresh per app build.
     /// Revision 10: the plugins became the only agent integration, so users
@@ -194,7 +196,7 @@ public struct AgentPluginInstaller: Sendable {
             at: destinationRoot,
             withIntermediateDirectories: true
         )
-        for provider in AgentPluginProvider.allCases {
+        for provider in Self.marketplaceProviders {
             let source = sourceRoot.appendingPathComponent(provider.rawValue, isDirectory: true)
             guard FileManager.default.fileExists(atPath: source.path) else {
                 throw AgentPluginInstallerError.bundledResourcesMissing
@@ -214,7 +216,7 @@ public struct AgentPluginInstaller: Sendable {
             defer { try? FileManager.default.removeItem(at: staging) }
             try FileManager.default.copyItem(at: source, to: staging)
             try materializeSymbolicLinks(from: source, into: staging)
-            try materializeHookCommands(in: staging)
+            try materializeHookCommands(at: staging.appendingPathComponent("plugins/graftty/hooks/hooks.json"))
             for path in [
                 "skills/graftty/SKILL.md", "skills/graftty-team/SKILL.md",
                 "skills/graftty-open/SKILL.md", "skills/graftty-preview/SKILL.md",
@@ -296,6 +298,28 @@ public struct AgentPluginInstaller: Sendable {
         )
     }
 
+    /// Antigravity copies a local plugin into its own profile. Stage it
+    /// separately so existing Codex and Claude installations never require agy.
+    public func installAntigravity(executor: any CLIExecutor = CLIRunner()) async throws {
+        guard let sourceRoot = resourceRoot ?? Self.bundledResourceRoot() else {
+            throw AgentPluginInstallerError.bundledResourcesMissing
+        }
+        let staging = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-antigravity-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let plugin = staging.appendingPathComponent("graftty", isDirectory: true)
+        try FileManager.default.copyItem(at: sourceRoot.appendingPathComponent("antigravity"), to: plugin)
+        let skills = sourceRoot.appendingPathComponent("codex/plugins/graftty/skills", isDirectory: true)
+        let destination = plugin.appendingPathComponent("skills", isDirectory: true)
+        try FileManager.default.copyItem(at: skills, to: destination)
+        try materializeSymbolicLinks(from: skills, into: destination)
+        try materializeHookCommands(at: plugin.appendingPathComponent("hooks.json"))
+        _ = try await executor.run(command: TeamHookRuntime.antigravity.executable,
+            args: ["plugin", "install", plugin.path], at: staging.path, timeout: .seconds(60))
+    }
+
     /// Resolve source links before traversing them: a provider cache cannot
     /// depend on another provider's files or linked reference directories.
     private func materializeSymbolicLinks(
@@ -327,9 +351,7 @@ public struct AgentPluginInstaller: Sendable {
         }
     }
 
-    private func materializeHookCommands(in providerRoot: URL) throws {
-        let hooksURL = providerRoot
-            .appendingPathComponent("plugins/graftty/hooks/hooks.json")
+    private func materializeHookCommands(at hooksURL: URL) throws {
         let data = try Data(contentsOf: hooksURL)
         let document = try JSONSerialization.jsonObject(with: data)
         let commandPrefix = AgentPluginInstallStep.shellToken(grafttyCLIPath)
@@ -401,7 +423,7 @@ public struct AgentPluginInstaller: Sendable {
     ) async -> AgentPluginInstallationReport {
         let installation = await install(plan, executor: executor, timeout: timeout)
         var results = installation.results
-        for provider in AgentPluginProvider.allCases {
+        for provider in Self.marketplaceProviders {
             let providerResults = installation.results.filter { $0.step.provider == provider }
             guard !providerResults.isEmpty, providerResults.allSatisfy(\.succeeded) else { continue }
             results.append(contentsOf: await verifyAndRemoveLegacy(
@@ -420,7 +442,7 @@ public struct AgentPluginInstaller: Sendable {
         timeout: Duration = .seconds(60)
     ) async -> AgentPluginInstallationReport {
         var results: [AgentPluginInstallResult] = []
-        for provider in AgentPluginProvider.allCases {
+        for provider in Self.marketplaceProviders {
             let listStep = Self.listStep(for: provider)
             do {
                 guard plan.installSteps.contains(where: { $0.provider == provider }) else { continue }
@@ -468,6 +490,8 @@ public struct AgentPluginInstaller: Sendable {
         let registrations: [String: Bool]
         do {
             switch provider {
+            case .antigravity:
+                registrations = [:]
             case .codex:
                 registrations = CodexHomeMirror.pluginEnablement(
                     in: try String(contentsOf: codexConfigurationURL, encoding: .utf8)
@@ -609,6 +633,8 @@ public struct AgentPluginInstaller: Sendable {
 
     private static func installedPlugins(for provider: AgentPluginProvider, data: Data) throws -> InstalledPlugins {
         switch provider {
+        case .antigravity:
+            return InstalledPlugins(currentEnabled: false, legacyEnabled: false, legacyInstalled: false, currentDisabled: false)
         case .codex:
             let entries = try JSONDecoder().decode(CodexPluginInventory.self, from: data).installed
             return InstalledPlugins(
