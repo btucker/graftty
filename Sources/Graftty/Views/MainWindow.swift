@@ -839,14 +839,21 @@ struct MainWindow: View {
     /// The selected worktree's agent pane, local or remote, and the timeline its scrollback map marks.
     private var agentScrollbackMap: AgentScrollbackMap? {
         guard let context = selectedContext, let session = context.transcriptPaneID else { return nil }
-        let terminalID: PaneSlotID?
         if let remoteIdentity = selectedRemoteIdentity {
-            terminalID = remoteViewer.existingTerminalID(identity: remoteIdentity, worktreePath: context.worktree.path,
-                                                         sessionName: session)
-        } else {
-            terminalID = terminalManager.handle(forSessionName: session)?.terminalID
+            return remoteViewer.existingTerminalID(identity: remoteIdentity, worktreePath: context.worktree.path,
+                                                    sessionName: session).map {
+                AgentScrollbackMap(terminalID: $0, timeline: WorktreeTimeline(context))
+            }
         }
-        return terminalID.map { AgentScrollbackMap(terminalID: $0, timeline: WorktreeTimeline(context)) }
+        guard let terminalID = terminalManager.handle(forSessionName: session)?.terminalID else { return nil }
+        let worktree = context.worktree.path
+        let thread = selectedWorktree?.agents.first {
+            $0.paneSlotID == terminalID && $0.provider == .codex && ($0.status == .running || $0.status == .waiting)
+        }?.providerSessionID
+        let recovery = thread.map { thread in
+            ScrollbackMapRecovery(id: thread) { CodexScrollbackTranscript.read(sessionID: thread, worktree: worktree) }
+        }
+        return AgentScrollbackMap(terminalID: terminalID, timeline: WorktreeTimeline(context), recovery: recovery)
     }
 
     private var selectedContext: SidebarWorktreeContext? {

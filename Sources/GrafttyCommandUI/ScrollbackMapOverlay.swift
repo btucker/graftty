@@ -624,6 +624,16 @@ struct ScrollbackMapPreviewFrame: ViewModifier {
     }
 }
 
+public struct ScrollbackMapRecovery: Sendable {
+    public let id: String
+    let load: @Sendable () -> WorktreeTimeline?
+
+    public init(id: String, load: @escaping @Sendable () -> WorktreeTimeline?) {
+        self.id = id
+        self.load = load
+    }
+}
+
 /// @spec CONTEXT-38
 /// One terminal pane's scrollback map: rebuilt from the timeline and the pane's
 /// scrollback after a quiet second, only while the pane is visible. At the scrollback
@@ -636,6 +646,8 @@ public final class ScrollbackMapModel: ObservableObject {
     public private(set) var entries: [String: ScrollbackMapEntry] = [:]
     private weak var terminal: (any TerminalScrollback)?
     private var messages: [ScrollbackMap.Message] = []
+    private var capturedEntries: [String: ScrollbackMapEntry] = [:]
+    private var recovery: ScrollbackMapRecovery?
     private var isVisible = false
     private var pending: Task<Void, Never>?
     private var evictionCheck: Task<Void, Never>?
@@ -656,12 +668,13 @@ public final class ScrollbackMapModel: ObservableObject {
         evictionCheck?.cancel()
     }
 
-    public func update(timeline: WorktreeTimeline) {
+    public func update(timeline: WorktreeTimeline, recovery: ScrollbackMapRecovery? = nil) {
         let messages = ScrollbackMap.messages(in: timeline)
-        guard messages != self.messages else { return }
+        guard messages != self.messages || recovery?.id != self.recovery?.id else { return }
         self.messages = messages
-        entries = ScrollbackMapEntry.entries(in: timeline)
-        if messages.isEmpty { map = nil; stopEvictionCheck() }
+        capturedEntries = ScrollbackMapEntry.entries(in: timeline)
+        self.recovery = recovery
+        if messages.isEmpty, recovery == nil { map = nil; entries = [:]; stopEvictionCheck() }
         scheduleRebuild()
     }
 
@@ -687,14 +700,22 @@ public final class ScrollbackMapModel: ObservableObject {
     private func scheduleRebuild() {
         pending?.cancel()
         pending = nil
-        guard isVisible, !messages.isEmpty, terminal != nil else { return }
+        guard isVisible, !messages.isEmpty || recovery != nil, terminal != nil else { return }
         let debounce = debounce
         pending = Task { [weak self] in
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled, let self, let terminal = self.terminal else { return }
             let firstRow = terminal.firstRowText()
-            let map = await terminal.scrollbackMap(for: self.messages)
+            let snapshot = terminal.scrollbackRows(limit: ScrollbackMap.readLimit)
+            let messages = self.messages, recovery = self.recovery
+            let (map, recovered) = await Task.detached(priority: .userInitiated) { () -> (ScrollbackMap?, WorktreeTimeline?) in
+                guard let snapshot else { return (nil, nil) }
+                let captured = ScrollbackMap.locate(messages, in: snapshot)
+                guard captured.marks.isEmpty, let timeline = recovery?.load() else { return (captured, nil) }
+                return (ScrollbackMap.locate(ScrollbackMap.messages(in: timeline), in: snapshot), timeline)
+            }.value
             guard !Task.isCancelled else { return }
+            self.entries = recovered.map(ScrollbackMapEntry.entries(in:)) ?? self.capturedEntries
             self.map = map
             self.scannedFirstRow = firstRow
             self.pending = nil
@@ -728,13 +749,16 @@ public struct ScrollbackMapOverlayHost: View {
     @ObservedObject var model: ScrollbackMapModel
     let timeline: WorktreeTimeline
     let isVisible: Bool
+    let recovery: ScrollbackMapRecovery?
     var gists: PeerMessageGistProvider = .shared
     /// Derived once per parent update, not on every viewport report that redraws this body.
     private let messages: [ScrollbackMap.Message]
 
     public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, isVisible: Bool = true,
+                recovery: ScrollbackMapRecovery? = nil,
                 gists: PeerMessageGistProvider = .shared) {
         self.model = model; self.timeline = timeline; self.isVisible = isVisible; self.gists = gists
+        self.recovery = recovery
         self.messages = ScrollbackMap.messages(in: timeline)
     }
 
@@ -748,11 +772,12 @@ public struct ScrollbackMapOverlayHost: View {
             }
         }
         .onAppear {
-            model.update(timeline: timeline)
+            model.update(timeline: timeline, recovery: recovery)
             model.setVisible(isVisible)
         }
         .onDisappear { model.setVisible(false) }
-        .onChange(of: messages) { _, _ in model.update(timeline: timeline) }
+        .onChange(of: messages) { _, _ in model.update(timeline: timeline, recovery: recovery) }
+        .onChange(of: recovery?.id) { _, _ in model.update(timeline: timeline, recovery: recovery) }
         .onChange(of: isVisible) { _, visible in model.setVisible(visible) }
     }
 }
@@ -762,7 +787,7 @@ public extension View {
     /// Keep the gutter outside the terminal grid even before the first scrollback scan finishes.
     @MainActor
     func macScrollbackMapGutter(timeline: WorktreeTimeline?, model: ScrollbackMapModel,
-                                background: Color, topInset: CGFloat) -> some View {
+                                background: Color, topInset: CGFloat, recovery: ScrollbackMapRecovery? = nil) -> some View {
         padding(.trailing, timeline == nil ? 0 : ScrollbackMapLayout.macGutterWidth)
             .background(alignment: .trailing) {
                 if timeline != nil {
@@ -771,7 +796,7 @@ public extension View {
             }
             .overlay(alignment: .topTrailing) {
                 if let timeline {
-                    ScrollbackMapOverlayHost(model: model, timeline: timeline)
+                    ScrollbackMapOverlayHost(model: model, timeline: timeline, recovery: recovery)
                         .padding(.vertical, ScrollbackMapLayout.stripInset.top)
                         .padding(.top, topInset)
                 }

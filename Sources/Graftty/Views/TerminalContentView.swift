@@ -8,6 +8,7 @@ import GrafttyRemoteClient
 struct AgentScrollbackMap {
     let terminalID: PaneSlotID
     let timeline: WorktreeTimeline
+    var recovery: ScrollbackMapRecovery? = nil
 }
 
 /// Recursively renders a SplitTree into terminal surface views.
@@ -178,7 +179,8 @@ struct TerminalContentView: View {
                     .macScrollbackMapGutter(
                         timeline: agentScrollbackMap?.terminalID == terminalID ? agentScrollbackMap?.timeline : nil,
                         model: handle.scrollbackMapModel, background: theme.background,
-                        topInset: inputRequestHeights[terminalID] ?? 0
+                        topInset: inputRequestHeights[terminalID] ?? 0,
+                        recovery: agentScrollbackMap?.terminalID == terminalID ? agentScrollbackMap?.recovery : nil
                     )
                     // A retry replaces the native view while preserving the
                     // pane ID. Rebuild the wrapper for the new surface too.

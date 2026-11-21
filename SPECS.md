@@ -5642,6 +5642,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.4** If the worktree’s retained report points to a missing pane and exactly one active agent remains, then the application shall use that agent’s pane for the scrollback map and history jumps on Mac and mobile.
 
+**CONTEXT-57.5** If captured history contains no messages that match the loaded scrollback of a local Codex pane, then the application shall locate messages from that pane’s saved Codex transcript.
+
 ### CONTEXT-58.x
 
 **CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its current-state sentence above a dimmer Next line when a next step exists, after the timeline, followed by any waiting question and a status line.

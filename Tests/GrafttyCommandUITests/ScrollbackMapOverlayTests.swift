@@ -575,6 +575,21 @@ struct ScrollbackMapMobileCollapseTests {
 @MainActor
 @Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
 struct ScrollbackMapRebuildTests {
+    @Test("@spec CONTEXT-57.5: If captured history contains no messages that match the loaded scrollback of a local Codex pane, then the application shall locate messages from that pane’s saved Codex transcript.", arguments: [false, true])
+    func locatesSavedTranscriptWhenCapturedHistoryHasNoMatches(hasCapturedMatch: Bool) async {
+        let terminal = FakeScrollback(rows: sampleRows())
+        let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
+        var captured = WorktreeHistory()
+        captured.record(.init(text: hasCapturedMatch ? "open a pr for the sidebar fix" : "Older prompt no longer in the terminal", at: start))
+        model.update(timeline: WorktreeTimeline(history: captured, brief: nil),
+                     recovery: .init(id: "local-codex", load: { sampleTimeline() }))
+        model.setVisible(true)
+        await waitUntil { model.map?.marks.isEmpty == false }
+        #expect(model.map?.marks.map(\.row) == (hasCapturedMatch ? [40] : [40, 300, 560]))
+        #expect(model.entries.count == (hasCapturedMatch ? 1 : 3))
+        #expect(terminal.reads == 1, "Both sources must be matched against the same rows")
+    }
+
     @Test func hiddenPaneNeverScans() async {
         let terminal = FakeScrollback(rows: sampleRows())
         let model = ScrollbackMapModel(terminal: terminal, debounce: .milliseconds(20))
