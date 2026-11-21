@@ -103,29 +103,42 @@ struct ChromeTabViewerRenderingTests {
     @Test("@spec CHROME-2.25: While the selected remote HTTP(S) page has no rendered frame or a current remote browser error, the application shall hide the Local/Remote toggle; when that page renders successfully, the application shall offer Local only through the toggle without a Try Local button or explanatory copy.")
     func localToggleWaitsForRenderedRemotePage() async throws {
         let model = ChromeTabViewerModel()
+        let frame = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 240)).image { _ in }
+        model.state = .init(tabs: [.init(id: "page", title: "Page", url: "https://example.com")], selectedTabID: "page")
+        model.image = frame
         let viewer = ChromeTabViewer(target: "pane", connectionProvider: { nil }, paneReady: false,
                                      onChooseLocal: { _ in }, localError: "Local browser unavailable.", model: model)
         let fixture = try makeFixture(viewer)
         defer { close(fixture) }
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
-        model.state = .init(tabs: [.init(id: "page", title: "Page", url: "https://example.com")], selectedTabID: "page")
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
+
+        func picker() -> UISegmentedControl? {
+            descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.first
+        }
+        func waitForRender(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async throws {
+            let deadline = ContinuousClock.now + .seconds(5)
+            fixture.host.view.layoutIfNeeded()
+            while !condition(), ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+                fixture.host.view.layoutIfNeeded()
+            }
+            try #require(condition(), "Browser view did not reach the expected state", sourceLocation: sourceLocation)
+        }
+
+        // The inactive viewer suspends on mount and discards its cached frame.
+        try await waitForRender { model.image == nil && picker() == nil }
         model.initialLaunchError = "Earlier launch was ambiguous. Select an existing tab."
-        model.image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 240)).image { _ in }
-        try await Task.sleep(for: .milliseconds(100))
-        let modes = try #require(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.first)
+        model.image = frame
+        try await waitForRender { picker() != nil }
+        let modes = try #require(picker())
         #expect(modes.numberOfSegments == 2 && modes.selectedSegmentIndex == 1)
         #expect(modes.titleForSegment(at: 0) == "Local" && modes.titleForSegment(at: 1) == "Remote")
         #expect(!descendants(of: fixture.host.view).contains { $0.accessibilityLabel == "Try Local" })
         model.error = "Remote browser failed."
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
+        try await waitForRender { picker() == nil }
         model.error = nil
+        try await waitForRender { picker() != nil }
         model.state.tabs[0].url = "about:blank"
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
+        try await waitForRender { picker() == nil }
     }
 
     @Test("@spec CHROME-2.10: When the user explicitly chooses Local in the remote browser, the application shall request local presentation once without choosing Local automatically when the remote view appears.")
