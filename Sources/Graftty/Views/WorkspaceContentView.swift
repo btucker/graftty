@@ -124,8 +124,7 @@ struct WorkspaceContentView: View {
         let group = layout.group(containing: slot)
         return VStack(spacing: 0) {
             HStack(spacing: 2) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) {
+                AgentTabStrip(spacing: 2) {
                         ForEach(group?.sessions ?? [], id: \.self) { tab in
                             Button { selectTab(tab) } label: {
                                 HStack(spacing: 6) {
@@ -137,7 +136,7 @@ struct WorkspaceContentView: View {
                                     } else {
                                         Image(systemName: "terminal")
                                     }
-                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, agent: agent(tab)).lineLimit(1)
+                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, agent: agent(tab)).lineLimit(1).truncationMode(.middle)
                                         .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if agent(tab) == nil, worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
@@ -161,8 +160,7 @@ struct WorkspaceContentView: View {
                                 })
                                 .contextMenu { tabMenu(tab, group: group?.id) }
                         }
-                        newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText()
-                    }
+                        newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText().agentTabStripFixed()
                 }
             }.font(.system(size: 13))
                 .background { theme.background.worktreeHeaderWash() }
@@ -450,7 +448,8 @@ private struct WorkspaceTerminalTitle: View {
 
     var body: some View {
         let _ = invalidations.generation
-        Text(SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
-            agentName: agent?.name ?? "Terminal", tabProvider: agent?.provider.rawValue))
+        let title = SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
+            agentName: agent?.name ?? "Terminal", tabProvider: agent?.provider.rawValue)
+        Text(title).help(title)
     }
 }

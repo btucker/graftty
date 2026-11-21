@@ -444,6 +444,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.244** While header text overlaps the header watermark, the application shall shade the watermark beneath that text, leaving the rest of the watermark and the header outside it unshaded.
 
+**LAYOUT-2.245** When agent tabs are wider than their row, the application shall shrink the widest tabs first to an equal width, no narrower than a minimum, truncating their titles in the middle, and scroll only the tabs that still do not fit.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

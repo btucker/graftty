@@ -271,8 +271,7 @@ struct RemoteWorkspaceContentView: View {
     @ViewBuilder private func header(_ id: PaneSlotID) -> some View {
         if let group = layout.groups.first(where: { slot($0.selected) == id }) {
           VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack {
+            AgentTabStrip(spacing: 8) {
                     ForEach(group.sessions, id: \.self) { session in
                         Button { select(session) } label: {
                             HStack(spacing: 6) {
@@ -286,7 +285,7 @@ struct RemoteWorkspaceContentView: View {
                                 } else {
                                     Image(systemName: "terminal")
                                 }
-                                Text(title(session)).lineLimit(1)
+                                Text(title(session)).lineLimit(1).truncationMode(.middle).help(title(session))
                                     .fontWeight(group.selected == session ? .medium : .regular)
                             }.worktreeHeaderWashText().padding(.horizontal, 12).padding(.vertical, 9)
                                 .foregroundStyle(terminalManager.theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
@@ -320,8 +319,7 @@ struct RemoteWorkspaceContentView: View {
                                 }
                             }
                     }
-                    newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText()
-                }
+                    newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText().agentTabStripFixed()
             }.font(.system(size: 13))
                 .background { terminalManager.theme.background.worktreeHeaderWash() }
                 .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
