@@ -340,9 +340,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.186** When an agent tab is dragged before or after another tab in its group, the application shall persist the new order without changing selected sessions, keyboard focus, or terminal identities.
 
-**LAYOUT-2.187** While an agent is running without a failure or input request, its shared tab and sidebar status badge shall display an indeterminate progress indicator; waiting, completed, failed, and disconnected agents shall display their corresponding static status symbols.
+**LAYOUT-2.187** While an agent tab is visible, the application shall omit the running spinner and display static indicators for idle, waiting, completed, failed, or disconnected agents.
 
-**LAYOUT-2.188** While a live agent is listed in the sidebar or agent tabs, the application shall use its current terminal title and fall back to its assignment name only when the terminal title is blank.
+**LAYOUT-2.188** While a live agent is listed in the sidebar or agent tabs, the application shall use its current terminal title, omit the provider's animated prefix in tabs, and fall back to its assignment name when the displayed title is blank.
 
 **LAYOUT-2.189** When a removable linked worktree has a merged PR or MR, the sidebar shall replace its Git divergence counts with a remove button that invokes the existing worktree deletion flow.
 
@@ -350,7 +350,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.191** When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.
 
-**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a fully visible tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
+**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
 
 **LAYOUT-2.193** While an agent has a live input request, the application shall use the same waiting state in its sidebar and tab, retain the question when its worktree opens, and clear that state when the request is dismissed or its provider resumes.
 
@@ -424,7 +424,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.228** When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.
 
-**LAYOUT-2.229** While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.
+**LAYOUT-2.229** While the application draws a header watermark, it shall size the tilted icon to nearly twice the height of the header band, cropping it at the band's top and bottom edges, and show it at uniform opacity.
 
 **LAYOUT-2.230** While a worktree row is shown, the application shall give its identity a 60 by 40 point slot that a wide drawing fills, start the row's text after that slot, and keep emoji and project icons at most 32 points.
 
@@ -441,6 +441,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.242** While pinned agents are shown as tiles on Mac or mobile, the application shall place them in one shared niche, darker than the sidebar and inset into it, and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.
 
 **LAYOUT-2.243** When a connected remote worktree advertises a drawing, the Mac application shall fetch its matching revision through the delivering host, cache the image, and show it in sidebar rows, pinned tiles, and the selected worktree header, while preserving user-chosen emoji and home checkout icons.
+
+**LAYOUT-2.244** While header text overlaps the header watermark, the application shall shade the watermark beneath that text, leaving the rest of the watermark and the header outside it unshaded.
+
+**LAYOUT-2.245** When agent tabs are wider than their row, the application shall shrink the widest tabs first to an equal width, no narrower than a minimum, truncating their titles in the middle, and scroll only the tabs that still do not fit.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -4886,9 +4890,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.6** The application shall bound each `claude agents --json` and `ps` liveness-poll subprocess with a 5-second timeout, and if that timeout expires, then the application shall produce an empty Claude polling result so the next tick can poll again.
 
-**AGENT-2.7** While a running agent's pane has a liveness registry, the application shall spin only for observed busy turns and treat missing entries as idle; without a registry it shall preserve the working spinner for unknown activity.
+**AGENT-2.7** While a running agent has a liveness registry, the application shall treat observed busy turns as working and missing entries as idle. Without a registry, unknown activity shall count as working.
 
-**AGENT-2.8** While an agent's turn is busy, the application shall show no spinner on its sidebar row, because the agent's terminal title carries its own activity indicator, while agent tabs keep the spinner.
+**AGENT-2.8** While an agent is working, the application shall omit the running status spinner from its tab and sidebar row.
 
 **AGENT-2.9** When provider activity arrives through the durable file handoff, the application shall update the tracked pane's busy state using the original hook event and attention reason while leaving legacy progress without hook metadata unchanged.
 
@@ -4997,6 +5001,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.49** When an agent reports a question with options, the application shall accept two to four options with distinct labels of at most 40 characters, optional costs of at most 80 characters, and at most one suggested option, reject options without a question or with a label that begins with an exclamation mark or a slash, which an agent's input would run as a command, and decode older recaps without options.
 
 **AGENT-3.50** When a client answers a stopped agent's question, the host shall type the answer as one line without control characters into that agent's pane and submit it, and shall refuse when the question has changed or cleared, the answer is empty, the pane is gone or belongs to another agent or shell, or the pane is waiting at its harness's own prompt.
+
+**AGENT-3.51** While a linked worktree has no drawing, the application shall ask that worktree's agent at turn start to draw one on the wide canvas, leaving the home checkout without a request.
+
+**AGENT-3.52** While a linked worktree has no drawing, the application shall adopt the first valid drawing any agent in that worktree reports, while only the context owner may replace an existing drawing or change the rest of the retained context.
 
 ### AGENT-4.x
 
@@ -5552,15 +5560,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-34.x
 
-**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, purple marks and sender headings for incoming agent messages, accent marks and headings for local responses, marks merged when their displayed centers are closer than 3 points or their bars overlap with human input taking color priority followed by incoming messages, and a box showing the current viewport, and shall hide the card while no message is located.
+**CONTEXT-34** While an agent pane contains located messages, the application shall show a map of the entire scrollback with marks for human inputs, peer messages, and agent responses, merge marks closer than three points or whose bars overlap, and outline the visible rows. If no message is located, then the application shall hide the map.
 
 ### CONTEXT-35.x
 
-**CONTEXT-35** When the user hovers over the scrollback map card including its padding on Mac or with a pointer on mobile, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.
+**CONTEXT-35** When the user hovers over, touches, or drags along the scrollback map, the application shall preview the nearest visible mark using a message of the kind shown by that mark, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.
 
 ### CONTEXT-36.x
 
-**CONTEXT-36** While the pointer is not over the scrollback map and no drag is in progress, the application shall draw the card at 40 percent opacity, and shall draw it fully opaque while it is hovered, dragged, or touched, changing without animation when Reduce Motion is on.
+**CONTEXT-36** While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks, incoming agent messages with purple square-ended marks, and local agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.
 
 ### CONTEXT-37.x
 
@@ -5608,7 +5616,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-49.x
 
-**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge. While the map is visible, the application shall retain a 44-point-wide touch target. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.
+**CONTEXT-49** While the mobile scrollback map is idle, the application shall show an eight-point strip flush with the pane's right edge. While the map is visible, the application shall keep a 44-point-wide touch target and limit the map height to 150 points. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.
 
 ### CONTEXT-50.x
 
@@ -5636,7 +5644,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-57.x
 
-**CONTEXT-57** While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the displayed geometry for navigation throughout the animation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.
+**CONTEXT-57** While the user hovers over, touches, or scrubs the scrollback map, the application shall magnify nearby marks inward and along the strip without overlapping other marks or changing their vertical centers, the map height, or the navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
+
+**CONTEXT-57.1** While the user hovers over, holds, or scrubs the scrollback map, the application shall group close user messages in shared cards beside their marks and connect each group to its span with a gradient. If all cards cannot fit, then the application shall prioritize the focused message and nearby cards.
+
+**CONTEXT-57.2** While a scrollback map preview has a message timestamp, the application shall show its elapsed age in whole minutes, hours from one hour, or days from twenty-four hours, and show now for messages less than a minute old.
+
+**CONTEXT-57.3** When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass input outside the message boxes through to the terminal.
+
+**CONTEXT-57.4** If the worktree’s retained report points to a missing pane and exactly one active agent remains, then the application shall use that agent’s pane for the scrollback map and history jumps on Mac and mobile.
+
+**CONTEXT-57.5** While a local Codex pane displays submitted prompts, the application shall mark matching prompts from its saved conversation even when captured agent replies already match, preserving captured marks and showing each prompt row once.
+
+**CONTEXT-57.6** While several agent panes are open in a worktree, the application shall offer a scrollback map in each live agent pane, independent of which agent submitted the latest report.
+
+**CONTEXT-57.7** When the user clicks or taps a scrollback message box, the application shall scroll to the first message associated with the box, including when its excerpt is hidden.
 
 ### CONTEXT-58.x
 
@@ -5749,6 +5771,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-85.x
 
 **CONTEXT-85** While Context history displays messages on Mac or mobile, the application shall use a readable purple rail marker and sender identity for incoming agent messages, retain secondary markers for local agent responses and orange for human input, and keep message text neutral.
+
+### CONTEXT-86.x
+
+**CONTEXT-86** If a worktree's primary agent has failed or closed, then the application shall accept retained context from the earliest running agent the user launched there, never from a CLI-added additional agent.
 
 ## MEM — MEM
 

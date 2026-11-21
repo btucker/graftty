@@ -470,9 +470,9 @@ struct SingleSessionView: View {
         return sidebarNavigation?.worktreeContext(row) ?? SidebarWorktreeContext(worktree: row)
     }
 
-    /// The timeline the scrollback map marks, while this focused pane is its worktree's agent pane.
+    /// The focused agent pane locates timeline messages in its own scrollback.
     private var agentScrollbackTimeline: WorktreeTimeline? {
-        guard isPaneFocused, let context = paneWorktreeContext, context.agentPaneID == step.sessionName else { return nil }
+        guard isPaneFocused, let context = paneWorktreeContext, context.scrollbackPaneIDs.contains(step.sessionName) else { return nil }
         return WorktreeTimeline(context)
     }
 

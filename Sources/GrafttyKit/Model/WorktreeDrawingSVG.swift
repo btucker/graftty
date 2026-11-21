@@ -33,7 +33,18 @@ public struct WorktreeDrawing: Codable, Sendable, Equatable {
     public var canvas: WorktreeDrawingSVG.Canvas { WorktreeDrawingSVG.canvas(of: svg) ?? .square }
 
     public enum Redraw: Sendable {
-        case widen, varyComposition
+        case widen, varyComposition, first
+    }
+
+    /// @spec AGENT-3.51
+    /// While a linked worktree has no drawing, the application shall ask that worktree's agent at turn start to draw one on the wide canvas, leaving the home checkout without a request.
+    /// The drawing request for a turn start: a first drawing for a linked
+    /// worktree without one, otherwise any pending redraw.
+    public static func turnStartRequest(forWorktreePath path: String, in repos: [RepoEntry]) -> Redraw? {
+        guard let repo = repos.first(where: { $0.path != path && $0.worktrees.contains { $0.path == path } }),
+              let worktree = repo.worktrees.first(where: { $0.path == path }) else { return nil }
+        guard let drawing = worktree.drawing else { return .first }
+        return drawing.redraw
     }
 
     public var redraw: Redraw? {

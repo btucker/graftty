@@ -95,6 +95,41 @@ public struct ScrollbackMap: Sendable, Equatable {
         return ScrollbackMap(totalRows: totalRows ?? firstRow + rows.count, marks: marks)
     }
 
+    /// Codex echoes submitted prompts after a chevron. Replies can quote the same words
+    /// later, so match the beginning of a prompt independently of the reply timeline.
+    public static func codexInputMarks(_ messages: [Message], in snapshot: ScrollbackRows) -> [Mark] {
+        let inputs = messages.filter { $0.kind == .input }
+        guard !inputs.isEmpty else { return [] }
+        let rows = snapshot.rows
+        let prompts = rows.indices.compactMap { index -> (Int, [UInt8], [UInt8])? in
+            let line = rows[index].drop(while: \.isWhitespace)
+            guard let glyph = line.first, ["›", "❯", ">"].contains(glyph),
+                  line.dropFirst().first?.isWhitespace == true else { return nil }
+            let first = canonicalize(String(line.dropFirst()))
+            guard !first.isEmpty else { return nil }
+            var prefix = String(first.prefix(needleLength))
+            var next = index + 1
+            while prefix.count < needleLength, next < rows.count {
+                let continuation = canonicalize(rows[next])
+                guard !continuation.isEmpty else { break }
+                prefix += continuation.prefix(needleLength - prefix.count)
+                next += 1
+            }
+            return (snapshot.firstRow + index, Array(first.utf8), Array(prefix.utf8))
+        }
+        var limit = prompts.endIndex
+        var marks: [Mark] = []
+        for message in inputs.reversed() {
+            guard let needle = needle(for: message.text),
+                  let index = prompts[..<limit].lastIndex(where: { _, first, prefix in
+                      needle.count < distinctiveLength ? first == needle : prefix.starts(with: needle)
+                  }) else { continue }
+            marks.append(Mark(row: prompts[index].0, kind: .input, eventID: message.eventID))
+            limit = index
+        }
+        return marks.reversed()
+    }
+
     static func needle(for text: String) -> [UInt8]? {
         let line = text.split(whereSeparator: \.isNewline).lazy.map { canonicalize(String($0)) }.first { !$0.isEmpty }
         guard let line else { return nil }

@@ -31,6 +31,32 @@ public struct SidebarWorktreeContext: Equatable {
         hasUnseenStop ? [] : (worktree.layout?.leaves ?? []).filter(\.isBusy)
     }
 
+    /// A retained report can outlive its pane, such as after closing a reviewer tab.
+    public var transcriptPaneID: String? {
+        if let agentPaneID { return agentPaneID }
+        let active = agentPanes(withStatus: ["running", "waiting"])
+        return active.count == 1 ? active.first : nil
+    }
+
+    /// Rails belong to the displayed terminals, even when another tab last reported.
+    /// The Mac gutter narrows its terminal, so a pane keeps its rail from launch until
+    /// cleanup rather than resizing a live provider when it reports in or finishes.
+    public var scrollbackPaneIDs: Set<String> {
+        var panes = agentPanes(withStatus: ["starting", "running", "waiting", "awaiting-cleanup"])
+        if let agentPaneID { panes.insert(agentPaneID) }
+        return panes
+    }
+
+    private func agentPanes(withStatus statuses: Set<String>) -> Set<String> {
+        guard worktree.state == .running, let agents = worktree.agents, let layout = worktree.layout else { return [] }
+        let panes = Set(layout.leaves.map(\.sessionName))
+        return Set(agents.compactMap { agent -> String? in
+            guard statuses.contains(agent.status), agent.processObservation != .exited,
+                  let session = agent.sessionName, panes.contains(session) else { return nil }
+            return session
+        })
+    }
+
     public init(worktree: WorktreePanes, retained: [SidebarActivityItem] = [],
                 isViewed: (SidebarActivityItem) -> Bool = { _ in false }) {
         self.worktree = worktree

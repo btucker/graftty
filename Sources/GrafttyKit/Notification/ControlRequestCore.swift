@@ -366,7 +366,7 @@ public enum ControlRequestCore {
                 ? (try? TeamHookRenderer.userPromptSubmit(assignmentContext: AgentControl.currentSessionInstructions(
                     path: callerPath, agentID: callerAgentID, paneSessionName: paneSessionName,
                     provider: runtime, platform: platform),
-                    drawingRedraw: platform.state.worktree(forPath: callerPath)?.drawing?.redraw,
+                    drawingRedraw: WorktreeDrawing.turnStartRequest(forWorktreePath: callerPath, in: platform.state.repos),
                     drawingThemeContext: platform.drawingThemeContext,
                     drawingsInUse: WorktreeDrawing.descriptionsInUse(besidesWorktreePath: callerPath,
                                                                      in: platform.state.repos))) ?? "{}" : "{}")

@@ -115,7 +115,7 @@ struct WorktreeContextHistory: View {
     }
 
     private var revealInTerminal: (@MainActor (String) async -> Bool)? {
-        guard let reveal = actions?.revealInTerminal, let paneID = context.agentPaneID else { return nil }
+        guard let reveal = actions?.revealInTerminal, let paneID = context.transcriptPaneID else { return nil }
         let worktree = context.worktree, messages = ScrollbackMap.messages(in: timeline)
         return { eventID in
             await reveal(TerminalRevealRequest(worktree: worktree, paneID: paneID, eventID: eventID, messages: messages))

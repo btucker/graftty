@@ -68,6 +68,16 @@ struct ScrollbackMapTests {
         #expect(ScrollbackMap.locate([input("1", "ok")], rows: ["⏺ That looks ok to me"]).marks.isEmpty)
     }
 
+    @Test func codexPromptsKeepTheirRowsAcrossWrappingQuotesAndRepeatedSubmissions() {
+        let messages = [input("a", "ok"), input("b", "Look at the migration error in staging"),
+                        peer("reply", "ok"), input("c", "ok")]
+        let rows = ["› ok", "› Look at the migra", "tion error in staging",
+                    "• Look at the migration error in staging", "› ok", "• ok"]
+        let found = ScrollbackMap.codexInputMarks(messages, in: ScrollbackRows(rows: rows, firstRow: 20, totalRows: 26))
+        #expect(found.map(\.row) == [20, 21, 24])
+        #expect(found.map(\.eventID) == ["a", "b", "c"])
+    }
+
     @Test func findsTheNearestMarkToARow() {
         let map = ScrollbackMap(totalRows: 100, marks: [.init(row: 10, kind: .input, eventID: "a"),
                                                        .init(row: 40, kind: .peer, eventID: "b")])
