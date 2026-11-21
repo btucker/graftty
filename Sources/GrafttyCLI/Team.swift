@@ -239,7 +239,7 @@ struct TeamHook: ParsableCommand {
             event: event,
             stdinJSON: stdinPayload
         )
-        // AGY does not expose a recursion flag for a hook-triggered retry.
+        // AGENT-6.168: allow AGY Stop to complete without asking for another turn.
         let stopHookActive = antigravity != nil || stdinPayload["stop_hook_active"] as? Bool == true
 
         // TEAM-9.1
@@ -248,7 +248,11 @@ struct TeamHook: ParsableCommand {
             return
         }
 
-        guard let worktreePath = try? WorktreeResolver.resolve() else {
+        // AGY runs plugin hooks with CWD set to the plugin directory, passing
+        // the agent's working directory in the JSON payload instead.
+        guard let worktreePath = try? WorktreeResolver.resolve(
+            at: antigravity?.workingDirectory ?? FileManager.default.currentDirectoryPath
+        ) else {
             emit("{}")
             return
         }

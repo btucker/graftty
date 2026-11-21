@@ -5,6 +5,7 @@ import GrafttyKit
 /// https://antigravity.google/docs/hooks
 struct AntigravityHook {
     let sessionID: String
+    let workingDirectory: String?
     let prompt: String?
     let turnID: String?
     let fullyIdle: Bool
@@ -23,6 +24,9 @@ struct AntigravityHook {
             return nil
         }
         self.sessionID = sessionID
+        let cwd = (payload["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let workspace = (payload["workspacePaths"] as? [String])?.first(where: { !$0.isEmpty })
+        workingDirectory = cwd ?? workspace
         prompt = payload["lastUserInput"] as? String
         turnID = (payload["executionNum"] as? Int).map { "execution:\($0)" }
         fullyIdle = payload["fullyIdle"] as? Bool ?? true
@@ -35,7 +39,7 @@ struct AntigravityHook {
               let context = hook["additionalContext"] as? String,
               !context.isEmpty,
               let data = try? JSONSerialization.data(withJSONObject: [
-                  "injectSteps": [["ephemeralMessage": context]]
+                  "injectSteps": [["systemMessage": ["systemMessage": context]]]
               ]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }

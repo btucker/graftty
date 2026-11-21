@@ -12,7 +12,8 @@ struct AgentInstallAntigravity: AsyncParsableCommand {
         abstract: "Install Graftty's hooks and skills in the local Antigravity CLI profile")
 
     func run() async throws {
-        let cli = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        let cli = Bundle.main.executableURL?.standardizedFileURL
+            ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
         try await AgentPluginInstaller(grafttyCLIPath: cli.path).installAntigravity()
         print("Installed the Graftty plugin. Start a new Antigravity session to load it.")
     }

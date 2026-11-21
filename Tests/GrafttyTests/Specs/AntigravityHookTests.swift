@@ -7,8 +7,15 @@ struct AntigravityHookTests {
     @Test("@spec AGENT-6.167: When Antigravity sends a lifecycle hook, the application shall use its conversation ID, treat only the first model invocation as a turn start, and keep the worktree busy until Antigravity reports that its background work has finished.")
     func readsNativeLifecycle() throws {
         let sessionID = UUID().uuidString
-        let start = try #require(AntigravityHook(event: .sessionStart, payload: ["conversationId": sessionID]))
+        let start = try #require(AntigravityHook(event: .sessionStart, payload: [
+            "conversationId": sessionID, "cwd": "/repo/wt", "workspacePaths": ["/repo"]
+        ]))
         #expect(start.sessionID == sessionID)
+        #expect(start.workingDirectory == "/repo/wt")
+        let fallback = try #require(AntigravityHook(event: .sessionStart, payload: [
+            "conversationId": sessionID, "cwd": "", "workspacePaths": ["/repo/fallback"]
+        ]))
+        #expect(fallback.workingDirectory == "/repo/fallback")
         let payload: [String: Any] = ["conversationId": sessionID, "lastUserInput": "Continue", "invocationNum": 0]
         #expect(AntigravityHook(event: .userPromptSubmit, payload: payload)?.prompt == "Continue")
         var later = payload
@@ -29,8 +36,9 @@ struct AntigravityHookTests {
         let output = try TeamHookRenderer.sessionStart(runtime: .antigravity, instructions: "Worktree instructions.")
         let native = AntigravityHook.output(output, event: .sessionStart)
         let data = try #require(JSONSerialization.jsonObject(with: Data(native.utf8)) as? [String: Any])
-        let steps = try #require(data["injectSteps"] as? [[String: String]])
-        #expect(steps.first?["ephemeralMessage"]?.contains("Worktree instructions.") == true)
+        let steps = try #require(data["injectSteps"] as? [[String: Any]])
+        let systemMessage = try #require(steps.first?["systemMessage"] as? [String: Any])
+        #expect((systemMessage["systemMessage"] as? String)?.contains("Worktree instructions.") == true)
         #expect(data["hookSpecificOutput"] == nil)
         #expect(AntigravityHook.output(TeamHookRenderer.requestRecap(), event: .stop) == #"{"decision":"allow"}"#)
     }

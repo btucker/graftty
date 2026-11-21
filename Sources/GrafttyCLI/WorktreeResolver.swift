@@ -12,9 +12,8 @@ enum WorktreeResolver {
     /// tracked. Otherwise it isn't. This implements ATTN-3.2: the old
     /// behavior only checked "inside a git worktree" but the spec error
     /// message says "tracked", which is a stronger guarantee.
-    static func resolve() throws -> String {
-        let pwd = FileManager.default.currentDirectoryPath
-        let result = try GitRepoDetector.detect(path: pwd)
+    static func resolve(at path: String = FileManager.default.currentDirectoryPath) throws -> String {
+        let result = try GitRepoDetector.detect(path: path)
         let candidate: String
         switch result {
         case .repoRoot(let path): candidate = path
