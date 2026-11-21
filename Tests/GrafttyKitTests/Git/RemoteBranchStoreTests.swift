@@ -42,6 +42,11 @@ struct RemoteBranchStoreTests {
             "feature/local": "feature/remote",
         ])
         #expect(snapshot.defaultBranch == "main")
+        #expect(snapshot.localTips == [
+            "feature/local": "1111111111111111111111111111111111111111",
+            "main": "2222222222222222222222222222222222222222",
+            "non-origin": "3333333333333333333333333333333333333333",
+        ])
         let expectedMainDate = Date(timeIntervalSince1970: 1_778_434_200)
         #expect(
             snapshot.remoteBranches.first { $0.name == "main" }?.lastCommitDate
@@ -58,7 +63,7 @@ struct RemoteBranchStoreTests {
 
         #expect(executor.invocations.map(\.args) == [[
             "for-each-ref",
-            "--format=%(refname)\t%(committerdate:unix)\t%(upstream)\t%(symref)",
+            "--format=%(refname)\t%(committerdate:unix)\t%(upstream)\t%(symref)\t%(objectname)",
             "refs/heads/",
             "refs/remotes/origin",
         ]])
@@ -712,9 +717,9 @@ private final class CombinedRefScanExecutor: CLIExecutor, @unchecked Sendable {
     }
 
     private let output = """
-    refs/heads/feature/local\t1778681700\trefs/remotes/origin/feature/remote\t
-    refs/heads/main\t1778434200\trefs/remotes/origin/main\t
-    refs/heads/non-origin\t1778347800\trefs/remotes/upstream/main\t
+    refs/heads/feature/local\t1778681700\trefs/remotes/origin/feature/remote\t\t1111111111111111111111111111111111111111
+    refs/heads/main\t1778434200\trefs/remotes/origin/main\t\t2222222222222222222222222222222222222222
+    refs/heads/non-origin\t1778347800\trefs/remotes/upstream/main\t\t3333333333333333333333333333333333333333
     refs/remotes/origin/HEAD\t1778434200\t\trefs/remotes/origin/main
     refs/remotes/origin/feature/remote\t1778681700\t\t
     refs/remotes/origin/main\t1778434200\t\t
