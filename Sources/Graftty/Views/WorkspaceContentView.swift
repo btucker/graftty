@@ -39,7 +39,7 @@ struct WorkspaceContentView: View {
     /// A hair of breathing room so terminal text doesn't slam into the
     /// sidebar divider, while tab rows stay flush with the window edge.
     static let leadingContentInset: CGFloat = 6
-    var agentScrollbackMap: AgentScrollbackMap?
+    var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
     @Environment(\.agentWorkspaceRequest) private var request
     @State private var failure: String?
@@ -59,7 +59,7 @@ struct WorkspaceContentView: View {
                             worktree.canvasTree
                         }, set: { tree in mutate { $0.updateGeometry(from: tree) } }),
                         focusedPaneSlotID: worktree.presentationPane, theme: theme, onFocusTerminal: focus,
-                        previewWorktreePath: worktree.path, agentScrollbackMap: agentScrollbackMap,
+                        previewWorktreePath: worktree.path, agentScrollbackMaps: agentScrollbackMaps,
                         paneHeader: { slot in AnyView(groupHeader(for: slot)) },
                         paneBanner: { slot in
                             guard let group = layout.group(containing: slot), group.id == inputRequestGroupID else { return nil }

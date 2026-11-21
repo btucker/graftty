@@ -4,9 +4,8 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 
-/// The worktree's agent pane, which carries the scrollback map, and the timeline it maps.
+/// The message sources for one terminal pane’s map.
 struct AgentScrollbackMap {
-    let terminalID: PaneSlotID
     let timeline: WorktreeTimeline
     var recovery: ScrollbackMapRecovery? = nil
 }
@@ -22,7 +21,7 @@ struct TerminalContentView: View {
     let theme: GhosttyTheme
     let onFocusTerminal: (PaneSlotID) -> Void
     var previewWorktreePath: String? = nil
-    var agentScrollbackMap: AgentScrollbackMap? = nil
+    var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var paneHeader: ((PaneSlotID) -> AnyView)? = nil
     var paneBanner: ((PaneSlotID) -> AnyView?)? = nil
     var paneContent: ((PaneSlotID) -> AnyView?)? = nil
@@ -177,10 +176,10 @@ struct TerminalContentView: View {
                         MacPagedHistoryBanner(presentation: handle.pagedHistory).padding(12)
                     }
                     .macScrollbackMapGutter(
-                        timeline: agentScrollbackMap?.terminalID == terminalID ? agentScrollbackMap?.timeline : nil,
+                        timeline: agentScrollbackMaps[terminalID]?.timeline,
                         model: handle.scrollbackMapModel, background: theme.background,
                         topInset: inputRequestHeights[terminalID] ?? 0,
-                        recovery: agentScrollbackMap?.terminalID == terminalID ? agentScrollbackMap?.recovery : nil
+                        recovery: agentScrollbackMaps[terminalID]?.recovery
                     )
                     // A retry replaces the native view while preserving the
                     // pane ID. Rebuild the wrapper for the new surface too.

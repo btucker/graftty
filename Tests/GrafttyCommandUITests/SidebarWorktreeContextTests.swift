@@ -46,6 +46,28 @@ struct SidebarWorktreeContextTests {
         #expect(SidebarWorktreeContext(worktree: row.with(agents: [failed, closed])).transcriptPaneID == nil)
     }
 
+    @Test("@spec CONTEXT-57.6: While several agent panes are open in a worktree, the application shall offer a scrollback map in each live agent pane, independent of which agent submitted the latest report.")
+    func codexAndClaudeBothGetRailsWhenClaudeLastReported() {
+        let shell = PaneLayoutNode.leaf(sessionName: "shell", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil)
+        let claude = PaneLayoutNode.leaf(sessionName: "claude", title: "Claude", attentionText: nil, isBusy: false, attentionSource: nil)
+        let codex = PaneLayoutNode.leaf(sessionName: "codex", title: "Codex", attentionText: nil, isBusy: true, attentionSource: nil)
+        let layout = PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: shell,
+            right: .split(direction: .horizontal, ratio: 0.5, left: claude, right: codex))
+        let agents = [
+            AgentSessionInfo(id: "a", name: "Claude", provider: "claude", status: "waiting", sessionName: "claude"),
+            AgentSessionInfo(id: "b", name: "Codex", provider: "codex", status: "running", sessionName: "codex"),
+            AgentSessionInfo(id: "c", name: "Failed", provider: "codex", status: "failed", sessionName: "shell"),
+        ]
+        let stop = SidebarAgentStop(agentName: "Claude", stoppedAt: .now, paneSlotID: "claude-slot")
+        let row = WorktreePanes(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+            sidebar: .init(id: "/wt", projectID: "p", paneIDs: ["claude": "claude-slot", "codex": "codex-slot"],
+                           lastAgentStop: stop), agents: agents)
+        let context = SidebarWorktreeContext(worktree: row)
+        #expect(context.transcriptPaneID == "claude")
+        #expect(context.scrollbackPaneIDs == ["claude", "codex"])
+    }
+
     @Test("@spec LAYOUT-2.191: When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.")
     func routineStopsAreUpdatesNotRequests() {
         for need: String? in [nil, "", " \n"] {

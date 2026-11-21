@@ -11,7 +11,7 @@ struct RemoteWorkspaceContentView: View {
     let identity: RemoteMacIdentity
     let focused: PaneSlotID?
     let onFocus: (PaneSlotID) -> Void
-    var agentScrollbackMap: AgentScrollbackMap?
+    var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
     var requestedAgent: String? = nil
     var consumeAgentRequest: () -> Void = {}
@@ -202,7 +202,7 @@ struct RemoteWorkspaceContentView: View {
             }), focusedPaneSlotID: focused, theme: terminalManager.theme,
             onFocusTerminal: { id in
                 if let session = layout.sessions.first(where: { slot($0) == id }) { select(session) }
-            }, agentScrollbackMap: agentScrollbackMap,
+            }, agentScrollbackMaps: agentScrollbackMaps,
             paneHeader: headers ? { id in AnyView(header(id)) } : nil,
             paneBanner: headers ? { id in
                 guard let group = layout.groups.first(where: { slot($0.selected) == id }), group.id == inputRequestGroupID else { return nil }

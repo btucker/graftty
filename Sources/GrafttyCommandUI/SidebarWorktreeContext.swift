@@ -34,14 +34,25 @@ public struct SidebarWorktreeContext: Equatable {
     /// A retained report can outlive its pane, such as after closing a reviewer tab.
     public var transcriptPaneID: String? {
         if let agentPaneID { return agentPaneID }
-        guard worktree.state == .running, let agents = worktree.agents, let layout = worktree.layout else { return nil }
+        let active = activeAgentPanes
+        return active.count == 1 ? active.first : nil
+    }
+
+    /// Rails belong to the displayed terminals, even when another tab last reported.
+    public var scrollbackPaneIDs: Set<String> {
+        var panes = activeAgentPanes
+        if let agentPaneID { panes.insert(agentPaneID) }
+        return panes
+    }
+
+    private var activeAgentPanes: Set<String> {
+        guard worktree.state == .running, let agents = worktree.agents, let layout = worktree.layout else { return [] }
         let panes = Set(layout.leaves.map(\.sessionName))
-        let active = Set(agents.compactMap { agent -> String? in
+        return Set(agents.compactMap { agent -> String? in
             guard (agent.status == "running" || agent.status == "waiting"), agent.processObservation != .exited,
                   let session = agent.sessionName, panes.contains(session) else { return nil }
             return session
         })
-        return active.count == 1 ? active.first : nil
     }
 
     public init(worktree: WorktreePanes, retained: [SidebarActivityItem] = [],

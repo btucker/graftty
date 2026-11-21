@@ -1,5 +1,8 @@
 import GrafttyProtocol
+import OSLog
 import SwiftUI
+
+private let scrollbackLog = Logger(subsystem: "com.graftty.app", category: "scrollback-map")
 
 /// The terminal rows on screen, as the terminal's scrollbar reports them.
 public struct ScrollbackViewport: Sendable, Equatable {
@@ -321,6 +324,8 @@ public struct ScrollbackMapOverlay: View {
     @State private var hover: CGFloat?
     #if os(macOS)
     @State private var previewArea: CGRect?
+    #else
+    @State private var previewReleasedAt: Date?
     #endif
     @State private var scrub: CGFloat?
     // GestureState clears on cancellation, so an interrupted touch cannot leave the map expanded.
@@ -433,9 +438,13 @@ public struct ScrollbackMapOverlay: View {
             let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: maximumGap, maximumSpan: maximumSpan)
             ScrollbackMapPreviews(groups: groups, height: availableHeight, cardWidth: cardWidth,
                                   gap: gap, railCenter: railCenter, focusY: focusY, maximumShift: maximumShift,
-                                  focusedID: focused?.eventID, responseGist: responseGist)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+                                  focusedID: focused?.eventID, responseGist: responseGist) { firstID in
+                if let row = map.row(for: firstID) { scroll(row) }
+                #if !os(macOS)
+                scrub = nil
+                previewReleasedAt = nil
+                #endif
+            }
         }
     }
 
@@ -479,6 +488,14 @@ public struct ScrollbackMapOverlay: View {
         .animation(ScrollbackMapLayout.interactionAnimation(reduceMotion: reduceMotion), value: isActive)
         .contentShape(Rectangle())
         .gesture(scrubGesture(layout: layout))
+        #if !os(macOS)
+        .task(id: previewReleasedAt) {
+            guard previewReleasedAt != nil else { return }
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            scrub = nil
+        }
+        #endif
         .onContinuousHover { phase in
             switch phase {
             case .active(let point): hover = point.y
@@ -534,6 +551,12 @@ public struct ScrollbackMapOverlay: View {
                 if let value = gestures.first, hasMoved(value) { drag(at: value.location.y, layout: layout) }
             }
             .onEnded { gestures in
+                #if !os(macOS)
+                if let y = gestures.first?.location.y ?? gestures.second?.location.y {
+                    scrub = y
+                    previewReleasedAt = .now
+                }
+                #endif
                 if let value = gestures.first, hasMoved(value) {
                     drag(at: value.location.y, layout: layout)
                 } else if let y = gestures.second?.location.y {
@@ -715,6 +738,7 @@ public final class ScrollbackMapModel: ObservableObject {
                 return (ScrollbackMap.locate(ScrollbackMap.messages(in: timeline), in: snapshot), timeline)
             }.value
             guard !Task.isCancelled else { return }
+            scrollbackLog.debug("Scan read \(snapshot?.rows.count ?? 0) rows and found \(map?.marks.count ?? 0) marks. Used saved transcript: \(recovered != nil).")
             self.entries = recovered.map(ScrollbackMapEntry.entries(in:)) ?? self.capturedEntries
             self.map = map
             self.scannedFirstRow = firstRow
@@ -764,11 +788,14 @@ public struct ScrollbackMapOverlayHost: View {
 
     public var body: some View {
         GeometryReader { geometry in
-            if let map = model.map {
+            if let map = model.map, !map.marks.isEmpty {
                 ScrollbackMapOverlay(map: map, viewport: model.viewport, entries: model.entries, gists: gists,
                                      availableHeight: geometry.size.height, availableWidth: geometry.size.width,
                                      scroll: { [model] in model.scroll(toRow: $0) })
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                    .onAppear {
+                        scrollbackLog.debug("Showing rail with \(map.marks.count) marks. Local Codex session: \(recovery != nil).")
+                    }
             }
         }
         .onAppear {

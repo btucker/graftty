@@ -123,14 +123,9 @@ final class ScrollbackMapPointerView: NSView {
     override func mouseExited(with event: NSEvent) { setHover(nil) }
 
     override func scrollWheel(with event: NSEvent) {
-        // Re-hit-test a point just inside the terminal beside the gutter.
-        guard let root = window?.contentView else { return }
         let location = convert(event.locationInWindow, from: nil)
         if bounds.contains(location) { setHover(location.y) }
-        let x = terminalOnLeft ? bounds.minX - 1 : bounds.maxX + 1
-        let point = convert(NSPoint(x: x, y: location.y), to: root.superview)
-        let target = root.hitTest(point)
-        if target !== self { target?.scrollWheel(with: event) }
+        forwardWheel(event, acrossLeftEdge: terminalOnLeft)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -155,6 +150,43 @@ final class ScrollbackMapPointerView: NSView {
         press = nil
         setHover(bounds.contains(point) || previewArea?.contains(point) == true ? point.y : nil)
         onScrub?(nil)
+    }
+}
+
+/// The button's native input view forwards wheel events into the terminal next to the card.
+struct ScrollbackPreviewButtonInput: NSViewRepresentable {
+    let railOnRight: Bool
+    let select: () -> Void
+
+    func makeNSView(context: Context) -> InputView { InputView() }
+    func updateNSView(_ view: InputView, context: Context) {
+        view.railOnRight = railOnRight
+        view.select = select
+    }
+
+    final class InputView: NSView {
+        var railOnRight = true
+        var select: (() -> Void)?
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+        override func mouseDown(with event: NSEvent) {}
+        override func mouseUp(with event: NSEvent) {
+            if bounds.contains(convert(event.locationInWindow, from: nil)) { select?() }
+        }
+        override func scrollWheel(with event: NSEvent) {
+            forwardWheel(event, acrossLeftEdge: !railOnRight)
+        }
+    }
+}
+
+private extension NSView {
+    /// Both the gutter and the cards border a gap over the same terminal.
+    func forwardWheel(_ event: NSEvent, acrossLeftEdge: Bool) {
+        guard let root = window?.contentView else { return }
+        let y = min(bounds.maxY - 1, max(bounds.minY + 1, convert(event.locationInWindow, from: nil).y))
+        let point = convert(NSPoint(x: acrossLeftEdge ? bounds.minX - 1 : bounds.maxX + 1, y: y), to: root.superview)
+        let target = root.hitTest(point)
+        if target !== self { target?.scrollWheel(with: event) }
     }
 }
 #endif

@@ -48,6 +48,7 @@ struct ScrollbackMapPreviews: View {
     let maximumShift: CGFloat
     let focusedID: String?
     let responseGist: (entry: ScrollbackMapEntry, gist: PeerMessageGist)?
+    let onSelect: (String) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.layoutDirection) private var layoutDirection
@@ -59,12 +60,22 @@ struct ScrollbackMapPreviews: View {
             ScrollbackPreviewStack(width: cardWidth, height: height, gap: gap, focusY: focusY,
                                    maximumShift: maximumShift, focusedIndex: focusedIndex) {
                 ForEach(groups) { group in
-                    card(for: group, now: now)
-                        .layoutValue(key: PreviewY.self, value: group.y)
-                        .anchorPreference(key: PreviewBounds.self, value: .bounds) { [group.id: $0] }
+                    Button { onSelect(group.id) } label: {
+                        card(for: group, now: now).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    #if os(macOS)
+                    .overlay {
+                        ScrollbackPreviewButtonInput(railOnRight: layoutDirection == .leftToRight) { onSelect(group.id) }
+                            .accessibilityHidden(true)
+                    }
+                    #endif
+                    .layoutValue(key: PreviewY.self, value: group.y)
+                    .anchorPreference(key: PreviewBounds.self, value: .bounds) { [group.id: $0] }
                 }
             }
-            .backgroundPreferenceValue(PreviewBounds.self, connectors)
+            .backgroundPreferenceValue(PreviewBounds.self) { connectors(for: $0).allowsHitTesting(false) }
             .clipped()
         }
     }

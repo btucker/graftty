@@ -122,7 +122,7 @@ struct MainWindow: View {
                 onFocus: { terminalID in
                     attentionOpenGeneration &+= 1
                     remoteViewer.focusTerminal(terminalID)
-                }, agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
+                }, agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
                     let response = try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .addAgent(worktreeID: snapshot.path, provider: provider, operationID: operationID))
                     switch response {
@@ -281,7 +281,7 @@ struct MainWindow: View {
                         onActivateTerminal: { terminalID in
                             makePaneFirstResponder(terminalID, when: { terminalManager.focusedTerminalID == terminalID })
                         },
-                        agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext
+                        agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext
                     )
                 } else {
                     ContentUnavailableView(
@@ -836,24 +836,29 @@ struct MainWindow: View {
         return await handle.reveal(eventID: request.eventID, messages: request.messages)
     }
 
-    /// The selected worktree's agent pane, local or remote, and the timeline its scrollback map marks.
-    private var agentScrollbackMap: AgentScrollbackMap? {
-        guard let context = selectedContext, let session = context.transcriptPaneID else { return nil }
-        if let remoteIdentity = selectedRemoteIdentity {
-            return remoteViewer.existingTerminalID(identity: remoteIdentity, worktreePath: context.worktree.path,
-                                                    sessionName: session).map {
-                AgentScrollbackMap(terminalID: $0, timeline: WorktreeTimeline(context))
+    private var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] {
+        guard let context = selectedContext else { return [:] }
+        let sessions = context.scrollbackPaneIDs
+        guard !sessions.isEmpty else { return [:] }
+        let worktree = context.worktree.path
+        let timeline = WorktreeTimeline(context)
+        var maps: [PaneSlotID: AgentScrollbackMap] = [:]
+        for session in sessions {
+            if let remote = selectedRemoteIdentity {
+                if let slot = remoteViewer.existingTerminalID(identity: remote, worktreePath: worktree, sessionName: session) {
+                    maps[slot] = AgentScrollbackMap(timeline: timeline)
+                }
+            } else if let slot = terminalManager.handle(forSessionName: session)?.terminalID {
+                let thread = selectedWorktree?.agents.first {
+                    $0.paneSlotID == slot && $0.provider == .codex && ($0.status == .running || $0.status == .waiting)
+                }?.providerSessionID
+                let recovery = thread.map { thread in
+                    ScrollbackMapRecovery(id: thread) { CodexScrollbackTranscript.read(sessionID: thread, worktree: worktree) }
+                }
+                maps[slot] = AgentScrollbackMap(timeline: timeline, recovery: recovery)
             }
         }
-        guard let terminalID = terminalManager.handle(forSessionName: session)?.terminalID else { return nil }
-        let worktree = context.worktree.path
-        let thread = selectedWorktree?.agents.first {
-            $0.paneSlotID == terminalID && $0.provider == .codex && ($0.status == .running || $0.status == .waiting)
-        }?.providerSessionID
-        let recovery = thread.map { thread in
-            ScrollbackMapRecovery(id: thread) { CodexScrollbackTranscript.read(sessionID: thread, worktree: worktree) }
-        }
-        return AgentScrollbackMap(terminalID: terminalID, timeline: WorktreeTimeline(context), recovery: recovery)
+        return maps
     }
 
     private var selectedContext: SidebarWorktreeContext? {

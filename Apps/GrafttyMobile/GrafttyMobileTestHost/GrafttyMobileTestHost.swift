@@ -230,6 +230,7 @@ private struct TranscriptMapFixture: View {
         var history = WorktreeHistory()
         let start = Date(timeIntervalSince1970: 1000)
         history.record(.init(text: "Earlier prompt", at: start))
+        history.record(.init(text: "Earlier in the group", at: start.addingTimeInterval(45)))
         history.record(.init(text: "Later prompt", at: start.addingTimeInterval(60)))
         return WorktreeTimeline(history: history, brief: nil)
     }()
@@ -241,7 +242,8 @@ private struct TranscriptMapFixture: View {
                 ScrollbackMapOverlay(map: ScrollbackMap(totalRows: 1000, marks: [
                     .init(row: 230, kind: .input, eventID: prompts[0].id),
                     .init(row: 500, kind: .peer, eventID: "middle"),
-                    .init(row: 800, kind: .input, eventID: prompts[1].id),
+                    .init(row: 760, kind: .input, eventID: prompts[1].id),
+                    .init(row: 800, kind: .input, eventID: prompts[2].id),
                 ]), viewport: .init(offset: 960, length: 40, total: 1000),
                     entries: ScrollbackMapEntry.entries(in: timeline)) {
                     requestedRow = $0

@@ -5638,11 +5638,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.2** While a scrollback map preview has a message timestamp, the application shall show its elapsed age in whole minutes, hours from one hour, or days from twenty-four hours, and show now for messages less than a minute old.
 
-**CONTEXT-57.3** When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass terminal input through the previews.
+**CONTEXT-57.3** When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass input outside the message boxes through to the terminal.
 
 **CONTEXT-57.4** If the worktree’s retained report points to a missing pane and exactly one active agent remains, then the application shall use that agent’s pane for the scrollback map and history jumps on Mac and mobile.
 
 **CONTEXT-57.5** If captured history contains no messages that match the loaded scrollback of a local Codex pane, then the application shall locate messages from that pane’s saved Codex transcript.
+
+**CONTEXT-57.6** While several agent panes are open in a worktree, the application shall offer a scrollback map in each live agent pane, independent of which agent submitted the latest report.
+
+**CONTEXT-57.7** When the user clicks or taps a scrollback message box, the application shall scroll to the first message associated with the box, including when its excerpt is hidden.
 
 ### CONTEXT-58.x
 

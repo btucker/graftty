@@ -137,7 +137,7 @@ struct ScrollbackMapPresenceTests {
 @MainActor
 @Suite("@spec CONTEXT-35: When the user hovers over, touches, or drags along the scrollback map, the application shall preview the nearest visible mark using a message of the kind shown by that mark, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.")
 struct ScrollbackMapScrubTests {
-    @Test("@spec CONTEXT-57.3: When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass terminal input through the previews.", arguments: [1.0, 7.0, 13.0])
+    @Test("@spec CONTEXT-57.3: When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass input outside the message boxes through to the terminal.", arguments: [1.0, 7.0, 13.0])
     func nativeTerminalAndGutterEachReceiveTheirOwnInput(x: Double) async throws {
         _ = NSApplication.shared
         let terminal = MapTerminalFixture()
@@ -196,8 +196,8 @@ struct ScrollbackMapScrubTests {
         host.layoutSubtreeIfNeeded()
         #expect(pointer.convert(pointer.bounds, to: host) == railFrame)
         #expect(terminal.convert(terminal.bounds, to: host) == terminalFrame)
-        let previewPoint = terminal.convert(NSPoint(x: 220, y: 36), to: host.superview)
-        #expect(host.hitTest(previewPoint) === terminal, "Visible preview cards must not capture terminal input")
+        let previewPoint = terminal.convert(NSPoint(x: 20, y: 36), to: host.superview)
+        #expect(host.hitTest(previewPoint) === terminal, "Terminal space outside the cards still receives input")
         pointer.onClick?(ScrollbackMapLayout.stripInset.top + layout.y(forRow: 300))
         #expect(scrollback.scrolled.last == 300)
         await waitUntil { pointer.previewArea != nil }
@@ -233,6 +233,56 @@ struct ScrollbackMapScrubTests {
         let scrolled = try #require(scrollback.scrolled.last)
         #expect(abs(scrolled - layout.scrubTopRow(atY: dragY, viewportLength: viewport.length)) <= 1,
                 "Native event coordinates may round to the nearest pixel")
+        #expect(terminal.clicks == 0)
+    }
+
+    @Test("@spec CONTEXT-57.7: When the user clicks or taps a scrollback message box, the application shall scroll to the first message associated with the box, including when its excerpt is hidden.")
+    func clickingGroupedBoxJumpsToItsEarliestMessage() async throws {
+        _ = NSApplication.shared
+        let terminal = MapTerminalFixture()
+        var history = WorktreeHistory()
+        var rows = Array(repeating: "", count: 400)
+        for index in 0..<5 {
+            let prompt = "This is distinct message number \(index) in the group"
+            rows[100 + index * 4] = "> " + prompt
+            history.record(.init(text: prompt, at: start.addingTimeInterval(Double(index))))
+        }
+        let transcript = FakeScrollback(rows: rows)
+        let model = ScrollbackMapModel(terminal: transcript, debounce: .zero)
+        let host = NSHostingView(rootView: MapTerminalRepresentable(view: terminal)
+            .macScrollbackMapGutter(timeline: .init(history: history, brief: nil), model: model,
+                                    background: .black, topInset: 0))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 440, height: 412),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        await waitUntil { model.map?.marks.count == 5 }
+        #expect(model.map?.marks.map(\.row) == [100, 104, 108, 112, 116])
+        host.layoutSubtreeIfNeeded()
+        let pointer = try #require(host.hitTest(NSPoint(x: host.bounds.maxX - 6, y: host.bounds.midY)) as? ScrollbackMapPointerView)
+        func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: pointer.convert(point, to: nil), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+        }
+        let railPoint = CGPoint(x: 7, y: 120)
+        pointer.mouseMoved(with: try event(.mouseMoved, at: railPoint))
+        await waitUntil { pointer.previewArea != nil }
+        let area = try #require(pointer.previewArea)
+        let cardPoint = CGPoint(x: area.minX + 24, y: area.midY)
+        pointer.mouseMoved(with: try event(.mouseMoved, at: cardPoint))
+        let cardHit = try #require(host.hitTest(pointer.convert(cardPoint, to: host.superview)))
+        let wheel = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1,
+                                         wheel1: 1, wheel2: 0, wheel3: 0).flatMap(NSEvent.init(cgEvent:)))
+        cardHit.scrollWheel(with: wheel)
+        #expect(terminal.wheels == 1, "Scrolling over a preview still scrolls the terminal")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try event(type, at: cardPoint))
+        }
+        await waitUntil { !transcript.scrolled.isEmpty }
+        #expect(transcript.scrolled == [100])
         #expect(terminal.clicks == 0)
     }
 
