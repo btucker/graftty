@@ -33,11 +33,21 @@ public final class CodexScrollbackTranscript: @unchecked Sendable {
               let number = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
               let file = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? file.close() }
+        let maxRecordBytes = 4 * 1024 * 1024
         do {
             let end = try file.seekToEnd()
             if fileNumber != number || end < offset {
                 try file.seek(toOffset: 0)
-                guard let header = try file.read(upToCount: 64 * 1024), let newline = header.firstIndex(of: 10),
+                // Session metadata embeds the provider's instructions, so it can span many chunks.
+                var header = Data()
+                var headerEnd: Data.Index?
+                while headerEnd == nil, header.count < maxRecordBytes,
+                      let chunk = try file.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                    let searched = header.endIndex
+                    header.append(chunk)
+                    headerEnd = header[searched...].firstIndex(of: 10)
+                }
+                guard let newline = headerEnd,
                       let record = try JSONSerialization.jsonObject(with: header[..<newline]) as? [String: Any],
                       record["type"] as? String == "session_meta", let meta = record["payload"] as? [String: Any],
                       let id = meta["id"] as? String, UUID(uuidString: id) == session,
@@ -52,7 +62,6 @@ public final class CodexScrollbackTranscript: @unchecked Sendable {
             try file.seek(toOffset: offset)
             var position = offset
             var pending = Data()
-            let maxRecordBytes = 4 * 1024 * 1024
             while position < end {
                 guard !Task.isCancelled else { return nil }
                 guard let chunk = try file.read(upToCount: Int(min(256 * 1024, end - position))), !chunk.isEmpty else { break }

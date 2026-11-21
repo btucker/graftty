@@ -136,7 +136,7 @@ struct WorkspaceContentView: View {
                                     } else {
                                         Image(systemName: "terminal")
                                     }
-                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, agent: agent(tab)).lineLimit(1).truncationMode(.middle)
+                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, agentName: agent(tab)?.name, provider: agent(tab)?.provider.rawValue).lineLimit(1).truncationMode(.middle)
                                         .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if agent(tab) == nil, worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
@@ -267,7 +267,7 @@ struct WorkspaceContentView: View {
                     HStack(spacing: 2) {
                 ForEach(layout.terminals, id: \.self) { slot in
                     Button { selectTerminalTab(slot) } label: {
-                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, agent: agent(slot)).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
+                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, agentName: agent(slot)?.name, provider: agent(slot)?.provider.rawValue).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
                             .workspaceTabUnderline(selected: layout.selectedTerminal == slot, color: theme.foreground)
                     }.buttonStyle(.plain)
                         .fontWeight(layout.selectedTerminal == slot ? .semibold : .regular)
@@ -345,9 +345,8 @@ struct WorkspaceContentView: View {
     }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
     private func title(_ slot: PaneSlotID) -> String {
-        let agent = agent(slot)
-        return SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
-            agentName: agent?.name ?? "Terminal", tabProvider: agent?.provider.rawValue)
+        WorkspaceTerminalTitle.text(terminalManager: terminalManager, slot: slot,
+                                    agentName: agent(slot)?.name, provider: agent(slot)?.provider.rawValue)
     }
     private func mutate(_ action: (inout WorkspaceLayout<PaneSlotID>) -> Void) {
         var next = layout; action(&next); worktree.workspaceLayout = next
@@ -444,12 +443,18 @@ private struct WorkspaceTerminalTitle: View {
     let terminalManager: TerminalManager
     @ObservedObject var invalidations: PaneTitleInvalidationSource
     let slot: PaneSlotID
-    let agent: ManagedAgent?
+    /// Only the fields the title reads, so tab diffs never compare whole agent records.
+    let agentName: String?
+    let provider: String?
+
+    static func text(terminalManager: TerminalManager, slot: PaneSlotID, agentName: String?, provider: String?) -> String {
+        SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
+                                  agentName: agentName ?? "Terminal", tabProvider: provider)
+    }
 
     var body: some View {
         let _ = invalidations.generation
-        let title = SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
-            agentName: agent?.name ?? "Terminal", tabProvider: agent?.provider.rawValue)
+        let title = Self.text(terminalManager: terminalManager, slot: slot, agentName: agentName, provider: provider)
         Text(title).help(title)
     }
 }

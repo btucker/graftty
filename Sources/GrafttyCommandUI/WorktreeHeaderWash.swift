@@ -7,7 +7,7 @@ import GrafttyProtocol
 import SwiftUI
 
 /// @spec LAYOUT-2.192
-/// While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a fully visible tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
+/// While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
 /// @spec LAYOUT-2.194
 /// The main checkout draws its wash from the project icon, or from the
 /// project's initials in its accent color when the project has no icon.

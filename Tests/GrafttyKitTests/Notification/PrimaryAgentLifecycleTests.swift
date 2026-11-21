@@ -81,6 +81,32 @@ struct PrimaryAgentLifecycleTests {
             == ["codex-123456789abc", "codex-abcdef123456"])
     }
 
+    @Test func sessionStartKeepsATemporarySuccessorsRecordedRole() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let first = try #require(platform.state.repos[0].worktrees[0].splitTree.allLeaves.first)
+        let second = PaneSlotID()
+        var worktree = platform.state.repos[0].worktrees[0]
+        worktree.splitTree = worktree.splitTree.inserting(second, at: first, direction: .horizontal)
+        worktree.ensurePaneSession(for: second)
+        let primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil, status: .failed, isPrimary: true)
+        var successor = ManagedAgent(name: "Replacement", provider: .codex, parent: nil,
+                                     launchOrigin: .userInterface, isPrimary: false)
+        successor.paneSlotID = second
+        worktree.agents = [primary, successor]
+        platform.state.repos[0].worktrees[0] = worktree
+        let session = ZmxLauncher.sessionName(for: try #require(worktree.paneSessions[second]))
+        let text = try await AgentControl.sessionContext(path: "/repo", agentID: "codex-abcdef123456",
+            paneSessionName: session, provider: .codex, isSessionStart: true, platform: platform)
+        #expect(text.contains("primary agent"), "The successor is guided as the context owner")
+        let stored = try #require(platform.state.repos[0].worktrees[0].agents.first { $0.id == successor.id })
+        #expect(stored.isPrimary == false, "Succession must not be persisted as a recorded primary role")
+
+        // Once the original primary runs again, it alone owns the worktree's context.
+        platform.state.repos[0].worktrees[0].agents[0] = ManagedAgent(name: "Primary", provider: .codex, parent: nil,
+                                                                      isPrimary: true)
+        #expect(!platform.state.repos[0].worktrees[0].isPrimaryAgent(stored))
+    }
+
     @Test(arguments: [TeamHookRuntime.codex, .claude])
     func ordinaryTurnRefreshesPrimaryGuidanceWithoutRestart(provider: TeamHookRuntime) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()

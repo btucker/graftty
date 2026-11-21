@@ -28,6 +28,22 @@ struct CodexScrollbackTranscriptTests {
         #expect(reader.read()?.events.map(\.completed) == ["Earlier request", "Next request"])
     }
 
+    @Test func readsASessionWhoseHeaderExceedsOneReadChunk() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let directory = home.appendingPathComponent("sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let session = UUID().uuidString.lowercased()
+        let file = directory.appendingPathComponent("rollout-\(session).jsonl")
+        // Session metadata carries the provider's instructions, which can exceed 64 KiB.
+        let instructions = String(repeating: "i", count: 100 * 1024)
+        let header = #"{"type":"session_meta","payload":{"id":"\#(session)","cwd":"/repo/worktree","instructions":"\#(instructions)"}}"#
+        let prompt = #"{"timestamp":"2026-11-20T01:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"Earlier request"}}"#
+        try Data(([header, prompt].joined(separator: "\n") + "\n").utf8).write(to: file)
+        let reader = CodexScrollbackTranscript(sessionID: session, worktree: "/repo/worktree", codexHome: home)
+        #expect(reader.read()?.events.map(\.completed) == ["Earlier request"])
+    }
+
     @Test func readsOnlyVisibleMessagesFromTheExactWorktreeThread() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }

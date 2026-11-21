@@ -139,6 +139,18 @@ struct WorktreeContextLifecycleTests {
         #expect(!state.repos[0].worktrees[0].isPrimaryAgent(replacement))
     }
 
+    @Test func anEndedUserAgentDoesNotHoldContextFromARunningSuccessor() {
+        let primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil, status: .failed, isPrimary: true)
+        let interrupted = ManagedAgent(name: "Interrupted", provider: .codex, parent: nil, status: .interrupted,
+                                       launchOrigin: .userInterface, isPrimary: false)
+        let running = ManagedAgent(name: "Running", provider: .claude, parent: nil,
+                                   launchOrigin: .userInterface, isPrimary: false)
+        var entry = WorktreeEntry(path: "/wt", branch: "fix")
+        entry.agents = [primary, interrupted, running]
+        #expect(entry.isPrimaryAgent(running))
+        #expect(!entry.isPrimaryAgent(interrupted))
+    }
+
     @Test("@spec AGENT-3.52: While a linked worktree has no drawing, the application shall adopt the first valid drawing any agent in that worktree reports, while only the context owner may replace an existing drawing or change the rest of the retained context.")
     func anyAgentMayProvideTheFirstDrawing() {
         let primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil, isPrimary: true)

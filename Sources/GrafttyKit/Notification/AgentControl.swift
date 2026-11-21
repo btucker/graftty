@@ -105,7 +105,9 @@ public enum AgentControl {
         if let session = paneSessionName, let slot = worktree.paneSlot(forSessionName: session),
            var agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) {
             guard agent.provider == provider else { return "" }
-            agent.isPrimary = worktree.isPrimaryAgent(agent)
+            // A successor to an ended primary is guided as the owner, but keeps its recorded role.
+            let guidedAsPrimary = worktree.isPrimaryAgent(agent)
+            agent.isPrimary = worktree.isRecordedPrimaryAgent(agent)
             if isSessionStart || (providerSessionID?.isEmpty == false && providerSessionID != agent.providerSessionID) {
                 agent.recoverOngoingConversation()
             }
@@ -120,7 +122,9 @@ public enum AgentControl {
             if let prompt = agent.initialPrompt, !prompt.isEmpty {
                 sections.append("Saved initial assignment, for recovery only. If this is already in your launch context or completed, do not repeat it:\n" + prompt)
             }
-            sections.append(agent.sessionInstructions)
+            var guidance = agent
+            guidance.isPrimary = guidedAsPrimary
+            sections.append(guidance.sessionInstructions)
         }
         await reconcileOutbox(platform: platform)
         if let agentID {
@@ -527,7 +531,7 @@ public enum AgentControl {
         guard let currentRepo = platform.state.repo(forWorktreePath: path) else { throw AgentControlError.unknownAgent }
         // The stop that ended this agent ended its children too; its new session context lists their pending cleanup.
         guard hostRecovery || !hasOpenChildren(of: agent, in: currentRepo) else { throw AgentControlError.activeChildren }
-        agent.isPrimary = platform.state.worktree(forPath: path)?.isPrimaryAgent(agent)
+        agent.isPrimary = platform.state.worktree(forPath: path)?.isRecordedPrimaryAgent(agent)
         // A fresh provider invocation receives the new assignment through its
         // environment and hook context, without a synthetic user prompt.
         if agent.status != .closed {

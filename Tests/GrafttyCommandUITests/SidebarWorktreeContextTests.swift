@@ -68,6 +68,24 @@ struct SidebarWorktreeContextTests {
         #expect(context.scrollbackPaneIDs == ["claude", "codex"])
     }
 
+    @Test func launchingAgentPanesKeepTheirRailThroughStartup() {
+        let shell = PaneLayoutNode.leaf(sessionName: "shell", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil)
+        let codex = PaneLayoutNode.leaf(sessionName: "codex", title: "Codex", attentionText: nil, isBusy: false, attentionSource: nil)
+        let layout = PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: shell, right: codex)
+        func row(_ status: String) -> WorktreePanes {
+            WorktreePanes(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+                sidebar: .init(id: "/wt", projectID: "p", paneIDs: ["codex": "codex-slot"]),
+                agents: [AgentSessionInfo(id: "a", name: "Codex", provider: "codex", status: status, sessionName: "codex")])
+        }
+        // The rail's gutter narrows the terminal, so it must not appear only once the provider reports in.
+        for status in ["starting", "running", "waiting", "awaiting-cleanup"] {
+            #expect(SidebarWorktreeContext(worktree: row(status)).scrollbackPaneIDs == ["codex"], "status \(status)")
+        }
+        #expect(SidebarWorktreeContext(worktree: row("starting")).transcriptPaneID == nil)
+        #expect(SidebarWorktreeContext(worktree: row("running")).transcriptPaneID == "codex")
+    }
+
     @Test("@spec LAYOUT-2.191: When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.")
     func routineStopsAreUpdatesNotRequests() {
         for need: String? in [nil, "", " \n"] {
