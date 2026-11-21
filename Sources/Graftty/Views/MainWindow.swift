@@ -853,7 +853,8 @@ struct MainWindow: View {
                     $0.paneSlotID == slot && $0.provider == .codex && ($0.status == .running || $0.status == .waiting)
                 }?.providerSessionID
                 let recovery = thread.map { thread in
-                    ScrollbackMapRecovery(id: thread) { CodexScrollbackTranscript.read(sessionID: thread, worktree: worktree) }
+                    let transcript = CodexScrollbackTranscript(sessionID: thread, worktree: worktree)
+                    return ScrollbackMapRecovery(id: thread) { transcript.read() }
                 }
                 maps[slot] = AgentScrollbackMap(timeline: timeline, recovery: recovery)
             }

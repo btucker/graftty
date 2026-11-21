@@ -1,52 +1,107 @@
 import Foundation
 import GrafttyProtocol
 
-/// A read-only fallback for a local Codex pane whose lifecycle hooks missed messages.
-public enum CodexScrollbackTranscript {
-    public static func read(sessionID: String, worktree: String,
-                            codexHome: URL = CodexHomeMirror.defaultSourceDirectory()) -> WorktreeTimeline? {
-        guard let session = UUID(uuidString: sessionID), let files = FileManager.default.enumerator(
-            at: codexHome.appendingPathComponent("sessions"), includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]) else { return nil }
-        let suffix = "-\(session.uuidString.lowercased()).jsonl"
-        for case let file as URL in files where file.lastPathComponent.lowercased().hasSuffix(suffix) {
-            guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
-            if let history = try? read(file, session: session, worktree: worktree) {
-                return WorktreeTimeline(history: history, brief: nil)
-            }
-        }
-        return nil
+/// Reads complete records from one local conversation, retaining a bounded history between rail scans.
+public final class CodexScrollbackTranscript: @unchecked Sendable {
+    private let lock = NSLock()
+    private let session: UUID?
+    private let worktree: String
+    private let codexHome: URL
+    private var fileURL: URL?
+    private var fileNumber: UInt64?
+    private var offset: UInt64 = 0
+    private var history = WorktreeHistory()
+    private var discardUntilNewline = false
+
+    public init(sessionID: String, worktree: String, codexHome: URL = CodexHomeMirror.defaultSourceDirectory()) {
+        session = UUID(uuidString: sessionID)
+        self.worktree = worktree
+        self.codexHome = codexHome
     }
 
-    private static func read(_ url: URL, session: UUID, worktree: String) throws -> WorktreeHistory? {
-        let file = try FileHandle(forReadingFrom: url)
-        defer { try? file.close() }
-        guard let header = try file.read(upToCount: 64 * 1024), let newline = header.firstIndex(of: 10),
-              let record = try JSONSerialization.jsonObject(with: header[..<newline]) as? [String: Any],
-              record["type"] as? String == "session_meta", let meta = record["payload"] as? [String: Any],
-              let id = meta["id"] as? String, UUID(uuidString: id) == session,
-              let cwd = meta["cwd"] as? String, cwd.hasPrefix("/"),
-              URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path ==
-                URL(fileURLWithPath: worktree).resolvingSymlinksInPath().path else { return nil }
+    public static func read(sessionID: String, worktree: String,
+                            codexHome: URL = CodexHomeMirror.defaultSourceDirectory()) -> WorktreeTimeline? {
+        CodexScrollbackTranscript(sessionID: sessionID, worktree: worktree, codexHome: codexHome).read()
+    }
 
-        let end = try file.seekToEnd()
-        let limit: UInt64 = 4 * 1024 * 1024
-        let start = end > limit ? end - limit : 0
-        try file.seek(toOffset: start > 0 ? start - 1 : 0)
-        let atLineStart = start == 0 ? true : try file.read(upToCount: 1)?.first == 10
-        guard let bytes = try file.read(upToCount: Int(end - start)), let last = bytes.lastIndex(of: 10) else { return nil }
-        guard let first = atLineStart ? bytes.startIndex : bytes.firstIndex(of: 10).map({ $0 + 1 }),
-              first <= last else { return nil }
-        var history = WorktreeHistory()
-        for line in bytes[first..<last].split(separator: 10) {
-            guard let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-            let offset = start + UInt64(line.startIndex)
-            if let input = userInput(from: record, sessionID: id, offset: offset) { history.record(input) }
-            if let response = AgentResponseCapture.response(from: record, runtime: .codex, sessionID: id, offset: offset) {
-                history.record(response)
+    public func read() -> WorktreeTimeline? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let session, let url = locate(session),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let number = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+              let file = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? file.close() }
+        do {
+            let end = try file.seekToEnd()
+            if fileNumber != number || end < offset {
+                try file.seek(toOffset: 0)
+                guard let header = try file.read(upToCount: 64 * 1024), let newline = header.firstIndex(of: 10),
+                      let record = try JSONSerialization.jsonObject(with: header[..<newline]) as? [String: Any],
+                      record["type"] as? String == "session_meta", let meta = record["payload"] as? [String: Any],
+                      let id = meta["id"] as? String, UUID(uuidString: id) == session,
+                      let cwd = meta["cwd"] as? String, cwd.hasPrefix("/"),
+                      URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path ==
+                        URL(fileURLWithPath: worktree).resolvingSymlinksInPath().path else { return nil }
+                fileNumber = number
+                history = WorktreeHistory()
+                offset = UInt64(newline + 1)
+                discardUntilNewline = false
             }
+            try file.seek(toOffset: offset)
+            var position = offset
+            var pending = Data()
+            let maxRecordBytes = 4 * 1024 * 1024
+            while position < end {
+                guard !Task.isCancelled else { return nil }
+                guard let chunk = try file.read(upToCount: Int(min(256 * 1024, end - position))), !chunk.isEmpty else { break }
+                var start = chunk.startIndex
+                while start < chunk.endIndex {
+                    let newline = chunk[start...].firstIndex(of: 10)
+                    let stop = newline ?? chunk.endIndex
+                    if !discardUntilNewline {
+                        if pending.count + stop - start > maxRecordBytes {
+                            pending.removeAll(keepingCapacity: false)
+                            discardUntilNewline = true
+                        } else {
+                            pending.append(contentsOf: chunk[start..<stop])
+                        }
+                    }
+                    if let newline {
+                        if !discardUntilNewline { record(pending, sessionID: session.uuidString.lowercased(), at: offset) }
+                        pending.removeAll(keepingCapacity: true)
+                        discardUntilNewline = false
+                        start = newline + 1
+                        offset = position + UInt64(start)
+                    } else {
+                        // Retry an incomplete record on append. Oversized tool records need no replay.
+                        if discardUntilNewline { offset = position + UInt64(stop) }
+                        break
+                    }
+                }
+                position += UInt64(chunk.count)
+            }
+            return WorktreeTimeline(history: history, brief: nil)
+        } catch { return nil }
+    }
+
+    private func locate(_ session: UUID) -> URL? {
+        let manager = FileManager.default
+        if let fileURL, manager.fileExists(atPath: fileURL.path) { return fileURL }
+        let suffix = "-\(session.uuidString.lowercased()).jsonl"
+        let files = manager.enumerator(at: codexHome.appendingPathComponent("sessions"),
+                                       includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+        fileURL = files?.lazy.compactMap { $0 as? URL }.first { $0.lastPathComponent.lowercased().hasSuffix(suffix) }
+        return fileURL
+    }
+
+    private func record(_ data: Data, sessionID: String, at offset: UInt64) {
+        guard let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if let input = Self.userInput(from: record, sessionID: sessionID, offset: offset) { history.record(input) }
+        if let response = AgentResponseCapture.response(from: record, runtime: .codex, sessionID: sessionID, offset: offset) {
+            history.record(response)
         }
-        return history
     }
 
     private static func userInput(from record: [String: Any], sessionID: String, offset: UInt64) -> WorktreeHistory.UserInput? {

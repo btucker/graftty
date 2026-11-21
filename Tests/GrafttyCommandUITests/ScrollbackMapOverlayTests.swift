@@ -625,19 +625,25 @@ struct ScrollbackMapMobileCollapseTests {
 @MainActor
 @Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
 struct ScrollbackMapRebuildTests {
-    @Test("@spec CONTEXT-57.5: If captured history contains no messages that match the loaded scrollback of a local Codex pane, then the application shall locate messages from that pane’s saved Codex transcript.", arguments: [false, true])
-    func locatesSavedTranscriptWhenCapturedHistoryHasNoMatches(hasCapturedMatch: Bool) async {
-        let terminal = FakeScrollback(rows: sampleRows())
+    @Test("@spec CONTEXT-57.5: While a local Codex pane displays submitted prompts, the application shall mark matching prompts from its saved conversation even when captured agent replies already match, preserving captured marks and showing each prompt row once.", arguments: [false, true])
+    func supplementsCapturedMarksWithSubmittedPrompts(hasCapturedInput: Bool) async {
+        var rows = sampleRows()
+        rows[40] = "› open a pr for the sidebar fix"
+        rows[560] = "› keep going, this is not security related"
+        rows[580] = "• The user said: keep going, this is not security related"
+        let terminal = FakeScrollback(rows: rows)
         let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
         var captured = WorktreeHistory()
-        captured.record(.init(text: hasCapturedMatch ? "open a pr for the sidebar fix" : "Older prompt no longer in the terminal", at: start))
+        if hasCapturedInput { captured.record(.init(text: "open a pr for the sidebar fix", at: start)) }
+        captured.record(WorktreeHistory.AgentResponse(id: "reply", text: rows[300], at: start.addingTimeInterval(600), runtime: "codex"))
         model.update(timeline: WorktreeTimeline(history: captured, brief: nil),
                      recovery: .init(id: "local-codex", load: { sampleTimeline() }))
         model.setVisible(true)
-        await waitUntil { model.map?.marks.isEmpty == false }
-        #expect(model.map?.marks.map(\.row) == (hasCapturedMatch ? [40] : [40, 300, 560]))
-        #expect(model.entries.count == (hasCapturedMatch ? 1 : 3))
-        #expect(terminal.reads == 1, "Both sources must be matched against the same rows")
+        await waitUntil { model.map != nil }
+        #expect(model.map?.marks.map(\.row) == [40, 300, 560])
+        #expect(model.map?.marks.map(\.kind) == [.input, .peer, .input])
+        #expect(model.map?.row(for: "reply") == 300)
+        #expect(terminal.reads == 1)
     }
 
     @Test func hiddenPaneNeverScans() async {

@@ -696,7 +696,7 @@ public final class ScrollbackMapModel: ObservableObject {
         guard messages != self.messages || recovery?.id != self.recovery?.id else { return }
         self.messages = messages
         capturedEntries = ScrollbackMapEntry.entries(in: timeline)
-        self.recovery = recovery
+        if self.recovery?.id != recovery?.id { self.recovery = recovery }
         if messages.isEmpty, recovery == nil { map = nil; entries = [:]; stopEvictionCheck() }
         scheduleRebuild()
     }
@@ -730,16 +730,32 @@ public final class ScrollbackMapModel: ObservableObject {
             guard !Task.isCancelled, let self, let terminal = self.terminal else { return }
             let firstRow = terminal.firstRowText()
             let snapshot = terminal.scrollbackRows(limit: ScrollbackMap.readLimit)
-            let messages = self.messages, recovery = self.recovery
-            let (map, recovered) = await Task.detached(priority: .userInitiated) { () -> (ScrollbackMap?, WorktreeTimeline?) in
-                guard let snapshot else { return (nil, nil) }
+            let messages = self.messages, recovery = self.recovery, capturedEntries = self.capturedEntries
+            let (map, entries) = await Task.detached(priority: .userInitiated) { () -> (ScrollbackMap?, [String: ScrollbackMapEntry]) in
+                guard let snapshot else { return (nil, [:]) }
                 let captured = ScrollbackMap.locate(messages, in: snapshot)
-                guard captured.marks.isEmpty, let timeline = recovery?.load() else { return (captured, nil) }
-                return (ScrollbackMap.locate(ScrollbackMap.messages(in: timeline), in: snapshot), timeline)
+                guard let timeline = recovery?.load() else { return (captured, capturedEntries) }
+                let saved = ScrollbackMap.messages(in: timeline)
+                let entries = capturedEntries.merging(ScrollbackMapEntry.entries(in: timeline)) { captured, _ in captured }
+                let base = captured.marks.isEmpty ? ScrollbackMap.locate(saved, in: snapshot) : captured
+                let savedInputs = ScrollbackMap.codexInputMarks(saved, in: snapshot)
+                let capturedInputs = ScrollbackMap.codexInputMarks(messages, in: snapshot)
+                let savedIDs = Set(savedInputs.map(\.eventID))
+                let confirmed = savedInputs + capturedInputs.filter { !savedIDs.contains($0.eventID) }
+                let confirmedTexts = Set(confirmed.compactMap { entries[$0.eventID]?.text })
+                var marksByRow: [Int: ScrollbackMap.Mark] = [:]
+                for mark in base.marks {
+                    if mark.kind == .input, let text = entries[mark.eventID]?.text, confirmedTexts.contains(text) { continue }
+                    marksByRow[mark.row] = mark
+                }
+                // Keep the captured event ID when both sources describe the same prompt row.
+                for mark in confirmed { marksByRow[mark.row] = mark }
+                return (ScrollbackMap(totalRows: snapshot.totalRows, marks: Array(marksByRow.values)), entries)
             }.value
             guard !Task.isCancelled else { return }
-            scrollbackLog.debug("Scan read \(snapshot?.rows.count ?? 0) rows and found \(map?.marks.count ?? 0) marks. Used saved transcript: \(recovered != nil).")
-            self.entries = recovered.map(ScrollbackMapEntry.entries(in:)) ?? self.capturedEntries
+            let userCount = map?.marks.count { $0.kind == .input } ?? 0
+            scrollbackLog.debug("Scan read \(snapshot?.rows.count ?? 0) rows and found \(userCount) user marks among \(map?.marks.count ?? 0) total.")
+            self.entries = entries
             self.map = map
             self.scannedFirstRow = firstRow
             self.pending = nil
@@ -794,7 +810,8 @@ public struct ScrollbackMapOverlayHost: View {
                                      scroll: { [model] in model.scroll(toRow: $0) })
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .onAppear {
-                        scrollbackLog.debug("Showing rail with \(map.marks.count) marks. Local Codex session: \(recovery != nil).")
+                        let userCount = map.marks.count { $0.kind == .input }
+                        scrollbackLog.debug("Showing rail with \(userCount) user marks among \(map.marks.count) total. Local Codex session: \(recovery != nil).")
                     }
             }
         }

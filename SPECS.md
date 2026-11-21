@@ -5642,7 +5642,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.4** If the worktree’s retained report points to a missing pane and exactly one active agent remains, then the application shall use that agent’s pane for the scrollback map and history jumps on Mac and mobile.
 
-**CONTEXT-57.5** If captured history contains no messages that match the loaded scrollback of a local Codex pane, then the application shall locate messages from that pane’s saved Codex transcript.
+**CONTEXT-57.5** While a local Codex pane displays submitted prompts, the application shall mark matching prompts from its saved conversation even when captured agent replies already match, preserving captured marks and showing each prompt row once.
 
 **CONTEXT-57.6** While several agent panes are open in a worktree, the application shall offer a scrollback map in each live agent pane, independent of which agent submitted the latest report.
 

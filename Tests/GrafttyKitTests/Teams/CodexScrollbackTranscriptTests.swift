@@ -4,6 +4,30 @@ import Testing
 @testable import GrafttyKit
 
 struct CodexScrollbackTranscriptTests {
+    @Test func keepsPromptsBeforeLargeToolResultsAndSeesLaterAppends() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let directory = home.appendingPathComponent("sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let session = UUID().uuidString.lowercased()
+        let file = directory.appendingPathComponent("rollout-\(session).jsonl")
+        let header = #"{"type":"session_meta","payload":{"id":"\#(session)","cwd":"/repo/worktree"}}"#
+        let prompt = #"{"timestamp":"2026-11-20T01:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"Earlier request"}}"#
+        let largeTool = #"{"type":"response_item","payload":{"type":"function_call_output","output":"\#(String(repeating: "x", count: 5 * 1024 * 1024))"}}"#
+        try Data(([header, prompt, largeTool].joined(separator: "\n") + "\n").utf8).write(to: file)
+        let reader = CodexScrollbackTranscript(sessionID: session, worktree: "/repo/worktree", codexHome: home)
+        #expect(reader.read()?.events.map(\.completed) == ["Earlier request"])
+        let append = try FileHandle(forWritingTo: file)
+        defer { try? append.close() }
+        try append.seekToEnd()
+        let next = prompt.replacingOccurrences(of: "Earlier request", with: "Next request")
+            .replacingOccurrences(of: "01:00:00", with: "01:00:01")
+        try append.write(contentsOf: Data(next.utf8))
+        #expect(reader.read()?.events.map(\.completed) == ["Earlier request"])
+        try append.write(contentsOf: Data("\n".utf8))
+        #expect(reader.read()?.events.map(\.completed) == ["Earlier request", "Next request"])
+    }
+
     @Test func readsOnlyVisibleMessagesFromTheExactWorktreeThread() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
