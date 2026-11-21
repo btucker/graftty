@@ -31,7 +31,7 @@ struct WorkspaceContentView: View {
     let onFocusTerminal: (PaneSlotID) -> Void
     let onNewTerminal: () -> Void
     let onCloseTerminal: (PaneSlotID) -> Void
-    /// AGENT-2.7: hook-reported turn activity, so stopped turns stop spinning.
+    /// AGENT-2.7: hook-reported turn activity distinguishes working and idle agents.
     var agentLiveness: ClaudeSessionRegistry? = nil
     /// LAYOUT-2.190: explicit tab selection hands keyboard focus to the
     /// terminal. Clicks inside a terminal already make it first responder.
@@ -137,7 +137,7 @@ struct WorkspaceContentView: View {
                                     } else {
                                         Image(systemName: "terminal")
                                     }
-                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, fallback: agent(tab)?.name ?? "Terminal").lineLimit(1)
+                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, agent: agent(tab)).lineLimit(1)
                                         .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if agent(tab) == nil, worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
@@ -269,7 +269,7 @@ struct WorkspaceContentView: View {
                     HStack(spacing: 2) {
                 ForEach(layout.terminals, id: \.self) { slot in
                     Button { selectTerminalTab(slot) } label: {
-                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, fallback: agent(slot)?.name ?? "Terminal").lineLimit(1).padding(.horizontal, 8).frame(height: 30)
+                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, agent: agent(slot)).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
                             .workspaceTabUnderline(selected: layout.selectedTerminal == slot, color: theme.foreground)
                     }.buttonStyle(.plain)
                         .fontWeight(layout.selectedTerminal == slot ? .semibold : .regular)
@@ -347,7 +347,9 @@ struct WorkspaceContentView: View {
     }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
     private func title(_ slot: PaneSlotID) -> String {
-        SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: agent(slot)?.name ?? "Terminal")
+        let agent = agent(slot)
+        return SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
+            agentName: agent?.name ?? "Terminal", tabProvider: agent?.provider.rawValue)
     }
     private func mutate(_ action: (inout WorkspaceLayout<PaneSlotID>) -> Void) {
         var next = layout; action(&next); worktree.workspaceLayout = next
@@ -444,10 +446,11 @@ private struct WorkspaceTerminalTitle: View {
     let terminalManager: TerminalManager
     @ObservedObject var invalidations: PaneTitleInvalidationSource
     let slot: PaneSlotID
-    let fallback: String
+    let agent: ManagedAgent?
 
     var body: some View {
         let _ = invalidations.generation
-        Text(SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: fallback))
+        Text(SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
+            agentName: agent?.name ?? "Terminal", tabProvider: agent?.provider.rawValue))
     }
 }
