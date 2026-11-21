@@ -113,6 +113,32 @@ struct WorktreeContextLifecycleTests {
         #expect(entry.unseenAgentStop?.question == "Second?")
     }
 
+    @Test("@spec CONTEXT-86: If a worktree's primary agent has failed or closed, then the application shall accept retained context from the earliest running agent the user launched there, never from a CLI-added additional agent.")
+    func userLaunchedAgentTakesOverContextFromAnEndedPrimary() {
+        let primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil, status: .failed, isPrimary: true)
+        var additional = ManagedAgent(name: "Reviewer", provider: .codex, parent: nil, isPrimary: false)
+        additional.launchOrigin = .cliAgentAdd
+        var replacement = ManagedAgent(name: "Replacement", provider: .claude, parent: nil, isPrimary: false)
+        replacement.launchOrigin = .userInterface
+        var entry = WorktreeEntry(path: "/wt", branch: "fix")
+        entry.agents = [primary, additional, replacement]
+        var state = AppState(repos: [.init(path: "/repo", displayName: "Repo", worktrees: [entry])])
+
+        state.recordAgentRecap(.init(title: "Reviewer", completed: "Reviewed.", next: "Finish."),
+            callerPath: "/wt", reportedAt: start, callerAgentID: additional.id)
+        #expect(state.repos[0].worktrees[0].brief == nil)
+
+        state.recordAgentRecap(.init(title: "Header wash", completed: "Enlarged it.", next: "Review."),
+            callerPath: "/wt", reportedAt: start.addingTimeInterval(1), callerAgentID: replacement.id)
+        #expect(state.repos[0].worktrees[0].brief?.title == "Header wash")
+        #expect(state.repos[0].worktrees[0].isPrimaryAgent(replacement))
+        #expect(!state.repos[0].worktrees[0].isPrimaryAgent(additional))
+
+        // A live primary keeps ownership.
+        state.repos[0].worktrees[0].agents[0] = ManagedAgent(name: "Primary", provider: .codex, parent: nil, isPrimary: true)
+        #expect(!state.repos[0].worktrees[0].isPrimaryAgent(replacement))
+    }
+
     @Test func legacyAndSparseDrawingsUseTheSameClock() {
         var state = AppState(repos: [.init(path: "/repo", displayName: "Repo", worktrees: [.init(path: "/wt", branch: "fix")])])
         let first = "<svg viewBox='0 0 96 64'><circle cx='48' cy='32' r='20' fill='primary'/></svg>"

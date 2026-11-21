@@ -7,6 +7,11 @@ public extension WorktreeEntry {
     }
 
     func isPrimaryAgent(_ agent: ManagedAgent) -> Bool {
+        if isRecordedPrimary(agent) { return true }
+        return successorToEndedPrimary?.id == agent.id
+    }
+
+    private func isRecordedPrimary(_ agent: ManagedAgent) -> Bool {
         guard agent.launchTargetWorktree == nil || agent.launchTargetWorktree == path else { return false }
         if let primary = agent.isPrimary { return primary }
         // Durable record order preserves the original role after a legacy
@@ -14,6 +19,19 @@ public extension WorktreeEntry {
         return agents.first {
             $0.launchTargetWorktree == nil || $0.launchTargetWorktree == path
         }?.id == agent.id
+    }
+
+    /// @spec CONTEXT-86
+    /// If a worktree's primary agent has failed or closed, then the application shall accept retained context from the earliest running agent the user launched there, never from a CLI-added additional agent.
+    private var successorToEndedPrimary: ManagedAgent? {
+        func hasEnded(_ agent: ManagedAgent) -> Bool { agent.status == .failed || agent.status == .closed }
+        let recorded = agents.filter(isRecordedPrimary)
+        guard !recorded.isEmpty, recorded.allSatisfy(hasEnded) else { return nil }
+        return agents.first {
+            // Legacy records without an origin may be CLI-added children.
+            !hasEnded($0) && [.userInterface, .resumedSession, .observedSession].contains($0.launchOrigin)
+                && ($0.launchTargetWorktree == nil || $0.launchTargetWorktree == path)
+        }
     }
 
     /// @spec GIT-5.44

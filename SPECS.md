@@ -5764,6 +5764,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-85** While Context history displays messages on Mac or mobile, the application shall use a readable purple rail marker and sender identity for incoming agent messages, retain secondary markers for local agent responses and orange for human input, and keep message text neutral.
 
+### CONTEXT-86.x
+
+**CONTEXT-86** If a worktree's primary agent has failed or closed, then the application shall accept retained context from the earliest running agent the user launched there, never from a CLI-added additional agent.
+
 ## MEM — MEM
 
 ### MEM-1.x
