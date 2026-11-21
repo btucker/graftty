@@ -4996,6 +4996,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.50** When a client answers a stopped agent's question, the host shall type the answer as one line without control characters into that agent's pane and submit it, and shall refuse when the question has changed or cleared, the answer is empty, the pane is gone or belongs to another agent or shell, or the pane is waiting at its harness's own prompt.
 
+**AGENT-3.51** While a linked worktree has no drawing, the application shall ask that worktree's agent at turn start to draw one on the wide canvas, leaving the home checkout without a request.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
