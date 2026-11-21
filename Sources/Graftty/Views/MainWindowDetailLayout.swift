@@ -28,7 +28,6 @@ struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: Vie
             HStack(spacing: 0) {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay { WorktreeHeaderWashSpill() }
                     .onPreferenceChange(WorkspaceTabRowHeightKey.self) { tabRowHeight = $0 }
                 // Starts below the content's tab row, when the content has one (CONTEXT-55).
                 inspector
@@ -46,7 +45,7 @@ struct MainWindowDetailLayout<Header: View, Content: View, Inspector: View>: Vie
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .coordinateSpace(name: WorktreeHeaderWash.coordinateSpace)
         .environment(\.worktreeHeaderWashBand, headerWash.map {
-            WorktreeHeaderWashBand(wash: $0, size: CGSize(width: width, height: headerHeight + WorktreeHeaderWash.tabRowHeight))
+            WorktreeHeaderWashBand(wash: $0, size: CGSize(width: width, height: headerHeight + tabRowHeight))
         })
     }
 }

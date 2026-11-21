@@ -234,7 +234,7 @@ struct WorktreeRowContent: View {
                     }
                 }
                 if let progress = worktree.creationProgress {
-                    WorktreeCreationProgressView(progress: progress)
+                    WorktreeCreationProgressView(progress: progress, isRunning: worktree.state == .running)
                         .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
                 }
             }

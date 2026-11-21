@@ -70,6 +70,7 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public var transcriptArchive: AgentTranscriptArchive?
     public var transcriptHistory: [UUID: AgentTranscriptArchive]?
     public var initialPrompt: String?
+    var promptImageSet: WorktreePromptImageSet?
     public private(set) var completion: Completion?
     public private(set) var results: [Completion]
     public private(set) var failure: String?
@@ -216,6 +217,7 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         value.transcript = nil
         value.transcriptHistory = nil
         value.initialPrompt = nil
+        value.promptImageSet = nil
         value.retainedResultCount = results.count
         value.results = []
         value.detailsOmitted = true
@@ -256,8 +258,10 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public mutating func retryLaunch() throws {
         guard canRetryLaunch else { throw LifecycleError.invalidState }
         let task = initialPrompt
+        let images = promptImageSet
         resetConversationAssignment()
         initialPrompt = task
+        promptImageSet = images
         launchTargetWorktree = nil
         paneSlotID = presentationSlotID ?? PaneSlotID()
         paneSessionID = PaneSessionID()
@@ -287,6 +291,7 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         deliveryFailure = nil
         failure = nil
         initialPrompt = nil
+        promptImageSet = nil
     }
 
     /// A restart that never acquired a live binding is safe to retry after host recovery.

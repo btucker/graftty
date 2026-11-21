@@ -146,7 +146,8 @@ public enum AgentControl {
         return agent.sessionInstructions
     }
 
-    public static func handle(_ request: AgentControlRequest, platform: any ControlPlatform) async -> ResponseMessage {
+    public static func handle(_ request: AgentControlRequest, promptImages: [Data] = [],
+                              platform: any ControlPlatform) async -> ResponseMessage {
         do {
             if request.action == .capability {
                 return platform.controlCapabilities.contains(.managedAgents) ? .ok : .error("operation is unavailable on this host")
@@ -155,7 +156,7 @@ public enum AgentControl {
                 throw AgentControlError.unknownAgent
             }
             if request.action == .add {
-                return try await add(request, repoIndex: repoIndex, platform: platform)
+                return try await add(request, repoIndex: repoIndex, promptImages: promptImages, platform: platform)
             }
             let repoPath = platform.state.repos[repoIndex].path
             try? repairParentEndpoints(repoPath: repoPath, platform: platform)
@@ -290,7 +291,8 @@ public enum AgentControl {
         } catch { return .error(error.localizedDescription) }
     }
 
-    private static func add(_ request: AgentControlRequest, repoIndex: Int, platform: any ControlPlatform) async throws -> ResponseMessage {
+    private static func add(_ request: AgentControlRequest, repoIndex: Int, promptImages: [Data],
+                            platform: any ControlPlatform) async throws -> ResponseMessage {
         guard let name = request.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AgentControlError.invalidRequest
         }
@@ -372,7 +374,8 @@ public enum AgentControl {
             worktreeName: names.worktree, branchName: names.branch, existing: request.existing ?? false, base: request.base, command: nil,
             agentRuntime: provider, agentPrompt: request.prompt, operationID: agent.launchOperationID,
             managedAgent: agent, selectTab: request.selectTab ?? false,
-            existingBranchSource: request.existingBranchSource, sourcePaneSessionName: request.paneSessionName), platform: platform.worktreeCreation)
+            existingBranchSource: request.existingBranchSource, sourcePaneSessionName: request.paneSessionName),
+            promptImages: promptImages, platform: platform.worktreeCreation)
         guard case .worktreeCreate(let status) = response else {
             if let path = platform.state.repos.flatMap(\.worktrees).first(where: { $0.agents.contains { $0.id == agent.id } })?.path {
                 agent.paneSlotID = nil

@@ -112,6 +112,7 @@ struct MainWindow: View {
         var hostContext: AddWorktreeHostContext? = nil
         var name = ""
         var branch: String? = nil
+        var agent = WorktreeAgentConfiguration()
     }
 
     @ViewBuilder private func remoteWorkspaceContent(for remote: RemoteMac) -> some View {
@@ -164,9 +165,9 @@ struct MainWindow: View {
                 onSelectRemoteWorktree: selectRemoteWorktree,
                 onWakeRemoteWorktree: wakeAndOpen,
                 onAddRemoteWorktree: { beginAddRemoteWorktree($0, repository: $1) },
-                onAddRemoteWorktreeWithHost: { mac, repository, context, name, branch in
+                onAddRemoteWorktreeWithHost: { mac, repository, context, name, branch, agent in
                     pendingAddRemoteWorktree = RemoteAddWorktreeRequest(remoteMac: mac, repository: repository,
-                                                                        hostContext: context, name: name, branch: branch)
+                                                                        hostContext: context, name: name, branch: branch, agent: agent)
                 },
                 onDeleteRemoteWorktree: deleteRemoteWorktree,
                 onAddRemoteMac: { isShowingAddRemoteMacSheet = true },
@@ -402,10 +403,11 @@ struct MainWindow: View {
                 },
                 onCancel: { pendingAddRemoteWorktree = nil },
                 existingBranch: request.branch,
+                initialAgent: request.agent,
                 hostContext: request.hostContext.map { context in
-                    AddWorktreeHostContext(projectName: context.projectName, choices: context.choices, selectedID: context.selectedID, onSelect: { id, name, branch in
+                    AddWorktreeHostContext(projectName: context.projectName, choices: context.choices, selectedID: context.selectedID, onSelect: { id, name, branch, agent in
                         pendingAddRemoteWorktree = nil
-                        context.onSelect(id, name, branch)
+                        context.onSelect(id, name, branch, agent)
                     }, onCreated: context.onCreated)
                 }
             )

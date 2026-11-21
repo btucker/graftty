@@ -29,6 +29,7 @@ public enum ViewerAgentLaunch {
                                   return AgentPreference.provider()
                               }) async -> WorktreeManagementResponse {
         let provider: TeamHookRuntime
+        if let error = WorktreePromptImageSet.validationError(agent.promptImages) { return failure(error) }
         let explicit = agent.provider.flatMap(TeamHookRuntime.init(rawValue:))
         if agent.provider != nil, explicit == nil { return failure("Unknown agent provider.") }
         do { provider = try AgentPreference.resolve(explicit: explicit, configured: configuredProvider()) }
@@ -52,7 +53,7 @@ public enum ViewerAgentLaunch {
         let response = await AgentControl.handle(.init(action: .add, callerWorktree: repository,
             name: name, provider: provider, prompt: agent.initialPrompt, operationID: UUID().uuidString, branch: branch,
             existing: existingSource != nil, selectTab: false, existingBranchSource: branchSource,
-            launchOrigin: .userInterface), platform: platform)
+            launchOrigin: .userInterface), promptImages: agent.promptImages, platform: platform)
         guard case .agents(let records) = response, let record = records.first,
               let operation = record.operationID else { return result(response) }
         // Creation continues in its host-owned task if the viewer disconnects.

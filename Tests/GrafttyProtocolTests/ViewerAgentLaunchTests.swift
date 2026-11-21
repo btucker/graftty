@@ -19,6 +19,30 @@ struct ViewerAgentLaunchTests {
         #expect(object["type"] as? String == "create")
     }
 
+    @Test("@spec GIT-5.46: When the user pastes images into the initial worktree prompt on Mac or mobile, the application shall preserve the images in order with the optional text and send them to the owning host for the first agent turn.")
+    func promptImagesRoundTripAndRequireAnUpdatedHost() throws {
+        let agent = WorktreeAgentConfiguration(taskDescription: "Use these screenshots.\n",
+            promptImages: [Data([1, 2]), Data([3, 4])])
+        let request = WorktreeManagementRequest.create(repositoryID: "repo", worktreeName: "feature",
+            branchName: "feature", existingSource: nil, agent: agent)
+        let data = try JSONEncoder().encode(request)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["type"] as? String == "create_with_prompt_images")
+        #expect(try JSONDecoder().decode(WorktreeManagementRequest.self, from: data) == request)
+        #expect(WorktreeAgentConfiguration(promptImages: agent.promptImages).initialPrompt != nil)
+    }
+
+    @Test func maximumPromptImagesFitTheRelayQueue() throws {
+        let bytes = WorktreeAgentConfiguration.maximumPromptImageBytes
+        let image = Data(repeating: 0xff, count: bytes)
+        #expect(WorktreeAgentConfiguration.promptImageSizeError([image]) == nil)
+        #expect(WorktreeAgentConfiguration.promptImageSizeError([image, Data([1])]) != nil)
+        let request = WorktreeManagementRequest.create(repositoryID: "repo", worktreeName: "images",
+            branchName: "images", existingSource: nil, agent: .init(promptImages: [image]))
+        // Leave space in the 8 MiB relay queue for SSH framing and other writes.
+        #expect(try JSONEncoder().encode(request).count < 7 * 1024 * 1024)
+    }
+
     @Test("@spec GIT-5.35: When a client creates a worktree with an agent choice and optional task description, the application shall preserve the provider and exact multiline description across transport and use the destination's default agent when the provider is omitted.")
     func creationPreservesAgentAndTask() throws {
         let prompt = "Fix the tests.\nKeep $(literal syntax).\n"

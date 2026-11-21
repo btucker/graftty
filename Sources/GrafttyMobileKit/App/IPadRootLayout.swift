@@ -328,11 +328,18 @@ public struct IPadRootLayout: View {
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
         guard !worktree.state.isInFlight || worktree.showsCreationProgress else { return }
         let leaves = worktree.layout?.leaves ?? []
-        let focused = appState.selectedWorktreePath == worktree.path
-            ? appState.focusedPaneId.flatMap { id in
+        func presentable(_ session: String?) -> String? {
+            session.flatMap { id in
                 leaves.contains(where: { $0.sessionName == id }) || worktree.agents?.contains(where: { $0.presentationSessionName == id }) == true ? id : nil
             }
-            : nil
+        }
+        // IPAD-1.36: without a current pane here, restore the worktree's last
+        // selected tab. A matching path can name another host's worktree,
+        // whose focused pane then fails the presentable check.
+        let current = appState.selectedWorktreePath == worktree.path ? presentable(appState.focusedPaneId) : nil
+        let focused = current ?? presentable(appState.selectedHostId.flatMap {
+            appState.workspaceStore.layout(hostID: $0, worktree: worktree).focusedSession
+        })
         appState.select(hostID: appState.selectedHostId, worktreePath: worktree.path,
                         paneID: focused ?? leaves.first?.sessionName,
                         requestsTerminalFocus: !worktree.showsCreationProgress)
@@ -1516,7 +1523,7 @@ struct IPadDetailColumn: View {
             // the top row of tabs; each surface draws its slice.
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
             .coordinateSpace(name: WorktreeHeaderWash.coordinateSpace)
-            .environment(\.worktreeHeaderWashBand, washBand(for: worktree))
+            .environment(\.worktreeHeaderWashBand, washBand(for: worktree, host: host))
             .id("\(host.id)-\(worktree.path)")
         } else {
             ContentUnavailableView(
@@ -1537,13 +1544,16 @@ struct IPadDetailColumn: View {
         appState.workspaceStore.layout(hostID: host.id, worktree: worktree).drawerVisible
     }
 
-    private func washBand(for worktree: WorktreePanes) -> WorktreeHeaderWashBand? {
+    private func washBand(for worktree: WorktreePanes, host: Host) -> WorktreeHeaderWashBand? {
         guard let wash = MobileWorktreeIdentity.wash(for: worktree, icons: projectIconCache?.icons, drawings: worktreeDrawingCache?.images,
                                                      background: appState.theme.background, isDark: appState.theme.isDark)
         else { return nil }
         // The toolbar and status bar sit above the identity bar.
         let toolbar: CGFloat = 96
-        return WorktreeHeaderWashBand(wash: wash, size: CGSize(width: detailWidth, height: toolbar + identityHeight + 44),
+        let workspace = appState.workspaceStore.layout(hostID: host.id, worktree: worktree)
+        let hasTabs = !worktree.showsCreationProgress
+            && workspace.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) != nil
+        return WorktreeHeaderWashBand(wash: wash, size: CGSize(width: detailWidth, height: toolbar + identityHeight + (hasTabs ? 44 : 0)),
                                       topExtension: toolbar)
     }
 

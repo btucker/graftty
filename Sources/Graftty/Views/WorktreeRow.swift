@@ -99,7 +99,7 @@ struct WorktreeRow: View {
                             }
                         }
                         if let progress = entry.creationProgress {
-                            WorktreeCreationProgressView(progress: progress)
+                            WorktreeCreationProgressView(progress: progress, isRunning: entry.state == .running)
                                 .foregroundStyle(theme.sidebarSecondaryText)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)

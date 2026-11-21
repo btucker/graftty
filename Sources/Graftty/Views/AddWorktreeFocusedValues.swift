@@ -11,6 +11,7 @@ struct AddWorktreeRequest: Identifiable {
     let prefill: String
     var existingBranch: String? = nil
     var hostContext: AddWorktreeHostContext? = nil
+    var agent = WorktreeAgentConfiguration()
     var id: UUID { repo.id }
 }
 
@@ -20,7 +21,7 @@ struct AddWorktreeHostContext {
     let projectName: String
     let choices: [AddWorktreeHostChoice]
     let selectedID: String
-    let onSelect: (_ id: String, _ name: String, _ branch: String?) -> Void
+    let onSelect: (_ id: String, _ name: String, _ branch: String?, _ agent: WorktreeAgentConfiguration) -> Void
     /// The chosen host becomes the project's default once a worktree exists on it.
     let onCreated: () -> Void
 }

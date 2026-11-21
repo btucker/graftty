@@ -25,9 +25,11 @@ extension SocketRequestRouter: ControlPlatform {
     }
 
     func recordHookLiveness(runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?,
-                            paneSessionName: String, attentionReason: AgentHookAttentionReason?) {
+                            paneSessionName: String, attentionReason: AgentHookAttentionReason?,
+                            subagentsRunning: Bool) {
         agentRegistry.recordHook(runtime: runtime, event: event, sessionID: sessionID,
-                                 paneSessionName: paneSessionName, attentionReason: attentionReason)
+                                 paneSessionName: paneSessionName, attentionReason: attentionReason,
+                                 subagentsRunning: subagentsRunning)
     }
 
     func instructionsDefaultBranch(repoPath: String, hint: String?) -> String? {

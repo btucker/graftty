@@ -350,7 +350,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.191** When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.
 
-**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
+**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a fully visible tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
 
 **LAYOUT-2.193** While an agent has a live input request, the application shall use the same waiting state in its sidebar and tab, retain the question when its worktree opens, and clear that state when the request is dismissed or its provider resumes.
 
@@ -424,7 +424,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.228** When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.
 
-**LAYOUT-2.229** While the header watermark reaches below the header band, the application shall draw that part faintly over the content beneath instead of cutting it off, without taking clicks.
+**LAYOUT-2.229** While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.
 
 **LAYOUT-2.230** While a worktree row is shown, the application shall give its identity a 60 by 40 point slot that a wide drawing fills, start the row's text after that slot, and keep emoji and project icons at most 32 points.
 
@@ -1076,7 +1076,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.30** When a creating worktree is selected, the application shall display its progress and output in the terminal content area, switch to the terminal on success, and retain failed or interrupted diagnostics until a terminal is explicitly opened.
 
-**GIT-5.31** When worktree creation succeeds on Mac or mobile, the application shall hide the sidebar's Creation complete status one minute after completion while retaining creation diagnostics and keeping pending, failed, and interrupted statuses visible.
+**GIT-5.31** When worktree creation succeeds on Mac or mobile, the application shall hide the sidebar's Creation complete status one minute after completion. While a worktree is running, the application shall hide prior failed or interrupted creation statuses in the sidebar and retain their diagnostics.
 
 **GIT-5.32** When pulling the default checkout before worktree creation, the application shall bound branch validation to five seconds and retain the fast-forward pull's twenty-second timeout.
 
@@ -1105,6 +1105,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-5.44** When the user opens a terminal from a failed creation whose worktree exists, the application shall start a shell there even when a failed agent launch is recorded.
 
 **GIT-5.45** When a retried agent launch starts in a worktree whose creation failed, the application shall mark that creation complete so the failure no longer replaces the worktree's content.
+
+**GIT-5.46** When the user pastes images into the initial worktree prompt on Mac or mobile, the application shall preserve the images in order with the optional text and send them to the owning host for the first agent turn.
 
 ### GIT-6.x — Auto-tracking Pinned Agents
 
@@ -2216,6 +2218,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-1.2** If more than one PR in the same repository matches the worktree's branch and state, the application shall associate the worktree with the most recently created one.
 
+**PR-1.3** If a worktree's branch matches no PR/MR head ref by name or tracked upstream, then the application shall associate the worktree with the same-repository PR/MR whose head commit equals the branch's tip commit, preferring the PR/MR whose head ref is the branch's own name, then an open PR/MR, and otherwise the highest number. The application shall skip this fallback for the repository's default branch and for any branch whose tip is the default branch's tip, and shall not match a PR/MR whose head ref is another local branch or another local branch's tracked upstream, so a branch created from another branch's tip does not inherit that branch's PR/MR.
+
+**PR-1.4** When a refresh is requested for a worktree whose branch has no remote but whose tip commit matches a PR/MR in the repository's last snapshot, the application shall refetch the repository's PRs/MRs instead of waiting for the next poll.
+
 ### PR-2.x — Refresh Triggers
 
 **PR-2.1** When a worktree's HEAD reference changes (per GIT-2.4), the application shall drop the worktree's previously cached PR display synchronously and shall trigger a fresh PR resolution for the new branch — rather than waiting for the next polling tick to discover the change. This prevents the previous branch's PR from continuing to display through the polling cadence window after a `git checkout`, rebase, or other HEAD-rewriting operation.
@@ -2909,6 +2915,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-1.34** While a different host's worktree is selected, the application shall leave shared worktree state alone when other hosts push frames.
 
 **IPAD-1.35** While the iPad sidebar displays a worktree, the application shall draw its name at 13 points, smaller than the 15 points used on iPhone, so the sidebar fits more.
+
+**IPAD-1.36** When the user returns to a worktree, the application shall focus the tab last selected in that worktree's workspace rather than the worktree's first pane.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -4254,6 +4262,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.15** When a snapshot reveals a split-created pane after the split response, the viewer shall focus the created pane unless a newer user intent superseded the split.
 
+**REMOTE-24.16** When the viewer returns to a remote worktree without naming a pane, it shall focus the session last selected in that worktree's workspace rather than the worktree's first pane.
+
 ### REMOTE-25.x — Dev Container environments
 
 **REMOTE-25.1** When preparing a remote project environment, the application shall use its selected Dev Container configuration through the existing Dev Container CLI.
@@ -4895,6 +4905,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-2.10** While a registered Codex session has a live app-server and an observed active thread, the application shall include its pane in sidebar working activity even when provider hooks are absent, and shall discard polled activity when the provider no longer confirms it.
 
 **AGENT-2.11** While the Mac application is inactive, the application shall continue polling provider activity so Mobile receives current Working status.
+
+**AGENT-2.12** When a Claude Stop hook reports a background subagent still in flight, the application shall keep the pane in Running until a later Stop reports no running subagents or a different Claude session starts in that pane.
 
 ### AGENT-3.x
 
@@ -5550,7 +5562,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-34.x
 
-**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks merged when their displayed centers are closer than 3 points or their bars overlap, and a box showing the current viewport, and shall hide the card while no message is located.
+**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, purple marks and sender headings for incoming agent messages, accent marks and headings for local responses, marks merged when their displayed centers are closer than 3 points or their bars overlap with human input taking color priority followed by incoming messages, and a box showing the current viewport, and shall hide the card while no message is located.
 
 ### CONTEXT-35.x
 
@@ -5743,6 +5755,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-84.x
 
 **CONTEXT-84** When a headless host starts maintenance after restoring its worktrees, the application shall publish their retained context with the current host process identity before accepting further updates.
+
+### CONTEXT-85.x
+
+**CONTEXT-85** While Context history displays messages on Mac or mobile, the application shall use a readable purple rail marker and sender identity for incoming agent messages, retain secondary markers for local agent responses and orange for human input, and keep message text neutral.
 
 ## MEM — MEM
 

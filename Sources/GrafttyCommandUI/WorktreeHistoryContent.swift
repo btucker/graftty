@@ -3,6 +3,7 @@ import SwiftUI
 
 /// A quiet rail aligns all messages; older runs of agent work can fold.
 struct WorktreeHistoryContent: View {
+    @Environment(\.colorScheme) private var colorScheme
     let timeline: WorktreeTimeline
     let secondary: Color
     var openWorktree: ((String) -> Bool)? = nil
@@ -276,14 +277,15 @@ struct WorktreeHistoryContent: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(event.kind == .agentMessage ? PeerMessageStyle.color(in: colorScheme) : .accentColor)
             .help(event.title)
             .accessibilityLabel("Open worktree \(path)")
             .accessibilityIdentifier("worktree.context.history.link.\(event.id)")
         } else {
             Text(title)
                 .font(.caption).fontWeight(.semibold)
-                .foregroundStyle(event.kind == .user ? Color.orange : .primary)
+                .foregroundStyle(event.kind == .user ? Color.orange :
+                    (event.kind == .agentMessage ? PeerMessageStyle.color(in: colorScheme) : .primary))
                 .help(event.title)
                 .lineLimit(1)
         }
@@ -320,7 +322,8 @@ struct WorktreeHistoryContent: View {
         switch event.kind {
         case .creation: .accentColor
         case .user: .orange
-        case .checkpoint, .agentMessage, .agentResponse, .system: secondary
+        case .agentMessage: PeerMessageStyle.color(in: colorScheme)
+        case .checkpoint, .agentResponse, .system: secondary
         }
     }
 

@@ -52,7 +52,7 @@ struct SidebarView: View {
     let onWakeRemoteWorktree: (RemoteMac, String) -> Void
     let onAddRemoteWorktree: (RemoteMac, RemoteRepositoryInfo) -> Void
     /// Opens the sheet for a remote host from the Host row or Add worktree.
-    let onAddRemoteWorktreeWithHost: (RemoteMac, RemoteRepositoryInfo, AddWorktreeHostContext?, String, String?) -> Void
+    let onAddRemoteWorktreeWithHost: (RemoteMac, RemoteRepositoryInfo, AddWorktreeHostContext?, String, String?, WorktreeAgentConfiguration) -> Void
     let onDeleteRemoteWorktree: (RemoteMac, WorktreePanes) -> Void
     let onAddRemoteMac: () -> Void
     var onSetupLinuxHost: (() -> Void)? = nil
@@ -599,6 +599,7 @@ struct SidebarView: View {
                 },
                 onCancel: { pendingAddWorktree = nil },
                 existingBranch: request.existingBranch,
+                initialAgent: request.agent,
                 hostContext: hostContext
             )
         }
@@ -1035,14 +1036,14 @@ struct SidebarView: View {
     private func hostContext(member: SidebarProject, project: MergedProject, merged: SidebarMergedRows) -> AddWorktreeHostContext? {
         let choices = addWorktreeChoices(project, merged: merged)
         guard choices.count > 1 else { return nil }
-        return AddWorktreeHostContext(projectName: project.name, choices: choices, selectedID: member.id, onSelect: { id, name, branch in
+        return AddWorktreeHostContext(projectName: project.name, choices: choices, selectedID: member.id, onSelect: { id, name, branch, agent in
             guard let next = project.members.first(where: { $0.id == id }) else { return }
             pendingAddWorktree = nil
             // Local and remote sheets have separate presenters, and one can't
             // appear while the other is still dismissing.
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(350))
-                presentAddWorktree(member: next, project: project, name: name, branch: branch)
+                presentAddWorktree(member: next, project: project, name: name, branch: branch, agent: agent)
             }
         }, onCreated: {
             UserDefaults.standard.set(member.id, forKey: "addWorktree.lastHost.\(project.id)")
@@ -1057,13 +1058,14 @@ struct SidebarView: View {
     }
 
     /// Opens Add Worktree on one host. A project on several hosts gets a Host row.
-    private func presentAddWorktree(member: SidebarProject, project: MergedProject, name: String = "", branch: String? = nil) {
+    private func presentAddWorktree(member: SidebarProject, project: MergedProject, name: String = "",
+                                    branch: String? = nil, agent: WorktreeAgentConfiguration = .init()) {
         let context = hostContext(member: member, project: project, merged: mergedSidebar)
         if let repo = appState.repos.first(where: { localProjectID($0) == member.id }) {
             guard SidebarMenuVisibility.showsAddWorktree(repo: repo) else { return }
             remoteBranchStore.pulse()
             prStatusStore.pulse()
-            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: name, existingBranch: branch, hostContext: context)
+            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: name, existingBranch: branch, hostContext: context, agent: agent)
             return
         }
         guard !remoteProjectOperationInProgress else { return }
@@ -1080,7 +1082,7 @@ struct SidebarView: View {
                 var target = member
                 target.isAvailable = true
                 let (mac, repository) = try await remoteMacsModel.addWorktreeRepository(for: target)
-                onAddRemoteWorktreeWithHost(mac, repository, context, name, branch)
+                onAddRemoteWorktreeWithHost(mac, repository, context, name, branch, agent)
             } catch { navigationError = error.localizedDescription }
         }
     }

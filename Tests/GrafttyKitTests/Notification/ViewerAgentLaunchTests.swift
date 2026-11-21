@@ -5,6 +5,8 @@ import GrafttyProtocol
 
 @MainActor
 struct ViewerAgentLaunchTests {
+    private static let clipboardPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+
     @Test("@spec GIT-5.34: When a worktree is created without an explicit shell command, the application shall launch exactly one primary agent using the selected provider or the owning host's default, with the optional description as its initial message.", arguments: [TeamHookRuntime.codex, .claude], [nil, "Fix the tests.\nKeep $(literal syntax).\n"] as [String?])
     func creationStartsOnePrimaryAgent(provider: TeamHookRuntime, prompt: String?) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
@@ -27,6 +29,66 @@ struct ViewerAgentLaunchTests {
         #expect(plans.count == 1)
         #expect(plans.first?.agentRuntime == provider)
         #expect(plans.first?.initialCommand?.contains(agent.id) == true)
+    }
+
+    @Test(arguments: [TeamHookRuntime.codex, .claude])
+    func pastedImageReachesProviderLaunch(provider: TeamHookRuntime) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let png = try #require(Data(base64Encoded: Self.clipboardPNG))
+        var plan: CLIWorktreeCreationPlan?
+        platform.finishCreation = { plan = $0; return nil }
+        let result = await ViewerAgentLaunch.create(repository: "/repo", name: "images", branch: "images", existingSource: nil,
+            agent: .init(promptImages: [png]), platform: platform, configuredProvider: { provider })
+        guard case .created(let path, _) = result else { Issue.record("Expected worktree creation: \(result)"); return }
+        let agent = try #require(platform.state.worktree(forPath: path)?.agents.first)
+        let attachments = try #require(agent.promptImageSet)
+        let image = try #require(attachments.files(in: platform.agentPromptDirectory).first)
+        #expect(try Data(contentsOf: image) == png)
+        #expect(try FileManager.default.attributesOfItem(atPath: image.path)[.posixPermissions] as? Int == 0o600)
+        let command = try #require(plan?.initialCommand)
+        #expect(command.contains("--image") == (provider == .codex))
+        if provider == .codex { #expect(command.contains(image.lastPathComponent)) }
+        let promptFile = try #require(WorktreeAgentLaunchCommand.recoveryPromptFiles(in: platform.agentPromptDirectory).first)
+        let prompt = try String(contentsOf: promptFile, encoding: .utf8)
+        #expect(prompt.contains("Review the attached images."))
+        if provider == .claude { #expect(prompt.contains(image.path)) }
+
+        let recovered = try JSONDecoder().decode(ManagedAgent.self, from: JSONEncoder().encode(agent))
+        #expect(recovered.promptImageSet == attachments)
+        #expect(recovered.summary().promptImageSet == nil)
+        var retry = recovered
+        retry.launchFailed(reason: "Provider startup failed")
+        try retry.retryLaunch()
+        #expect(retry.promptImageSet == attachments)
+
+        if provider == .codex {
+            let commaDirectory = platform.agentPromptDirectory.appendingPathComponent("prompts,staged")
+            let set = try WorktreePromptImageSet.stage([png], in: commaDirectory)
+            retry.promptImageSet = set
+            let launch = try WorktreeAgentLaunchCommand.prepare(agent: .codex, prompt: retry.initialPrompt,
+                exactCommand: nil, managedAgent: retry, promptDirectory: commaDirectory)
+            let stagedPrompt = try String(contentsOf: #require(launch.promptFile), encoding: .utf8)
+            let imageFile = try #require(set.files(in: commaDirectory).first)
+            #expect(launch.command?.contains("--image") == false)
+            #expect(stagedPrompt.contains(imageFile.path))
+        }
+    }
+
+    @Test func failedCreationDiscardsImagesWhenTheTargetWasRemoved() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let png = try #require(Data(base64Encoded: Self.clipboardPNG))
+        platform.finishCreation = { [weak platform] plan in
+            platform?.state.removeWorktree(atPath: plan.worktreePath)
+            return "Git failed before creating the checkout."
+        }
+        let result = await ViewerAgentLaunch.create(repository: "/repo", name: "failed", branch: "failed",
+            existingSource: nil, agent: .init(promptImages: [png]), platform: platform, configuredProvider: { .codex })
+        guard case .error(_, let message, _, _) = result else { Issue.record("Expected creation failure"); return }
+        #expect(message.contains("Git failed before creating the checkout."))
+        let retained = try #require(platform.state.worktree(forPath: "/repo")?.agents.first)
+        #expect(retained.promptImageSet == nil)
+        let files = try FileManager.default.contentsOfDirectory(atPath: platform.agentPromptDirectory.path)
+        #expect(!files.contains(where: { $0.hasSuffix(".images") }))
     }
 
     @Test("@spec AGENT-6.149: When a paired viewer adds an agent to a worktree with no panes, the application shall launch the requested provider without changing host selection and reuse that launch when the operation is retried.", arguments: [WorktreeState.closed, .running])

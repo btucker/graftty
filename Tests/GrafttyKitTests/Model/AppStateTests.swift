@@ -16,17 +16,20 @@ struct AppStateTests {
         let url = dir.appendingPathComponent("state.json")
         let bytes = try Data(contentsOf: url)
 
-        var fallback = AppState.loadOrFreshBackingUpCorruption(from: dir, readData: { _ in
+        var loaded: AppState?
+        var fallback = AppState.loadOrFreshBackingUpCorruption(from: dir, didLoad: { loaded = $0 }, readData: { _ in
             throw CocoaError(.fileReadNoPermission)
         })
+        #expect(loaded == nil)
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["state.json"])
         #expect(FileManager.default.fileExists(atPath: url.path))
         fallback.sidebarWidth = 300
         // Reads already work again. A snapshot built without the original rows is still unsafe to save.
         #expect(throws: CocoaError(.fileReadNoPermission)) { try fallback.save(to: dir) }
         #expect(try Data(contentsOf: url) == bytes)
-        var recovered = AppState.loadOrFreshBackingUpCorruption(from: dir)
+        var recovered = AppState.loadOrFreshBackingUpCorruption(from: dir, didLoad: { loaded = $0 })
         #expect(recovered == original)
+        #expect(loaded == original)
         recovered.sidebarWidth = 300
         try recovered.save(to: dir)
         #expect(try AppState.load(from: dir).repos == original.repos)
