@@ -17,12 +17,12 @@ struct RemoteSkillsExport: ParsableCommand {
     @Option(help: "New private snapshot file in an existing directory; never overwritten") var output: String
 
     func validate() throws {
-        guard TeamHookRuntime(rawValue: runtime) != nil else { throw ValidationError("Choose codex or claude.") }
+        guard runtime == "codex" || runtime == "claude" else { throw ValidationError("Choose codex or claude.") }
         for path in [workspace, output] + (sourceHome.map { [$0] } ?? []) { try RemoteSkillCLIOutput.validatePath(path) }
     }
 
     func run() throws {
-        guard let runtime = TeamHookRuntime(rawValue: runtime) else { throw ValidationError("Choose codex or claude.") }
+        guard let runtime = TeamHookRuntime(rawValue: runtime), runtime != .antigravity else { throw ValidationError("Choose codex or claude.") }
         let snapshot = try RemoteSkillSnapshot.capture(runtime: runtime,
             home: URL(fileURLWithPath: sourceHome ?? NSHomeDirectory(), isDirectory: true),
             workspace: URL(fileURLWithPath: workspace, isDirectory: true),

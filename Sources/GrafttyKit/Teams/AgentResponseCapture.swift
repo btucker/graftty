@@ -166,6 +166,8 @@ public struct AgentResponseCapture {
         let message: [String: Any]
         let sourceID: String
         switch runtime {
+        case .antigravity:
+            return nil
         case .codex:
             guard record["type"] as? String == "response_item",
                   let payload = record["payload"] as? [String: Any],

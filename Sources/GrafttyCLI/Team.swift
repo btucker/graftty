@@ -176,7 +176,7 @@ struct TeamHook: ParsableCommand {
         abstract: "Render agent-team hook context for an agent runtime"
     )
 
-    @Argument(help: "Runtime: codex or claude")
+    @Argument(help: "Runtime: codex, claude, or antigravity")
     var runtime: String
 
     @Argument(help: "Hook event: session-start, user-prompt-submit, pre-tool-use, post-tool-use, post-tool-use-failure, permission-request, or stop")
@@ -192,7 +192,7 @@ struct TeamHook: ParsableCommand {
 
     func validate() throws {
         guard TeamHookRuntime(rawValue: runtime) != nil else {
-            throw ValidationError("runtime must be one of: codex, claude")
+            throw ValidationError("runtime must be one of: codex, claude, antigravity")
         }
         guard TeamHookEvent(rawValue: event) != nil else {
             throw ValidationError(
@@ -212,33 +212,56 @@ struct TeamHook: ParsableCommand {
         let stdinSessionID = stdinPayload["session_id"] as? String
         let runtime = TeamHookRuntime(rawValue: runtime)!
         let event = TeamHookEvent(rawValue: event)!
+        let environment = ProcessInfo.processInfo.environment
+        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(env: environment)
+        func emit(_ output: String) {
+            print(runtime == .antigravity ? AntigravityHook.output(output, event: event) : output)
+        }
+        let antigravity: AntigravityHook?
+        let antigravityPID: Int32?
+        if runtime == .antigravity {
+            guard environment["GRAFTTY_DISABLE_AGENT_HOOKS"] != "1",
+                  environment["GRAFTTY_SOCK"]?.isEmpty == false,
+                  paneSessionName != nil,
+                  let hook = AntigravityHook(event: event, payload: stdinPayload),
+                  let pid = AntigravityHook.providerPID() else {
+                emit("{}")
+                return
+            }
+            antigravity = hook
+            antigravityPID = pid
+        } else {
+            antigravity = nil
+            antigravityPID = nil
+        }
         let attentionReason = AgentHookAttentionClassifier.reason(
             runtime: runtime,
             event: event,
             stdinJSON: stdinPayload
         )
-        let stopHookActive = stdinPayload["stop_hook_active"] as? Bool ?? false
+        // AGY does not expose a recursion flag for a hook-triggered retry.
+        let stopHookActive = antigravity != nil || stdinPayload["stop_hook_active"] as? Bool == true
 
         // TEAM-9.1
         if AgentStopHookFilter.isSubagentStop(stdinJSON: stdinPayload) {
-            print("{}")
+            emit("{}")
             return
         }
 
         guard let worktreePath = try? WorktreeResolver.resolve() else {
-            print("{}")
+            emit("{}")
             return
         }
-        let resolvedSessionID = sessionID
+        let resolvedSessionID = antigravity?.sessionID ?? sessionID
             ?? stdinSessionID
-            ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_SESSION_ID"]
+            ?? environment["GRAFTTY_AGENT_SESSION_ID"]
         // Capture commentary at tool boundaries as well as the final Stop. This
         // file handoff works even when the provider cannot reach the app socket.
         try? AgentResponseCapture().capture(payload: stdinPayload, runtime: runtime,
             worktree: worktreePath, sessionID: resolvedSessionID, turnCompleted: event == .stop)
-        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
-            env: ProcessInfo.processInfo.environment
-        )
+        if let antigravity, let antigravityPID, let paneSessionName, event != .stop {
+            antigravity.register(worktree: worktreePath, pane: paneSessionName, pid: antigravityPID)
+        }
         func attentionAgentID() -> String? {
             AttentionReportIdentity.currentAgentID(worktreePath: worktreePath, runtime: runtime, sessionID: resolvedSessionID)
                 ?? resolvedSessionID.map { TeamAgentIdentity(runtime: runtime, nativeSessionID: $0).rawValue }
@@ -249,7 +272,9 @@ struct TeamHook: ParsableCommand {
                 agentID: attentionAgentID(),
                 runtime: runtime,
                 sessionID: resolvedSessionID,
-                userPrompt: event == .userPromptSubmit ? WorktreeUserPrompt.text(from: stdinPayload, runtime: runtime.rawValue) : nil,
+                userPrompt: event == .userPromptSubmit ? WorktreeUserPrompt.text(
+                    from: antigravity?.prompt.map { ["prompt": $0] } ?? stdinPayload, runtime: runtime.rawValue
+                ) : nil,
                 startsTurn: event == .sessionStart || event == .userPromptSubmit,
                 paneSessionName: paneSessionName,
                 hookEvent: event,
@@ -279,10 +304,10 @@ struct TeamHook: ParsableCommand {
         if event == .sessionStart || event == .userPromptSubmit || attentionReason != nil {
             stageAttentionProgress()
         }
-        let stopTurnID = event == .stop ? AgentStopHookFilter.turnID(stdinJSON: stdinPayload) : nil
+        let stopTurnID = event == .stop ? antigravity?.turnID ?? AgentStopHookFilter.turnID(stdinJSON: stdinPayload) : nil
         // AGENT-2.12: background subagents keep the worktree running past this Stop.
-        let subagentsRunning = runtime == .claude && event == .stop
-            && AgentStopHookFilter.hasRunningSubagent(stdinJSON: stdinPayload)
+        let subagentsRunning = event == .stop && (antigravity?.fullyIdle == false
+            || (runtime == .claude && AgentStopHookFilter.hasRunningSubagent(stdinJSON: stdinPayload)))
         let providerSleepActivity: ProviderSleepActivity = runtime == .claude
             ? .claudeHook(payload: stdinPayload, event: event.camelCaseKey)
             : .unknown
@@ -306,7 +331,7 @@ struct TeamHook: ParsableCommand {
                 turnID: stopTurnID,
                 subagentsRunning: subagentsRunning
            ) {
-            print(action == .requestRecap ? TeamHookRenderer.requestRecap() : "{}")
+            emit(action == .requestRecap ? TeamHookRenderer.requestRecap() : "{}")
             return
         }
         let fallbackAgentID = event == .stop ? attentionAgentID() : nil
@@ -317,7 +342,7 @@ struct TeamHook: ParsableCommand {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
                     callerWorktree: worktreePath,
-                    callerAgentID: event == .stop
+                    callerAgentID: event == .stop || antigravity != nil
                         ? attentionAgentID()
                         : TeamMessageInput.currentAgentID(worktreePath: worktreePath),
                     runtime: runtime,
@@ -341,20 +366,20 @@ struct TeamHook: ParsableCommand {
                         worktree: worktreePath, agentID: fallbackAgentID, sessionID: resolvedSessionID,
                         turnID: stopTurnID, reportedAt: fallbackReport?.reportedAt, subagentsRunning: subagentsRunning)
                 }
-                print(output)
+                emit(output)
             case .error, .serverBusy:
                 if event == .postToolUse || event == .postToolUseFailure {
                     stageAttentionProgress()
                 }
-                print(Self.unrenderedHookOutput(runtime: runtime, event: event))
+                emit(Self.unrenderedHookOutput(runtime: runtime, event: event))
             default:
-                print(Self.unrenderedHookOutput(runtime: runtime, event: event))
+                emit(Self.unrenderedHookOutput(runtime: runtime, event: event))
             }
         } catch {
             if event == .postToolUse || event == .postToolUseFailure {
                 stageAttentionProgress()
             }
-            print(Self.unrenderedHookOutput(runtime: runtime, event: event))
+            emit(Self.unrenderedHookOutput(runtime: runtime, event: event))
         }
     }
 
@@ -779,7 +804,7 @@ struct TeamRegister: ParsableCommand {
         abstract: "Announce agent presence for the current worktree."
     )
 
-    @Option(name: .long, help: "Runtime: codex or claude")
+    @Option(name: .long, help: "Runtime: codex, claude, or antigravity")
     var runtime: String
 
     @Option(name: .long, help: "PID of the long-running agent process to register")
@@ -796,7 +821,7 @@ struct TeamRegister: ParsableCommand {
 
     func run() throws {
         guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
-            throw ValidationError("runtime must be one of: codex, claude")
+            throw ValidationError("runtime must be one of: codex, claude, antigravity")
         }
         let runtimeIdentity = try TeamRegisterPIDResolver.resolve(explicitPID: pid)
         guard let resolved = TeamPresenceResolution.resolveCurrentWorktree() else {
@@ -884,7 +909,7 @@ struct TeamUnregister: ParsableCommand {
         abstract: "Clear agent presence for the current worktree."
     )
 
-    @Option(name: .long, help: "Runtime: codex or claude")
+    @Option(name: .long, help: "Runtime: codex, claude, or antigravity")
     var runtime: String
 
     @Option(name: .long, help: "Canonical Graftty agent ID")
@@ -892,7 +917,7 @@ struct TeamUnregister: ParsableCommand {
 
     func run() throws {
         guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
-            throw ValidationError("runtime must be one of: codex, claude")
+            throw ValidationError("runtime must be one of: codex, claude, antigravity")
         }
         guard let resolved = TeamPresenceResolution.resolveCurrentWorktree() else {
             return

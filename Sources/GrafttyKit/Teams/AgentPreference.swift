@@ -7,7 +7,7 @@ public enum AgentPreference {
     public enum Error: Swift.Error, Equatable, LocalizedError {
         case noDefault
         public var errorDescription: String? {
-            "Choose a default agent in Agent teams settings or pass --provider claude or --provider codex."
+            "Choose a default agent in Agent teams settings or pass --provider with codex, claude, or antigravity."
         }
     }
 
@@ -23,7 +23,7 @@ public enum AgentPreference {
     public static func migrate(in defaults: UserDefaults = .standard) {
         guard defaults.object(forKey: key) == nil,
               let command = defaults.string(forKey: "defaultCommand")?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let provider = TeamHookRuntime(rawValue: command) else { return }
+              let provider = TeamHookRuntime.allCases.first(where: { $0.executable == command }) else { return }
         defaults.set(provider.rawValue, forKey: key)
     }
 

@@ -90,8 +90,10 @@ public enum AttentionReportIdentity {
                 nativeID = sessionID
             } else if record.runtime == .codex {
                 nativeID = codexSessionID(environment: environment)
-            } else {
+            } else if record.runtime == .claude {
                 nativeID = claudeSessionID(environment: environment)
+            } else {
+                nativeID = nil
             }
             return nativeID == nil || record.runtimeSessionID == nativeID
         }

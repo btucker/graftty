@@ -8,8 +8,8 @@ struct AgentPluginInstallerTests {
     @Test("Plugin providers are the hook runtimes, so every runtime has exactly one plugin provider and display name.")
     func pluginProvidersAreHookRuntimes() {
         let providers: [AgentPluginProvider] = TeamHookRuntime.allCases
-        #expect(providers.map(\.rawValue) == ["codex", "claude"])
-        #expect(providers.map(\.displayName) == ["Codex", "Claude"])
+        #expect(providers.map(\.rawValue) == ["codex", "claude", "antigravity"])
+        #expect(providers.map(\.displayName) == ["Codex", "Claude", "Antigravity"])
     }
 
     @Test("@spec AGENT-6.40: When a development build's bundled plugin content changes without a new app build number, the application shall give the plugin a distinct cache version.")

@@ -263,6 +263,7 @@ export function NewWorktreePage() {
             <option value="">Default agent</option>
             <option value="codex">Codex</option>
             <option value="claude">Claude</option>
+            <option value="antigravity">Antigravity</option>
           </select>
         </label>
         <label className="new-worktree-field">

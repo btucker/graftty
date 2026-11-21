@@ -56,7 +56,7 @@ struct TeamHookRendererTests {
             #expect(!context.contains("one agent per worktree"))
             #expect(context.contains("`git worktree add`"))
             #expect(context.contains("`graftty agent add <name> --provider"))
-            #expect(context.contains("`graftty agent add <name> --worktree <worktree> --provider <codex|claude> --prompt-stdin`"))
+            #expect(context.contains("`graftty agent add <name> --worktree <worktree> --provider <codex|claude|antigravity> --prompt-stdin`"))
             #expect(context.contains("unless the implementer hands off"))
         }
     }

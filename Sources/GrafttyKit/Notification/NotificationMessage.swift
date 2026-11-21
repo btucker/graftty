@@ -4,11 +4,15 @@ import GrafttyProtocol
 public enum TeamHookRuntime: String, Codable, Sendable, Equatable, CaseIterable {
     case codex
     case claude
+    case antigravity
+
+    public var executable: String { self == .antigravity ? "agy" : rawValue }
 
     public var displayName: String {
         switch self {
         case .codex: "Codex"
         case .claude: "Claude"
+        case .antigravity: "Antigravity"
         }
     }
 }

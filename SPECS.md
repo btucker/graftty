@@ -1174,7 +1174,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.23** The Graftty Team provider skill shall name the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.
 
-**ATTN-1.24** When `graftty pane add` is invoked with `--agent <codex|claude>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.
+**ATTN-1.24** When `graftty pane add` is invoked with `--agent <codex|claude|antigravity>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.
 
 **ATTN-1.25** When `graftty pane add` runs a command or agent, the application shall hand it to the new pane as initial shell input that runs once the shell is ready, rather than typing it into the PTY after the split, and shall run nothing for an empty or whitespace-only command.
 
@@ -5010,7 +5010,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch using zsh or bash shall run from shell startup after initialization and first-prompt environment hooks, independently of the Mac renderer. Other shells with integration readiness shall wait for the first shell-ready signal; remaining shells shall use bounded spawn-time injection. Each path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch using zsh or bash shall run from shell startup after initialization and first-prompt environment hooks, independently of the Mac renderer. Other shells with integration readiness shall wait for the first shell-ready signal; remaining shells shall use bounded spawn-time injection. Each path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude|antigravity` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
@@ -5401,6 +5401,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.164** When a failed launch is retried, the application shall select the new agent tab only if the request asks for it.
 
 **AGENT-6.165** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 in that shell's environment, replacing any inherited value, so Claude Code saves its session for later resume.
+
+**AGENT-6.166** When a user launches an Antigravity agent, the application shall start agy interactively with the exact initial task, and when reopening that conversation, it shall pass the saved conversation ID without resubmitting the task.
+
+**AGENT-6.167** When Antigravity sends a lifecycle hook, the application shall use its conversation ID, treat only the first model invocation as a turn start, and keep the worktree busy until Antigravity reports that its background work has finished.
+
+**AGENT-6.168** When Graftty returns context to Antigravity, the application shall use Antigravity's native hook output and allow Stop to complete without asking Antigravity to start another turn.
+
+**AGENT-6.169** If a resumed Antigravity conversation omits its session-start hook, then the application shall bind the saved conversation to its managed agent when the first turn begins.
 
 ## CLI — CLI
 
