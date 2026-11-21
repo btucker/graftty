@@ -139,6 +139,31 @@ struct WorktreeContextLifecycleTests {
         #expect(!state.repos[0].worktrees[0].isPrimaryAgent(replacement))
     }
 
+    @Test("@spec AGENT-3.52: While a linked worktree has no drawing, the application shall adopt the first valid drawing any agent in that worktree reports, while only the context owner may replace an existing drawing or change the rest of the retained context.")
+    func anyAgentMayProvideTheFirstDrawing() {
+        let primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil, isPrimary: true)
+        var helper = ManagedAgent(name: "Helper", provider: .claude, parent: nil, isPrimary: false)
+        helper.launchOrigin = .cliAgentAdd
+        var entry = WorktreeEntry(path: "/repo/wt", branch: "fix")
+        entry.agents = [primary, helper]
+        var state = AppState(repos: [.init(path: "/repo", displayName: "Repo",
+            worktrees: [WorktreeEntry(path: "/repo", branch: "main"), entry])])
+        let first = "<svg viewBox='0 0 96 64'><circle cx='48' cy='32' r='20' fill='primary'/></svg>"
+        let second = first.replacingOccurrences(of: "primary", with: "accent")
+
+        var update = WorktreeContextUpdate(purpose: .init(title: "Helper purpose", context: "Not the owner."))
+        update.icon = first
+        state.recordAgentRecap(.init(update: update), callerPath: "/repo/wt", reportedAt: start, callerAgentID: helper.id)
+        #expect(state.repos[0].worktrees[1].drawing?.svg == first)
+        #expect(state.repos[0].worktrees[1].brief == nil)
+
+        var replacement = WorktreeContextUpdate(purpose: .init(title: "Helper again", context: "Still not the owner."))
+        replacement.icon = second
+        state.recordAgentRecap(.init(update: replacement), callerPath: "/repo/wt", reportedAt: start.addingTimeInterval(1),
+            callerAgentID: helper.id)
+        #expect(state.repos[0].worktrees[1].drawing?.svg == first)
+    }
+
     @Test func legacyAndSparseDrawingsUseTheSameClock() {
         var state = AppState(repos: [.init(path: "/repo", displayName: "Repo", worktrees: [.init(path: "/wt", branch: "fix")])])
         let first = "<svg viewBox='0 0 96 64'><circle cx='48' cy='32' r='20' fill='primary'/></svg>"

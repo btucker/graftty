@@ -4998,6 +4998,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.51** While a linked worktree has no drawing, the application shall ask that worktree's agent at turn start to draw one on the wide canvas, leaving the home checkout without a request.
 
+**AGENT-3.52** While a linked worktree has no drawing, the application shall adopt the first valid drawing any agent in that worktree reports, while only the context owner may replace an existing drawing or change the rest of the retained context.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
