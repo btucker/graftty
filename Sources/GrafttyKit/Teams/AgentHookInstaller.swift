@@ -114,6 +114,12 @@ public struct AgentHookInstaller: Sendable {
             executable: true,
             written: &written
         )
+        try writeIfChanged(
+            Self.antigravityWrapperScript(wrapperDirectory: binDirectory.path),
+            to: binDirectory.appendingPathComponent("agy"),
+            executable: true,
+            written: &written
+        )
         #if os(macOS)
         try writeIfChanged(Self.openWrapperScript(grafttyCLIPath: grafttyCLIPath),
                            to: binDirectory.appendingPathComponent("open"),
@@ -445,6 +451,48 @@ public struct AgentHookInstaller: Sendable {
         typeset -ga precmd_functions
         precmd_functions=(${precmd_functions[@]:#_graftty_prepend_wrapper_path})
         precmd_functions+=(_graftty_prepend_wrapper_path)
+        """
+    }
+
+    /// @spec AGENT-6.176
+    /// The AGY launch wrapper. The Antigravity provider plugin owns lifecycle
+    /// hooks; the wrapper only chooses the credential of the `agy` process's
+    /// local agent server, so Graftty can deliver messages through it. AGY
+    /// withholds `ANTIGRAVITY_SERVER_CSRF_TOKEN` from hooks, so hooks read
+    /// the copy.
+    public static func antigravityWrapperScript(wrapperDirectory: String) -> String {
+        """
+        #!/bin/sh
+        # GRAFTTY_AGENT_HOOK_WRAPPER version=\(version)
+        real_binary=""
+        old_ifs="$IFS"
+        IFS=":"
+        for dir in $PATH; do
+          if [ "$dir" = \(shellLiteral(wrapperDirectory)) ]; then
+            continue
+          fi
+          if [ -x "$dir/agy" ]; then
+            real_binary="$dir/agy"
+            break
+          fi
+        done
+        IFS="$old_ifs"
+
+        if [ -z "$real_binary" ]; then
+          printf '%s\\n' \(shellLiteral("graftty: unable to find real agy outside \(wrapperDirectory)")) >&2
+          exit 127
+        fi
+
+        if [ -z "${ANTIGRAVITY_SERVER_CSRF_TOKEN:-}" ]; then
+          ANTIGRAVITY_SERVER_CSRF_TOKEN="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+          if [ "${#ANTIGRAVITY_SERVER_CSRF_TOKEN}" -ne 36 ]; then
+            ANTIGRAVITY_SERVER_CSRF_TOKEN="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \\n')"
+          fi
+        fi
+        \(AntigravityServerBinder.tokenEnvironmentKey)="$ANTIGRAVITY_SERVER_CSRF_TOKEN"
+        export ANTIGRAVITY_SERVER_CSRF_TOKEN \(AntigravityServerBinder.tokenEnvironmentKey)
+        exec "$real_binary" "$@"
+
         """
     }
 

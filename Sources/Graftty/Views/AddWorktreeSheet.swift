@@ -155,6 +155,7 @@ struct AddWorktreeSheet: View {
                 Text("Default agent").tag(String?.none)
                 Text("Codex").tag(Optional("codex"))
                 Text("Claude").tag(Optional("claude"))
+                Text("Antigravity").tag(Optional("antigravity"))
             }
             .disabled(isSubmitting)
             VStack(alignment: .leading, spacing: 6) {

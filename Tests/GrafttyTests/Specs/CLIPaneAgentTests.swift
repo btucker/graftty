@@ -22,7 +22,7 @@ struct CLIPaneAgentTests {
             }
         }
     }
-    @Test("@spec ATTN-1.24: When `graftty pane add` is invoked with `--agent <codex|claude>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.")
+    @Test("@spec ATTN-1.24: When `graftty pane add` is invoked with `--agent <codex|claude|antigravity>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.")
     func agentFlagsBuildAgentRequest() throws {
         let command = try PaneAdd.parse(["review-wt", "--agent", "codex", "--prompt", "Review the diff"])
         let request = command.request(path: "/repo/.worktrees/review-wt", resolvedPrompt: "Review the diff", environment: [:])

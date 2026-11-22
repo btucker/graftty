@@ -76,7 +76,7 @@ This lets one agent configure another before launch. Create the child's leaf
 where its first session can see it: in Application Support, in the main
 checkout, or in the child's starting tree. From a linked worktree, you can put
 the leaf in the starting tree by committing it and running
-`graftty worktree add <name> --base HEAD --agent <codex|claude>`; Git creates
+`graftty worktree add <name> --base HEAD --agent <codex|claude|antigravity>`; Git creates
 the child from that commit, but Graftty still reads the resulting filesystem
 file directly. Once the child exists, its own `.graftty/` can tune later
 sessions without a commit.
@@ -98,6 +98,20 @@ Graftty offers to install them on first launch; you can also install them
 from **Settings → Agent Teams**, which warns until they are installed. The
 plugins add Graftty's skills and lifecycle hooks, and Graftty refreshes them
 automatically after app updates. Start new agent sessions after installing.
+
+To use Antigravity from Mac or GrafttyMobile, install the
+[Antigravity CLI](https://antigravity.google/download#antigravity-cli) on the
+host that owns the worktree. Run `agy` there and sign in. On a Mac host,
+Graftty installs its Antigravity plugin the next time it launches; to install
+it right away, choose **Install** beside Antigravity in **Settings → Agent
+Teams**. From a host terminal, use `graftty agent install-antigravity`.
+
+Choose **New Antigravity agent** in Graftty or pass
+`--provider antigravity` to `graftty agent add`. The plugin connects
+Antigravity's conversation ID and turn status to Graftty. Antigravity agents
+can read queued team messages with `graftty team inbox`; automatic delivery
+to an already open agent and native transcript capture are available for
+Codex and Claude.
 
 In **Settings → Agent Teams** you also choose which events (PR state,
 merges, CI conclusion, mergability) get routed to the root agent, the

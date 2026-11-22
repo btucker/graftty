@@ -1174,7 +1174,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.23** The Graftty Team provider skill shall name the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.
 
-**ATTN-1.24** When `graftty pane add` is invoked with `--agent <codex|claude>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.
+**ATTN-1.24** When `graftty pane add` is invoked with `--agent <codex|claude|antigravity>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.
 
 **ATTN-1.25** When `graftty pane add` runs a command or agent, the application shall hand it to the new pane as initial shell input that runs once the shell is ready, rather than typing it into the PTY after the split, and shall run nothing for an empty or whitespace-only command.
 
@@ -5064,7 +5064,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch using zsh or bash shall run from shell startup after initialization and first-prompt environment hooks, independently of the Mac renderer. Other shells with integration readiness shall wait for the first shell-ready signal; remaining shells shall use bounded spawn-time injection. Each path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch using zsh or bash shall run from shell startup after initialization and first-prompt environment hooks, independently of the Mac renderer. Other shells with integration readiness shall wait for the first shell-ready signal; remaining shells shall use bounded spawn-time injection. Each path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude|antigravity` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
@@ -5455,6 +5455,34 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.164** When a failed launch is retried, the application shall select the new agent tab only if the request asks for it.
 
 **AGENT-6.165** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 in that shell's environment, replacing any inherited value, so Claude Code saves its session for later resume.
+
+**AGENT-6.166** When a user launches an Antigravity agent, the application shall start agy interactively with the exact initial task, and when reopening that conversation, it shall pass the saved conversation ID without resubmitting the task.
+
+**AGENT-6.167** When Antigravity sends a lifecycle hook, the application shall use its conversation ID, treat only the first model invocation as a turn start, and keep the worktree busy until Antigravity reports that its background work has finished.
+
+**AGENT-6.168** When Graftty returns context to Antigravity, the application shall use Antigravity's native hook output and allow Stop to complete without asking Antigravity to start another turn.
+
+**AGENT-6.169** If a resumed Antigravity conversation omits its session-start hook, then the application shall bind the saved conversation to its managed agent when the first turn begins.
+
+**AGENT-6.170** When Graftty automatically installs or refreshes the Antigravity plugin, the application shall query `agy plugin list --json`, install the bundled plugin with the current build version and materialized hooks and skills when missing or enabled, preserve an explicitly disabled plugin, skip silently when `agy` is not found, and report inventory or installation failures as retryable errors.
+
+**AGENT-6.171** When Graftty launches, the application shall automatically install or refresh the Antigravity plugin once per build checkpoint without requiring prior Codex or Claude plugin installation, preserve opt-outs, and leave the checkpoint unset when `agy` is missing or installation fails so future launches retry.
+
+**AGENT-6.172** When Graftty inspects provider plugin status, the application shall query each provider's native inventory and report installed, disabled, notInstalled, cliNotFound, or error independently per provider, and shall support installing a single provider without affecting other providers.
+
+**AGENT-6.173** When live provider plugin statuses are inspected in Agent Teams Settings, the application shall treat the integration as installed once at least one Codex or Claude provider is installed and no available Codex or Claude provider remains uninstalled or errored, and shall select only available providers for bulk installation.
+
+**AGENT-6.174** When inbox rows are deliverable to a reachable Antigravity agent whose presence records a local agent server, the application shall send all of those rows as one message to that agent's conversation through the server and update shared delivery state only after the server accepts the message; if the server credential is unavailable or the server rejects the message, then the rows shall remain unread for hook delivery or retry.
+
+**AGENT-6.175** When an Antigravity hook registers a session launched with a Graftty server credential, the application shall record the provider process's listening local port that accepts that credential for the session's conversation and shall store the credential in a file that only the user can read; if no listening port accepts the credential, then the application shall record no local agent server.
+
+**AGENT-6.176** When `agy` is launched from a Graftty terminal, the wrapper shall start the real `agy` outside the wrapper directory with the caller's arguments and a server credential that Graftty's hooks can read, minting a new credential for each launch unless the caller already supplied one.
+
+**AGENT-6.177** While rows remain unread for a worktree whose Antigravity presence records a local agent server, the application shall retry native delivery on every presence refresh, so rows that arrived before a hook recorded the server or whose send failed are delivered without waiting for another message.
+
+**AGENT-6.178** When an installation started from Agent Teams Settings completes, the application shall advance the Codex and Claude automatic-refresh build checkpoint only if that installation installed every enabled Codex and Claude plugin, and shall advance the Antigravity build checkpoint only if it installed the Antigravity plugin, so that a plugin it did not install is still refreshed on the next launch.
+
+**AGENT-6.179** When Antigravity starts a turn that no new user input began, such as a turn woken by a delivered team message, the application shall treat it as a turn start without recording the previous user prompt again.
 
 ## CLI — CLI
 
