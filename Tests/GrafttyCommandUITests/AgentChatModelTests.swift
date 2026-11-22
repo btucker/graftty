@@ -13,6 +13,8 @@ struct AgentChatModelTests {
         var submissions: [AgentChatSubmission] = []
         var answers: [String] = []
         var answerAccepted = true
+        /// Runs while a submission is in flight, before its result returns.
+        var whileSubmitting: (@Sendable () async -> Void)?
         let updates: AsyncStream<AgentChatUpdate>
         let push: AsyncStream<AgentChatUpdate>.Continuation
 
@@ -26,6 +28,7 @@ struct AgentChatModelTests {
                 open: { .attached(self.snapshot, self.updates) },
                 submit: { submission in
                     self.submissions.append(submission)
+                    await self.whileSubmitting?()
                     return self.result
                 },
                 answer: { _, requestID, _ in
@@ -74,6 +77,19 @@ struct AgentChatModelTests {
         #expect(host.submissions.first?.binding == binding)
         #expect(model.draft.isEmpty)
         #expect(model.notice == nil)
+    }
+
+    @Test func textTypedWhileAMessageIsSendingStaysInTheDraft() async {
+        let host = idleHost()
+        let (model, task) = await attached(host)
+        defer { task.cancel() }
+
+        model.draft = "first message"
+        host.whileSubmitting = { await MainActor.run { model.draft += " and a second thought" } }
+        await model.send()
+
+        #expect(host.submissions.map(\.text) == ["first message"])
+        #expect(model.draft == " and a second thought")
     }
 
     @Test func aRejectedDraftIsKeptWithAReason() async {
@@ -147,7 +163,7 @@ struct AgentChatModelTests {
         host.push.finish()
         await task.value
         #expect(model.snapshot == nil)
-        #expect(model.unavailable == "Chat lost its connection to the agent. Reopen Chat to continue.")
+        #expect(model.unavailable == "Chat lost its connection to the agent.")
     }
 
     @Test func aFeedThatStopsAfterTheConversationEndedKeepsTheTranscript() async {
@@ -158,6 +174,39 @@ struct AgentChatModelTests {
         await task.value
         #expect(model.snapshot?.endedReason == "The agent exited.")
         #expect(model.unavailable == nil)
+    }
+
+    /// An `open` that waits until the test answers it.
+    @MainActor
+    private final class PendingOpen {
+        private var continuation: CheckedContinuation<AgentChatFeed, Never>?
+        var isWaiting: Bool { continuation != nil }
+        func wait() async -> AgentChatFeed { await withCheckedContinuation { continuation = $0 } }
+        func answer(_ feed: AgentChatFeed) {
+            continuation?.resume(returning: feed)
+            continuation = nil
+        }
+    }
+
+    @Test func anOpenAnsweredAfterTheViewLeftChangesNothing() async {
+        let host = idleHost()
+        let (model, first) = await attached(host)
+        first.cancel()
+        await first.value
+
+        let pending = PendingOpen()
+        let connection = AgentChatConnection(
+            open: { await pending.wait() },
+            submit: { _ in .rejected(.unavailable) }, answer: { _, _, _ in false }
+        )
+        let task = Task { await model.run(connection) }
+        while !pending.isWaiting { await Task.yield() }
+        task.cancel()
+        pending.answer(.unavailable("Chat could not reach the Mac that runs this agent. The terminal is still available."))
+        await task.value
+
+        #expect(model.unavailable == nil)
+        #expect(model.snapshot?.binding == binding)
     }
 
     @Test func anUnavailableSessionExplainsWhy() async {

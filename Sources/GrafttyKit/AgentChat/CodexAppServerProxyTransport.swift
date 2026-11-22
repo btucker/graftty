@@ -5,9 +5,14 @@ import Foundation
 /// through `codex app-server proxy` as team delivery does. Socket paths can
 /// exceed what `connect` accepts, and the proxy is Codex's supported route.
 final class CodexAppServerProxyTransport: CodexChatTransport, @unchecked Sendable {
+    /// The proxy's pipes, which own the descriptors the connection uses.
+    private final class Pipes: @unchecked Sendable {
+        let stdin = Pipe()
+        let stdout = Pipe()
+    }
+
     private let process = Process()
-    private let stdin = Pipe()
-    private let stdout = Pipe()
+    private let pipes = Pipes()
     private let connection: CodexAppServerWebSocketConnection
     private let sendQueue = DispatchQueue(label: "graftty.codex-chat.send")
     private let stream: AsyncThrowingStream<String, Error>
@@ -19,17 +24,17 @@ final class CodexAppServerProxyTransport: CodexChatTransport, @unchecked Sendabl
         sendTimeout = timeout
         process.executableURL = URL(fileURLWithPath: binaryPath)
         process.arguments = ["app-server", "proxy", "--sock", socketPath]
-        process.standardInput = stdin
-        process.standardOutput = stdout
+        process.standardInput = pipes.stdin
+        process.standardOutput = pipes.stdout
         process.standardError = FileHandle.nullDevice
         (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         connection = CodexAppServerWebSocketConnection(
-            inputFD: stdin.fileHandleForWriting.fileDescriptor,
-            outputFD: stdout.fileHandleForReading.fileDescriptor
+            inputFD: pipes.stdin.fileHandleForWriting.fileDescriptor,
+            outputFD: pipes.stdout.fileHandleForReading.fileDescriptor
         )
         try process.run()
         // A proxy that exits must fail the send, not end this process.
-        let writeFD = stdin.fileHandleForWriting.fileDescriptor
+        let writeFD = pipes.stdin.fileHandleForWriting.fileDescriptor
         _ = fcntl(writeFD, F_SETNOSIGPIPE, 1)
         _ = fcntl(writeFD, F_SETFL, fcntl(writeFD, F_GETFL) | O_NONBLOCK)
         do {
@@ -38,13 +43,18 @@ final class CodexAppServerProxyTransport: CodexChatTransport, @unchecked Sendabl
             process.terminate()
             throw error
         }
-        let reader = Thread { [connection, continuation] in
-            do {
-                while true {
-                    continuation.yield(try connection.readText(deadline: .distantFuture))
+        let reader = Thread { [connection, continuation, pipes] in
+            // This thread reads one descriptor and answers pings on the
+            // other, so it keeps both open until it stops. A descriptor
+            // closed under it could be reused by an unrelated file.
+            withExtendedLifetime(pipes) {
+                do {
+                    while true {
+                        continuation.yield(try connection.readText(deadline: .distantFuture))
+                    }
+                } catch {
+                    continuation.finish(throwing: error)
                 }
-            } catch {
-                continuation.finish(throwing: error)
             }
         }
         reader.name = "graftty.codex-chat.read"

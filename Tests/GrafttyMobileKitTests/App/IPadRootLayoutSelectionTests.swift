@@ -1279,6 +1279,15 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
         ))
     }
 
+    func testAHiddenTerminalKeyboardLeavesTheChatMessageFieldItsKeyboard() {
+        XCTAssertFalse(SingleSessionView.shouldDismissKeyboard(
+            isKeyboardVisible: true,
+            keyboardAllowed: false,
+            isPaneFocused: true,
+            showsChat: true
+        ))
+    }
+
     /// @spec IOS-6.16: When a fullscreen mobile client transitions from
     /// non-owner to owner while keyboard input is allowed, the application
     /// shall request keyboard focus for the sole `UITerminalView` responder. This covers

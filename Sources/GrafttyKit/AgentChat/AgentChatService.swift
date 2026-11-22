@@ -99,7 +99,9 @@ public final class AgentChatService {
         } ?? false
         switch viewer {
         case .host:
-            return !hasActiveOwner || snapshot.ownerKind == .mac
+            // A paired Mac attaches as a Mac client too. Only this Mac's own
+            // terminal attaches without a device identity.
+            return !hasActiveOwner || (snapshot.ownerKind == .mac && snapshot.ownerIdentity == nil)
         case .device(let deviceID):
             return hasActiveOwner && snapshot.ownerIdentity == "ssh-device:\(deviceID)"
         }

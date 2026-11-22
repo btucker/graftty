@@ -251,12 +251,15 @@ struct SingleSessionView: View {
         }
     }
 
+    /// `keyboardAllowed` is the terminal's choice. While Chat shows, the
+    /// keyboard belongs to its message field.
     static func shouldDismissKeyboard(
         isKeyboardVisible: Bool,
         keyboardAllowed: Bool,
-        isPaneFocused: Bool
+        isPaneFocused: Bool,
+        showsChat: Bool = false
     ) -> Bool {
-        isPaneFocused && isKeyboardVisible && !keyboardAllowed
+        isPaneFocused && isKeyboardVisible && !keyboardAllowed && !showsChat
     }
 
     /// Runs once per keyboard frame notification. Also dismisses an
@@ -266,7 +269,8 @@ struct SingleSessionView: View {
         guard Self.shouldDismissKeyboard(
             isKeyboardVisible: isKeyboardVisible,
             keyboardAllowed: keyboardAllowed,
-            isPaneFocused: isPaneFocused
+            isPaneFocused: isPaneFocused,
+            showsChat: showsChat
         ) else { return }
         UIApplication.shared.sendAction(
             #selector(UIResponder.resignFirstResponder),
@@ -616,6 +620,8 @@ struct SingleSessionView: View {
                     theme: terminalTheme,
                     showTerminal: { if isEmbeddedPane { onEmbeddedShowTerminal() } else { setCompactShowsChat(false) } })
                     .padding(.top, compactContentTopInset)
+                    // The terminal reports its own touches. Chat selects its pane here.
+                    .simultaneousGesture(TapGesture().onEnded { _ in onPaneInteraction?() })
             } else {
             switch connection.presentation {
             case .loading:
@@ -737,7 +743,7 @@ struct SingleSessionView: View {
                     // CONTEXT-37: below the floating controls, which hold Worktree context.
                     let controlsHeight = step.worktreePath != nil && coordinator != nil ? floatingControlsHeight : 0
                     ScrollbackMapOverlayHost(model: model, timeline: timeline,
-                                             isVisible: scenePhase == .active && connection == .live)
+                                             isVisible: scenePhase == .active && connection == .live && !showsChat)
                         .padding(.top, max(ScrollbackMapLayout.topInset(belowControlsAt: 12, controlsHeight: controlsHeight),
                                           inputRequestHeight > 0 ? topOverlayInset : 0))
                 }
@@ -1248,7 +1254,7 @@ struct SingleSessionView: View {
                 if shouldExposeKeyboard && isKeyboardVisible {
                     terminalControlBar
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else if shouldExposeKeyboard && !keyboardAllowed {
+                } else if shouldExposeKeyboard && !keyboardAllowed && !showsChat {
                     HStack {
                         Spacer()
                         keyboardButton

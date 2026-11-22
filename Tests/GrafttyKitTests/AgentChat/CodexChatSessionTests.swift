@@ -119,6 +119,12 @@ struct CodexChatSessionTests {
         #expect(snapshot.commands.map(\.name) == ["review"])
     }
 
+    @Test func aJoinReplyWithoutTheConversationFailsTheAttach() async throws {
+        let server = FakeCodexServer(history: "{}")
+        let session = CodexChatSession(binding: binding, transport: server)
+        await #expect(throws: CodexChatTransportError.self) { try await session.start() }
+    }
+
     @Test func aLongConversationOpensWithItsLatestRows() async throws {
         let items = (1...450).map {
             #"{"type":"userMessage","id":"u\#($0)","clientId":null,"content":[{"type":"text","text":"message \#($0)"}]}"#

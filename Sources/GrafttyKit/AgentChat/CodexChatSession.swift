@@ -29,6 +29,8 @@ actor CodexChatSession {
     private var nextRequestID = 1
     private var reader: Task<Void, Never>?
     private var isLoaded = false
+    /// Set once the connection is gone or the session was stopped.
+    private var isStopped = false
     private var earlyItems: [AgentChatEvent] = []
     /// The provider's own ID for each request that Chat may still answer.
     private var answerable: [String: Any] = [:]
@@ -63,8 +65,12 @@ actor CodexChatSession {
             request("thread/resume", ["threadId": threadID]) { reply in
                 switch reply {
                 case .success(let result):
-                    self.install(history: result)
-                    continuation.resume()
+                    if self.install(history: result) {
+                        continuation.resume()
+                    } else {
+                        // With no history loaded, later events would never be shown.
+                        continuation.resume(throwing: CodexChatTransportError.rpc("thread/resume returned no thread"))
+                    }
                 case .failure(let error):
                     continuation.resume(throwing: error)
                 }
@@ -73,8 +79,14 @@ actor CodexChatSession {
         refreshCommands()
     }
 
-    func stop() async {
+    static let agentExited = "The agent exited."
+    static let conversationChanged = "The agent moved to another conversation. Reopen Chat to continue."
+
+    /// Ends the session for every viewer before it returns. `reason` is shown
+    /// unless the conversation had already ended.
+    func stop(reason: String = CodexChatSession.agentExited) async {
         reader?.cancel()
+        end(reason: reason)
         await transport.close()
     }
 
@@ -194,14 +206,16 @@ actor CodexChatSession {
         }
     }
 
-    private func install(history result: [String: Any]) {
-        guard let history = CodexChatDecoder.history(threadResult: result) else { return }
+    /// False when the reply carries no conversation to show.
+    private func install(history result: [String: Any]) -> Bool {
+        guard let history = CodexChatDecoder.history(threadResult: result) else { return false }
         isLoaded = true
         activeTurnID = history.activeTurnID
         for item in history.items { emit(.item(item)) }
         emit(.turnState(history.turnState))
         earlyItems.forEach(emit)
         earlyItems = []
+        return true
     }
 
     private func refreshCommands() {
@@ -213,12 +227,18 @@ actor CodexChatSession {
     }
 
     private func connectionEnded() {
+        end(reason: Self.agentExited)
+    }
+
+    /// Fails whatever waits on the server and ends every viewer's feed.
+    private func end(reason: String) {
+        isStopped = true
         let handlers = pending.values
         pending = [:]
         handlers.forEach { $0(.failure(.closed)) }
         answerable = [:]
         if transcript.snapshot.endedReason == nil {
-            emit(.ended(reason: "The agent exited."))
+            emit(.ended(reason: reason))
         }
         subscribers.values.forEach { $0.finish() }
         subscribers = [:]
@@ -253,6 +273,11 @@ actor CodexChatSession {
         _ method: String, _ params: [String: Any], onSent: @escaping () -> Void = {},
         onResult: @escaping (Reply) -> Void, onSendFailure: @escaping (Error) -> Void
     ) {
+        // Nothing would ever answer it.
+        guard !isStopped else {
+            onResult(.failure(.closed))
+            return
+        }
         let id = nextRequestID
         nextRequestID += 1
         pending[id] = onResult

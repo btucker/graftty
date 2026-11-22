@@ -72,11 +72,73 @@ struct AgentChatHostTests {
         _ = try await host.open(endpoint(thread: "thread-2"))
         #expect(servers.all.count == 2)
 
-        var ended = false
+        var reason: String?
         for await update in oldUpdates {
-            if case .ended = update.event { ended = true }
+            if case .ended(let text) = update.event { reason = text }
         }
-        #expect(ended)
+        // The agent is still running. Only its conversation changed.
+        #expect(reason == "The agent moved to another conversation. Reopen Chat to continue.")
+    }
+
+    @Test func aServerThatNeverAnswersTheJoinFailsTheOpen() async throws {
+        let servers = Servers()
+        let host = AgentChatHost(connect: { _ in
+            let server = servers.make()
+            server.hold("thread/resume")
+            return server
+        }, startTimeout: .milliseconds(50))
+
+        let failed = Flag()
+        let tab = endpoint()
+        let opening = Task {
+            do { _ = try await host.open(tab) } catch { failed.set() }
+        }
+        for _ in 0..<400 where !failed.isSet { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(failed.isSet)
+
+        // Lets a regression finish instead of hanging the run.
+        servers.all.first?.release("thread/resume")
+        await opening.value
+    }
+
+    @Test func connectingOneTabDoesNotHoldUpAnother() async throws {
+        let servers = Servers()
+        let connecting = Flag()
+        let gate = DispatchSemaphore(value: 0)
+        let host = AgentChatHost(connect: { endpoint in
+            if endpoint.binding.agentID == "slow" {
+                connecting.set()
+                gate.wait()
+            }
+            return servers.make()
+        })
+        let fast = endpoint()
+        _ = try await host.open(fast)
+
+        let slow = endpoint(agent: "slow", thread: "thread-9")
+        let opening = Task { _ = try? await host.open(slow) }
+        for _ in 0..<400 where !connecting.isSet { try await Task.sleep(nanoseconds: 5_000_000) }
+
+        let answered = Flag()
+        let request = submission("s1", fast)
+        let sending = Task {
+            _ = await host.submit(request, current: fast.binding, isController: true)
+            answered.set()
+        }
+        for _ in 0..<200 where !answered.isSet { try await Task.sleep(nanoseconds: 5_000_000) }
+        let answeredWhileConnecting = answered.isSet
+
+        gate.signal()
+        await opening.value
+        await sending.value
+        #expect(answeredWhileConnecting)
+    }
+
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isSet: Bool { lock.withLock { value } }
+        func set() { lock.withLock { value = true } }
     }
 
     @Test func resolutionRequiresTheExactLiveConversation() throws {

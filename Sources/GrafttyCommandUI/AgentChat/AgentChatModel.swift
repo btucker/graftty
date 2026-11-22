@@ -34,7 +34,10 @@ public final class AgentChatModel {
     /// conversation ends.
     public func run(_ connection: AgentChatConnection) async {
         self.connection = connection
-        switch await connection.open() {
+        let feed = await connection.open()
+        // The view left while Chat was attaching. This answer is not for it.
+        guard !Task.isCancelled else { return }
+        switch feed {
         case .unavailable(let reason):
             snapshot = nil
             unavailable = reason
@@ -50,7 +53,7 @@ public final class AgentChatModel {
             // link to the host dropped. A stale transcript would look live.
             if !Task.isCancelled, transcript.snapshot.endedReason == nil {
                 snapshot = nil
-                unavailable = "Chat lost its connection to the agent. Reopen Chat to continue."
+                unavailable = "Chat lost its connection to the agent."
             }
         }
     }
@@ -69,7 +72,7 @@ public final class AgentChatModel {
         switch await connection.submit(submission) {
         case .accepted:
             // Only the text that was sent is cleared; later typing stays.
-            if draft == text { draft = "" }
+            if draft.hasPrefix(text) { draft.removeFirst(text.count) }
             notice = nil
         case .uncertain:
             notice = "The agent may have received this message. Check the conversation before sending it again."

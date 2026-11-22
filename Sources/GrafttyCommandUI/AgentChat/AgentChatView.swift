@@ -12,6 +12,8 @@ public struct AgentChatView: View {
     @State private var highlighted = 0
     /// The draft for which the user dismissed the menu with Escape.
     @State private var dismissedDraft: String?
+    /// Counts the viewer's requests to attach again after a failure.
+    @State private var attempt = 0
 
     public init(
         model: AgentChatModel, tabID: String, connection: AgentChatConnection,
@@ -30,6 +32,12 @@ public struct AgentChatView: View {
             } else if let snapshot = model.snapshot {
                 transcript(snapshot)
                 ForEach(snapshot.requests) { request in requestCard(request) }
+                if snapshot.requests.isEmpty, snapshot.turnState == .waitingOnRequest, snapshot.endedReason == nil {
+                    // Asked before Chat attached, so only the terminal has it.
+                    requestCard(AgentChatPendingRequest(
+                        id: "unlisted", kind: .other, summary: title(for: .other), canAnswerInChat: false
+                    ))
+                }
                 if let ended = snapshot.endedReason {
                     Text(ended).font(.callout).foregroundStyle(.secondary).padding(12)
                 } else {
@@ -39,7 +47,7 @@ public struct AgentChatView: View {
                 ProgressView("Loading conversation…").frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .task(id: tabID) {
+        .task(id: "\(tabID)/\(attempt)") {
             await model.run(connection)
         }
         .onAppear { composerFocused = true }
@@ -48,7 +56,10 @@ public struct AgentChatView: View {
     private func unavailable(_ reason: String) -> some View {
         VStack(spacing: 12) {
             Text(reason).multilineTextAlignment(.center).foregroundStyle(.secondary)
-            Button("Show Terminal", action: showTerminal)
+            HStack {
+                Button("Try Again") { attempt += 1 }
+                Button("Show Terminal", action: showTerminal)
+            }
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -72,9 +83,13 @@ public struct AgentChatView: View {
     }
 
     private func requestCard(_ request: AgentChatPendingRequest) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title(for: request)).font(.callout.weight(.medium))
-            Text(request.summary).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+        let heading = title(for: request)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(heading).font(.callout.weight(.medium))
+            // A request Chat cannot describe has only its heading to show.
+            if request.summary != heading {
+                Text(request.summary).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+            }
             if let detail = request.detail {
                 Text(detail).font(.callout).foregroundStyle(.secondary)
             }
@@ -95,8 +110,10 @@ public struct AgentChatView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func title(for request: AgentChatPendingRequest) -> String {
-        switch request.kind {
+    private func title(for request: AgentChatPendingRequest) -> String { title(for: request.kind) }
+
+    private func title(for kind: AgentChatPendingRequest.Kind) -> String {
+        switch kind {
         case .commandApproval: "The agent wants to run a command"
         case .fileChangeApproval: "The agent wants to change files"
         case .other: "The agent is waiting for an answer"

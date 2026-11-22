@@ -143,6 +143,12 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public mutating func remove(_ session: Session) {
         chatSessions?.remove(session)
         if chatSessions?.isEmpty == true { chatSessions = nil }
+        detach(session)
+    }
+
+    /// Takes a tab out of its group or the drawer. Its view choice stays, for
+    /// a move that puts the tab back somewhere else.
+    private mutating func detach(_ session: Session) {
         terminals.removeAll { $0 == session }
         if selectedTerminal == session { selectedTerminal = terminals.first }
         for i in groups.indices {
@@ -158,7 +164,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public mutating func move(_ session: Session, to target: UUID) {
         guard sessions.contains(session), groups.contains(where: { $0.id == target }) else { return }
         if group(containing: session)?.id == target { select(session); return }
-        remove(session)
+        detach(session)
         guard let index = groups.firstIndex(where: { $0.id == target }) else { return }
         groups[index].sessions.append(session)
         groups[index].selected = session
@@ -188,7 +194,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public mutating func split(_ session: Session, beside target: UUID, edge: Edge) {
         guard sessions.contains(session), let destination = groups.first(where: { $0.id == target }),
               !(destination.sessions == [session]) else { return }
-        remove(session)
+        detach(session)
         let group = Group(sessions: [session], selected: session)
         groups.append(group)
         let before = edge == .left || edge == .top

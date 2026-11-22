@@ -108,6 +108,30 @@ struct AgentChatServiceTests {
         #expect(fixture.servers.all.first?.sent("turn/start").count == 1)
     }
 
+    @Test func theHostMacDoesNotSendWhileAPairedMacOwnsTheDisplay() async throws {
+        let fixture = try Fixture()
+        _ = await fixture.service.open(worktreePath: fixture.path, agentID: fixture.agent.id)
+        // A paired Mac attaches as a Mac client under its own device identity.
+        _ = fixture.ownership.attachClient(
+            sessionName: fixture.sessionName, clientID: DisplayClientID("ssh-laptop-1"), kind: .mac,
+            role: .interactive, visible: true, grid: .daemonFallback, identity: "ssh-device:laptop"
+        )
+        #expect(await fixture.submit("s1", as: .host) == .rejected(.notController))
+        #expect(await fixture.submit("s2", as: .device("laptop")) == .accepted)
+        #expect(fixture.servers.all.first?.sent("turn/start").count == 1)
+    }
+
+    @Test func theHostMacSendsWhileItsOwnWindowOwnsTheDisplay() async throws {
+        let fixture = try Fixture()
+        _ = await fixture.service.open(worktreePath: fixture.path, agentID: fixture.agent.id)
+        // The host's own terminal attaches with no device identity.
+        _ = fixture.ownership.attachClient(
+            sessionName: fixture.sessionName, clientID: DisplayClientID("mac-local"), kind: .mac,
+            role: .interactive, visible: true, grid: .daemonFallback
+        )
+        #expect(await fixture.submit("s1", as: .host) == .accepted)
+    }
+
     @Test("@spec AGENT-6.173: When a paired viewer selects Chat or Terminal, the application shall change only that viewer's presentation and preserve the session's input ownership.")
     func aViewerThatOpensChatDoesNotTakeControl() async throws {
         let fixture = try Fixture()

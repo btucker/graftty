@@ -49,6 +49,25 @@ struct WorkspaceLayoutChatTests {
         #expect(layout.showsChat("a") == false)
     }
 
+    @Test func aTabMovedToAnotherPaneKeepsItsChoice() throws {
+        var layout = layout()
+        layout.setShowsChat(true, for: "a")
+        layout.setShowsChat(true, for: "b")
+        let first = try #require(layout.group(containing: "a")?.id)
+
+        layout.split("a", beside: first, edge: .right)
+        #expect(layout.showsChat("a"))
+
+        layout.move("a", to: first)
+        #expect(layout.showsChat("a"))
+
+        layout.split("b", beside: first, edge: .bottom)
+        let second = try #require(layout.group(containing: "b")?.id)
+        layout.merge(second, into: first)
+        #expect(layout.showsChat("b"))
+        #expect(layout.showsChat("a"))
+    }
+
     @Test func aChoiceForAnUnknownTabIsIgnored() {
         var layout = layout()
         layout.setShowsChat(true, for: "zzz")

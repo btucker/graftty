@@ -30,7 +30,11 @@ public enum AgentChatHostError: Error, Equatable {
 public actor AgentChatHost {
     typealias Connect = @Sendable (AgentChatEndpoint) throws -> any CodexChatTransport
 
+    /// How long a tab's app-server has to answer the join.
+    static let defaultStartTimeout: Duration = .seconds(15)
+
     private let connect: Connect
+    private let startTimeout: Duration
     private var sessions: [String: (endpoint: AgentChatEndpoint, session: CodexChatSession)] = [:]
 
     public init() {
@@ -41,10 +45,12 @@ public actor AgentChatHost {
             throw AgentChatHostError.unsupportedPlatform
             #endif
         }
+        startTimeout = Self.defaultStartTimeout
     }
 
-    init(connect: @escaping Connect) {
+    init(connect: @escaping Connect, startTimeout: Duration = AgentChatHost.defaultStartTimeout) {
         self.connect = connect
+        self.startTimeout = startTimeout
     }
 
     /// Binds a tab's agent to its running conversation. It matches the exact
@@ -94,12 +100,22 @@ public actor AgentChatHost {
                 return await existing.session.subscribe()
             }
             sessions[agentID] = nil
-            await existing.session.stop()
+            // The agent is still running when only its conversation changed.
+            await existing.session.stop(reason: existing.endpoint.binding == endpoint.binding
+                ? CodexChatSession.agentExited : CodexChatSession.conversationChanged)
         }
-        let session = CodexChatSession(binding: endpoint.binding, transport: try connect(endpoint))
+        let session = CodexChatSession(binding: endpoint.binding, transport: try await connected(to: endpoint))
+        // A server that takes the connection and then never answers must not
+        // leave the viewer loading. Stopping the session fails the join.
+        let deadline = Task { [startTimeout] in
+            guard (try? await Task.sleep(for: startTimeout)) != nil else { return }
+            await session.stop()
+        }
         do {
             try await session.start()
+            deadline.cancel()
         } catch {
+            deadline.cancel()
             await session.stop()
             throw error
         }
@@ -136,6 +152,16 @@ public actor AgentChatHost {
     public func close(agentID: String) async {
         guard let existing = sessions.removeValue(forKey: agentID) else { return }
         await existing.session.stop()
+    }
+
+    /// Launching the proxy and its handshake block. They run off this actor,
+    /// as team delivery does, so other tabs are not held up.
+    private func connected(to endpoint: AgentChatEndpoint) async throws -> any CodexChatTransport {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { [connect] in
+                continuation.resume(with: Result { try connect(endpoint) })
+            }
+        }
     }
 
     private func session(for binding: AgentChatBinding, current: AgentChatBinding?) -> CodexChatSession? {
