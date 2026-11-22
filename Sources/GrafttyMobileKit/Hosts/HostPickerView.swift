@@ -2,10 +2,12 @@
 import SwiftUI
 import GrafttyProtocol
 import GrafttyRemoteClient
+import GrafttyWatchKit
 
 public struct HostPickerView: View {
     private typealias Connections = DownstreamHostConnections<UUID>
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
+    @AppStorage(WatchCompanionSettings.enabledKey) private var watchEnabled = false
     @Bindable var store: HostStore
     @Bindable var browser: NearbyMacBrowser
     @State private var showingAdd = false
@@ -60,6 +62,19 @@ public struct HostPickerView: View {
                             }
                         }
                     }
+                }
+            }
+            if MobileWatchCompanion.isSupported {
+                Section {
+                    Toggle("Enable Apple Watch", isOn: Binding(
+                        get: { watchEnabled },
+                        set: { enabled in
+                            watchEnabled = enabled
+                            MobileWatchCompanion.shared.setEnabled(enabled)
+                            if enabled, let feed { MobileWatchCompanion.shared.update(from: feed) }
+                        }))
+                } header: { Text("Apple Watch") } footer: {
+                    Text("View worktree requests and send replies from your paired watch, including while Graftty is in the background.")
                 }
             }
         }

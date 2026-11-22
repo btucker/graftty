@@ -166,8 +166,9 @@ def collect_renders(simulator, directory):
 def run_phase(name, options, simulator):
     directory = options.output / name
     directory.mkdir()
+    # Let the destination select each SDK, including the embedded watch app's.
     command = ['xcodebuild', '-project', 'Apps/GrafttyMobile/GrafttyMobile.xcodeproj',
-               '-scheme', 'GrafttyMobile', '-configuration', 'Debug', '-sdk', 'iphonesimulator',
+               '-scheme', 'GrafttyMobile', '-configuration', 'Debug',
                '-destination', f'platform=iOS Simulator,id={simulator}', '-destination-timeout', '90',
                '-derivedDataPath', str(options.derived_data), '-skipPackagePluginValidation',
                '-parallel-testing-enabled', 'NO', '-resultBundlePath', str(directory / 'tests.xcresult'),

@@ -116,7 +116,7 @@ let appleTargets: Set<String> = ["GhosttyKit", "GhosttyTerminal", "GhosttyTermin
 let package = Package(
     name: "Graftty",
     defaultLocalization: "en",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v14), .iOS(.v17), .watchOS(.v10)],
     products: ([
         .executable(name: "Graftty", targets: ["Graftty"]),
         // Product name "graftty-cli" (not "graftty") to avoid case-insensitive
@@ -135,6 +135,7 @@ let package = Package(
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
+        .library(name: "GrafttyWatchKit", targets: ["GrafttyWatchKit"]),
         // Test-only: the iOS test bundles (Apps/GrafttyMobile/project.yml)
         // can link a package product, not a bare target.
         .library(name: "GrafttyRemoteTestSupport", targets: ["GrafttyRemoteTestSupport"]),
@@ -152,6 +153,8 @@ let package = Package(
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "b9778b054bbdbf2e81deef0494ffecb8683c1e4a"),
     ] + appleDependencies,
     targets: ([
+        .target(name: "GrafttyWatchKit", swiftSettings: strictWarnings),
+        .testTarget(name: "GrafttyWatchKitTests", dependencies: ["GrafttyWatchKit"], swiftSettings: strictWarnings),
         .target(name: "CGrafttyConPTY"),
         .target(
             name: "GrafttyWindowsTerminal",
@@ -377,6 +380,7 @@ let package = Package(
         .target(
             name: "GrafttyMobileKit",
             dependencies: [
+                "GrafttyWatchKit",
                 "GrafttyRemoteClient",
                 "GrafttyProtocol",
                 "GrafttyCommandUI",

@@ -285,12 +285,13 @@ jobs:
         # (with application-identifier entitlement) — CODE_SIGN_IDENTITY=-
         # in project.yml handles signing. Without a real signature the
         # iOS Keychain rejects every SecItemAdd with errSecMissingEntitlement.
+        # Select SDKs through the destination: a global -sdk iphonesimulator
+        # makes the embedded watch app link iOS package objects.
         run: |
           # shellcheck disable=SC2016 # Xcode expands $(inherited).
           xcodebuild \
             -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj \
             -scheme GrafttyMobile \
-            -sdk iphonesimulator \
             -configuration Debug \
             -skipPackagePluginValidation \
             -clonedSourcePackagesDirPath .spm \

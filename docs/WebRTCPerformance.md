@@ -11,7 +11,6 @@ available device ID from `xcrun simctl list devices available`.
 TEST_RUNNER_GRAFTTY_WEBRTC_LATENCY_SAMPLES=100 xcodebuild \
   -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj \
   -scheme GrafttyMobile \
-  -sdk iphonesimulator \
   -skipPackagePluginValidation \
   -derivedDataPath /tmp/graftty-webrtc-performance \
   -destination 'platform=iOS Simulator,id=SIMULATOR_ID' \
