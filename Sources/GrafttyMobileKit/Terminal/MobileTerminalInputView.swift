@@ -12,6 +12,13 @@ import UIKit
 /// previously committed hypotheses. Ghostty still renders and sends input.
 final class MobileTerminalInputView: UITerminalView {
     var onHistoryScroll: (() -> Void)?
+    /// Builds the edit menu shown while text is selected. Nil keeps the
+    /// terminal library's default Copy, Paste and Select All.
+    var selectionMenuItems: ((TerminalTouchSelectionMenuContext) -> [UIMenuElement])?
+
+    override func touchSelectionMenuItems(for context: TerminalTouchSelectionMenuContext) -> [UIMenuElement] {
+        selectionMenuItems?(context) ?? super.touchSelectionMenuItems(for: context)
+    }
     var isAutocorrectionEnabled = false {
         didSet {
             guard oldValue != isAutocorrectionEnabled, isFirstResponder else { return }

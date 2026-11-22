@@ -197,5 +197,43 @@ struct TerminalTouchSelectionTests {
         #expect(!view.hasTouchSelection)
         #expect(!view.copyTouchSelection(), "Nothing selected, nothing copied")
     }
+
+    @Test
+    func hostSuppliesTheSelectionMenu() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("alpha beta gamma", until: "gamma")
+        let view = harness.view
+        var menuText: String?
+        view.selectionMenuItems = { context in
+            menuText = context.selectedText
+            return [UIAction(title: "Probe") { _ in }]
+        }
+        let point = try harness.point(column: 7, row: 0)
+        try #require(view.beginHostTouchSelection(at: point))
+
+        let menu = view.touchSelectionMenu(at: point, suggestedActions: [])
+
+        #expect(menu.children.compactMap { ($0 as? UIAction)?.title } == ["Probe"])
+        #expect(menuText == "beta")
+    }
+
+    @Test
+    func menuAfterAHandleDragAvoidsTheSelection() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("alpha beta gamma", until: "gamma")
+        let view = harness.view
+        let point = try harness.point(column: 7, row: 0)
+        try #require(view.beginHostTouchSelection(at: point))
+        let overlay = try #require(view.touchSelection.overlay)
+
+        view.finishTouchSelectionDrag(at: point)
+
+        let avoid = try #require(overlay.menuAvoidanceRect)
+        #expect(!avoid.isEmpty)
+        #expect(view.touchMenuTargetRect(at: point) == avoid)
+        #expect(view.hasTouchSelection)
+    }
 }
 #endif
