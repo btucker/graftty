@@ -208,7 +208,7 @@ struct MultiPaneDetailView: View {
     private func showsChat(_ session: String) -> Bool {
         worktree.chatAgent(session: session) != nil && currentWorkspace.showsChat(session)
     }
-    /// AGENT-6.173: only this device's saved layout changes. Nothing is sent to the host.
+    /// AGENT-6.187: only this device's saved layout changes. Nothing is sent to the host.
     private func setShowsChat(_ value: Bool, for session: String) {
         mutate { $0.setShowsChat(value, for: session) }
         onSelectPane(session)

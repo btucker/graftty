@@ -140,7 +140,7 @@ struct CodexChatSessionTests {
         #expect(snapshot.items.last?.text == "message 450")
     }
 
-    @Test("@spec AGENT-6.170: When a user switches views during a turn, the application shall continue displaying that turn in the selected view and show each submitted message exactly once.")
+    @Test("@spec AGENT-6.184: When a user switches views during a turn, the application shall continue displaying that turn in the selected view and show each submitted message exactly once.")
     func aTurnEnteredInTheTerminalAppearsOnceForEverySubscriber() async throws {
         let server = FakeCodexServer()
         let session = try await started(server)
@@ -222,7 +222,7 @@ struct CodexChatSessionTests {
         #expect(server.sent("turn/start").count == 1)
     }
 
-    @Test("@spec AGENT-6.171: When a user switches views with a provider request pending, the application shall preserve the request for an explicit answer and remove its action from Chat once the provider resolves it.")
+    @Test("@spec AGENT-6.185: When a user switches views with a provider request pending, the application shall preserve the request for an explicit answer and remove its action from Chat once the provider resolves it.")
     func anApprovalIsAnsweredOnceAndClearedWhenTheProviderResolvesIt() async throws {
         let server = FakeCodexServer()
         let session = try await started(server)

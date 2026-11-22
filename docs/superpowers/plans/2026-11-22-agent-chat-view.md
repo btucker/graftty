@@ -19,7 +19,7 @@
 - Only the display controller may submit or answer. The host Mac may act on a session nobody has claimed. A paired device must match `ownerIdentity == "ssh-device:<deviceID>"`.
 - Each viewer stores its own view choice. A choice never changes ownership.
 - Host-side code in `GrafttyKit`, `GrafttyProtocol`, and `GrafttyHostAgent` must compile on Linux: no AppKit, no SwiftUI. `CodexAppServerProxyTransport` is the only macOS-only file.
-- Requirements use `@spec` EARS titles with no literal quote characters. Promote `AGENT-6.166`–`6.173` out of `Tests/GrafttyTests/Specs/AgentTodo.swift` in the task that makes each one observable, delete the inventory entry in the same commit, and run `scripts/generate-specs.py`.
+- Requirements use `@spec` EARS titles with no literal quote characters. Promote `AGENT-6.180`–`6.187` out of `Tests/GrafttyTests/Specs/AgentTodo.swift` in the task that makes each one observable, delete the inventory entry in the same commit, and run `scripts/generate-specs.py`.
 - User-facing copy uses "Chat" and "Terminal". No internal terms (binding, thread, app-server) appear in copy.
 - Status cues are subtle: italic or dimmed text, no saturated color.
 
@@ -79,7 +79,7 @@ Already written and passing in isolation: `Sources/GrafttyProtocol/AgentChat.swi
 - Produces: `@MainActor @Observable final class AgentChatModel` with `snapshot`, `unavailable`, `notice`, `draft`, `slashMatches`, `canSend`, `run(_:)`, `choose(_:)`, `send(_:)`, `answer(_:_:_:)`; and `AgentChatView(model:tabID:connection:showTerminal:)`.
 
 - [ ] **Step 1:** Run `scripts/swiftpm test --filter AgentChatModelTests`; fix compile errors. Expected: 7 tests pass.
-- [ ] **Step 2:** Promote `AGENT-6.167` onto `choosingACommandEditsTheDraftAndSendsNothing` and `AGENT-6.166` onto `aCommandUpdateReplacesTheWholeList` in `AgentChatTranscriptTests`; delete both inventory entries; run `scripts/generate-specs.py`.
+- [ ] **Step 2:** Promote `AGENT-6.181` onto `choosingACommandEditsTheDraftAndSendsNothing` and `AGENT-6.180` onto `aCommandUpdateReplacesTheWholeList` in `AgentChatTranscriptTests`; delete both inventory entries; run `scripts/generate-specs.py`.
 - [ ] **Step 3:** Commit: `feat: add the shared Chat view`.
 
 ### Task 4: Per-viewer view choice
@@ -117,12 +117,12 @@ Behavior:
 - `showTerminal` from the view (including **Answer in Terminal**) calls `setView(slot, chat: false)`.
 
 - [ ] **Step 1: Write failing tests** following the existing `WorkspaceContentView` tests in `Tests/GrafttyTests`:
-  - `@spec AGENT-6.169` title on `switchingViewsKeepsTheTabItsSessionAndItsAgent`: after `setView(slot, chat: true)` then `false`, the worktree's `agents`, `paneSessions`, and layout `selected` are equal to before, and the fake terminal manager recorded no input and no new surface.
-  - `@spec AGENT-6.172` title on `eachViewKeepsItsOwnUnsentInput`: set the slot's model draft, switch to Terminal and back; the draft is unchanged and the fake connection recorded no submission.
+  - `@spec AGENT-6.183` title on `switchingViewsKeepsTheTabItsSessionAndItsAgent`: after `setView(slot, chat: true)` then `false`, the worktree's `agents`, `paneSessions`, and layout `selected` are equal to before, and the fake terminal manager recorded no input and no new surface.
+  - `@spec AGENT-6.186` title on `eachViewKeepsItsOwnUnsentInput`: set the slot's model draft, switch to Terminal and back; the draft is unchanged and the fake connection recorded no submission.
   - `aTabWithoutChatSupportOffersNoSwitch` (Review Focus 2): with a Claude agent, `showsChat` stays false after `setView(slot, chat: true)`.
 - [ ] **Step 2:** Run `scripts/swiftpm test --filter WorkspaceChatSwitchTests`. Expected: compile failure.
 - [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run. Expected: suite passes. Delete the `AGENT-6.169` and `AGENT-6.172` inventory entries and run `scripts/generate-specs.py`.
+- [ ] **Step 4:** Run. Expected: suite passes. Delete the `AGENT-6.183` and `AGENT-6.186` inventory entries and run `scripts/generate-specs.py`.
 - [ ] **Step 5:** Launch the app with the `run` skill. In a Codex tab: start a turn in Terminal, switch to Chat mid-output, send from Chat, switch back. Confirm both turns appear once in each view. Trigger an approval, answer it in Terminal, confirm the card leaves Chat. Check Return with an input method composing.
 - [ ] **Step 6:** Commit: `feat: switch local Mac agent tabs between Chat and Terminal`.
 
@@ -171,7 +171,7 @@ Behavior: one channel serves one tab. The first frame must be `.open`; the handl
   - `anOlderHostExplainsWhyChatIsUnavailable` (Review Focus 5): the host refuses the subsystem → `open` returns `.unavailable("Chat is not available from the Mac that runs this agent. The terminal is still available.")` (a host advertises Chat per tab, so this is rare).
 - [ ] **Step 2:** Run `scripts/swiftpm test --filter AgentChatChannelClientTests`. Expected: compile failure.
 - [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run. Expected: suite passes. Add an assertion to `aRemoteSubmissionReturnsTheHostsResult` that the host's scripted connection received the exact text `/review the last commit`, promote `AGENT-6.168` onto it, and delete the inventory entry.
+- [ ] **Step 4:** Run. Expected: suite passes. Add an assertion to `aRemoteSubmissionReturnsTheHostsResult` that the host's scripted connection received the exact text `/review the last commit`, promote `AGENT-6.182` onto it, and delete the inventory entry.
 - [ ] **Step 5:** Commit: `feat: reach agent chat from paired viewers`.
 
 ### Task 8: Mac remote viewer
@@ -185,7 +185,7 @@ Behavior: one channel serves one tab. The first frame must be `.open`; the handl
 - Consumes: `RemoteHostLink.agentChatConnection`, `AgentChatView`, `WorkspaceLayout.showsChat`.
 - Produces: `RemoteMacsModel.agentChatConnection(hostID:worktreePath:agentID:) -> AgentChatConnection`.
 
-- [ ] **Step 1: Write failing tests:** `chatAvailable` decodes as nil from an older host and round-trips; the remote view offers the switch only when `chatAvailable == true`; `@spec AGENT-6.173` title on `choosingAViewChangesOnlyThisViewer`: setting the choice writes only this viewer's stored layout and sends no pane-control or ownership request through the fake link.
+- [ ] **Step 1: Write failing tests:** `chatAvailable` decodes as nil from an older host and round-trips; the remote view offers the switch only when `chatAvailable == true`; `@spec AGENT-6.187` title on `choosingAViewChangesOnlyThisViewer`: setting the choice writes only this viewer's stored layout and sends no pane-control or ownership request through the fake link.
 - [ ] **Step 2–4:** Run, implement with the same header control and content swap as Task 5, run.
 - [ ] **Step 5:** Commit: `feat: switch remote Mac agent tabs between Chat and Terminal`.
 
@@ -208,7 +208,7 @@ Behavior: on compact width the switch sits in the floating header, above the key
 
 ### Task 10: Remaining requirements and review
 
-- [ ] **Step 1:** Promote `AGENT-6.170` onto `aTurnEnteredInTheTerminalAppearsOnceForEverySubscriber` and `AGENT-6.171` onto `anApprovalIsAnsweredOnceAndClearedWhenTheProviderResolvesIt` in `CodexChatSessionTests`. `AgentTodo.swift` must hold none of `6.166`–`6.173`. Run `scripts/generate-specs.py --check`.
+- [ ] **Step 1:** Promote `AGENT-6.184` onto `aTurnEnteredInTheTerminalAppearsOnceForEverySubscriber` and `AGENT-6.185` onto `anApprovalIsAnsweredOnceAndClearedWhenTheProviderResolvesIt` in `CodexChatSessionTests`. `AgentTodo.swift` must hold none of `6.180`–`6.187`. Run `scripts/generate-specs.py --check`.
 - [ ] **Step 2:** Update the design document's build order to mark each stage done.
 - [ ] **Step 3:** Run `scripts/swiftpm test`, then `/code-review xhigh --fix`, then `/simplify`.
 - [ ] **Step 4:** Open the PR and confirm CI, including `ios-build-and-test` and the Linux job.

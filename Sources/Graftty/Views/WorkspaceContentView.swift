@@ -366,7 +366,7 @@ struct WorkspaceContentView: View {
     }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
     func showsChat(_ slot: PaneSlotID) -> Bool { chatService != nil && worktree.showsChat(in: slot) }
-    /// AGENT-6.169: a view change keeps the terminal mounted in its manager and sends the agent nothing.
+    /// AGENT-6.183: a view change keeps the terminal mounted in its manager and sends the agent nothing.
     func setView(_ slot: PaneSlotID, chat: Bool) {
         var entry = worktree
         WorkspaceChatSwitch.setView(chat: chat, slot: slot, in: &entry)

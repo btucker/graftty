@@ -43,7 +43,7 @@ struct RemoteWorkspaceContentView: View {
         worktree.chatAgent(session: session)
     }
     private func showsChat(_ session: String) -> Bool { chatAgent(session) != nil && layout.showsChat(session) }
-    /// AGENT-6.173: only this viewer's saved layout changes. Nothing is sent to the host.
+    /// AGENT-6.187: only this viewer's saved layout changes. Nothing is sent to the host.
     private func setView(_ session: String, chat: Bool) {
         workspace?.setShowsChat(chat, for: session)
         select(session)

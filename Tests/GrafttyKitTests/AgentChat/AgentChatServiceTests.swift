@@ -132,7 +132,7 @@ struct AgentChatServiceTests {
         #expect(await fixture.submit("s1", as: .host) == .accepted)
     }
 
-    @Test("@spec AGENT-6.173: When a paired viewer selects Chat or Terminal, the application shall change only that viewer's presentation and preserve the session's input ownership.")
+    @Test("@spec AGENT-6.187: When a paired viewer selects Chat or Terminal, the application shall change only that viewer's presentation and preserve the session's input ownership.")
     func aViewerThatOpensChatDoesNotTakeControl() async throws {
         let fixture = try Fixture()
         _ = fixture.ownership.attachClient(

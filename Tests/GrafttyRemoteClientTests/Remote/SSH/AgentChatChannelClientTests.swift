@@ -122,7 +122,7 @@ struct AgentChatChannelClientTests {
         await link.close()
     }
 
-    @Test("@spec AGENT-6.168: When the user sends a slash command from an agent tab's Chat view on Mac or GrafttyMobile, the application shall deliver the draft's exact command text and arguments to that tab's bound session.")
+    @Test("@spec AGENT-6.182: When the user sends a slash command from an agent tab's Chat view on Mac or GrafttyMobile, the application shall deliver the draft's exact command text and arguments to that tab's bound session.")
     func aRemoteSubmissionReturnsTheHostsResult() async throws {
         let host = Host()
         let (link, connection) = try await connect(host)

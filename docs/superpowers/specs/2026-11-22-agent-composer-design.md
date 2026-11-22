@@ -52,7 +52,7 @@ Start the integration trial with a running Codex tab. Enable switching for a pro
 
 ## Acceptance checks
 
-The [pending requirements AGENT-6.166 through AGENT-6.173](../../../Tests/GrafttyTests/Specs/AgentTodo.swift) cover command selection, submission, and live view switching.
+The [pending requirements AGENT-6.180 through AGENT-6.187](../../../Tests/GrafttyTests/Specs/AgentTodo.swift) cover command selection, submission, and live view switching.
 
 | Scenario | Observable result |
 | --- | --- |

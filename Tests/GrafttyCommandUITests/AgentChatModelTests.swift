@@ -50,7 +50,7 @@ struct AgentChatModelTests {
         Host(AgentChatSnapshot(binding: binding, commands: commands))
     }
 
-    @Test("@spec AGENT-6.167: When the user chooses a slash command in the graphical composer, the application shall insert its invocation into the editable draft and wait for the user to send it.")
+    @Test("@spec AGENT-6.181: When the user chooses a slash command in the graphical composer, the application shall insert its invocation into the editable draft and wait for the user to send it.")
     func choosingACommandEditsTheDraftAndSendsNothing() async {
         let host = idleHost(commands: [AgentChatCommand(name: "review", description: "Review changes")])
         let (model, task) = await attached(host)

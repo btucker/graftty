@@ -21,7 +21,7 @@ struct WorkspaceChatSwitchTests {
         return (entry, slot)
     }
 
-    @Test("@spec AGENT-6.169: When a user switches a supported running agent tab between Chat and Terminal on Mac or GrafttyMobile, the application shall keep the same tab, terminal session, provider process, assignment, and conversation in both directions.")
+    @Test("@spec AGENT-6.183: When a user switches a supported running agent tab between Chat and Terminal on Mac or GrafttyMobile, the application shall keep the same tab, terminal session, provider process, assignment, and conversation in both directions.")
     func switchingViewsKeepsTheTabItsSessionAndItsAgent() {
         let (original, slot) = worktree()
         var entry = original
@@ -38,7 +38,7 @@ struct WorkspaceChatSwitchTests {
         #expect(entry == original)
     }
 
-    @Test("@spec AGENT-6.172: When a user switches views with unsent input, the application shall preserve each view's draft in its original input field without submitting it.")
+    @Test("@spec AGENT-6.186: When a user switches views with unsent input, the application shall preserve each view's draft in its original input field without submitting it.")
     func eachViewKeepsItsOwnUnsentInput() {
         var (entry, slot) = worktree()
         let models = AgentChatModelStore<PaneSlotID>()

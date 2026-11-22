@@ -515,7 +515,7 @@ struct SingleSessionView: View {
             .chatAgent(session: step.sessionName)
     }
     private var showsChat: Bool { chatAgent != nil && (isEmbeddedPane ? embeddedShowsChat : compactShowsChat) }
-    /// AGENT-6.173: only this device's stored choice changes. Nothing is sent to the host.
+    /// AGENT-6.187: only this device's stored choice changes. Nothing is sent to the host.
     private func setCompactShowsChat(_ value: Bool) {
         guard let path = step.worktreePath else { return }
         MobileChatViewChoice.setShowsChat(value, hostID: step.host.id, worktreePath: path, sessionName: step.sessionName)

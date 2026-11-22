@@ -56,7 +56,7 @@ struct AgentChatTranscriptTests {
         #expect(transcript.snapshot.requests.isEmpty)
     }
 
-    @Test("@spec AGENT-6.166: When the running agent advertises a new command list, the application shall replace the slash menu in that tab's Chat view with the advertised names, descriptions, and argument hints.")
+    @Test("@spec AGENT-6.180: When the running agent advertises a new command list, the application shall replace the slash menu in that tab's Chat view with the advertised names, descriptions, and argument hints.")
     func aCommandUpdateReplacesTheWholeList() {
         var transcript = transcript()
         transcript.apply(.commands([
