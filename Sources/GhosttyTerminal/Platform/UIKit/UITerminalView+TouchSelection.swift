@@ -23,6 +23,10 @@
         var tapRecognizers: [UITapGestureRecognizer] = []
         var tapBeganWithMenu = false
         var tapStopsMomentum = false
+        /// The cell under the first tap of a sequence. With a host
+        /// delegate that tap may raise or lower the keyboard, moving the
+        /// text before a double tap is recognized.
+        var tapCell: Int?
         var longPress: UILongPressGestureRecognizer?
         var scrollGesture: UIPanGestureRecognizer?
         var panUsesSelection = false
@@ -81,6 +85,19 @@
             touchSelection.pendingAction = action
         }
 
+        /// Remembers the cell a tap sequence began on, for a double or
+        /// triple tap that completes after the text has moved.
+        func noteTapBegan(at point: CGPoint, tapCount: Int) {
+            guard touchSelection.enabled, tapCount == 1 else { return }
+            touchSelection.tapCell = touchSelectionGrid()?.cell(at: point, viewportOffset: touchViewportOffset)
+        }
+
+        /// Whether a host-mode tap clicks the program and toggles the
+        /// keyboard. The later taps of a double or triple tap only select.
+        func tapActsOnTerminal(tapCount: Int) -> Bool {
+            !(touchSelection.enabled && tapCount >= 2)
+        }
+
         /// A tap while text is selected only takes the selection down.
         /// Returns whether it did, so the caller leaves the keyboard and
         /// the program alone.
@@ -104,10 +121,10 @@
             )
         }
 
-        func beginTouchSelection(at point: CGPoint, selectAll: Bool, selectLine: Bool = false) {
+        func beginTouchSelection(at point: CGPoint, selectAll: Bool, selectLine: Bool = false, cell: Int? = nil) {
             guard touchSelection.enabled, window != nil, let surface, let grid = touchSelectionGrid() else { return }
             stopMomentumScrolling()
-            let cell = grid.cell(at: point, viewportOffset: touchViewportOffset)
+            let cell = cell ?? grid.cell(at: point, viewportOffset: touchViewportOffset)
             let total = max(grid.rows, Int(core.bridge.scrollbar?.total ?? UInt64(grid.rows)))
             let range: ClosedRange<Int>
             if selectAll {

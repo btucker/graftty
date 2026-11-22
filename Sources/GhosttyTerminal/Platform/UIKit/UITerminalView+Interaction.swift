@@ -51,6 +51,7 @@
                           // (sidebar, tab bar) must not swallow a tap here.
                           (event?.touches(for: self)?.count ?? touches.count) == 1
                 {
+                    noteTapBegan(at: touch.location(in: self), tapCount: touch.tapCount)
                     softwareKeyboard.tapCandidateArmed = true
                     softwareKeyboard.tapCandidateStart = touch.location(in: self)
                     softwareKeyboard.tapCandidateTimestamp = touch.timestamp
@@ -97,7 +98,9 @@
                 if softwareKeyboard.tapCandidateArmed, let touch = touches.first {
                     softwareKeyboard.tapCandidateArmed = false
                     let duration = touch.timestamp - softwareKeyboard.tapCandidateTimestamp
-                    if duration <= Self.tapCandidateMaxDuration, !dismissTouchSelectionForTap() {
+                    if duration <= Self.tapCandidateMaxDuration, tapActsOnTerminal(tapCount: touch.tapCount),
+                       !dismissTouchSelectionForTap()
+                    {
                         TerminalDebugLog.log(
                             .input,
                             "tap toggles keyboard visible=\(softwareKeyboard.isVisible) duration=\(String(format: "%.3f", duration))",

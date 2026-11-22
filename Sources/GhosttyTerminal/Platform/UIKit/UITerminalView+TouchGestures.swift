@@ -26,14 +26,23 @@
 
             func updateTouchSelectionGestures() {
                 touchSelection.longPress?.minimumPressDuration = usesHostTextSelection ? 0.5 : 0.7
-                for tap in touchSelection.tapRecognizers {
-                    tap.isEnabled = usesInlineTextSelection
+                // A host delegate keeps single taps; double and triple taps
+                // still select a word and a row.
+                for (index, tap) in touchSelection.tapRecognizers.enumerated() {
+                    tap.isEnabled = usesInlineTextSelection || (touchSelection.enabled && index > 0)
                 }
                 touchSelection.scrollGesture?.maximumNumberOfTouches = usesInlineTextSelection ? 2 : 1
             }
 
             @objc func handleSelectionTap(_ gesture: UITapGestureRecognizer) {
-                guard usesInlineTextSelection, gesture.state == .ended, surface != nil else { return }
+                let selects = gesture.numberOfTapsRequired > 1
+                guard usesInlineTextSelection || (touchSelection.enabled && selects),
+                      gesture.state == .ended, surface != nil
+                else { return }
+                // With a host delegate the first tap may already have moved
+                // the text; select what that tap landed on.
+                let tapCell = usesHostTextSelection ? touchSelection.tapCell : nil
+                softwareKeyboard.tapCandidateArmed = false
                 stopMomentumScrolling()
                 let point = gesture.location(in: self)
                 defer {
@@ -43,9 +52,9 @@
                 guard !touchSelection.tapStopsMomentum else { return }
                 switch gesture.numberOfTapsRequired {
                 case 3:
-                    beginTouchSelection(at: point, selectAll: false, selectLine: true)
+                    beginTouchSelection(at: point, selectAll: false, selectLine: true, cell: tapCell)
                 case 2:
-                    beginTouchSelection(at: point, selectAll: false)
+                    beginTouchSelection(at: point, selectAll: false, cell: tapCell)
                 default:
                     if touchSelection.range != nil {
                         dismissTouchSelection()

@@ -12,6 +12,13 @@ final class ScriptedLongPress: UILongPressGestureRecognizer {
     override func location(in _: UIView?) -> CGPoint { point }
 }
 
+/// A tap that has already ended at a point a test chooses.
+final class ScriptedTap: UITapGestureRecognizer {
+    var point: CGPoint = .zero
+    override var state: UIGestureRecognizer.State { get { .ended } set {} }
+    override func location(in _: UIView?) -> CGPoint { point }
+}
+
 /// A pan whose state and location a test sets directly.
 final class ScriptedPan: UIPanGestureRecognizer {
     var scriptedState: UIGestureRecognizer.State = .began
@@ -369,6 +376,70 @@ struct TerminalTouchSelectionTests {
         let titles = container.selectionMenuElements(for: changed, hasPasteContent: false)
             .compactMap { ($0 as? UIAction)?.title }
         #expect(titles == ["Copy", "Select All"])
+    }
+
+    @Test("@spec IOS-11.27: When the user double-taps terminal text on mobile, the application shall select that word with handles, and when the user triple-taps, the application shall select that line.")
+    func doubleTapSelectsAWordAndTripleTapALine() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("alpha beta gamma", until: "gamma")
+        let view = harness.view
+        let taps = view.touchSelection.tapRecognizers
+        try #require(taps.count == 3)
+        #expect(!taps[0].isEnabled, "Single taps stay with the host's tap handling")
+        #expect(taps[1].isEnabled)
+        #expect(taps[2].isEnabled)
+
+        let double = ScriptedTap()
+        double.numberOfTapsRequired = 2
+        double.point = try harness.point(column: 7, row: 0)
+        view.handleSelectionTap(double)
+        #expect(view.touchSelectionText == "beta")
+        #expect(view.touchSelection.overlay != nil)
+
+        let triple = ScriptedTap()
+        triple.numberOfTapsRequired = 3
+        triple.point = double.point
+        view.handleSelectionTap(triple)
+        #expect(view.touchSelectionText?.trimmingCharacters(in: .whitespaces) == "alpha beta gamma")
+    }
+
+    @Test
+    func doubleTapSelectsTheWordFirstTouchedAfterTheKeyboardMovesTheText() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        let lines = (0..<200).map { "line \($0)" }.joined(separator: "\r\n")
+        try await harness.show("alpha beta gamma\r\n" + lines, until: "line 199")
+        let view = harness.view
+        let surface = try #require(view.surface)
+        _ = surface.scrollToRow(0)
+        try await harness.waitForViewportOffset { $0 == 0 }
+        let point = try harness.point(column: 7, row: 0)
+
+        // The first tap lands on "beta"; its keyboard toggle then moves the text.
+        view.noteTapBegan(at: point, tapCount: 1)
+        _ = surface.scrollToRow(1)
+        try await harness.waitForViewportOffset { $0 == 1 }
+        view.noteTapBegan(at: point, tapCount: 2)
+        let double = ScriptedTap()
+        double.numberOfTapsRequired = 2
+        double.point = point
+        view.handleSelectionTap(double)
+
+        #expect(view.touchSelectionText == "beta")
+    }
+
+    @Test
+    func secondTapOfADoubleTapDoesNotClickOrToggleTheKeyboard() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        let view = harness.view
+
+        #expect(view.tapActsOnTerminal(tapCount: 1))
+        #expect(!view.tapActsOnTerminal(tapCount: 2))
+        #expect(!view.tapActsOnTerminal(tapCount: 3))
+        view.usesInlineTextSelection = false
+        #expect(view.tapActsOnTerminal(tapCount: 2), "With touch selection off every tap is an ordinary tap")
     }
 }
 #endif

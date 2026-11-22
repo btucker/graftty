@@ -2762,6 +2762,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.26** When a retained terminal pane detaches its controls, the application shall discard browser callbacks and cached link actions while preserving its renderer and ownership.
 
+**IOS-11.27** When the user double-taps terminal text on mobile, the application shall select that word with handles, and when the user triple-taps, the application shall select that line.
+
 ### IOS-12.x
 
 **IOS-12.1** When graftty open offers a regular file, the application shall retain a bounded temporary snapshot scoped to the caller's worktree and allow paired clients to retrieve only that offered snapshot in bounded chunks.

@@ -37,14 +37,16 @@ by default; opening it on the remote host stays available as a second option.
 
 ## Approaches
 
-1. **Use the in-repo terminal library's inline touch selection (picked).**
+1. **Use the in-repo terminal library's touch selection (picked).**
    `Sources/GhosttyTerminal` already implements handles, loupe, double and
    triple tap, and autoscroll (`UITerminalView+TouchSelection*.swift`,
-   `TerminalTouchSelectionOverlay`). Graftty disables it by conforming
-   `TerminalInputContainerView` to `TerminalSurfaceTextSelectionRequestDelegate`.
-   Remove that conformance and Graftty's `TerminalSelectionController`
-   mode; supply menus through the `touchMenuItems(for:)` and
-   `touchSelectionMenuItems(for:)` overrides on `MobileTerminalInputView`.
+   `TerminalTouchSelectionOverlay`), but switched it off while a host
+   selection delegate was installed. As built: Graftty keeps that delegate,
+   because its tap, keyboard and scroll tuning depend on host mode, and the
+   library now lets the host begin the overlay selection
+   (`beginHostTouchSelection`). Graftty's `TerminalSelectionController` and
+   its selection pan are deleted; menus come from
+   `MobileTerminalInputView.selectionMenuItems`.
 2. **Keep Graftty's mouse-faking selection and draw handles over it.**
    Rejected: faked clicks hold one anchor, cannot move the start, and
    misbehave when a TUI captures the mouse.
