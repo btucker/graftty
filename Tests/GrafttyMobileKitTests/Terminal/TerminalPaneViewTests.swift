@@ -622,8 +622,8 @@ struct TerminalPaneViewTests {
         }
     }
 
-    @Test("@spec IOS-11.13: When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and offer Copy Link and route the complete URL through the originating pane browser when Open Link is chosen. Pressing ordinary text shall not offer link actions.")
-    func longPressOpensTheCompleteURLUnderThePressedWord() throws {
+    @Test("@spec IOS-11.13: When the user presses and holds a displayed HTTP or HTTPS URL on mobile, the application shall offer Open Link, which opens the complete URL on the device, then an action naming the host, which routes it through the originating pane browser, then Copy Link, ahead of its text-selection actions. Pressing ordinary text shall not offer link actions.")
+    func longPressOffersTheLinkOnTheDeviceThenOnTheHost() throws {
         let container = TerminalInputContainerView(frame: .zero)
         let text = "See https://example.com/first and https://example.org/path?q=hello#part."
         container.terminalView.contentScaleFactor = 1
@@ -631,22 +631,37 @@ struct TerminalPaneViewTests {
             columns: 100, rows: 1, widthPixels: 1000, heightPixels: 20,
             cellWidthPixels: 10, cellHeightPixels: 20
         ))
-        var opened: [URL] = []
-        container.openURL = { opened.append($0) }
+        var openedOnHost: [URL] = []
+        var openedLocally: [URL] = []
+        container.openURL = { openedOnHost.append($0) }
+        container.openURLLocally = { openedLocally.append($0) }
+        container.hostLabel = "Studio"
         container.prepareLongPressMenu(
             at: CGPoint(x: CGFloat((text as NSString).range(of: "hello").location) * 10 + 5, y: 10),
             text: text
         )
         #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false) == [
-            "Open Link", "Copy Link", "Select All",
+            "Open Link", "Open on Studio", "Copy Link", "Select All",
         ])
-        let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
-            .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
-        let button = UIButton()
-        button.addAction(action, for: .touchUpInside)
-        button.sendActions(for: .touchUpInside)
-        #expect(opened.map(\.absoluteString) == ["https://example.org/path?q=hello#part"])
-        #expect(!container.terminalView.hasTouchSelection)
+        func tap(_ title: String) throws -> UIButton {
+            let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
+                .children.compactMap { $0 as? UIAction }.first { $0.title == title })
+            let button = UIButton()
+            button.addAction(action, for: .touchUpInside)
+            button.sendActions(for: .touchUpInside)
+            return button
+        }
+        let local = try tap("Open Link")
+        #expect(openedLocally.map(\.absoluteString) == ["https://example.org/path?q=hello#part"])
+        #expect(openedOnHost.isEmpty)
+        let remote = try tap("Open on Studio")
+        #expect(openedOnHost.map(\.absoluteString) == ["https://example.org/path?q=hello#part"])
+        #expect(openedLocally.count == 1)
+
+        container.hostLabel = "  "
+        #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false).prefix(2) == ["Open Link", "Open on Host"])
+        container.hostLabel = nil
+        #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false).prefix(2) == ["Open Link", "Open on Host"])
 
         container.prepareLongPressMenu(
             at: CGPoint(x: 5, y: 10), text: text
@@ -654,8 +669,10 @@ struct TerminalPaneViewTests {
         #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false) == [
             "Select All",
         ])
-        button.sendActions(for: .touchUpInside)
-        #expect(opened.count == 1, "A dismissed menu must not open a stale URL")
+        local.sendActions(for: .touchUpInside)
+        remote.sendActions(for: .touchUpInside)
+        #expect(openedLocally.count == 1, "A dismissed menu must not open a stale URL")
+        #expect(openedOnHost.count == 1, "A dismissed menu must not open a stale URL")
     }
 
     @Test("@spec IOS-11.24: If a terminal link menu outlives its originating session or ownership context, then the application shall discard its Open and Copy actions instead of invoking callbacks for a replacement pane.")
@@ -667,10 +684,11 @@ struct TerminalPaneViewTests {
         var opened = 0
         var copied = 0
         container.openURL = { _ in opened += 1 }
+        container.openURLLocally = { _ in opened += 1 }
         container.copyLink = { _ in copied += 1 }
         container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: "https://example.com/first")
-        let actions = container.longPressMenuForTesting(hasPasteContent: false).children.compactMap { $0 as? UIAction }.filter { $0.title.contains("Link") }
-        try #require(actions.count == 2)
+        let actions = container.longPressMenuForTesting(hasPasteContent: false).children.compactMap { $0 as? UIAction }.filter { $0.title.contains("Link") || $0.title.hasPrefix("Open on") }
+        try #require(actions.count == 3)
         container.linkContext = "unowned-first-pane"
         container.linkContext = "owned-replacement-pane"
         for action in actions {
@@ -855,8 +873,10 @@ struct TerminalPaneViewTests {
             #expect(opened == nil, "Unsupported OSC8 targets must neither open nor fall back to the visible label URL")
             return
         }
+        #expect(container.selectionMenuActionTitlesForTesting(hasPasteContent: false).prefix(3)
+            == ["Open Link", "Open on Host", "Copy Link"], "The pressed word is selected and its link leads the menu")
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
-            .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Open on Host" })
         let button = UIButton()
         button.addAction(action, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)
@@ -893,7 +913,7 @@ struct TerminalPaneViewTests {
         container.openURL = { opened.append($0) }
         container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: url.absoluteString)
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
-            .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Open on Host" })
         #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Sign in via Mac"))
         let button = UIButton()
         button.addAction(action, for: .touchUpInside)

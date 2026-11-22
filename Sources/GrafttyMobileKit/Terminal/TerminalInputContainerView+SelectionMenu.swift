@@ -95,12 +95,39 @@ extension TerminalInputContainerView {
         }
     }
 
+    /// Actions for the long-pressed link: open it on this device, open it
+    /// through the originating pane's browser on the host, or copy it.
+    /// Empty when the press was not on a link. Each action checks that its
+    /// menu is still the current one, so a stale menu cannot act on a
+    /// replacement pane.
+    func linkMenuElements(for generation: UInt) -> [UIMenuElement] {
+        guard let url = longPressURL else { return [] }
+        let openLocally = openURLLocally
+        let openOnHost = openURL
+        let host = hostLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        func action(_ title: String, _ symbol: String, _ run: @escaping () -> Void) -> UIAction {
+            UIAction(title: title, image: UIImage(systemName: symbol)) { [weak self] _ in
+                guard let self, self.longPressMenuGeneration == generation else { return }
+                run()
+            }
+        }
+        return [
+            action("Open Link", "safari") { openLocally(url) },
+            action("Open on \(host.isEmpty ? "Host" : host)", "macbook.and.iphone") { openOnHost(url) },
+            action("Copy Link", "doc.on.doc") { [weak self] in self?.copyLink(url) },
+        ]
+    }
+
     /// The edit menu while text is selected: Copy, Select All, and Paste
     /// when the clipboard has something to paste.
     func selectionMenuElements(
         for context: TerminalTouchSelectionMenuContext, hasPasteContent: Bool
     ) -> [UIMenuElement] {
-        var children: [UIMenuElement] = ["terminal.copy", "terminal.selectAll"].compactMap {
+        // The link belongs to the word the long press selected. Once a
+        // handle drag changes the selection, its actions go.
+        var children: [UIMenuElement] = context.selectedText == longPressSelectedText
+            ? linkMenuElements(for: longPressMenuGeneration) : []
+        children += ["terminal.copy", "terminal.selectAll"].compactMap {
             terminalView.librarySelectionAction($0, for: context)
         }
         if hasPasteContent {
@@ -168,17 +195,7 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         var children: [UIMenuElement] = [
             UIAction(title: "Select All") { [weak self] _ in self?.performSelectAll() },
         ]
-        if let url = longPressURL {
-            let open = openURL
-            children.insert(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                guard let self, self.longPressMenuGeneration == generation else { return }
-                self.copyLink(url)
-            }, at: 0)
-            children.insert(UIAction(title: "Open Link", image: UIImage(systemName: "safari")) { [weak self] _ in
-                guard let self, self.longPressMenuGeneration == generation else { return }
-                open(url)
-            }, at: 0)
-        }
+        children.insert(contentsOf: linkMenuElements(for: generation), at: 0)
         if hasPasteContent {
             children.append(UIAction(title: "Paste") { [weak self] _ in
                 self?.performPaste(for: generation)

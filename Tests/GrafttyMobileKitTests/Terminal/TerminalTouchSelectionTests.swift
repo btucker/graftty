@@ -346,5 +346,29 @@ struct TerminalTouchSelectionTests {
         #expect(!first.view.hasTouchSelection)
         #expect(second.view.touchSelectionText == "delta")
     }
+
+    @Test
+    func linkActionsDropAfterSelectionChanges() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("see https://example.com/docs now", until: "now")
+        let view = harness.view
+        let container = harness.container
+        container.hostLabel = "Studio"
+        let press = ScriptedLongPress()
+        press.point = try harness.point(column: 10, row: 0)
+
+        view.handleLongPressForSelection(press)
+
+        try #require(view.hasTouchSelection)
+        #expect(container.selectionMenuActionTitlesForTesting(hasPasteContent: false) == [
+            "Open Link", "Open on Studio", "Copy Link", "Copy", "Select All",
+        ])
+        // A handle drag changes the selection; the link belonged to the pressed word.
+        let changed = TerminalTouchSelectionMenuContext(sourcePoint: press.point, selectedText: "see https")
+        let titles = container.selectionMenuElements(for: changed, hasPasteContent: false)
+            .compactMap { ($0 as? UIAction)?.title }
+        #expect(titles == ["Copy", "Select All"])
+    }
 }
 #endif

@@ -426,7 +426,12 @@ public final class TerminalInputContainerView: UIView,
     var longPressSelectedText: String?
     var longPressURL: URL?
     private(set) var terminalGridMetrics: TerminalGridMetrics?
+    /// Opens a link through the originating pane's browser on the host.
     var openURL: (URL) -> Void = { _ in }
+    /// Opens a link on this device, in its default browser.
+    var openURLLocally: (URL) -> Void = { UIApplication.shared.open($0) }
+    /// The host's name, for the menu action that opens a link there.
+    var hostLabel: String?
     var copyLink: (URL) -> Void = { UIPasteboard.general.string = $0.absoluteString }
     var linkContext: AnyHashable? {
         didSet {
@@ -436,6 +441,7 @@ public final class TerminalInputContainerView: UIView,
     }
     func detachBrowserControls() {
         openURL = { _ in }
+        hostLabel = nil
         linkContext = nil
         // Even a context-free caller can hold actions capturing its old route.
         invalidateLinkMenu()
