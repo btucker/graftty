@@ -4,7 +4,7 @@
 
 Use `graftty agent add <name> --prompt-stdin --json` to create a worktree and its agent, or pass `--worktree <existing-name-or-path>` to add an agent to a tracked checkout.
 
-- `--provider claude|codex` overrides the destination host's Default agent. Without either choice, launch fails with a provider-selection message.
+- `--provider claude|codex|antigravity` overrides the destination host's Default agent. Without either choice, launch fails with a provider-selection message.
 - `--base <ref>` selects the new branch's starting revision. It is incompatible with `--worktree`; `--base HEAD` includes committed changes only.
 - `--prompt-stdin` conflicts with `--prompt`. Use stdin for dynamic task text.
 - Creation is asynchronous. `--wait` waits for a new worktree to accept the launch, not for task completion.
@@ -17,7 +17,7 @@ The lower-level `graftty worktree add` remains available for explicit branch sel
 
 ## Another Mac
 
-The compatibility command `graftty worktree add <name> --agent <codex|claude>` accepts `--remote '<Mac-name-or-device-ID>'` over an active control connection. Both Macs must support remote creation and track the project. The destination defaults to the caller's Git origin; equivalent GitHub/GitLab SSH and HTTPS URLs match. Use `--project '<destination-name-or-absolute-repository-path>'` for another project, missing origin, or ambiguous matches, including calls outside a worktree.
+The compatibility command `graftty worktree add <name> --agent <codex|claude|antigravity>` accepts `--remote '<Mac-name-or-device-ID>'` over an active control connection. Both Macs must support remote creation and track the project. The destination defaults to the caller's Git origin; equivalent GitHub/GitLab SSH and HTTPS URLs match. Use `--project '<destination-name-or-absolute-repository-path>'` for another project, missing origin, or ambiguous matches, including calls outside a worktree.
 
 Branches and `--base` resolve on the destination; `--base HEAD` uses its main checkout. Local commits, edits, and instructions are not transferred.
 

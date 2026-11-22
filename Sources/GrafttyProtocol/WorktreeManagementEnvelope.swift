@@ -191,18 +191,25 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     /// Types `text` into the pane of an agent stopped on `occurrence`'s question
     /// and submits it; refused once that question changed or cleared.
     case answerRequest(worktreeID: String, paneID: String, occurrence: SidebarAttentionOccurrence, text: String)
+    /// Read the current rendered terminal and recent history without attaching or resizing it.
+    case terminalText(worktreeID: String, paneID: String, lines: Int)
 }
 
 extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case openResource, placement, agentSkills, agentID, action, conversation, provider, operationID, launchDefaultAgent, agent
         case type, repositoryID, worktreeID, worktreeName, branchName,
-             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode, rank, changedAt, text
+             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode, rank, changedAt, text, lines
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case let .terminalText(worktreeID, paneID, lines):
+            try c.encode("terminal_text", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
+            try c.encode(paneID, forKey: .paneID)
+            try c.encode(lines, forKey: .lines)
         case let .addAgent(worktreeID, provider, operationID):
             try c.encode("add_agent", forKey: .type)
             try c.encode(worktreeID, forKey: .worktreeID)
@@ -351,6 +358,10 @@ extension WorktreeManagementRequest: Codable {
         case "explain_request":
             self = .explainRequest(worktreeID: try c.decode(String.self, forKey: .worktreeID),
                                    paneID: try c.decode(String.self, forKey: .paneID))
+        case "terminal_text":
+            self = .terminalText(worktreeID: try c.decode(String.self, forKey: .worktreeID),
+                                 paneID: try c.decode(String.self, forKey: .paneID),
+                                 lines: try c.decode(Int.self, forKey: .lines))
         case "answer_request":
             self = .answerRequest(worktreeID: try c.decode(String.self, forKey: .worktreeID),
                                   paneID: try c.decode(String.self, forKey: .paneID),
@@ -411,6 +422,7 @@ extension WorktreeManagementRequest: Codable {
 }
 
 public enum WorktreeManagementResponse: Sendable, Equatable {
+    case terminalText(String)
     case agentSkills(RemoteSkillTransferStatus)
     case placement(HostPlacementRecord)
     case agentCompletions([AgentCompletionCandidate])
@@ -432,12 +444,15 @@ extension WorktreeManagementResponse: Codable {
         case openResource, placement, agentSkills, agentID, action, conversation
         case type, presentation, repositories, remoteMacConnections,
              worktreeID, paneID, dismissed, code, message, forceAllowed,
-             shortStatus, imageData
+             shortStatus, imageData, text
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .terminalText(let text):
+            try c.encode("terminal_text", forKey: .type)
+            try c.encode(text, forKey: .text)
         case .agentConversation(let detail):
             try c.encode("agent_conversation", forKey: .type)
             try c.encode(detail, forKey: .conversation)
@@ -486,6 +501,7 @@ extension WorktreeManagementResponse: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "terminal_text": self = .terminalText(try c.decode(String.self, forKey: .text))
         case "agent_skills": self = .agentSkills(try c.decode(RemoteSkillTransferStatus.self, forKey: .agentSkills))
         case "placement": self = .placement(try c.decode(HostPlacementRecord.self, forKey: .placement))
         case "agent_conversation":

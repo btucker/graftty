@@ -28,8 +28,8 @@ extension TerminalInputContainerView {
         longPressURL = nil
         // Native lookup uses the real terminal cell map, including OSC8.
         // Never synthesize pointer motion in a mouse-reporting application
-        // or while a selection drag owns the mouse button.
-        if let surface = terminalView.surface, !surface.isMouseCaptured, !selectionController.isActive, !surface.hasSelection() {
+        // or while a pointer selection owns the mouse button.
+        if let surface = terminalView.surface, !surface.isMouseCaptured, !surface.hasSelection() {
             longPressURL = TerminalLinkResolver.url(in: request.text, anchor: request.anchorRange)
             probingLink = true
             probedLink = nil
@@ -43,6 +43,18 @@ extension TerminalInputContainerView {
                 longPressURL = TerminalLinkResolver.webURL(link)
             }
         }
+        // The terminal selects the pressed word and presents its own menu,
+        // clear of the handles. A press with no text nearby selects nothing.
+        longPressSelectedText = nil
+        longPressSelectedCells = nil
+        isSelectingLongPressedWord = true
+        let selected = terminalView.beginHostTouchSelection(at: request.sourcePoint)
+        isSelectingLongPressedWord = false
+        if selected {
+            longPressSelectedText = terminalView.touchSelectionText
+            longPressSelectedCells = terminalView.touchSelectionCells
+            return
+        }
         let config = UIEditMenuConfiguration(
             identifier: longPressMenuIdentifier(for: longPressMenuGeneration),
             sourcePoint: convert(request.sourcePoint, from: terminalView)
@@ -50,81 +62,13 @@ extension TerminalInputContainerView {
         longPressMenu.presentEditMenu(with: config)
     }
 
-    @objc func handleSelectionPan(_ recognizer: UIPanGestureRecognizer) {
-        guard selectionController.isActive else { return }
-        let point = recognizer.location(in: terminalView)
-        switch recognizer.state {
-        case .began:
-            selectionPanStartedInViewport = acceptsTerminalInput(
-                at: recognizer.location(in: self)
-            )
-            guard selectionPanStartedInViewport else { return }
-            selectionMenu.dismissMenu()
-            selectionController.extend(to: point)
-        case .changed:
-            guard selectionPanStartedInViewport else { return }
-            selectionController.extend(to: point)
-        case .ended, .cancelled, .failed:
-            guard selectionPanStartedInViewport else { return }
-            selectionPanStartedInViewport = false
-            selectionController.endExtension(
-                at: point,
-                viewportHeight: terminalView.bounds.height,
-                displayScale: terminalView.contentScaleFactor
-            )
-            presentSelectionMenu(near: point)
-        default: break
-        }
-    }
-
-    /// Touch types masked pan recognizers may keep receiving while selection
-    /// mode is active: indirect pointer only, so trackpad/mouse scrolling
-    /// (IOS-6.17) stays live while finger drags belong to the selection pan.
-    static let indirectPointerOnlyTouchTypes: [NSNumber] = [
-        NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)
-    ]
-
-    /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
-    func enterSelectionMode() {
-        guard !selectionPanRecognizer.isEnabled else { return }
-        selectionPanRecognizer.isEnabled = true
-        selectionModeSavedTouchTypes = []
-        ((terminalView.gestureRecognizers ?? []) + [snapshotScrollView.panGestureRecognizer, snapshotScrollView.historyIntentPan]).forEach { recognizer in
-            if let pan = recognizer as? UIPanGestureRecognizer,
-               !pan.allowedScrollTypesMask.isEmpty {
-                // A non-empty scroll mask only ADDS indirect scroll-event
-                // recognition — the pan still recognizes finger drags, and
-                // left enabled it would race the selection pan for them.
-                // Narrow it to indirect touches instead of disabling it so
-                // trackpad scrolling keeps working during selection.
-                selectionModeSavedTouchTypes.append((pan, pan.allowedTouchTypes))
-                pan.allowedTouchTypes = Self.indirectPointerOnlyTouchTypes
-                return
-            }
-        }
-        updateTerminalGestureEnablement()
-    }
-
-    func exitSelectionMode() {
-        selectionPanRecognizer.isEnabled = false
-        for (pan, savedTouchTypes) in selectionModeSavedTouchTypes {
-            pan.allowedTouchTypes = savedTouchTypes
-        }
-        selectionModeSavedTouchTypes = []
-        updateTerminalGestureEnablement()
-    }
-
-    fileprivate func performSelectAtLongPressPoint() {
-        selectionController.beginSelection(at: lastLongPressPoint)
-        enterSelectionMode()
-        presentSelectionMenu(near: lastLongPressPoint)
-    }
-
+    /// The blank-space menu is the container's own, so the selection it
+    /// starts waits a turn for that menu to begin dismissing.
     fileprivate func performSelectAll() {
-        selectionController.selectAll()
-        enterSelectionMode()
-        let center = CGPoint(x: terminalView.bounds.midX, y: terminalView.bounds.midY)
-        presentSelectionMenu(near: center)
+        let point = lastLongPressPoint
+        DispatchQueue.main.async { [weak self] in
+            self?.terminalView.beginHostTouchSelection(at: point, selectAll: true)
+        }
     }
 
     func performPaste(for menuGeneration: UInt) {
@@ -136,30 +80,72 @@ extension TerminalInputContainerView {
         refocusKeyboardAfterEditMenuDismissalIfReady(for: menuGeneration)
     }
 
-    fileprivate func performCopy() {
-        _ = selectionController.copy(toPasteboard: UIPasteboard.general)
-        exitSelectionMode()
-    }
-
-    fileprivate func performCancelSelection() {
-        selectionController.cancel()
-        exitSelectionMode()
-    }
-
-    /// Called by parent SwiftUI layer when a control-bar key is pressed,
-    /// to satisfy IOS-11.7's "press a key while active" cancel path.
+    /// Clears any touch selection: a control-bar key press or a replaced surface.
     public func cancelActiveSelectionIfAny() {
-        guard selectionController.isActive else { return }
-        performCancelSelection()
+        terminalView.dismissTouchSelection()
     }
 
-    /// @spec IOS-11.5: When selection mode is active and the user lifts their finger after Select / Select All / extend, the application shall present a second `UIEditMenuInteraction` menu anchored near the selection rect containing **Copy** and **Cancel**.
-    private func presentSelectionMenu(near point: CGPoint) {
-        let config = UIEditMenuConfiguration(
-            identifier: "selection" as AnyHashable,
-            sourcePoint: convert(point, from: terminalView)
-        )
-        selectionMenu.presentEditMenu(with: config)
+    /// Paste chosen from the terminal's selection menu. That menu belongs to
+    /// the terminal view, so focus returns once its dismissal has finished.
+    fileprivate func performPasteFromSelectionMenu() {
+        let hadFocus = terminalView.isFirstResponder
+        terminalView.dismissTouchSelection()
+        cancelPendingApplicationScroll()
+        terminalView.commitAndResetTextContext()
+        onPasteRequested?()
+        guard hadFocus else { return }
+        terminalView.performAfterTouchMenuDismissal { [weak self] in
+            // Leave UIKit's dismissal-completion turn before asking its
+            // terminal responder to focus, as the long-press menu does.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.terminalView.canBecomeFirstResponder else { return }
+                _ = self.focusKeyboardInput()
+            }
+        }
+    }
+
+    /// Actions for the long-pressed link: open it on this device, open it
+    /// through the originating pane's browser on the host, or copy it.
+    /// Empty when the press was not on a link. Each action checks that its
+    /// menu is still the current one, so a stale menu cannot act on a
+    /// replacement pane.
+    func linkMenuElements(for generation: UInt) -> [UIMenuElement] {
+        guard let url = longPressURL else { return [] }
+        let openLocally = openURLLocally
+        let openOnHost = openURL
+        let host = hostLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        func action(_ title: String, _ symbol: String, _ run: @escaping () -> Void) -> UIAction {
+            UIAction(title: title, image: UIImage(systemName: symbol)) { [weak self] _ in
+                guard let self, self.longPressMenuGeneration == generation else { return }
+                run()
+            }
+        }
+        return [
+            action("Open Link", "safari") { openLocally(url) },
+            action("Open on \(host.isEmpty ? "Host" : host)", "macbook.and.iphone") { openOnHost(url) },
+            action("Copy Link", "doc.on.doc") { [weak self] in self?.copyLink(url) },
+        ]
+    }
+
+    /// The edit menu while text is selected: Copy, Select All, and Paste
+    /// when the clipboard has something to paste.
+    func selectionMenuElements(
+        for context: TerminalTouchSelectionMenuContext, hasPasteContent: Bool
+    ) -> [UIMenuElement] {
+        // The link belongs to the word the long press selected. Once a
+        // handle drag changes the selection, or another selection replaces
+        // it, its actions go.
+        let isPressedWord = isSelectingLongPressedWord
+            || (longPressSelectedCells != nil && terminalView.touchSelectionCells == longPressSelectedCells
+                && context.selectedText == longPressSelectedText)
+        var children: [UIMenuElement] = isPressedWord ? linkMenuElements(for: longPressMenuGeneration) : []
+        children += terminalView.librarySelectionActions(["terminal.copy", "terminal.selectAll"], for: context)
+        if hasPasteContent {
+            children.append(UIAction(title: "Paste", image: UIImage(systemName: "doc.on.clipboard")) { [weak self] _ in
+                self?.performPasteFromSelectionMenu()
+            })
+        }
+        return children
     }
 
     private func refocusKeyboardAfterEditMenuDismissalIfReady(for generation: UInt) {
@@ -184,7 +170,6 @@ extension TerminalInputContainerView {
 }
 
 extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegate {
-    /// @spec IOS-11.1: While a focused terminal pane is interactive, the application shall handle libghostty's built-in long-press selection request through `TerminalInputContainerView` and present a menu at the touch point containing **Select**, **Select All**, and (when the clipboard contains text or an image at menu-build time) **Paste**, without installing a competing long-press recognizer on the container.
     public func terminalDidRequestTextSelection(_ request: TerminalTextSelectionRequest) {
         presentLongPressMenu(for: request)
     }
@@ -196,15 +181,9 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         menuFor configuration: UIEditMenuConfiguration,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        if interaction === longPressMenu {
-            guard configuration.identifier == longPressMenuIdentifier(for: longPressMenuGeneration)
-            else { return nil }
-            return longPressUIMenu(
-                for: longPressMenuGeneration,
-                hasPasteContent: UIPasteboard.general.hasStrings || UIPasteboard.general.hasImages
-            )
-        }
-        return selectionUIMenu()
+        guard configuration.identifier == longPressMenuIdentifier(for: longPressMenuGeneration)
+        else { return nil }
+        return longPressUIMenu(for: longPressMenuGeneration, hasPasteContent: Self.pasteboardHasContent)
     }
 
     public func editMenuInteraction(
@@ -212,8 +191,7 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         willDismissMenuFor configuration: UIEditMenuConfiguration,
         animator: any UIEditMenuInteractionAnimating
     ) {
-        guard interaction === longPressMenu,
-              configuration.identifier == longPressMenuIdentifier(for: longPressMenuGeneration)
+        guard configuration.identifier == longPressMenuIdentifier(for: longPressMenuGeneration)
         else { return }
         let generation = longPressMenuGeneration
         animator.addCompletion { [weak self] in
@@ -225,20 +203,9 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
 
     func longPressUIMenu(for generation: UInt, hasPasteContent: Bool) -> UIMenu {
         var children: [UIMenuElement] = [
-            UIAction(title: "Select") { [weak self] _ in self?.performSelectAtLongPressPoint() },
             UIAction(title: "Select All") { [weak self] _ in self?.performSelectAll() },
         ]
-        if let url = longPressURL {
-            let open = openURL
-            children.insert(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                guard let self, self.longPressMenuGeneration == generation else { return }
-                self.copyLink(url)
-            }, at: 0)
-            children.insert(UIAction(title: "Open Link", image: UIImage(systemName: "safari")) { [weak self] _ in
-                guard let self, self.longPressMenuGeneration == generation else { return }
-                open(url)
-            }, at: 0)
-        }
+        children.insert(contentsOf: linkMenuElements(for: generation), at: 0)
         if hasPasteContent {
             children.append(UIAction(title: "Paste") { [weak self] _ in
                 self?.performPaste(for: generation)
@@ -247,13 +214,8 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         return UIMenu(children: children)
     }
 
-    private func selectionUIMenu() -> UIMenu {
-        UIMenu(children: [
-            UIAction(title: "Copy") { [weak self] _ in self?.performCopy() },
-            UIAction(title: "Cancel", attributes: .destructive) { [weak self] _ in
-                self?.performCancelSelection()
-            },
-        ])
+    static var pasteboardHasContent: Bool {
+        UIPasteboard.general.hasStrings || UIPasteboard.general.hasImages
     }
 }
 #endif

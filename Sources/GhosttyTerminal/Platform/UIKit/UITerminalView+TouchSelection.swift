@@ -23,12 +23,18 @@
         var tapRecognizers: [UITapGestureRecognizer] = []
         var tapBeganWithMenu = false
         var tapStopsMomentum = false
+        /// The cell under the first tap of a sequence. With a host
+        /// delegate that tap may raise or lower the keyboard, moving the
+        /// text before a double tap is recognized.
+        var tapCell: Int?
         var longPress: UILongPressGestureRecognizer?
         var scrollGesture: UIPanGestureRecognizer?
         var panUsesSelection = false
         var pivot: ClosedRange<Int>?
         var selectsRows = false
         var pendingAction: (() -> Void)?
+        /// Edit-menu dismissals that have begun and not yet finished.
+        var menuDismissals = 0
         var overlay: TerminalTouchSelectionOverlay?
         var dragPoint: CGPoint?
         var dragOrigin: CGPoint?
@@ -52,6 +58,75 @@
     }
 
     extension UITerminalView {
+        /// Whether a touch selection, with its handles, is on screen or
+        /// scrolled out of view.
+        public var hasTouchSelection: Bool {
+            touchSelection.range != nil
+        }
+
+        /// The text of the touch selection, nil without one.
+        public var touchSelectionText: String? {
+            touchSelection.text
+        }
+
+        /// The cells the touch selection covers, counted from the top of the
+        /// scrollback, nil without one. Selected text keeps its cells while
+        /// it scrolls; the same text selected elsewhere has other cells.
+        public var touchSelectionCells: ClosedRange<Int>? {
+            touchSelection.range
+        }
+
+        /// Begins a touch selection for a host that owns the long press:
+        /// the word at `point`, or all text with `selectAll`. Returns false,
+        /// leaving any earlier selection alone, when there is no text to
+        /// select.
+        @discardableResult
+        public func beginHostTouchSelection(at point: CGPoint, selectAll: Bool = false) -> Bool {
+            let before = touchSelection.overlay
+            beginTouchSelection(at: point, selectAll: selectAll)
+            return touchSelection.range != nil && touchSelection.overlay !== before
+        }
+
+        /// Runs `action` once the terminal's edit menu has finished
+        /// dismissing, for a host menu item that must not race UIKit's
+        /// dismissal (taking focus, presenting another menu). With no menu
+        /// up or on its way down the action runs now: nothing else would
+        /// run it before a later, unrelated menu went away.
+        public func performAfterTouchMenuDismissal(_ action: @escaping () -> Void) {
+            guard isTouchMenuVisible || touchSelection.menuDismissals > 0 else {
+                action()
+                return
+            }
+            touchSelection.pendingAction = action
+        }
+
+        /// Remembers the cell a tap sequence began on, for a double or
+        /// triple tap that completes after the text has moved. A first
+        /// touch that cannot be a tap passes nil: a double tap it leads
+        /// selects under the finger, not where an earlier touch landed.
+        func noteTapBegan(at point: CGPoint?, tapCount: Int) {
+            guard touchSelection.enabled, tapCount == 1 else { return }
+            touchSelection.tapCell = point.flatMap {
+                touchSelectionGrid()?.cell(at: $0, viewportOffset: touchViewportOffset)
+            }
+        }
+
+        /// Whether a host-mode tap acts as a tap: toggles the keyboard, and
+        /// clicks the program where taps click at all (`sendTapClick`). The
+        /// later taps of a double or triple tap only select.
+        func tapActsOnTerminal(tapCount: Int) -> Bool {
+            !(touchSelection.enabled && tapCount >= 2)
+        }
+
+        /// A tap while text is selected only takes the selection down.
+        /// Returns whether it did, so the caller leaves the keyboard and
+        /// the program alone.
+        func dismissTouchSelectionForTap() -> Bool {
+            guard touchSelection.range != nil else { return false }
+            dismissTouchSelection()
+            return true
+        }
+
         var touchViewportOffset: Int {
             Int(core.bridge.scrollbar?.offset ?? 0)
         }
@@ -66,10 +141,10 @@
             )
         }
 
-        func beginTouchSelection(at point: CGPoint, selectAll: Bool, selectLine: Bool = false) {
-            guard usesInlineTextSelection, window != nil, let surface, let grid = touchSelectionGrid() else { return }
+        func beginTouchSelection(at point: CGPoint, selectAll: Bool, selectLine: Bool = false, cell: Int? = nil) {
+            guard touchSelection.enabled, window != nil, let surface, let grid = touchSelectionGrid() else { return }
             stopMomentumScrolling()
-            let cell = grid.cell(at: point, viewportOffset: touchViewportOffset)
+            let cell = cell ?? grid.cell(at: point, viewportOffset: touchViewportOffset)
             let total = max(grid.rows, Int(core.bridge.scrollbar?.total ?? UInt64(grid.rows)))
             let range: ClosedRange<Int>
             if selectAll {
@@ -127,7 +202,7 @@
         /// began — the bottom, when it began there — unless the user has
         /// scrolled it since; a scroll gesture passes false, being the user
         /// moving it.
-        func dismissTouchSelection(restoringViewport: Bool = true) {
+        public func dismissTouchSelection(restoringViewport: Bool = true) {
             let viewportBefore = touchSelection.viewportBeforeSelection
             let autoscrolled = touchSelection.autoscrolledOffset
             touchSelection.viewportBeforeSelection = nil
@@ -159,6 +234,13 @@
             } else if touchSelection.enabled {
                 UIMenuController.shared.hideMenu()
             }
+        }
+
+        /// A scroll gesture is the user moving the viewport. A selection
+        /// that stays through it no longer puts back a viewport one of its
+        /// handles had scrolled, wherever the scroll ends.
+        func noteUserScrolledTouchSelection() {
+            touchSelection.autoscrolledOffset = nil
         }
 
         private func currentTouchViewport(rows: Int) -> (offset: Int, atBottom: Bool) {
@@ -233,7 +315,8 @@
             return min(grid.columns - 1, max(0, Int(column)))
         }
 
-        func copyTouchSelection() -> Bool {
+        @discardableResult
+        public func copyTouchSelection() -> Bool {
             guard let range = touchSelection.range, let grid = touchSelection.grid,
                   let text = surface?.readCells(range, columns: grid.columns)?.text,
                   text == touchSelection.text, !text.isEmpty

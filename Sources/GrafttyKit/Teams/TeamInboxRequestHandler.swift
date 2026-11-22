@@ -527,7 +527,7 @@ public final class TeamInboxRequestHandler {
             }
             return output
         case .postToolUse:
-            guard runtime != .codex else {
+            guard runtime == .claude else {
                 return try TeamHookRenderer.postToolUse(runtime: runtime, messages: [])
             }
             guard canConsumeAutomaticInbox(

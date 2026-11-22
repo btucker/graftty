@@ -112,7 +112,11 @@ public actor RemoteSkillTransferReceiver {
 
     public nonisolated static func validate(_ selections: [HostAgentSkillRevision]) throws {
         guard (1...2).contains(selections.count), Set(selections.map(\.runtime)).count == selections.count,
-              selections.allSatisfy({ TeamHookRuntime(rawValue: $0.runtime) != nil && $0.revision.count == 64 && $0.revision.allSatisfy { "0123456789abcdef".contains($0) } }) else {
+              selections.allSatisfy({ selection in
+                  (selection.runtime == "codex" || selection.runtime == "claude")
+                      && selection.revision.count == 64
+                      && selection.revision.allSatisfy { "0123456789abcdef".contains($0) }
+              }) else {
             throw RemoteSkillError("Select one exact revision per runtime, for codex and/or claude")
         }
     }

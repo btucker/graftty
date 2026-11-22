@@ -50,6 +50,7 @@ protocol CodexAppServerDeliveryTrigger: Sendable {
 
 extension CodexAppServerDeliveryService: CodexAppServerDeliveryTrigger {}
 extension ClaudePeerDeliveryService: CodexAppServerDeliveryTrigger {}
+extension AntigravityDeliveryService: CodexAppServerDeliveryTrigger {}
 
 struct AppTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
     let livePaneSession: @Sendable (String) -> Bool

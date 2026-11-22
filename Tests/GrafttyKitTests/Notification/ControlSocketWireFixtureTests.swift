@@ -420,7 +420,7 @@ struct ControlSocketWireFixtureTests {
     /// Enum values are wire spellings too: an older peer rejects a renamed
     /// raw value the same way it rejects a renamed key.
     @Test func enumWireValuesStayFrozen() {
-        #expect(TeamHookRuntime.allCases.map(\.rawValue) == ["codex", "claude"])
+        #expect(TeamHookRuntime.allCases.map(\.rawValue) == ["codex", "claude", "antigravity"])
         #expect(ControlCapability.allCases.map(\.rawValue) == [
             "managed_agents", "agent_prompt_staging", "pane_agent", "worktree_base", "worktree_create_idempotency", "remote_worktree",
             "worktree_remove", "worktree_pinned_removal", "worktree_pin", "project_add",

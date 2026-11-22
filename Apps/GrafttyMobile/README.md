@@ -42,3 +42,8 @@ Or open `GrafttyMobile.xcodeproj` in Xcode and ⌘R.
 - Business logic: `Sources/GrafttyMobileKit/` (SwiftPM library, all files
   wrapped in `#if canImport(UIKit)` so `swift build` on macOS still passes).
 - App bundle metadata: this directory.
+
+## Apple Watch
+
+The iPhone app includes an Apple Watch companion for worktree requests and
+replies. See [Run Graftty on Apple Watch](WATCH.md) for setup and watch builds.

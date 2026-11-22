@@ -35,7 +35,7 @@ import GrafttyRemoteClient
         case .addAgent(let worktreeID, _, _), .agentConversation(let worktreeID, _, _), .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
              .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _), .worktreeIcon(let worktreeID, _),
-             .explainRequest(let worktreeID, _), .answerRequest(let worktreeID, _, _, _):
+             .explainRequest(let worktreeID, _), .answerRequest(let worktreeID, _, _, _), .terminalText(let worktreeID, _, _):
             return worktreeID.hasPrefix("relay-worktree-")
         }
     }
@@ -407,6 +407,9 @@ extension GrafttyApp {
                 let router = await MainActor.run { SocketRequestRouter(appState: appStateBinding, terminalManager: terminalManager, services: services) }
                 return await AttentionAnswerDelivery.deliver(worktreeID: worktreeID, paneID: paneID, occurrence: occurrence,
                                                              text: text, platform: router)
+            case let .terminalText(worktreeID, paneID, lines):
+                let router = await MainActor.run { SocketRequestRouter(appState: appStateBinding, terminalManager: terminalManager, services: services) }
+                return await TerminalTextDelivery.read(worktreeID: worktreeID, paneID: paneID, lines: lines, platform: router)
             case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
                 return await MainActor.run {
                     GrafttyApp.persistingChanges(to: appStateBinding) {

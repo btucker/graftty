@@ -147,6 +147,65 @@ struct AgentPluginAutomaticUpdateTests {
         }, refreshHookAssets: {})
     }
 
+    @Test("""
+    @spec AGENT-6.171: When Graftty launches, the application shall automatically install or refresh the Antigravity plugin once per build checkpoint without requiring prior Codex or Claude plugin installation, preserve opt-outs, and leave the checkpoint unset when `agy` is missing or installation fails so future launches retry.
+    """)
+    func autoInstallsAntigravityOncePerBuildAndRetriesWhenMissingOrFailed() async {
+        let suite = "AgentPluginAntigravityAutoInstall-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        // Missing `agy` leaves the checkpoint unset so installing `agy` later
+        // triggers installation on the next launch.
+        var attempts = 0
+        await AgentPluginAutomaticUpdate().runAntigravityIfNeeded(defaults: defaults, buildVersion: "100.60.00") {
+            attempts += 1
+            return .cliNotFound
+        }
+        #expect(attempts == 1)
+        #expect(defaults.string(forKey: SettingsKeys.antigravityPluginInstalledBuildVersion) == nil)
+
+        // Transient failure also leaves the checkpoint unset for retry.
+        await AgentPluginAutomaticUpdate().runAntigravityIfNeeded(defaults: defaults, buildVersion: "100.60.00") {
+            attempts += 1
+            throw AgentPluginInstallerError.bundledResourcesMissing
+        }
+        #expect(attempts == 2)
+        #expect(defaults.string(forKey: SettingsKeys.antigravityPluginInstalledBuildVersion) == nil)
+
+        // Successful auto-install works even when Codex/Claude were never installed.
+        let updater = AgentPluginAutomaticUpdate()
+        await updater.runAntigravityIfNeeded(defaults: defaults, buildVersion: "100.60.00") {
+            attempts += 1
+            // Settings holds its own installs while this is set, so a manual
+            // install cannot run `agy plugin install` alongside this one.
+            #expect(updater.isRunning)
+            await updater.runAntigravityIfNeeded(defaults: defaults, buildVersion: "100.60.00") {
+                Issue.record("Reentrant Antigravity install executed twice")
+                return .installed
+            }
+            return .installed
+        }
+        #expect(!updater.isRunning)
+        #expect(attempts == 3)
+        #expect(defaults.string(forKey: SettingsKeys.antigravityPluginInstalledBuildVersion) == "100.60.00")
+
+        // Same build does not reinstall.
+        await AgentPluginAutomaticUpdate().runAntigravityIfNeeded(defaults: defaults, buildVersion: "100.60.00") {
+            attempts += 1
+            return .installed
+        }
+        #expect(attempts == 3)
+
+        // New build refreshes, and explicit opt-out records the new build checkpoint.
+        await AgentPluginAutomaticUpdate().runAntigravityIfNeeded(defaults: defaults, buildVersion: "100.61.00") {
+            attempts += 1
+            return .optedOut
+        }
+        #expect(attempts == 4)
+        #expect(defaults.string(forKey: SettingsKeys.antigravityPluginInstalledBuildVersion) == "100.61.00")
+    }
+
     private static func report(succeeded: Bool) -> AgentPluginInstallationReport {
         AgentPluginInstallationReport(results: [AgentPluginInstallResult(
             step: .init(provider: .codex, executable: "codex", arguments: []),

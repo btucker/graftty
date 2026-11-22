@@ -12,13 +12,13 @@ struct AgentHookInstallerTests {
         let first = try installer.install()
         let second = try installer.install()
 
-        // Provider wrapper (codex) + four zsh-init shim files
+        // Provider wrappers (codex, agy) + four zsh-init shim files
         // (.zshenv, .zprofile, .zshrc, .zlogin) + two bash-init files
-        // (bash-launcher, .bashrc) = 7.
+        // (bash-launcher, .bashrc) = 8.
         #if os(macOS)
-        #expect(first.writtenFiles.count == 10) // URL open, browser offer, and optional Codex TUI launcher.
+        #expect(first.writtenFiles.count == 11) // URL open, browser offer, and optional Codex TUI launcher.
         #else
-        #expect(first.writtenFiles.count == 7)
+        #expect(first.writtenFiles.count == 8)
         #endif
         #expect(second.writtenFiles.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("bin/claude").path))

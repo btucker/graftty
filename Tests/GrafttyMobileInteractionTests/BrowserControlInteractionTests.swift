@@ -555,3 +555,74 @@ final class BrowserControlInteractionTests: XCTestCase {
                        y: screen.minY + Double(ySum) / Double(count * cg.height) * screen.height)
     }
 }
+
+@MainActor
+final class TerminalReadabilityInteractionTests: XCTestCase {
+    func testNamedRowsWithKeyboardAndAfterPreview() throws {
+        for rows in [2, 5, 0] { try replay(rows: rows) }
+    }
+
+    func testScrollbackRevealsEveryNamedRow() throws {
+        try replay(rows: 40, scrollPasses: 4)
+    }
+
+    private func replay(rows: Int, scrollPasses: Int = 1) throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--readability-fixture", "--rows", String(rows)]
+        app.launch()
+        defer { app.terminate() }
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            let keyboard = app.buttons["Show keyboard"]
+            XCTAssertTrue(keyboard.waitForExistence(timeout: 10), app.debugDescription)
+            keyboard.tap()
+        }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // Host output arrives five seconds after mount.
+        Thread.sleep(forTimeInterval: 6)
+        capture(app, "rows-\(rows)-initial")
+        for pass in 1...scrollPasses {
+            drag(app, down: true)
+            capture(app, "rows-\(rows)-scrolled-down-\(pass)")
+        }
+        for _ in 1...scrollPasses { drag(app, down: false) }
+        capture(app, "rows-\(rows)-scrolled-up")
+        let preview = app.buttons["Preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5), app.debugDescription)
+        preview.tap()
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 10), app.debugDescription)
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5))
+        if !app.keyboards.firstMatch.exists {
+            let show = app.buttons["Show keyboard"]
+            if show.exists { show.tap() }
+            else {
+                let terminal = app.textViews.firstMatch
+                XCTAssertTrue(terminal.waitForExistence(timeout: 5), app.debugDescription)
+                terminal.tap()
+            }
+        }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "The post-preview replay requires the keyboard")
+        capture(app, "rows-\(rows)-after-preview")
+        for pass in 1...scrollPasses {
+            drag(app, down: true)
+            capture(app, "rows-\(rows)-after-preview-scroll-\(pass)")
+        }
+        if scrollPasses > 1 {
+            for _ in 1...scrollPasses { drag(app, down: false) }
+            capture(app, "rows-\(rows)-after-preview-return-to-bottom")
+        }
+    }
+
+    private func drag(_ app: XCUIApplication, down: Bool) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: down ? 0.23 : 0.43))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: down ? 0.43 : 0.23))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+    }
+    private func capture(_ app: XCUIApplication, _ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "readability-" + name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

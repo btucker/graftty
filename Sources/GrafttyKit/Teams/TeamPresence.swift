@@ -72,6 +72,9 @@ public enum TeamAgentTransport: Codable, Equatable, Sendable {
         threadID: String,
         activeTurnID: String?
     )
+    /// The loopback agent server of one `agy` process. `tokenPath` names a
+    /// user-only file holding the server credential.
+    case antigravity(port: Int, conversationID: String, tokenPath: String)
 }
 
 /// On-disk storage for `TeamPresenceRecord`s under a directory the caller controls

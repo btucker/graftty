@@ -28,16 +28,28 @@ private actor HostPluginExecutor: CLIExecutor {
     var commands: [String] = []
     var removedLegacy = false
     let missing: Bool
-    init(missing: Bool = false) { self.missing = missing }
+    let antigravityMissingUnderGNUEnv: Bool
+    init(missing: Bool = false, antigravityMissingUnderGNUEnv: Bool = false) {
+        self.missing = missing
+        self.antigravityMissingUnderGNUEnv = antigravityMissingUnderGNUEnv
+    }
     func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
         commands.append(command)
         if missing { throw CLIError.notFound(command: command) }
+        if antigravityMissingUnderGNUEnv, command == "agy" {
+            // GNU env names itself by path, so CLIRunner on a Linux host
+            // reports a missing CLI as exit 127 rather than notFound (#666).
+            throw CLIError.nonZeroExit(command: "/usr/bin/env", exitCode: 127,
+                stderr: "/usr/bin/env: 'agy': No such file or directory\n")
+        }
         if args.prefix(2) == ["plugin", "remove"] { removedLegacy = true }
         let inventory: String
         if command == "codex" {
             inventory = removedLegacy
                 ? #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true}]}"#
                 : #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true},{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
+        } else if command == "agy" {
+            inventory = "[]"
         } else {
             inventory = #"[{"id":"graftty@graftty","scope":"user","enabled":true}]"#
         }
@@ -1562,6 +1574,15 @@ struct HeadlessHostRuntimeTests {
         }
     }
 
+    @Test("Host plugin setup for every provider succeeds on a Linux host that has no Antigravity CLI.")
+    func pluginSetupWithoutAntigravityOnLinux() async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = HostPluginExecutor(antigravityMissingUnderGNUEnv: true)
+        try await HostAgentSetup.install(configuration: config, executor: executor, installer: AgentPluginInstaller(codexConfigurationURL: root.appendingPathComponent("codex-config.toml"), claudeSettingsURL: root.appendingPathComponent("claude-settings.json")))
+        #expect(await executor.commands.filter { $0 == "agy" } == ["agy"])
+    }
+
     @Test("@spec REMOTE-22.38: When a headless runtime receives an explicit agent installer, automatic provider setup shall retain its CLI hook path.", arguments: [TeamHookRuntime.claude, .codex])
     func automaticProviderSetupRetainsInstaller(provider: TeamHookRuntime) async throws {
         let (root, config, state) = try fixture()
@@ -1714,7 +1735,7 @@ struct HeadlessHostRuntimeTests {
         let executor = HostPluginExecutor()
         let identity = try await HostSetup.prepare(configuration: config, installAgentPlugins: true, executor: executor, pluginInstaller: AgentPluginInstaller(codexConfigurationURL: root.appendingPathComponent("codex-config.toml"), claudeSettingsURL: root.appendingPathComponent("claude-settings.json")))
         #expect(identity == nil)
-        #expect(Set(await executor.commands) == ["codex", "claude"])
+        #expect(Set(await executor.commands) == ["codex", "claude", "agy"])
         #expect(try Data(contentsOf: configFile) == savedConfig)
         #expect(try Data(contentsOf: stateFile) == savedState)
         #expect(!FileManager.default.fileExists(atPath: config.identityDirectory.appendingPathComponent("host-identity.json").path))

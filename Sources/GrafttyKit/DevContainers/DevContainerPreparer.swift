@@ -102,8 +102,8 @@ public actor DevContainerPreparer {
                 at: workspace, stage: "agent-profile-mount", timeout: .seconds(30))
         }
         if let agent {
-            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", "command -v " + agent.rawValue + " >/dev/null"],
-                at: workspace, stage: "agent-runtime (install \(agent.rawValue) in the Dev Container)", timeout: .seconds(30))
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", "command -v " + agent.executable + " >/dev/null"],
+                at: workspace, stage: "agent-runtime (install \(agent.executable) in the Dev Container)", timeout: .seconds(30))
         }
         if mcp != nil {
             _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c",

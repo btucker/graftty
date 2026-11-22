@@ -239,9 +239,6 @@ public final class TerminalInputContainerView: UIView,
     }
     var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
     private(set) var keyCommandUpdateRequestCountForTesting = 0
-    private(set) lazy var selectionController = TerminalSelectionController(
-        surface: RealSurfaceProxy(surfaceProvider: { [weak self] in self?.terminalView.surface })
-    )
 
     /// Called when the user taps the Paste action in the long-press
     /// menu — the SwiftUI layer wires this to `SessionClient.sendPaste`.
@@ -404,7 +401,6 @@ public final class TerminalInputContainerView: UIView,
     }
 
     private(set) lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
-    private(set) lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
 
     private lazy var anyTouchObserver: AnyTouchObserverGestureRecognizer = {
         let r = AnyTouchObserverGestureRecognizer()
@@ -413,14 +409,6 @@ public final class TerminalInputContainerView: UIView,
         return r
     }()
 
-    private(set) lazy var selectionPanRecognizer: UIPanGestureRecognizer = {
-        let r = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
-        r.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-        r.maximumNumberOfTouches = 1
-        r.isEnabled = false
-        return r
-    }()
-    var selectionPanStartedInViewport = false
     private lazy var backSwipeRecognizer: UISwipeGestureRecognizer = {
         let recognizer = UISwipeGestureRecognizer(target: self, action: #selector(handleBackSwipe(_:)))
         recognizer.direction = .right
@@ -431,13 +419,25 @@ public final class TerminalInputContainerView: UIView,
         return recognizer
     }()
 
-    /// Captures the most-recent long-press location so the menu's
-    /// `Select` action can word-select at the original touch point even
-    /// after the gesture has ended. Updated on `.began`.
+    /// The most recent long-press location, where the blank-space menu's
+    /// Select All anchors its selection menu.
     var lastLongPressPoint: CGPoint = .zero
+    /// The word the latest long press selected, nil when it selected nothing.
+    var longPressSelectedText: String?
+    /// The cells of that word. The same text selected elsewhere, by a double
+    /// tap for one, is not the pressed word and has no claim on its link.
+    var longPressSelectedCells: ClosedRange<Int>?
+    /// True while the terminal selects the pressed word. UIKit asks for the
+    /// selection's menu inside that call, before the word can be recorded.
+    var isSelectingLongPressedWord = false
     var longPressURL: URL?
     private(set) var terminalGridMetrics: TerminalGridMetrics?
+    /// Opens a link through the originating pane's browser on the host.
     var openURL: (URL) -> Void = { _ in }
+    /// Opens a link on this device, in its default browser.
+    var openURLLocally: (URL) -> Void = { UIApplication.shared.open($0) }
+    /// The host's name, for the menu action that opens a link there.
+    var hostLabel: String?
     var copyLink: (URL) -> Void = { UIPasteboard.general.string = $0.absoluteString }
     var linkContext: AnyHashable? {
         didSet {
@@ -447,6 +447,7 @@ public final class TerminalInputContainerView: UIView,
     }
     func detachBrowserControls() {
         openURL = { _ in }
+        hostLabel = nil
         linkContext = nil
         // Even a context-free caller can hold actions capturing its old route.
         invalidateLinkMenu()
@@ -511,16 +512,14 @@ public final class TerminalInputContainerView: UIView,
         addGestureRecognizer(tap)
 
         addInteraction(longPressMenu)
-        addInteraction(selectionMenu)
-        addGestureRecognizer(selectionPanRecognizer)
-        snapshotScrollView.panGestureRecognizer.require(toFail: selectionPanRecognizer)
+        terminalView.selectionMenuItems = { [weak self] context in
+            self?.selectionMenuElements(for: context, hasPasteContent: Self.pasteboardHasContent) ?? []
+        }
         addGestureRecognizer(backSwipeRecognizer)
         snapshotScrollView.panGestureRecognizer.require(toFail: backSwipeRecognizer)
         addGestureRecognizer(applicationScrollRecognizer)
-        applicationScrollRecognizer.require(toFail: selectionPanRecognizer)
         applicationScrollRecognizer.require(toFail: backSwipeRecognizer)
         snapshotScrollView.panGestureRecognizer.require(toFail: applicationScrollRecognizer)
-        snapshotScrollView.historyIntentPan.require(toFail: selectionPanRecognizer)
         snapshotScrollView.historyIntentPan.require(toFail: backSwipeRecognizer)
         snapshotScrollView.historyIntentPan.require(toFail: applicationScrollRecognizer)
         for pan in terminalView.gestureRecognizers?.compactMap({ $0 as? UIPanGestureRecognizer }) ?? [] {
@@ -594,8 +593,11 @@ public final class TerminalInputContainerView: UIView,
             && pan.allowedScrollTypesMask.isEmpty
     }
 
-    @objc private func handleFocusKeyboardInputTap(_ recognizer: UITapGestureRecognizer) {
-        guard acceptsTerminalInput(at: recognizer.location(in: self)) else { return }
+    @objc func handleFocusKeyboardInputTap(_ recognizer: UITapGestureRecognizer) {
+        // A tap while text is selected only takes the selection down; the
+        // terminal view does that as the touch ends, after this fires.
+        guard !terminalView.hasTouchSelection,
+              acceptsTerminalInput(at: recognizer.location(in: self)) else { return }
         _ = focusKeyboardInput()
     }
 
@@ -609,19 +611,15 @@ public final class TerminalInputContainerView: UIView,
         terminalView.becomeFirstResponder()
     }
 
-    /// Masked pans whose `allowedTouchTypes` were narrowed on entering
-    /// selection mode, with their prior values, so exit restores exactly
-    /// what libghostty/setup installed.
-    var selectionModeSavedTouchTypes: [(UIPanGestureRecognizer, [NSNumber])] = []
     private var suppressedTerminalGestures: [ObjectIdentifier: Bool] = [:]
 
-    /// Selection and the checkpoint canvas can both suppress pinch. Restore
-    /// each original state only after both restrictions have been released.
+    /// The checkpoint canvas suppresses the terminal's own pinch and scroll.
+    /// A text selection suppresses nothing: one finger keeps scrolling and
+    /// only the selection handles change it.
     func updateTerminalGestureEnablement() {
-        backSwipeRecognizer.isEnabled = onBackRequested != nil && !selectionController.isActive
-        applicationScrollRecognizer.isEnabled = onApplicationScrollRequested != nil && !selectionController.isActive
-        if selectionController.isActive { cancelPendingApplicationScroll() }
-        snapshotScrollView.followerPinchGesture.isEnabled = authoritativeGrid != nil && !selectionPanRecognizer.isEnabled
+        backSwipeRecognizer.isEnabled = onBackRequested != nil
+        applicationScrollRecognizer.isEnabled = onApplicationScrollRequested != nil
+        snapshotScrollView.followerPinchGesture.isEnabled = authoritativeGrid != nil
         for recognizer in terminalView.gestureRecognizers ?? [] {
             let scrollPan = (recognizer as? UIPanGestureRecognizer).map {
                 !$0.allowedScrollTypesMask.isEmpty
@@ -629,10 +627,8 @@ public final class TerminalInputContainerView: UIView,
             // Followers scroll the snapshot canvas; libghostty's pointer-drag
             // selection stays off there as it was before IOS-6.46.
             let pointerDrag = Self.isPointerDragSelection(recognizer)
-            // Pointer drags never compete with the finger selection pan.
-            let suppressed = (selectionPanRecognizer.isEnabled && !scrollPan && !pointerDrag)
-                || (authoritativeGrid != nil && (recognizer is UIPinchGestureRecognizer || scrollPan
-                    || pointerDrag))
+            let suppressed = authoritativeGrid != nil
+                && (recognizer is UIPinchGestureRecognizer || scrollPan || pointerDrag)
             let id = ObjectIdentifier(recognizer)
             if suppressed {
                 if suppressedTerminalGestures[id] == nil {
@@ -680,20 +676,20 @@ public final class TerminalInputContainerView: UIView,
         if gestureRecognizer === applicationScrollRecognizer {
             let velocity = applicationScrollRecognizer.velocity(in: self)
             return onApplicationScrollRequested != nil && controlAttachmentID != nil
-                && authoritativeGrid != nil && !selectionController.isActive
+                && authoritativeGrid != nil
                 && snapshotScrollView.followerZoomScale == 1
                 && acceptsTerminalInput(at: applicationScrollRecognizer.location(in: self))
                 && terminalView.surface?.isMouseCaptured == true
                 && abs(velocity.y) >= abs(velocity.x)
         }
         guard gestureRecognizer === backSwipeRecognizer else { return super.gestureRecognizerShouldBegin(gestureRecognizer) }
-        return onBackRequested != nil && !selectionController.isActive
+        return onBackRequested != nil && !terminalView.hasTouchSelection
             && snapshotScrollView.followerZoomScale == 1
     }
 
     @objc func handleBackSwipe(_ recognizer: UISwipeGestureRecognizer) {
         guard recognizer.state == .ended, onBackRequested != nil,
-              !selectionController.isActive, snapshotScrollView.followerZoomScale == 1 else { return }
+              !terminalView.hasTouchSelection, snapshotScrollView.followerZoomScale == 1 else { return }
         onBackRequested?()
     }
 
@@ -727,7 +723,6 @@ extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
         pendingPasteRefocusGeneration = nil
         completedLongPressMenuDismissalGeneration = nil
         longPressMenu.dismissMenu()
-        selectionMenu.dismissMenu()
     }
 }
 

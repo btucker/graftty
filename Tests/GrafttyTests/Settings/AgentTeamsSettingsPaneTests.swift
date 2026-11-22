@@ -172,4 +172,63 @@ struct AgentTeamsSettingsPaneTests {
         AgentPluginInstallOfferPolicy.recordInstalled(in: defaults, buildVersion: nil)
         #expect(AgentTeamsSettingsPane.missingPluginsWarning(in: defaults) == nil)
     }
+
+    @Test("""
+    @spec AGENT-6.173: When live provider plugin statuses are inspected in Agent Teams Settings, the application shall treat the integration as installed once at least one Codex or Claude provider is installed and no available Codex or Claude provider remains uninstalled or errored, and shall select only available providers for bulk installation.
+    """)
+    func liveProviderStatusesDriveIntegrationStateAndBulkSelection() {
+        #expect(AgentTeamsSettingsPane.isIntegrationSatisfied(by: [
+            .codex: .installed, .claude: .cliNotFound, .antigravity: .installed
+        ]))
+        #expect(AgentTeamsSettingsPane.isIntegrationSatisfied(by: [
+            .codex: .disabled, .claude: .installed, .antigravity: .cliNotFound
+        ]))
+        #expect(!AgentTeamsSettingsPane.isIntegrationSatisfied(by: [
+            .codex: .notInstalled, .claude: .installed, .antigravity: .installed
+        ]))
+        #expect(!AgentTeamsSettingsPane.isIntegrationSatisfied(by: [
+            .codex: .error("boom"), .claude: .installed, .antigravity: .installed
+        ]))
+        #expect(!AgentTeamsSettingsPane.isIntegrationSatisfied(by: [
+            .codex: .cliNotFound, .claude: .cliNotFound, .antigravity: .installed
+        ]))
+
+        #expect(AgentTeamsSettingsPane.availableProviders(in: [
+            .codex: .installed, .claude: .cliNotFound, .antigravity: .notInstalled
+        ]) == [.codex, .antigravity])
+        #expect(AgentTeamsSettingsPane.availableProviders(in: [
+            .codex: .cliNotFound, .claude: .cliNotFound, .antigravity: .cliNotFound
+        ]).isEmpty)
+    }
+
+    @Test("""
+    @spec AGENT-6.178: When an installation started from Agent Teams Settings completes, the application shall advance the Codex and Claude automatic-refresh build checkpoint only if that installation installed every enabled Codex and Claude plugin, and shall advance the Antigravity build checkpoint only if it installed the Antigravity plugin, so that a plugin it did not install is still refreshed on the next launch.
+    """)
+    func buildCheckpointsAdvanceOnlyForPluginsTheInstallationInstalled() {
+        typealias Checkpoints = AgentTeamsSettingsPane.InstallCheckpoints
+        let allEnabled: [AgentPluginProvider: AgentPluginProviderStatus] = [
+            .codex: .installed, .claude: .installed, .antigravity: .installed
+        ]
+
+        // A Codex install that failed, or was never attempted, leaves an older
+        // enabled plugin behind. Live status still reads installed, so only the
+        // launch refresh can bring it to this build.
+        #expect(AgentTeamsSettingsPane.checkpoints(afterInstalling: [.claude, .antigravity], statuses: allEnabled)
+            == Checkpoints(recordsIntegration: true, advancesIntegrationBuild: false, advancesAntigravityBuild: true))
+        #expect(AgentTeamsSettingsPane.checkpoints(afterInstalling: [.claude], statuses: allEnabled)
+            == Checkpoints(recordsIntegration: true, advancesIntegrationBuild: false, advancesAntigravityBuild: false))
+        #expect(AgentTeamsSettingsPane.checkpoints(afterInstalling: [.antigravity], statuses: allEnabled)
+            == Checkpoints(recordsIntegration: true, advancesIntegrationBuild: false, advancesAntigravityBuild: true))
+        #expect(AgentTeamsSettingsPane.checkpoints(afterInstalling: [.codex, .claude], statuses: allEnabled)
+            == Checkpoints(recordsIntegration: true, advancesIntegrationBuild: true, advancesAntigravityBuild: false))
+
+        // Disabled and unavailable providers are never refreshed, so they do
+        // not hold the checkpoint back.
+        #expect(AgentTeamsSettingsPane.checkpoints(afterInstalling: [.claude], statuses: [
+            .codex: .disabled, .claude: .installed, .antigravity: .cliNotFound
+        ]) == Checkpoints(recordsIntegration: true, advancesIntegrationBuild: true, advancesAntigravityBuild: false))
+        #expect(AgentTeamsSettingsPane.checkpoints(afterInstalling: [.claude], statuses: [
+            .codex: .notInstalled, .claude: .installed, .antigravity: .installed
+        ]) == Checkpoints(recordsIntegration: false, advancesIntegrationBuild: false, advancesAntigravityBuild: false))
+    }
 }
