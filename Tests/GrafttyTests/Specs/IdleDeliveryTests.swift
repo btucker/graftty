@@ -401,6 +401,64 @@ struct CodexAppServerInboxDeliveryWiringTests {
         )?.lastDeliveredToAnySessionID == claude.id)
     }
 
+    @Test("""
+    @spec AGENT-6.177: While rows remain unread for a worktree whose Antigravity presence records a local agent server, the application shall retry native delivery on every presence refresh, so rows that arrived before a hook recorded the server or whose send failed are delivered without waiting for another message.
+    """)
+    func presenceRetryDrainsAntigravityRowAfterServerIsRecorded() async throws {
+        let inbox = try Self.makeInbox()
+        let worktree = "/repo/.worktrees/alice"
+        let conversationID = "33baee6d-e7b9-450b-88d5-739d941230bf"
+        let pending = try Self.appendMessage(
+            to: worktree,
+            runtime: TeamHookRuntime.antigravity.rawValue,
+            inbox: inbox
+        )
+        let antigravityDelivery = RuntimeAdvancingDelivery(runtime: .antigravity, inbox: inbox)
+        let record = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: worktree,
+            runtime: .antigravity,
+            paneSessionName: "graftty-agy",
+            pid: 101,
+            processStartTimeMicroseconds: 1_001,
+            registeredAt: Date(timeIntervalSince1970: 10),
+            runtimeSessionID: conversationID,
+            transport: .antigravity(port: 50_201, conversationID: conversationID, tokenPath: "/tokens/101.token")
+        )
+
+        await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
+            inbox: inbox,
+            records: [record],
+            deliveries: [antigravityDelivery]
+        )
+
+        #expect(await antigravityDelivery.deliveryCount == 1)
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: worktree
+        )?.lastDeliveredToAnySessionID == pending.id)
+    }
+
+    @Test("Presence retry skips an Antigravity worktree whose agent has no recorded agent server.")
+    func presenceRetrySkipsAntigravityWithoutRecordedServer() async throws {
+        let inbox = try Self.makeInbox()
+        let worktree = "/repo/.worktrees/alice"
+        _ = try Self.appendMessage(
+            to: worktree,
+            runtime: TeamHookRuntime.antigravity.rawValue,
+            inbox: inbox
+        )
+        let delivery = RecordingCodexDelivery()
+
+        await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
+            inbox: inbox,
+            records: [Self.presence(team: "/repo", worktree: worktree, runtime: .antigravity, pane: "graftty-agy")],
+            deliveries: [delivery]
+        )
+
+        #expect(await delivery.calls.isEmpty)
+    }
+
     private static func waitUntil(
         timeout: TimeInterval = 1.0,
         condition: () async -> Bool

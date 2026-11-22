@@ -5410,6 +5410,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.169** If a resumed Antigravity conversation omits its session-start hook, then the application shall bind the saved conversation to its managed agent when the first turn begins.
 
+**AGENT-6.174** When inbox rows are deliverable to a reachable Antigravity agent whose presence records a local agent server, the application shall send all of those rows as one message to that agent's conversation through the server and update shared delivery state only after the server accepts the message; if the server credential is unavailable or the server rejects the message, then the rows shall remain unread for hook delivery or retry.
+
+**AGENT-6.175** When an Antigravity hook registers a session launched with a Graftty server credential, the application shall record the provider process's listening local port that accepts that credential for the session's conversation and shall store the credential in a file that only the user can read; if no listening port accepts the credential, then the application shall record no local agent server.
+
+**AGENT-6.176** When `agy` is launched from a Graftty terminal, the wrapper shall start the real `agy` outside the wrapper directory with the caller's arguments and a server credential that Graftty's hooks can read, minting a new credential for each launch unless the caller already supplied one.
+
+**AGENT-6.177** While rows remain unread for a worktree whose Antigravity presence records a local agent server, the application shall retry native delivery on every presence refresh, so rows that arrived before a hook recorded the server or whose send failed are delivered without waiting for another message.
+
 ## CLI — CLI
 
 ### CLI-1.x

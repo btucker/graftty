@@ -51,12 +51,20 @@ struct AntigravityHook {
         let teamID = TeamLookup.id(of: resolved.team)
         let existing = try? storage.read(teamID: teamID, worktree: worktree,
             runtime: .antigravity, paneSessionName: pane)
-        guard existing?.runtimeSessionID != sessionID || existing?.pid != pid
-                || existing?.processStartTimeMicroseconds != start else { return }
+        let unchanged = existing?.runtimeSessionID == sessionID && existing?.pid == pid
+            && existing?.processStartTimeMicroseconds == start
+        // A bound server stays valid for the life of the process and conversation.
+        // An unbound session probes again at each turn start. A process launched
+        // without the wrapper has no credential, so its probe returns at once.
+        let transport = (unchanged ? existing?.transport : nil) ?? AntigravityServerBinder().bind(
+            pid: pid, conversationID: sessionID,
+            token: ProcessInfo.processInfo.environment[AntigravityServerBinder.tokenEnvironmentKey])
+        guard !unchanged || existing?.transport != transport else { return }
         // One file per pane is replaced when AGY switches conversations.
         try? storage.write(.init(teamID: teamID, worktree: worktree, runtime: .antigravity,
             paneSessionName: pane, pid: pid, processStartTimeMicroseconds: start,
-            registeredAt: Date(), runtimeSessionID: sessionID))
+            registeredAt: unchanged ? existing?.registeredAt ?? Date() : Date(),
+            runtimeSessionID: sessionID, transport: transport))
     }
 
     static func providerPID(start: Int32 = ProcessInfo.processInfo.processIdentifier) -> Int32? {

@@ -94,6 +94,9 @@ private enum AgentIntegrationRoster {
             case .codex(_, _, let threadID, _):
                 row["transport"] = "codex"
                 row["transportThreadID"] = threadID
+            case .antigravity(_, let conversationID, _):
+                row["transport"] = "antigravity"
+                row["transportThreadID"] = conversationID
             case nil:
                 break
             }
