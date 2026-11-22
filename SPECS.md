@@ -2396,7 +2396,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.7** When the user selects a paired Mac, the application shall request `hostPresentation` over the authenticated worktree-management channel and pass a non-empty Ghostty config to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting a `TerminalPaneView`. A missing or empty config is non-fatal and falls back to `libghostty-spm` defaults. The response also carries the Mac's resolved keybindings so terminals mirror desktop presentation without Web Access.
 
-**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.
+**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its background to the screen edges, keep its terminal viewport below top chrome, keep floating controls within the safe area, and reserve the keyboard and its control bar when the keyboard is visible.
 
 **IOS-4.9** The application shall display a floating keyboard button at the bottom-trailing corner of the pane view with three states:
 
@@ -2480,9 +2480,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.55** When the phone shows a worktree with agents, the application shall list agent cards ordered by waiting for the user, working, idle, failed, then finished, each titled by its live terminal title and showing its question or result, followed by the worktree's shells and a one-line purpose from its brief.
 
-**IOS-4.56** While an iPhone agent terminal is visible, the application shall extend the terminal viewport to the screen's top and bottom edges behind a single floating row containing Back and the agent switcher on the left and the resource controls on the right, reserving only the keyboard and its control bar.
+**IOS-4.56** While an iPhone agent terminal is visible, the application shall extend its background to the screen edges, keep its terminal viewport below the floating row containing Back, the agent switcher and resource controls, and reserve the keyboard and its control bar when visible.
 
-**IOS-4.57** While an iPhone agent terminal extends behind the status bar and Dynamic Island, the application shall blend its top edge into the shared worktree identity smear, fade that overlay into the terminal below, and preserve the terminal's touch handling.
+**IOS-4.57** While an iPhone agent terminal is visible, the application shall blend the screen's top edge into the shared worktree identity smear, fade that overlay into the terminal below, and preserve the terminal's touch handling.
 
 **IOS-4.58** While an iPhone agent terminal shows resource controls, the application shall order Preview, Browser, and Context from left to right in one top-right capsule, use the right-sidebar glyph for Context, retain at least 44-point targets, and keep the group stable when no latest pane preview exists.
 
@@ -2548,7 +2548,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.10** When the iOS client becomes the display owner, the application shall explicitly synchronize the mounted terminal's physical viewport without waiting for keyboard input, preserving the owner's selected font size.
 
-**IOS-6.11** While the software keyboard is visible in a fullscreen mobile terminal, the application shall reserve the measured terminal control-bar height above the keyboard; while the keyboard is hidden, floating controls shall overlay the full usable viewport.
+**IOS-6.11** While a fullscreen mobile terminal is visible, the application shall keep its viewport below top chrome and extend it to the bottom screen edge or, when the keyboard is visible, to the measured terminal control bar above the keyboard.
 
 **IOS-6.12** While connected to a legacy (non-owner-aware) server, the application shall not resize the remote PTY until the user first engages with the session (keystroke, paste, or control key); a mere connection or layout tick shall leave the shared PTY size untouched so an already-attached client's column width is not stolen. On first engagement it shall send the current iOS viewport as the legacy window size.
 
@@ -2576,7 +2576,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.24** When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.
 
-**IOS-6.25** If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.
+**IOS-6.25** While a mobile terminal is displayed, the application shall keep fullscreen terminal viewports below top chrome through multiline output, wrapping, scrollback, and preview dismissal, and preserve embedded iPad viewport bounds.
 
 **IOS-6.26** When a user begins a scroll drag in an interactive mobile terminal, the application shall place the terminal pointer at the gesture location before sending wheel input so fullscreen applications receive scrolling in the touched region.
 

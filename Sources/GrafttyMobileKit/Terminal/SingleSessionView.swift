@@ -592,6 +592,9 @@ struct SingleSessionView: View {
                     VStack(spacing: 0) {
                         terminalContent
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            // Reserve chrome in the viewport, so every row stays
+                            // readable without resizing when output arrives.
+                            .padding(.top, isEmbeddedPane || isTerminalSheet ? 0 : topSafeAreaInset + floatingChromeClearance)
                             .overlay(alignment: .bottom) {
                                 if agentCompletion.isActive, isPaneFocused {
                                     AgentCompletionPicker(model: agentCompletion)
@@ -1398,8 +1401,6 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
-            reservesTopChromeSpace: !isEmbeddedPane && !isTerminalSheet,
-            topChromeClearance: floatingChromeClearance,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)

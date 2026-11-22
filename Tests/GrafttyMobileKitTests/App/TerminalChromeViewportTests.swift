@@ -13,7 +13,7 @@ import UIKit
 #endif
 
 #if canImport(UIKit) && !targetEnvironment(macCatalyst)
-@Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
+@Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its background to the screen edges, keep its terminal viewport below top chrome, keep floating controls within the safe area, and reserve the keyboard and its control bar when the keyboard is visible.", .serialized)
 @MainActor
 struct RenderedTerminalViewportTests {
     @Test("An embedded input request stays below the controls without resizing the mobile terminal")
@@ -103,10 +103,10 @@ struct RenderedTerminalViewportTests {
             try await waitForLayout("first prompt") { client.session.readViewportText()?.contains("prompt") == true }
             let text = container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
             #expect(text.minY >= request.accessibilityFrame.maxY + 8)
-            #expect(abs(container.convert(container.bounds, to: fixture.window).minY) < 1)
+            #expect(container.convert(container.bounds, to: fixture.window).minY >= fixture.host.view.safeAreaInsets.top + 68)
             client.session.receive(Data("\r\nsecond line".utf8))
-            try await waitForLayout("populated terminal still reaches top") {
-                abs(container.terminalView.convert(container.terminalView.bounds, to: fixture.window).minY) < 1
+            try await waitForLayout("populated terminal stays below the input request") {
+                container.terminalView.convert(container.terminalView.bounds, to: fixture.window).minY >= request.accessibilityFrame.maxY + 8
             }
         }
     }
@@ -124,7 +124,7 @@ struct RenderedTerminalViewportTests {
         client.session.receive(Data((String(repeating: "Checking the floating iPhone header\r\n", count: 60) + "Ready > ").utf8))
         try await waitForLayout("multiline agent output") {
             container.layoutIfNeeded()
-            return client.session.readViewportText()?.contains("Ready >") == true && container.snapshotScrollView.topContentInset == 0
+            return client.session.readViewportText()?.contains("Ready >") == true
         }
         try await waitForLayout("agent header accessibility") {
             fixture.host.view.layoutIfNeeded()
@@ -144,12 +144,12 @@ struct RenderedTerminalViewportTests {
         }
         #expect(back.accessibilityFrame.maxX <= switcher.accessibilityFrame.minX + 1)
         #expect(switcher.accessibilityFrame.maxX <= preview.accessibilityFrame.minX + 1)
-        #expect(abs(container.convert(container.bounds, to: fixture.window).minY) < 1)
+        #expect(container.convert(container.bounds, to: fixture.window).minY >= fixture.host.view.safeAreaInsets.top + 68)
         #expect(container.acceptsTerminalInput(at: CGPoint(x: 100, y: 1)))
 
     }
 
-    @Test("@spec IOS-4.57: While an iPhone agent terminal extends behind the status bar and Dynamic Island, the application shall blend its top edge into the shared worktree identity smear, fade that overlay into the terminal below, and preserve the terminal's touch handling.", arguments: [true, false])
+    @Test("@spec IOS-4.57: While an iPhone agent terminal is visible, the application shall blend the screen's top edge into the shared worktree identity smear, fade that overlay into the terminal below, and preserve the terminal's touch handling.", arguments: [true, false])
     func terminalTopFadesIntoWorktreeSmear(dark: Bool) throws {
         let theme = dark ? GhosttyThemeColors.fallback : GhosttyThemeColors(
             backgroundRGB: .init(r: 0.98, g: 0.97, b: 0.94), foregroundRGB: .init(r: 0.1, g: 0.1, b: 0.1))
@@ -178,8 +178,8 @@ struct RenderedTerminalViewportTests {
                 "The wash must leave terminal content below the header unchanged")
     }
 
-    @Test("@spec IOS-4.56: While an iPhone agent terminal is visible, the application shall extend the terminal viewport to the screen's top and bottom edges behind a single floating row containing Back and the agent switcher on the left and the resource controls on the right, reserving only the keyboard and its control bar.", arguments: [CGFloat(0), CGFloat(300)])
-    func compactAgentTerminalReachesScreenEdges(keyboardInset: CGFloat) async throws {
+    @Test("@spec IOS-4.56: While an iPhone agent terminal is visible, the application shall extend its background to the screen edges, keep its terminal viewport below the floating row containing Back, the agent switcher and resource controls, and reserve the keyboard and its control bar when visible.", arguments: [CGFloat(0), CGFloat(300)])
+    func compactAgentTerminalClearsChrome(keyboardInset: CGFloat) async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
         client.start()
         defer { client.stop() }
@@ -189,7 +189,7 @@ struct RenderedTerminalViewportTests {
         let container = try await renderedContainer(in: fixture.host.view)
         let frame = container.convert(container.bounds, to: fixture.window)
         let expectedBottom = fixture.window.bounds.maxY - keyboardInset - (keyboardInset > 0 ? 58 : 0)
-        #expect(abs(frame.minY - fixture.window.bounds.minY) < 1, "Agent terminal leaves a top gap: \(frame)")
+        #expect(frame.minY >= fixture.host.view.safeAreaInsets.top + 68, "Agent terminal overlaps top chrome: \(frame)")
         #expect(abs(frame.maxY - expectedBottom) < 1, "Agent terminal ends at \(frame.maxY), expected \(expectedBottom)")
 
         client.session.receive(Data("prompt".utf8))
@@ -198,14 +198,14 @@ struct RenderedTerminalViewportTests {
             return text.minY >= fixture.host.view.safeAreaInsets.top + 68
         }
         client.session.receive(Data("\r\nsecond line".utf8))
-        try await waitForLayout("agent output reaches the physical top") {
+        try await waitForLayout("agent output remains below floating controls") {
             let text = container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
-            return abs(text.minY - fixture.window.bounds.minY) < 1
+            return text.minY >= fixture.host.view.safeAreaInsets.top + 68
         }
     }
 
-    @Test("@spec IOS-6.25: If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.", arguments: [true, false], ["x", "界", "👩‍💻"])
-    func chromeClearanceTracksFirstLineContent(embedded: Bool, wrappedCharacter: String) async throws {
+    @Test("@spec IOS-6.25: While a mobile terminal is displayed, the application shall keep fullscreen terminal viewports below top chrome through multiline output, wrapping, scrollback, and preview dismissal, and preserve embedded iPad viewport bounds.", arguments: [true, false], ["x", "界", "👩‍💻"])
+    func chromeClearanceKeepsFullscreenOutputReadable(embedded: Bool, wrappedCharacter: String) async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
         client.start()
         defer { client.stop() }
@@ -226,8 +226,8 @@ struct RenderedTerminalViewportTests {
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
 
         client.session.receive(Data("\r\nsecond line".utf8))
-        try await waitForLayout("multiline terminal reaches top edge") {
-            abs(textFrame().minY - viewportTop) < 1
+        try await waitForLayout("multiline terminal preserves its pane clearance") {
+            (embedded ? abs(textFrame().minY - viewportTop) < 1 : textFrame().minY >= minimumClearance)
         }
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
         #expect(container.acceptsTerminalInput(at: CGPoint(x: 100, y: 1)))
@@ -242,22 +242,50 @@ struct RenderedTerminalViewportTests {
         let columns = Int(try #require(container.terminalGridMetrics).columns)
         let repeats = (wrappedCharacter == "x" ? columns : columns / 2) + 5
         client.session.receive(Data(String(repeating: wrappedCharacter, count: repeats).utf8))
-        try await waitForLayout("soft-wrapped first line removes clearance") {
-            abs(textFrame().minY - viewportTop) < 1
+        try await waitForLayout("wrapped output preserves its pane clearance") {
+            (embedded ? abs(textFrame().minY - viewportTop) < 1 : textFrame().minY >= minimumClearance)
         }
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
 
         let rows = Int(try #require(container.terminalGridMetrics).rows)
         client.session.receive(Data((String(repeating: "\r\noutput", count: rows * 2)
                                      + "\u{1b}[2J\u{1b}[Hprompt").utf8))
-        try await waitForLayout("scrollback removes clearance even with one visible line") {
-            abs(textFrame().minY - viewportTop) < 1
+        try await waitForLayout("scrollback preserves its pane clearance") {
+            (embedded ? abs(textFrame().minY - viewportTop) < 1 : textFrame().minY >= minimumClearance)
         }
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
     }
 
-    @Test("@spec IOS-6.11: While the software keyboard is visible in a fullscreen mobile terminal, the application shall reserve the measured terminal control-bar height above the keyboard; while the keyboard is hidden, floating controls shall overlay the full usable viewport.", arguments: [CGFloat(0), CGFloat(300)])
-    func fullscreenCanvasReachesScreenEdges(keyboardInset: CGFloat) async throws {
+    @Test("Two rows, five rows and a full screen remain readable without changing the grid", arguments: [false, true])
+    func namedOutputKeepsChromeClearance(keyboardVisible: Bool) async throws {
+        let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let fixture = makeFixture(client: client, keyboardInset: keyboardVisible ? 300 : 0, agentWorkspace: true)
+        defer { fixture.window.isHidden = true }
+        let container = try await renderedContainer(in: fixture.host.view)
+        let original = try #require(container.terminalGridMetrics)
+        #expect(original.rows >= 10, "The keyboard-open terminal must retain usable space")
+        for count in [2, 5, Int(original.rows), Int(original.rows) * 2] {
+            let output = (1...count).map { "APRICOT row \($0)" }.joined(separator: "\r\n")
+            client.session.receive(Data(("\u{1b}[3J\u{1b}[2J\u{1b}[H" + output).utf8))
+            try await waitForLayout("named output") { client.session.readViewportText()?.contains("APRICOT row \(count)") == true }
+            // Give the existing 250 ms clearance poll time to observe the output.
+            try await Task.sleep(for: .milliseconds(350))
+            fixture.host.view.layoutIfNeeded()
+            container.layoutIfNeeded()
+            let text = container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
+            #expect(text.minY >= fixture.host.view.safeAreaInsets.top + 68,
+                    "Rows must stay below Back and the Dynamic Island after \(count) lines")
+            #expect(container.terminalGridMetrics?.rows == original.rows,
+                    "Receiving output must not resize or reflow the terminal")
+            #expect(container.terminalGridMetrics?.columns == original.columns)
+        }
+    }
+
+    @Test("@spec IOS-6.11: While a fullscreen mobile terminal is visible, the application shall keep its viewport below top chrome and extend it to the bottom screen edge or, when the keyboard is visible, to the measured terminal control bar above the keyboard.", arguments: [CGFloat(0), CGFloat(300)])
+    func fullscreenCanvasClearsChromeAndReachesUsableBottom(keyboardInset: CGFloat) async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
         client.start()
         defer { client.stop() }
@@ -268,15 +296,15 @@ struct RenderedTerminalViewportTests {
         let containerFrame = container.convert(container.bounds, to: fixture.window)
         let canvasFrame = container.snapshotScrollView.convert(container.snapshotScrollView.bounds, to: fixture.window)
         // The control bar has 34pt controls, 16pt vertical content padding,
-        // and 8pt bottom padding. Hidden controls float over the full canvas.
+        // and 8pt bottom padding. Top chrome always has its own clearance.
         let expectedBottom = fixture.window.bounds.maxY - keyboardInset - (keyboardInset > 0 ? 58 : 0)
 
-        #expect(abs(containerFrame.minY - fixture.window.bounds.minY) < 1,
-                "Terminal container starts at \(containerFrame.minY), screen starts at \(fixture.window.bounds.minY)")
+        #expect(containerFrame.minY >= fixture.host.view.safeAreaInsets.top + 68,
+                "Terminal container overlaps top chrome: \(containerFrame)")
         #expect(abs(containerFrame.maxY - expectedBottom) < 1,
                 "Terminal container ends at \(containerFrame.maxY), expected \(expectedBottom)")
-        #expect(abs(canvasFrame.minY - fixture.window.bounds.minY) < 1,
-                "Canvas viewport starts at \(canvasFrame.minY), leaving a top gap")
+        #expect(abs(canvasFrame.minY - containerFrame.minY) < 1,
+                "Canvas viewport must fill the terminal container")
         #expect(abs(canvasFrame.maxY - expectedBottom) < 1,
                 "Canvas viewport ends at \(canvasFrame.maxY), expected \(expectedBottom)")
         #expect(abs(containerFrame.width - fixture.window.bounds.width) < 1)

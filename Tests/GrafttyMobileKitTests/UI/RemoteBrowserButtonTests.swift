@@ -15,7 +15,7 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
-    @Test("The phone header smear overlays the terminal without taking its touch events.")
+    @Test("The phone header smear preserves terminal gestures below the floating controls.")
     func hostedCompactHeaderRender() async throws {
         let client = SessionClient(sessionName: "phone-header", webSocketFactory: { PreviewLifecycleSocket() })
         client.start()
@@ -45,14 +45,15 @@ struct RemoteBrowserButtonTests {
         defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
         let container = try await terminalContainer(in: host.view)
         client.session.receive(Data((String(repeating: "Restoring the terminal's full screen height\r\n", count: 70) + "Ready > ").utf8))
-        try await waitUntil("output reaches the screen top") {
+        try await waitUntil("parsed terminal output") {
             container.layoutIfNeeded()
             return client.session.readViewportText()?.contains("Ready >") == true && container.snapshotScrollView.topContentInset == 0
         }
-        #expect(abs(container.convert(container.bounds, to: window).minY) < 1)
+        #expect(container.convert(container.bounds, to: window).minY >= host.view.safeAreaInsets.top + 68)
         #expect(!accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Terminal" },
                 "Terminal belongs in the agent dropdown, rather than the resource capsule")
-        let hit = host.view.hitTest(CGPoint(x: 100, y: 10), with: nil)
+        let point = container.convert(CGPoint(x: 100, y: 10), to: host.view)
+        let hit = host.view.hitTest(point, with: nil)
         #expect(hit?.isDescendant(of: container) == true, "The decorative smear must pass terminal gestures through")
         try await Task.sleep(for: .milliseconds(200))
         let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
