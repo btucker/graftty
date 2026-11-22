@@ -602,6 +602,7 @@ final class TerminalReadabilityInteractionTests: XCTestCase {
                 terminal.tap()
             }
         }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "The post-preview replay requires the keyboard")
         capture(app, "rows-\(rows)-after-preview")
         for pass in 1...scrollPasses {
             drag(app, down: true)

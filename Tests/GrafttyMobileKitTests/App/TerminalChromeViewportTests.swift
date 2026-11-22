@@ -226,6 +226,7 @@ struct RenderedTerminalViewportTests {
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
 
         client.session.receive(Data("\r\nsecond line".utf8))
+        try await waitForLayout("parsed multiline output") { client.session.readViewportText()?.contains("second line") == true }
         try await waitForLayout("multiline terminal preserves its pane clearance") {
             (embedded ? abs(textFrame().minY - viewportTop) < 1 : textFrame().minY >= minimumClearance)
         }
@@ -242,6 +243,10 @@ struct RenderedTerminalViewportTests {
         let columns = Int(try #require(container.terminalGridMetrics).columns)
         let repeats = (wrappedCharacter == "x" ? columns : columns / 2) + 5
         client.session.receive(Data(String(repeating: wrappedCharacter, count: repeats).utf8))
+        try await waitForLayout("parsed physical wrapped rows") {
+            let rows = client.session.readViewportRowsText()?.split(separator: "\n").filter { !$0.allSatisfy(\.isWhitespace) }
+            return (rows?.count ?? 0) > 1 && client.session.readViewportText()?.contains(wrappedCharacter) == true
+        }
         try await waitForLayout("wrapped output preserves its pane clearance") {
             (embedded ? abs(textFrame().minY - viewportTop) < 1 : textFrame().minY >= minimumClearance)
         }
@@ -250,6 +255,9 @@ struct RenderedTerminalViewportTests {
         let rows = Int(try #require(container.terminalGridMetrics).rows)
         client.session.receive(Data((String(repeating: "\r\noutput", count: rows * 2)
                                      + "\u{1b}[2J\u{1b}[Hprompt").utf8))
+        try await waitForLayout("parsed scrollback and cleared screen") {
+            container.snapshotScrollView.hasScrollback && client.session.readViewportText()?.contains("prompt") == true
+        }
         try await waitForLayout("scrollback preserves its pane clearance") {
             (embedded ? abs(textFrame().minY - viewportTop) < 1 : textFrame().minY >= minimumClearance)
         }
