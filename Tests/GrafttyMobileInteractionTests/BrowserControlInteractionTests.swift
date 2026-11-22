@@ -563,7 +563,7 @@ final class TerminalReadabilityInteractionTests: XCTestCase {
     }
 
     func testScrollbackRevealsEveryNamedRow() throws {
-        try replay(rows: 40, scrollPasses: 3)
+        try replay(rows: 40, scrollPasses: 4)
     }
 
     private func replay(rows: Int, scrollPasses: Int = 1) throws {
