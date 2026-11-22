@@ -147,7 +147,6 @@
             set {
                 core.delegate = newValue
                 #if !targetEnvironment(macCatalyst)
-                    if usesHostTextSelection { dismissTouchSelection() }
                     updateTouchSelectionGestures()
                 #endif
             }

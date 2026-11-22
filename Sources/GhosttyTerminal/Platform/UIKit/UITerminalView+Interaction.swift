@@ -97,7 +97,7 @@
                 if softwareKeyboard.tapCandidateArmed, let touch = touches.first {
                     softwareKeyboard.tapCandidateArmed = false
                     let duration = touch.timestamp - softwareKeyboard.tapCandidateTimestamp
-                    if duration <= Self.tapCandidateMaxDuration {
+                    if duration <= Self.tapCandidateMaxDuration, !dismissTouchSelectionForTap() {
                         TerminalDebugLog.log(
                             .input,
                             "tap toggles keyboard visible=\(softwareKeyboard.isVisible) duration=\(String(format: "%.3f", duration))",
