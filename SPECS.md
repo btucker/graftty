@@ -5402,6 +5402,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.165** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 in that shell's environment, replacing any inherited value, so Claude Code saves its session for later resume.
 
+**AGENT-6.166** When a graphical agent session advertises a new command list, the application shall replace that session's slash menu with the advertised names, descriptions, and argument hints.
+
+**AGENT-6.167** When the user chooses a slash command in the graphical composer, the application shall insert its invocation into the editable draft and wait for the user to send it.
+
+**AGENT-6.168** When the user sends a slash command from a graphical agent tab on Mac or GrafttyMobile, the application shall deliver the draft's exact command text and arguments to that tab's bound session.
+
 ## CLI — CLI
 
 ### CLI-1.x
