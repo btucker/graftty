@@ -5672,6 +5672,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.12** While the user hovers over, touches, or scrubs the scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.
 
+**CONTEXT-57.13** While a scrollback map preview card is shown, the application shall draw it on a nearly opaque backing lighter than a dark terminal, so terminal text behind the card does not show through.
+
 ### CONTEXT-58.x
 
 **CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its current-state sentence above a dimmer Next line when a next step exists, after the timeline, followed by any waiting question and a status line.

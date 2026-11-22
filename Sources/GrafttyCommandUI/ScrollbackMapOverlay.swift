@@ -633,17 +633,26 @@ struct ScrollbackMapLabel: View {
     }
 }
 
+/// @spec CONTEXT-57.13
+/// While a scrollback map preview card is shown, the application shall draw it on a nearly opaque backing lighter than a dark terminal, so terminal text behind the card does not show through.
 struct ScrollbackMapPreviewFrame: ViewModifier {
     let width: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
+        let dark = colorScheme == .dark
+        let shape = RoundedRectangle(cornerRadius: 8)
         content
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
             .frame(width: width, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+            .background {
+                // A translucent material let terminal text read through the card.
+                shape.fill(.thickMaterial)
+                shape.fill(Color(white: dark ? 0.235 : 0.985).opacity(0.94))
+            }
+            .overlay(shape.strokeBorder(Color.primary.opacity(dark ? 0.22 : 0.16), lineWidth: 1))
+            .shadow(color: .black.opacity(dark ? 0.55 : 0.25), radius: 10, y: 3)
     }
 }
 

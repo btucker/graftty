@@ -525,6 +525,23 @@ struct ScrollbackMapPreviewTests {
 
 @Suite("@spec CONTEXT-36: While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks, incoming agent messages with purple square-ended marks, and local agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.")
 struct ScrollbackMapAppearanceTests {
+    @MainActor
+    @Test("@spec CONTEXT-57.13: While a scrollback map preview card is shown, the application shall draw it on a nearly opaque backing lighter than a dark terminal, so terminal text behind the card does not show through.")
+    func previewCardsHideTheTerminalBehindThem() throws {
+        let card = Color.clear.frame(height: 40)
+            .modifier(ScrollbackMapPreviewFrame(width: 120))
+            .padding(20)
+            .background(Color(red: 1, green: 0, blue: 0))
+            .environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: card)
+        renderer.scale = 1
+        let image = try #require(renderer.cgImage)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        let inside = try #require(bitmap.colorAt(x: 80, y: 40)?.usingColorSpace(.sRGB))
+        #expect(inside.redComponent - inside.greenComponent < 0.1)
+        #expect(inside.greenComponent > 0.18) // lighter than a #282c34 terminal
+    }
+
     @Test func distantMarksRetainTheirColorAndThePreviewMatchesTheMessage() throws {
         let layout = ScrollbackMapLayout(height: 150, totalRows: 150)
         let input = ScrollbackMap.Mark(row: 38, kind: .input, eventID: "input")
