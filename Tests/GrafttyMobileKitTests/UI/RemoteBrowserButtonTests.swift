@@ -706,7 +706,11 @@ struct RemoteBrowserButtonTests {
         defer { close(fixture) }
         fixture.state.failRead = !unsupportedPreview
         fixture.state.unsupportedPreview = unsupportedPreview
-        if unsupportedPreview { try await pollAgain(fixture, offers: [imageOffer("image.graftty-unknown-preview")]) }
+        // This test exercises the manual Preview action. Fresh offers would
+        // otherwise start a second download independently of the tap.
+        if unsupportedPreview {
+            try await pollAgain(fixture, offers: [imageOffer("image.graftty-unknown-preview")], autoPreview: false)
+        }
         try await waitForImages(fixture, filename: unsupportedPreview ? "image.graftty-unknown-preview" : "image.png")
         try activateImages(in: fixture.host.view)
         try await waitUntil { fixture.host.presentedViewController is UIAlertController }
@@ -716,7 +720,7 @@ struct RemoteBrowserButtonTests {
         try await finishPresentation(in: fixture)
         fixture.state.failRead = false
         fixture.state.unsupportedPreview = false
-        if unsupportedPreview { try await pollAgain(fixture, offers: [imageOffer()]) }
+        if unsupportedPreview { try await pollAgain(fixture, offers: [imageOffer()], autoPreview: false) }
         try await waitForImages(fixture, filename: "image.png")
         try activateImages(in: fixture.host.view)
         try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
@@ -911,6 +915,7 @@ struct RemoteBrowserButtonTests {
         let parent: UIViewController
         let host: UIHostingController<AnyView>
         let state: ButtonState
+        let coordinator: RemoteConnectionCoordinator
         let previous: UIWindow?
         let directory: URL
     }
@@ -953,7 +958,7 @@ struct RemoteBrowserButtonTests {
         window.rootViewController = parent
         window.makeKeyAndVisible()
         let fixture = ButtonFixture(window: window, parent: parent, host: UIHostingController(rootView: AnyView(button)),
-                                    state: state, previous: previous, directory: directory)
+                                    state: state, coordinator: coordinator, previous: previous, directory: directory)
         attach(fixture)
         if let paneWidth {
             fixture.host.view.frame = CGRect(x: 20, y: 100, width: paneWidth, height: 200)
@@ -1025,9 +1030,13 @@ struct RemoteBrowserButtonTests {
     private func finishPresentation(in fixture: ButtonFixture) async throws {
         if let presented = fixture.host.presentedViewController {
             if presented is UIAlertController {
+                try await waitUntil("mounted alert") {
+                    !presented.isBeingPresented && presented.viewIfLoaded?.window != nil
+                }
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                     presented.dismiss(animated: false) { continuation.resume() }
                 }
+                try await waitUntil("dismissed alert") { presented.viewIfLoaded?.window == nil }
             } else {
                 if let image = quickLook(in: presented) {
                     try await waitUntil { image.view.window != nil && !presented.isBeingPresented }
@@ -1050,11 +1059,16 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { fixture.host.presentedViewController == nil }
         try await Task.sleep(for: .milliseconds(50))
     }
-    private func pollAgain(_ fixture: ButtonFixture, offers: [RemoteOpenOffer]? = nil) async throws {
+    private func pollAgain(_ fixture: ButtonFixture, offers: [RemoteOpenOffer]? = nil, autoPreview: Bool = true) async throws {
         let clock = fixture.state.pollingClock
         try await waitUntil { clock.hasPendingSleep(for: 3) }
         let previous = fixture.state.offerPolls
-        if let offers { fixture.state.offers = offers }
+        if let offers {
+            if !autoPreview {
+                for offer in offers where offer.isNativePreview { fixture.coordinator.completePreviewAutoOpen(offer.id) }
+            }
+            fixture.state.offers = offers
+        }
         clock.advance(by: 3)
         try await waitUntil { fixture.state.offerPolls > previous && clock.hasPendingSleep(for: 3) }
         // Preserve the original post-poll observation window for negative UI
