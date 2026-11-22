@@ -1692,6 +1692,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TECH-6.8** When an iOS CI shard runs in a results directory containing earlier bundles, the workflow shall use distinct result paths for the new invocation, execute every selected batch, and preserve the earlier evidence.
 
+**TECH-6.9** When CI creates an iOS test simulator, the workflow shall choose the newest available runtime supporting its device type within the selected SDK's major and minor version ceiling.
+
 ## ZMX — zmx Session Backing
 
 ### ZMX-1.x — Bundling
