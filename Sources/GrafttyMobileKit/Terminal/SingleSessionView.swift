@@ -183,6 +183,7 @@ struct SingleSessionView: View {
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
     @State private var isTrayShiftSelected = false
+    @State private var showsSavedMessages = false
     @State private var scrollbackMapModel: ScrollbackMapModel?
     /// The floating top-right controls' height, so the scrollback map sits below them.
     @State private var floatingControlsHeight: CGFloat = 44
@@ -716,7 +717,17 @@ struct SingleSessionView: View {
                     ScrollbackMapOverlayHost(model: model, timeline: timeline, terminalTheme: terminalTheme,
                                              isVisible: scenePhase == .active && connection == .live,
                                              recovery: .pairedCodex(sessionAgent),
-                                             loadEarlier: loadEarlierCodexPage)
+                                             loadEarlier: loadEarlierCodexPage,
+                                             showSavedMessages: sessionAgent?.provider == "codex" && coordinator != nil
+                                                 ? { showsSavedMessages = true } : nil)
+                        .onChange(of: client?.paging?.historyRevision) { model.terminalHistoryDidChange() }
+                        .sheet(isPresented: $showsSavedMessages) {
+                            if let agent = sessionAgent, let path = paneWorktree?.path {
+                                MobileSavedMessagesView(host: step.host, path: path, agent: agent,
+                                                        loadTerminalPage: loadEarlierCodexPage)
+                                    .id(agent.assignmentID ?? agent.id)
+                            }
+                        }
                         .padding(.top, max(ScrollbackMapLayout.topInset(belowControlsAt: 12, controlsHeight: controlsHeight),
                                           inputRequestHeight > 0 ? topOverlayInset : 0))
                 }

@@ -4,6 +4,40 @@ import Testing
 @testable import GrafttyKit
 
 struct CodexScrollbackTranscriptTests {
+    @Test("@spec CONTEXT-57.11: When a paired viewer opens earlier messages in a live Codex session, the host shall return that session’s saved visible messages in order across pages, including prompts that have left terminal scrollback.")
+    @MainActor func savedConversationPages() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let directory = home.appendingPathComponent("sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let session = UUID().uuidString.lowercased()
+        var agent = ManagedAgent(name: "History", provider: .codex, parent: nil, launchOrigin: .cliAgentAdd)
+        agent.providerSessionID = session
+        platform.state.repos[0].worktrees[0].agents = [agent]
+        let file = directory.appendingPathComponent("rollout-\(session).jsonl")
+        let header = #"{"type":"session_meta","payload":{"id":"\#(session)","cwd":"/repo"}}"#
+        let prompts = (0..<140).map { "Saved prompt \($0)" }
+        let records = prompts.map { #"{"timestamp":"2026-11-20T01:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"\#($0)"}}"# }
+        try ([header] + records + [""]).joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        var cursor: UInt64 = 0
+        var texts: [String] = []
+        var pageCount = 0
+        repeat {
+            let response = await AgentControl.conversation(path: "/repo", agentID: agent.id, action: .messages(from: cursor), platform: platform, codexHome: home)
+            guard case .agentConversation(let detail) = response else { Issue.record("Expected saved conversation"); return }
+            let page = try #require(detail.messages)
+            #expect(detail.assignmentID == agent.assignmentID.uuidString)
+            texts += page.items.map(\.text)
+            pageCount += 1
+            guard let next = page.nextOffset else { break }
+            try #require(next > cursor)
+            cursor = next
+        } while true
+        #expect(texts == prompts)
+        #expect(pageCount > 1)
+    }
+
     @Test func keepsPromptsBeforeLargeToolResultsAndSeesLaterAppends() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }

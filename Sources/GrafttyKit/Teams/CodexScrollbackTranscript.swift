@@ -27,6 +27,35 @@ public final class CodexScrollbackTranscript: @unchecked Sendable {
     public func read() -> WorktreeTimeline? {
         lock.lock()
         defer { lock.unlock() }
+        guard scan(start: 0, visit: { data, session, offset in
+            Self.record(data, sessionID: session, at: offset, into: &history)
+            return true
+        }) != nil else { return nil }
+        return WorktreeTimeline(history: history, brief: nil)
+    }
+
+    /// Page forward from the verified header so a long conversation keeps its oldest prompts.
+    public static func messages(sessionID: String, worktree: String, codexHome: URL,
+                                from start: UInt64) -> AgentConversationMessages? {
+        let reader = Self(sessionID: sessionID, worktree: worktree, codexHome: codexHome)
+        var items: [AgentConversationMessages.Item] = []
+        var bytes = 0
+        guard let scan = reader.scan(start: start, visit: { data, session, offset in
+            var record = WorktreeHistory()
+            Self.record(data, sessionID: session, at: offset, into: &record)
+            if !record.inputs.isEmpty || !record.responses.isEmpty {
+                let visible = WorktreeTimeline(history: record, brief: nil).events.compactMap(AgentConversationMessages.Item.init)
+                items.append(contentsOf: visible)
+                bytes += visible.reduce(0) { $0 + $1.text.utf8.count }
+            }
+            return items.count < 48 && bytes < 32 * 1024
+        }) else { return nil }
+        return .init(items: items, nextOffset: scan.hasMore ? reader.offset : nil)
+    }
+
+    private struct ScanResult { let hasMore: Bool }
+
+    private func scan(start requested: UInt64, visit: (Data, String, UInt64) -> Bool) -> ScanResult? {
         guard let session, let url = locate(session),
               let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               attributes[.type] as? FileAttributeType == .typeRegular,
@@ -59,6 +88,12 @@ public final class CodexScrollbackTranscript: @unchecked Sendable {
                 offset = UInt64(newline + 1)
                 discardUntilNewline = false
             }
+            if requested != 0 {
+                guard requested >= offset, requested <= end else { return nil }
+                try file.seek(toOffset: requested - 1)
+                guard try file.read(upToCount: 1)?.first == 10 else { return nil }
+                offset = requested
+            }
             try file.seek(toOffset: offset)
             var position = offset
             var pending = Data()
@@ -78,11 +113,12 @@ public final class CodexScrollbackTranscript: @unchecked Sendable {
                         }
                     }
                     if let newline {
-                        if !discardUntilNewline { record(pending, sessionID: session.uuidString.lowercased(), at: offset) }
+                        let keepReading = discardUntilNewline || visit(pending, session.uuidString.lowercased(), offset)
                         pending.removeAll(keepingCapacity: true)
                         discardUntilNewline = false
                         start = newline + 1
                         offset = position + UInt64(start)
+                        if !keepReading { return ScanResult(hasMore: offset < end) }
                     } else {
                         // Retry an incomplete record on append. Oversized tool records need no replay.
                         if discardUntilNewline { offset = position + UInt64(stop) }
@@ -91,7 +127,7 @@ public final class CodexScrollbackTranscript: @unchecked Sendable {
                 }
                 position += UInt64(chunk.count)
             }
-            return WorktreeTimeline(history: history, brief: nil)
+            return ScanResult(hasMore: false)
         } catch { return nil }
     }
 
@@ -105,7 +141,7 @@ public final class CodexScrollbackTranscript: @unchecked Sendable {
         return fileURL
     }
 
-    private func record(_ data: Data, sessionID: String, at offset: UInt64) {
+    private static func record(_ data: Data, sessionID: String, at offset: UInt64, into history: inout WorktreeHistory) {
         guard let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         if let input = Self.userInput(from: record, sessionID: sessionID, offset: offset) { history.record(input) }
         if let response = AgentResponseCapture.response(from: record, runtime: .codex, sessionID: sessionID, offset: offset) {

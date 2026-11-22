@@ -6,7 +6,7 @@ import Testing
 struct WorktreeManagementEnvelopeTests {
     @Test("@spec AGENT-6.138: When a paired viewer reads or resumes a retained agent conversation, the application shall round-trip its exact worktree and agent identities over the authenticated worktree-management channel.")
     func agentConversationRoundTrips() throws {
-        for action in [AgentConversationAction.read, .resume] {
+        for action in [AgentConversationAction.read, .resume, .messages(from: 8192)] {
             let request = WorktreeManagementRequest.agentConversation(worktreeID: "opaque-worktree", agentID: "exact-agent", action: action)
             #expect(try JSONDecoder().decode(WorktreeManagementRequest.self, from: JSONEncoder().encode(request)) == request)
         }

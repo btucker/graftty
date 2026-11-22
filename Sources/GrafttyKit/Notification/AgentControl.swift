@@ -35,7 +35,7 @@ public enum AgentControl {
 
     /// Paired-viewer operations always resolve the exact agent within the supplied worktree.
     public static func conversation(path: String, agentID: String, action: AgentConversationAction,
-                                    platform: any ControlPlatform) async -> WorktreeManagementResponse {
+                                    platform: any ControlPlatform, codexHome: URL = CodexHomeMirror.defaultSourceDirectory()) async -> WorktreeManagementResponse {
         guard platform.state.worktree(forPath: path)?.agents.contains(where: { $0.id == agentID }) == true else {
             return .error(code: "agent-unavailable", message: "This agent is no longer available in this worktree.", forceAllowed: false, shortStatus: nil)
         }
@@ -47,6 +47,17 @@ public enum AgentControl {
         }
         guard let agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agentID }) else {
             return .error(code: "agent-unavailable", message: "This agent is no longer available.", forceAllowed: false, shortStatus: nil)
+        }
+        if case .messages(let offset) = action {
+            guard agent.provider == .codex, let session = agent.providerSessionID,
+                  let page = await OffMainIO.run({ CodexScrollbackTranscript.messages(
+                    sessionID: session, worktree: path, codexHome: codexHome, from: offset) }),
+                  let current = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agentID }),
+                  current.assignmentID == agent.assignmentID, current.providerSessionID == session else {
+                return .error(code: "history-unavailable", message: "This session’s saved messages are unavailable.", forceAllowed: false, shortStatus: nil)
+            }
+            return .agentConversation(.init(agentID: agent.id, assignmentID: agent.assignmentID.uuidString,
+                result: nil, transcript: nil, failure: nil, canResume: false, messages: page))
         }
         let archives = platform.agentArchives
         do {

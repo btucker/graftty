@@ -714,6 +714,8 @@ public final class ScrollbackMapModel: ObservableObject {
         if resized { scheduleRebuild() }
     }
 
+    public func terminalHistoryDidChange() { scheduleRebuild() }
+
     public func setVisible(_ visible: Bool) {
         guard visible != isVisible else { return }
         isVisible = visible
@@ -772,7 +774,7 @@ public final class ScrollbackMapModel: ObservableObject {
             self.map = map
             self.scannedFirstRow = firstRow
             self.pending = nil
-            if map == nil { self.stopEvictionCheck() } else { self.startEvictionCheck() }
+            self.startEvictionCheck()
         }
     }
 
@@ -786,7 +788,8 @@ public final class ScrollbackMapModel: ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 // A pending scan records the row itself; hiding the pane cancels this loop.
                 guard self.pending == nil, let terminal = self.terminal else { continue }
-                if terminal.firstRowText() != self.scannedFirstRow { self.scheduleRebuild() }
+                let first = terminal.firstRowText()
+                if first != self.scannedFirstRow || (self.map == nil && first != nil) { self.scheduleRebuild() }
             }
         }
     }
@@ -804,6 +807,7 @@ public struct ScrollbackMapOverlayHost: View {
     let isVisible: Bool
     private let terminalTheme: GhosttyThemeColors?
     let recovery: ScrollbackMapRecovery?
+    private let showSavedMessages: (() -> Void)?
     private let loadEarlier: (() -> Void)?
     var gists: PeerMessageGistProvider = .shared
     /// Derived once per parent update, not on every viewport report that redraws this body.
@@ -811,7 +815,8 @@ public struct ScrollbackMapOverlayHost: View {
 
     public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, terminalTheme: GhosttyThemeColors? = nil, isVisible: Bool = true,
                 recovery: ScrollbackMapRecovery? = nil, loadEarlier: (() -> Void)? = nil,
-                gists: PeerMessageGistProvider = .shared) {
+                showSavedMessages: (() -> Void)? = nil, gists: PeerMessageGistProvider = .shared) {
+        self.showSavedMessages = showSavedMessages
         self.model = model; self.timeline = timeline; self.isVisible = isVisible; self.gists = gists
         self.recovery = recovery
         self.terminalTheme = terminalTheme
@@ -823,30 +828,39 @@ public struct ScrollbackMapOverlayHost: View {
         isVisible && model.map?.marks.isEmpty == true ? loadEarlier : nil
     }
 
+    private func historyButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.callout)
+                .padding(5)
+                .background(.regularMaterial, in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
     public var body: some View {
         GeometryReader { geometry in
-            if let map = model.map, !map.marks.isEmpty {
-                ScrollbackMapOverlay(map: map, viewport: model.viewport, entries: model.entries, gists: gists,
-                                     availableHeight: geometry.size.height, availableWidth: geometry.size.width,
-                                     scroll: { [model] in model.scroll(toRow: $0) })
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .onAppear {
-                        let userCount = map.marks.count { $0.kind == .input }
-                        scrollbackLog.debug("Showing rail with \(userCount) user marks among \(map.marks.count) total. Codex recovery: \(recovery != nil).")
-                    }
-            } else if let load = earlierHistoryAction {
-                Button(action: load) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.callout)
-                        .padding(5)
-                        .background(.regularMaterial, in: Circle())
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+            VStack(alignment: .trailing, spacing: 0) {
+                if isVisible, let showSavedMessages {
+                    historyButton("Earlier messages", icon: "clock", action: showSavedMessages)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Load earlier messages")
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                if let map = model.map, !map.marks.isEmpty {
+                    ScrollbackMapOverlay(map: map, viewport: model.viewport, entries: model.entries, gists: gists,
+                                         availableHeight: max(0, geometry.size.height - (showSavedMessages == nil ? 0 : 44)), availableWidth: geometry.size.width,
+                                         scroll: { [model] in model.scroll(toRow: $0) })
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .onAppear {
+                            let userCount = map.marks.count { $0.kind == .input }
+                            scrollbackLog.debug("Showing rail with \(userCount) user marks among \(map.marks.count) total. Codex recovery: \(recovery != nil).")
+                        }
+                } else if showSavedMessages == nil, let load = earlierHistoryAction {
+                    historyButton("Load earlier messages", icon: "clock.arrow.circlepath", action: load)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .transformEnvironment(\.colorScheme) { scheme in
             if let terminalTheme { scheme = terminalTheme.isDark ? .dark : .light }

@@ -8,16 +8,18 @@ import Testing
 @MainActor
 private final class FakeScrollback: TerminalScrollback {
     var rows: [String]
+    var ready = true
     var reads = 0
     var scrolled: [Int] = []
     var firstRowReads = 0
     init(rows: [String]) { self.rows = rows }
     func firstRowText() -> String? {
         firstRowReads += 1
-        return rows.first
+        return ready ? rows.first : nil
     }
     func scrollbackRows(limit: Int) -> ScrollbackRows? {
         reads += 1
+        guard ready else { return nil }
         return ScrollbackRows(rows: rows, firstRow: 0, totalRows: rows.count)
     }
     func scroll(toRow row: Int) { scrolled.append(row) }
@@ -625,6 +627,24 @@ struct ScrollbackMapMobileCollapseTests {
 @MainActor
 @Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
 struct ScrollbackMapRebuildTests {
+    @Test("@spec CONTEXT-57.10: When a quiet agent terminal becomes readable or installs same-sized history, the application shall locate its existing messages without waiting for another prompt.")
+    func quietTerminalBecomesReadable() async throws {
+        let terminal = FakeScrollback(rows: sampleRows())
+        terminal.ready = false
+        let model = ScrollbackMapModel(terminal: terminal, debounce: .zero, evictionCheckInterval: .milliseconds(10))
+        model.update(timeline: sampleTimeline())
+        model.setVisible(true)
+        defer { model.setVisible(false) }
+        await waitUntil { terminal.reads > 0 }
+        terminal.ready = true
+        await waitUntil { model.map?.marks.count == 3 }
+        #expect(model.map?.marks.count == 3)
+        terminal.rows.swapAt(40, 50)
+        model.terminalHistoryDidChange()
+        await waitUntil { model.map?.marks.first?.row == 50 }
+        #expect(model.map?.marks.first?.row == 50)
+    }
+
     @Test("@spec CONTEXT-57.9: When a paired Codex pane on iPhone has scanned its loaded rows without finding a message and older history is available, the application shall offer a control to load an earlier page and replace it with the rail when it finds a message.")
     func loadEarlierPageFromEmptyRail() async throws {
         let terminal = FakeScrollback(rows: ["• Reading the logs."])
