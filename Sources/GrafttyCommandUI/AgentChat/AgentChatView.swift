@@ -104,7 +104,7 @@ public struct AgentChatView: View {
     }
 
     private func answer(_ request: AgentChatPendingRequest, _ decision: AgentChatDecision) {
-        Task { await model.answer(request, decision, connection) }
+        Task { await model.answer(request, decision) }
     }
 
     private var composer: some View {
@@ -194,7 +194,7 @@ public struct AgentChatView: View {
     }
 
     private func send() {
-        Task { await model.send(connection) }
+        Task { await model.send() }
     }
 }
 

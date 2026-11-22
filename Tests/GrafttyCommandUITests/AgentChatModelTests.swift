@@ -68,7 +68,7 @@ struct AgentChatModelTests {
         defer { task.cancel() }
 
         model.draft = "/review the last two commits"
-        await model.send(host.connection)
+        await model.send()
 
         #expect(host.submissions.map(\.text) == ["/review the last two commits"])
         #expect(host.submissions.first?.binding == binding)
@@ -83,7 +83,7 @@ struct AgentChatModelTests {
         defer { task.cancel() }
 
         model.draft = "keep me"
-        await model.send(host.connection)
+        await model.send()
 
         #expect(model.draft == "keep me")
         #expect(model.notice != nil)
@@ -96,13 +96,13 @@ struct AgentChatModelTests {
         defer { task.cancel() }
 
         model.draft = "maybe delivered"
-        await model.send(host.connection)
+        await model.send()
         #expect(host.submissions.count == 1)
         #expect(model.draft == "maybe delivered")
         #expect(model.notice != nil)
 
         host.result = .accepted
-        await model.send(host.connection)
+        await model.send()
         #expect(host.submissions.count == 2)
         #expect(host.submissions[0].submissionID != host.submissions[1].submissionID)
         #expect(model.draft.isEmpty)
@@ -121,7 +121,7 @@ struct AgentChatModelTests {
         while model.snapshot?.turnState != .active { await Task.yield() }
         #expect(model.canSend == false)
         #expect(model.draft == "next")
-        await model.send(host.connection)
+        await model.send()
         #expect(host.submissions.isEmpty)
     }
 
@@ -132,13 +132,32 @@ struct AgentChatModelTests {
         let (model, task) = await attached(host)
         defer { task.cancel() }
 
-        await model.answer(request, .accept, host.connection)
+        await model.answer(request, .accept)
         #expect(host.answers == ["7"])
         #expect(model.notice != nil)
 
         host.push.yield(AgentChatUpdate(sequence: 1, event: .requestResolved(id: "7")))
         while model.snapshot?.requests.isEmpty == false { await Task.yield() }
         #expect(model.snapshot?.requests.isEmpty == true)
+    }
+
+    @Test func aFeedThatStopsWithoutTheConversationEndingSaysSo() async {
+        let host = idleHost()
+        let (model, task) = await attached(host)
+        host.push.finish()
+        await task.value
+        #expect(model.snapshot == nil)
+        #expect(model.unavailable == "Chat lost its connection to the agent. Reopen Chat to continue.")
+    }
+
+    @Test func aFeedThatStopsAfterTheConversationEndedKeepsTheTranscript() async {
+        let host = idleHost()
+        let (model, task) = await attached(host)
+        host.push.yield(AgentChatUpdate(sequence: 1, event: .ended(reason: "The agent exited.")))
+        host.push.finish()
+        await task.value
+        #expect(model.snapshot?.endedReason == "The agent exited.")
+        #expect(model.unavailable == nil)
     }
 
     @Test func anUnavailableSessionExplainsWhy() async {

@@ -168,7 +168,7 @@ Behavior: one channel serves one tab. The first frame must be `.open`; the handl
   - `aRemoteViewerReceivesTheSnapshotAndUpdates`.
   - `aRemoteSubmissionReturnsTheHostsResult` for `.accepted` and `.rejected(.notController)`.
   - `aLostAcknowledgmentIsReportedAsUncertain`: the channel closes after the submit frame is written and before a reply → `.uncertain`. A submit when no channel is open → `.rejected(.unavailable)`.
-  - `anOlderHostExplainsWhyChatIsUnavailable` (Review Focus 5): the host refuses the subsystem → `open` returns `.unavailable("Update Graftty on this Mac to use Chat.")`.
+  - `anOlderHostExplainsWhyChatIsUnavailable` (Review Focus 5): the host refuses the subsystem → `open` returns `.unavailable("Chat is not available from the Mac that runs this agent. The terminal is still available.")` (a host advertises Chat per tab, so this is rare).
 - [ ] **Step 2:** Run `scripts/swiftpm test --filter AgentChatChannelClientTests`. Expected: compile failure.
 - [ ] **Step 3:** Implement.
 - [ ] **Step 4:** Run. Expected: suite passes. Add an assertion to `aRemoteSubmissionReturnsTheHostsResult` that the host's scripted connection received the exact text `/review the last commit`, promote `AGENT-6.168` onto it, and delete the inventory entry.

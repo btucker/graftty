@@ -34,6 +34,8 @@ public struct WorktreeRowInputs {
     public var includeLayoutWhenStopped: Bool
     public var ports: [WorktreePort]
     public var portBindings: [String: [PortBinding]]?
+    /// This host serves Chat to paired viewers. The headless host does not.
+    public var offersChat: Bool
 
     public init(
         origin: WorktreeOrigin?,
@@ -46,8 +48,10 @@ public struct WorktreeRowInputs {
         liveness: [String: AgentLiveness] = [:],
         includeLayoutWhenStopped: Bool = false,
         ports: [WorktreePort] = [],
-        portBindings: [String: [PortBinding]]? = nil
+        portBindings: [String: [PortBinding]]? = nil,
+        offersChat: Bool = false
     ) {
+        self.offersChat = offersChat
         self.origin = origin
         self.projectID = projectID
         self.displayName = displayName
@@ -86,7 +90,8 @@ extension WorktreePanes {
                 retainedSlotID: agent.presentationSlotID?.id.uuidString,
                 canResume: agent.providerSessionID?.isEmpty == false && agent.completion != nil && agent.status != .closing,
                 transcriptRevision: agent.transcriptArchive?.id,
-                launched: agent.launchOperationID != nil)
+                launched: agent.launchOperationID != nil,
+                chatAvailable: inputs.offersChat && AgentChatHost.offers(agent) ? true : nil)
         }
         self.init(
             path: entry.path,

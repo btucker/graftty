@@ -108,6 +108,25 @@ struct AgentChatServiceTests {
         #expect(fixture.servers.all.first?.sent("turn/start").count == 1)
     }
 
+    @Test("@spec AGENT-6.173: When a paired viewer selects Chat or Terminal, the application shall change only that viewer's presentation and preserve the session's input ownership.")
+    func aViewerThatOpensChatDoesNotTakeControl() async throws {
+        let fixture = try Fixture()
+        _ = fixture.ownership.attachClient(
+            sessionName: fixture.sessionName, clientID: DisplayClientID("ssh-phone-1"), kind: .ios,
+            role: .interactive, visible: true, grid: .daemonFallback, identity: "ssh-device:phone"
+        )
+        let before = fixture.ownership.snapshot(sessionName: fixture.sessionName)
+
+        // Another device and the host Mac both read the conversation in Chat.
+        let tablet = fixture.service.connection(worktreePath: fixture.path, agentID: fixture.agent.id, viewer: .device("tablet"))
+        #expect(attached(await tablet.open()) != nil)
+        #expect(attached(await fixture.service.open(worktreePath: fixture.path, agentID: fixture.agent.id)) != nil)
+
+        #expect(fixture.ownership.snapshot(sessionName: fixture.sessionName) == before)
+        #expect(await fixture.submit("s1", as: .device("tablet")) == .rejected(.notController))
+        #expect(await fixture.submit("s2", as: .device("phone")) == .accepted)
+    }
+
     @Test func aConversationChangedInTheTerminalRejectsTheOldDraft() async throws {
         let fixture = try Fixture()
         _ = await fixture.service.open(worktreePath: fixture.path, agentID: fixture.agent.id)

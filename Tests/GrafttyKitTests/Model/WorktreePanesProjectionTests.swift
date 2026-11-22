@@ -32,6 +32,24 @@ struct WorktreePanesProjectionTests {
         #expect(row.sidebar?.id == "p:\(worktree.id.uuidString)")
     }
 
+    @Test func onlyAHostThatServesChatOffersItForARunningCodexConversation() {
+        var (worktree, _) = entry(.running)
+        func agent(_ provider: TeamHookRuntime, conversation: String?) -> ManagedAgent {
+            var agent = ManagedAgent(name: provider.rawValue, provider: provider, parent: nil)
+            agent.paneSlotID = slot
+            agent.providerSessionID = conversation
+            return agent
+        }
+        worktree.agents = [agent(.codex, conversation: "thread-1"), agent(.codex, conversation: nil),
+                           agent(.claude, conversation: "session-1")]
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
+        let serving = WorktreePanes(entry: worktree, repo: repo, inputs: .init(
+            origin: nil, projectID: "p", displayName: "", offersChat: true))
+        let headless = WorktreePanes(entry: worktree, repo: repo, inputs: .init(origin: nil, projectID: "p", displayName: ""))
+        #expect(serving.agents?.map(\.chatAvailable) == [true, nil, nil])
+        #expect(headless.agents?.map(\.chatAvailable) == [nil, nil, nil])
+    }
+
     @Test func stoppedRowDropsLayoutUnlessRequested() {
         let (worktree, repo) = entry(.closed)
         let published = WorktreePanes(entry: worktree, repo: repo, inputs: .init(origin: nil, projectID: "p", displayName: ""))

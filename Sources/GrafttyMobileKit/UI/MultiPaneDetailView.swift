@@ -128,7 +128,9 @@ struct MultiPaneDetailView: View {
                             retainedPanes: retainedPanes,
                             paneHeader: currentWorkspace.group(containing: sessionName).map { AnyView(tabHeader($0)) },
                             paneBanner: currentWorkspace.group(containing: sessionName)?.id == inputRequestGroupID
-                                ? AnyView(inputRequestBanner) : nil
+                                ? AnyView(inputRequestBanner) : nil,
+                            showsChat: showsChat(sessionName),
+                            onShowTerminal: { setShowsChat(false, for: sessionName) }
                         )
                         .id(sessionName)
                         }
@@ -199,7 +201,26 @@ struct MultiPaneDetailView: View {
     private func sessionTitle(_ session: String) -> String {
         worktree.workspaceSessionTitle(session)
     }
+    private func showsChat(_ session: String) -> Bool {
+        worktree.chatAgent(session: session) != nil && currentWorkspace.showsChat(session)
+    }
+    /// AGENT-6.173: only this device's saved layout changes. Nothing is sent to the host.
+    private func setShowsChat(_ value: Bool, for session: String) {
+        mutate { $0.setShowsChat(value, for: session) }
+        onSelectPane(session)
+    }
+
     private func tabHeader(_ group: WorkspaceLayout<String>.Group) -> some View {
+        HStack(spacing: 0) {
+            tabs(group)
+            if worktree.chatAgent(session: group.selected) != nil {
+                MobileChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
+                                                    set: { setShowsChat($0, for: group.selected) }))
+            }
+        }
+    }
+
+    private func tabs(_ group: WorkspaceLayout<String>.Group) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
                 ForEach(group.sessions, id: \.self) { session in
@@ -416,6 +437,8 @@ private struct MultiPaneLeafView: View {
     let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
     var paneHeader: AnyView? = nil
     var paneBanner: AnyView? = nil
+    var showsChat = false
+    var onShowTerminal: () -> Void = {}
 
     @State private var unusedNavigationPath = NavigationPath()
 
@@ -436,6 +459,8 @@ private struct MultiPaneLeafView: View {
             isEmbeddedPane: true,
             embeddedPaneHeader: paneHeader,
             embeddedPaneBanner: paneBanner,
+            embeddedShowsChat: showsChat,
+            onEmbeddedShowTerminal: onShowTerminal,
             onPaneInteraction: onSelect,
             onBackToWorktrees: onBackToWorktrees,
             retainedPanes: retainedPanes

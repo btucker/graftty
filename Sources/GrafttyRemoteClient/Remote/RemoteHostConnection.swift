@@ -421,6 +421,13 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         )
     }
 
+    public func makeAgentChatClient() throws -> AgentChatChannelClient {
+        guard let transport = sshTransport, let box = sshHandlerBox else {
+            throw ConnectionError.notConnected
+        }
+        return AgentChatChannelClient(parentChannel: transport.channel, parentHandler: box.handler)
+    }
+
     public func makeChromeTabClient() throws -> ChromeTabChannelClient {
         guard
             let transport = sshTransport,

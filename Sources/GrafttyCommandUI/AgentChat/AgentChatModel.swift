@@ -15,6 +15,10 @@ public final class AgentChatModel {
         didSet { if draft != oldValue { notice = nil } }
     }
 
+    /// The connection the current feed came from. Sends and answers go to
+    /// it, so they reach the channel this viewer attached through.
+    private var connection: AgentChatConnection?
+
     public init() {}
 
     public var slashMatches: [AgentChatCommand] {
@@ -29,6 +33,7 @@ public final class AgentChatModel {
     /// Attaches and follows the conversation until the view goes away or the
     /// conversation ends.
     public func run(_ connection: AgentChatConnection) async {
+        self.connection = connection
         switch await connection.open() {
         case .unavailable(let reason):
             snapshot = nil
@@ -41,6 +46,12 @@ public final class AgentChatModel {
                 if Task.isCancelled { return }
                 if transcript.apply(update) { snapshot = transcript.snapshot }
             }
+            // The feed stopped while the conversation is still going: the
+            // link to the host dropped. A stale transcript would look live.
+            if !Task.isCancelled, transcript.snapshot.endedReason == nil {
+                snapshot = nil
+                unavailable = "Chat lost its connection to the agent. Reopen Chat to continue."
+            }
         }
     }
 
@@ -49,8 +60,8 @@ public final class AgentChatModel {
         draft = AgentChatSlashQuery.draft(choosing: command)
     }
 
-    public func send(_ connection: AgentChatConnection) async {
-        guard canSend, let binding = snapshot?.binding else { return }
+    public func send() async {
+        guard canSend, let connection, let binding = snapshot?.binding else { return }
         let text = draft
         isSending = true
         defer { isSending = false }
@@ -67,10 +78,8 @@ public final class AgentChatModel {
         }
     }
 
-    public func answer(
-        _ request: AgentChatPendingRequest, _ decision: AgentChatDecision, _ connection: AgentChatConnection
-    ) async {
-        guard let binding = snapshot?.binding else { return }
+    public func answer(_ request: AgentChatPendingRequest, _ decision: AgentChatDecision) async {
+        guard let connection, let binding = snapshot?.binding else { return }
         if await connection.answer(binding, request.id, decision) {
             notice = nil
         } else {

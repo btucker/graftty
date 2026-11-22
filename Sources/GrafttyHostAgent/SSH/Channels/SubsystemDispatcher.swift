@@ -298,7 +298,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
             )
         },
         SSHChannelTypeNames.agentChat: SubsystemSpec(
-            maximumBufferSize: AgentChatChannelHandler.maximumRequestBytes + 4
+            maximumBufferSize: AgentChatClientMessage.maximumEncodedBytes + 4
         ) { dispatcher in
             // Sending is gated per action by display ownership on the host.
             guard dispatcher.terminalControlAllowed(),

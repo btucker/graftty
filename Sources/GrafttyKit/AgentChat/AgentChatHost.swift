@@ -50,6 +50,13 @@ public actor AgentChatHost {
     /// Binds a tab's agent to its running conversation. It matches the exact
     /// agent, terminal session, live app-server process, and thread; a provider
     /// name and worktree path can describe two different tabs.
+    /// Whether a tab may show the Chat / Terminal switch, judged from the
+    /// agent alone. `resolve` still decides whether Chat can attach.
+    public static func offers(_ agent: ManagedAgent) -> Bool {
+        agent.provider == .codex && (agent.status == .running || agent.status == .waiting)
+            && agent.providerSessionID?.isEmpty == false
+    }
+
     public static func resolve(
         agent: ManagedAgent?,
         record: CodexAppServerSessionRecord?,

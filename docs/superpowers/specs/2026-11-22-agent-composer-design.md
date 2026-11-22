@@ -79,8 +79,8 @@ Two clients on one app-server, and then Graftty's own session code against a liv
 ## Build order
 
 1. **Session core (done).** Wire types and a shared transcript reducer in `GrafttyProtocol`, and `CodexChatSession` in `GrafttyKit`: join the bound thread, fan out ordered updates, admit one turn per submission ID, answer each request once.
-2. **Host service.** Resolve a tab to its agent, assignment, socket, and thread. Invalidate on a thread change. Check the display controller before a submission or an answer. Expose it to paired viewers as a new SSH subsystem, and to the Mac app directly.
-3. **Chat view.** Transcript, composer, slash picker, and request actions in `GrafttyCommandUI`. Add the Chat / Terminal switch for local Mac tabs.
-4. **Other viewers.** Mac remote viewer, iPad, and iPhone, with the per-viewer view choice stored beside each viewer's workspace layout.
+2. **Host service (done).** Resolve a tab to its agent, assignment, socket, and thread. Invalidate on a thread change. Check the display controller before a submission or an answer. Expose it to paired viewers as a new SSH subsystem, and to the Mac app directly.
+3. **Chat view (done).** Transcript, composer, slash picker, and request actions in `GrafttyCommandUI`. Add the Chat / Terminal switch for local Mac tabs.
+4. **Other viewers (done, not yet tried on devices).** Mac remote viewer, iPad, and iPhone. The Mac and iPad keep the per-viewer view choice in each viewer's workspace layout; the iPhone keeps it in its own settings. A host advertises Chat per tab, so a viewer of an older or headless host shows no switch.
 
 The switch appears only for a tab whose provider passed this trial. Claude Code and Antigravity tabs stay Terminal-only until each has a verified way to share its live conversation.

@@ -261,6 +261,9 @@ public enum AgentChatClientMessage: Codable, Sendable, Equatable {
     case open(worktreePath: String, agentID: String)
     case submit(AgentChatSubmission)
     case answer(binding: AgentChatBinding, requestID: String, decision: AgentChatDecision)
+
+    /// Bounds one encoded viewer message. A draft is the only large field.
+    public static let maximumEncodedBytes = 1 << 20
 }
 
 /// What the host sends on the agent chat channel.

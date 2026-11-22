@@ -1055,7 +1055,8 @@ struct GrafttyApp: App {
                         portBindings: running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
                             guard let session = wt.paneSessions[slot], let bindings = panesPortBindings.bindings[slot], !bindings.isEmpty else { return nil }
                             return (ZmxLauncher.sessionName(for: session), bindings)
-                        }) : nil
+                        }) : nil,
+                        offersChat: true
                     )))
                 }
             }

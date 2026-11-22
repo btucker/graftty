@@ -11,9 +11,6 @@ public final class AgentChatChannelHandler: ChannelInboundHandler, @unchecked Se
     /// Chat for the named tab as seen by this authenticated device.
     public typealias Opener = @Sendable (RemoteDeviceID, _ worktreePath: String, _ agentID: String) async -> AgentChatConnection
 
-    /// Bounds one viewer frame. A draft is the only large field.
-    public static let maximumRequestBytes = 1 << 20
-
     private let deviceID: RemoteDeviceID
     private let opener: Opener
     // These properties are confined to the channel event loop.
@@ -29,7 +26,7 @@ public final class AgentChatChannelHandler: ChannelInboundHandler, @unchecked Se
 
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let bytes = Data(unwrapInboundIn(data).readableBytesView)
-        guard bytes.count <= Self.maximumRequestBytes,
+        guard bytes.count <= AgentChatClientMessage.maximumEncodedBytes,
               let message = try? JSONDecoder().decode(AgentChatClientMessage.self, from: bytes) else {
             context.close(promise: nil)
             return

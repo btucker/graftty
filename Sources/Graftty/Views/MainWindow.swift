@@ -133,6 +133,9 @@ struct MainWindow: View {
                 }, conversationRequest: { id, action in
                     try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .agentConversation(worktreeID: snapshot.path, agentID: id, action: action))
+                }, chatConnection: { agentID in
+                    remoteMacsModel.agentChatConnection(identity: RemoteMacIdentity(remote),
+                        worktreePath: snapshot.path, agentID: agentID)
                 })
                 .id(RemoteWorktreeViewerController.WorktreeKey(identity: RemoteMacIdentity(remote), worktreePath: snapshot.path))
         }
