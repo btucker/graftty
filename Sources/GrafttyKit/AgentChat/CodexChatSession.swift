@@ -78,6 +78,10 @@ actor CodexChatSession {
         await transport.close()
     }
 
+    /// The most rows a viewer receives when it attaches. Older rows stay in
+    /// the agent's terminal scrollback.
+    static let snapshotItemLimit = 400
+
     /// The current state and every later change, with no gap between them.
     func subscribe() -> (AgentChatSnapshot, AsyncStream<AgentChatUpdate>) {
         let id = UUID()
@@ -86,7 +90,11 @@ actor CodexChatSession {
         continuation.onTermination = { [weak self] _ in
             Task { await self?.removeSubscriber(id) }
         }
-        return (transcript.snapshot, stream)
+        var snapshot = transcript.snapshot
+        if snapshot.items.count > Self.snapshotItemLimit {
+            snapshot.items.removeFirst(snapshot.items.count - Self.snapshotItemLimit)
+        }
+        return (snapshot, stream)
     }
 
     /// Starts one turn for `submissionID`, however often it is retried.

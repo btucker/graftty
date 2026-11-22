@@ -54,6 +54,19 @@ struct CodexChatDecoderTests {
         #expect(CodexChatDecoder.events(notification: "item/completed", params: started, threadID: thread).isEmpty)
     }
 
+    @Test func longCommandOutputKeepsItsTail() throws {
+        let output = String(repeating: "x", count: 20_000) + "END"
+        let params: [String: Any] = [
+            "threadId": "thread-1", "turnId": "t",
+            "item": ["type": "commandExecution", "id": "c1", "command": "make", "status": "completed",
+                     "aggregatedOutput": output],
+        ]
+        let events = CodexChatDecoder.events(notification: "item/completed", params: params, threadID: thread)
+        guard case .item(let item)? = events.first else { Issue.record("no item"); return }
+        #expect(item.detail?.count == 8_000)
+        #expect(item.detail?.hasSuffix("END") == true)
+    }
+
     @Test func streamedReplyTextBecomesDeltas() throws {
         let params = try json(#"{"threadId":"thread-1","turnId":"t","itemId":"a1","delta":"Hel"}"#)
         #expect(CodexChatDecoder.events(notification: "item/agentMessage/delta", params: params, threadID: thread)

@@ -119,6 +119,21 @@ struct CodexChatSessionTests {
         #expect(snapshot.commands.map(\.name) == ["review"])
     }
 
+    @Test func aLongConversationOpensWithItsLatestRows() async throws {
+        let items = (1...450).map {
+            #"{"type":"userMessage","id":"u\#($0)","clientId":null,"content":[{"type":"text","text":"message \#($0)"}]}"#
+        }.joined(separator: ",")
+        let server = FakeCodexServer(history: """
+        {"thread":{"id":"thread-1","status":{"type":"idle"},"turns":[{"id":"t1","status":"completed","items":[\(items)]}]}}
+        """)
+        let session = try await started(server)
+
+        let (snapshot, _) = await session.subscribe()
+        #expect(snapshot.items.count == 400)
+        #expect(snapshot.items.first?.text == "message 51")
+        #expect(snapshot.items.last?.text == "message 450")
+    }
+
     @Test func aTurnEnteredInTheTerminalAppearsOnceForEverySubscriber() async throws {
         let server = FakeCodexServer()
         let session = try await started(server)

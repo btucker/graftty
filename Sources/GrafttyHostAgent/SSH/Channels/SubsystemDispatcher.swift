@@ -37,6 +37,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     private let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     private let chromeTabMutator: ChromeTabChannelHandler.Mutator?
     private let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect
+    private let agentChatOpener: AgentChatChannelHandler.Opener?
     private let paneControlMutator: PaneControlChannelHandler.Mutator
     private let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
     /// REMOTE-9: display-ownership plumbing threaded through to
@@ -81,6 +82,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
         chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil,
         chromeTabOnDisconnect: @escaping ChromeTabChannelHandler.OnDisconnect = { _ in },
+        agentChatOpener: AgentChatChannelHandler.Opener? = nil,
         ownershipStore: SessionDisplayOwnershipStore,
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
         deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?,
@@ -119,6 +121,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         self.panesStateV2Subscribe = panesStateV2Subscribe ?? panesStateSubscribe
         self.chromeTabMutator = chromeTabMutator
         self.chromeTabOnDisconnect = chromeTabOnDisconnect
+        self.agentChatOpener = agentChatOpener
         self.paneControlMutator = paneControlMutator
         self.worktreeManagementMutator = worktreeManagementMutator ?? { _ in
             .error(
@@ -293,6 +296,15 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
             return ChromeTabChannelHandler(
                 deviceID: deviceID, mutator: mutator, onDisconnect: dispatcher.chromeTabOnDisconnect
             )
+        },
+        SSHChannelTypeNames.agentChat: SubsystemSpec(
+            maximumBufferSize: AgentChatChannelHandler.maximumRequestBytes + 4
+        ) { dispatcher in
+            // Sending is gated per action by display ownership on the host.
+            guard dispatcher.terminalControlAllowed(),
+                  let deviceID = dispatcher.deviceIDProvider(),
+                  let opener = dispatcher.agentChatOpener else { return nil }
+            return AgentChatChannelHandler(deviceID: deviceID, opener: opener)
         },
         SSHChannelTypeNames.team: SubsystemSpec(
             maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes

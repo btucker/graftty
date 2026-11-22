@@ -4,6 +4,9 @@ import GrafttyProtocol
 /// Translates Codex app-server messages for one thread into chat events.
 /// Shapes follow `codex app-server generate-ts` for codex-cli 0.171.0.
 enum CodexChatDecoder {
+    /// The most characters of command output one row carries.
+    static let outputLimit = 8_000
+
     struct History: Equatable {
         var items: [AgentChatItem]
         var turnState: AgentChatTurnState
@@ -162,7 +165,9 @@ enum CodexChatDecoder {
             // creates the row when there is something to show.
             return text.isEmpty ? nil : make(.reasoning, text)
         case "commandExecution":
-            return make(.command, raw["command"] as? String ?? "", detail: raw["aggregatedOutput"] as? String,
+            // The tail of long output is what a reader checks first.
+            let output = (raw["aggregatedOutput"] as? String).map { String($0.suffix(Self.outputLimit)) }
+            return make(.command, raw["command"] as? String ?? "", detail: output,
                         complete: turnComplete && !running)
         case "fileChange":
             let paths = (raw["changes"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String }

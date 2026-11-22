@@ -129,10 +129,10 @@ Behavior:
 ### Task 6: Host side of the chat channel
 
 **Files:**
-- Modify: `Sources/GrafttyProtocol/SSHChannelTypes.swift` (add `agentChat = "agent-chat@graftty.dev"`)
+- Modify: `Sources/GrafttyProtocol/SSHChannelTypes.swift` (add `agentChat = "agent-chat-v1@graftty.dev"`)
 - Create: `Sources/GrafttyHostAgent/SSH/Channels/AgentChatChannelHandler.swift`
 - Modify: `Sources/GrafttyHostAgent/SSH/Channels/SubsystemDispatcher.swift` (`framedSubsystems` entry; refuse without a device ID or handler)
-- Modify: `Sources/GrafttyHostAgent/SSH/SSHHostSessionConfiguration.swift`, `Sources/Graftty/App/GrafttyApp+WebRTCHostChannels.swift`, `Sources/GrafttyHost/HostService.swift` (supply the opener)
+- Modify: `Sources/GrafttyHostAgent/SSH/SSHHostSessionConfiguration.swift`, `Sources/GrafttyHostAgent/WebRTCHostAgent.swift`, `Sources/Graftty/App/GrafttyApp+WebRTCHostChannels.swift` (supply the opener). The headless host passes no opener, so it refuses the channel and viewers see Chat as unavailable; Linux has no app-server transport yet.
 - Modify: `Sources/GrafttyKit/AgentChat/CodexChatSession.swift` (snapshot bound)
 - Test: `Tests/GrafttyTests/Remote/SSH/AgentChatChannelHandlerTests.swift`, `Tests/GrafttyKitTests/AgentChat/CodexChatSessionTests.swift`
 
@@ -150,7 +150,7 @@ Behavior: one channel serves one tab. The first frame must be `.open`; the handl
   - In `CodexChatSessionTests`, `aLongConversationOpensWithItsLatestRows` (Review Focus 4): history of 450 user messages → `subscribe()` snapshot has 400 items, the last one being the newest.
   - In `SubsystemDispatcherTests`, the subsystem is refused when `agentChatOpener` is nil.
 - [ ] **Step 2:** Run the filters. Expected: compile failure.
-- [ ] **Step 3:** Implement. On the Mac the opener is `{ deviceID, path, agentID in await MainActor.run { service.connection(worktreePath: path, agentID: agentID, viewer: .device(deviceID)) } }`. The headless host passes the same with its own `AgentChatService`; on Linux `AgentChatHost()` fails to connect and Chat reports unavailable.
+- [ ] **Step 3:** Implement. On the Mac the opener is `{ deviceID, path, agentID in await MainActor.run { service.connection(worktreePath: path, agentID: agentID, viewer: .device(deviceID)) } }`.
 - [ ] **Step 4:** Run. Expected: suites pass. Run `scripts/check-linux-test-allowlist.py`.
 - [ ] **Step 5:** Commit: `feat: serve agent chat to paired viewers`.
 
