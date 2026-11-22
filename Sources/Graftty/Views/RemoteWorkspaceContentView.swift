@@ -56,9 +56,7 @@ struct RemoteWorkspaceContentView: View {
     private func select(_ session: String) {
         zoomed = nil
         workspace?.select(session)
-        if showsChat(session) {
-            terminalManager.clearFocus()
-        } else if worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
+        if showsChat(session) || worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
             terminalManager.clearFocus()
         } else if let id = slot(session) { onFocus(id) }
     }
@@ -347,13 +345,9 @@ struct RemoteWorkspaceContentView: View {
                 }
             }
             if chatAgent(group.selected) != nil {
-                Picker("View", selection: Binding(get: { showsChat(group.selected) },
-                                                  set: { setView(group.selected, chat: $0) })) {
-                    Text("Chat").tag(true)
-                    Text("Terminal").tag(false)
-                }
-                .pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
-                .padding(.horizontal, 8)
+                AgentChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
+                                                   set: { setView(group.selected, chat: $0) }))
+                    .controlSize(.small)
             }
           }.font(.system(size: 13))
                 .background { terminalManager.theme.background.worktreeHeaderWash() }

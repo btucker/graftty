@@ -53,9 +53,6 @@ public actor AgentChatHost {
         self.startTimeout = startTimeout
     }
 
-    /// Binds a tab's agent to its running conversation. It matches the exact
-    /// agent, terminal session, live app-server process, and thread; a provider
-    /// name and worktree path can describe two different tabs.
     /// Whether a tab may show the Chat / Terminal switch, judged from the
     /// agent alone. `resolve` still decides whether Chat can attach.
     public static func offers(_ agent: ManagedAgent) -> Bool {
@@ -63,6 +60,9 @@ public actor AgentChatHost {
             && agent.providerSessionID?.isEmpty == false
     }
 
+    /// Binds a tab's agent to its running conversation. It matches the exact
+    /// agent, terminal session, live app-server process, and thread; a provider
+    /// name and worktree path can describe two different tabs.
     public static func resolve(
         agent: ManagedAgent?,
         record: CodexAppServerSessionRecord?,
@@ -72,8 +72,7 @@ public actor AgentChatHost {
         guard agent.provider == .codex else {
             return .unavailable("Chat is not available for this agent yet. Use Terminal.")
         }
-        guard agent.status == .running || agent.status == .waiting,
-              let conversation = agent.providerSessionID, !conversation.isEmpty else {
+        guard offers(agent), let conversation = agent.providerSessionID else {
             return .unavailable("This agent has no running conversation.")
         }
         guard let record, appServerIsRunning else {
@@ -146,12 +145,6 @@ public actor AgentChatHost {
     ) async -> Bool {
         guard isController, let session = session(for: binding, current: current) else { return false }
         return await session.answer(requestID: requestID, decision: decision)
-    }
-
-    /// Ends chat for a tab whose agent exited or was closed.
-    public func close(agentID: String) async {
-        guard let existing = sessions.removeValue(forKey: agentID) else { return }
-        await existing.session.stop()
     }
 
     /// Launching the proxy and its handshake block. They run off this actor,

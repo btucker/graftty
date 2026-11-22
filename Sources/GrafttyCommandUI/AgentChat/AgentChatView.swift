@@ -83,7 +83,7 @@ public struct AgentChatView: View {
     }
 
     private func requestCard(_ request: AgentChatPendingRequest) -> some View {
-        let heading = title(for: request)
+        let heading = title(for: request.kind)
         return VStack(alignment: .leading, spacing: 8) {
             Text(heading).font(.callout.weight(.medium))
             // A request Chat cannot describe has only its heading to show.
@@ -109,8 +109,6 @@ public struct AgentChatView: View {
         .background(.quaternary.opacity(0.5))
         .accessibilityElement(children: .contain)
     }
-
-    private func title(for request: AgentChatPendingRequest) -> String { title(for: request.kind) }
 
     private func title(for kind: AgentChatPendingRequest.Kind) -> String {
         switch kind {
@@ -226,7 +224,8 @@ private struct AgentChatRow: View {
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityLabel("You: \(item.text)")
         case .agent:
-            Text(Self.rich(item.text)).textSelection(.enabled)
+            // Markdown is parsed once the row is complete, not on every streamed token.
+            Text(item.isComplete ? Self.rich(item.text) : AttributedString(item.text)).textSelection(.enabled)
         case .reasoning:
             Text(Self.rich(item.text)).font(.callout).italic().foregroundStyle(.secondary)
         case .command:
@@ -247,5 +246,22 @@ private struct AgentChatRow: View {
     private static func rich(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+}
+
+/// The segmented Chat / Terminal control in an agent tab's header.
+public struct AgentChatSwitch: View {
+    @Binding private var showsChat: Bool
+
+    public init(showsChat: Binding<Bool>) { _showsChat = showsChat }
+
+    public var body: some View {
+        Picker("View", selection: $showsChat) {
+            Text("Chat").tag(true)
+            Text("Terminal").tag(false)
+        }
+        .pickerStyle(.segmented).labelsHidden().fixedSize()
+        .padding(.horizontal, 8)
+        .accessibilityIdentifier("workspace.chat.switch")
     }
 }

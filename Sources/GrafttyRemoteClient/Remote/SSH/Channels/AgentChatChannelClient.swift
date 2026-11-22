@@ -154,29 +154,15 @@ public final class AgentChatChannelClient: @unchecked Sendable {
 
 extension AgentChatConnection {
     /// Chat for one tab through whichever link `link` returns when the view
-    /// opens. Sends and answers stay on the link that served the open.
+    /// opens. Sends and answers stay on the channel that open made.
     public static func following(
         worktreePath: String, agentID: String,
         link: @escaping @Sendable () async -> (any RemoteHostLink)?
     ) -> AgentChatConnection {
-        let current = NIOLockedValueBox<AgentChatConnection?>(nil)
-        return AgentChatConnection(
-            open: {
-                guard let link = await link() else {
-                    current.withLockedValue { $0 = nil }
-                    return .unavailable(AgentChatChannelClient.unreachable)
-                }
-                let connection = await link.agentChat(worktreePath: worktreePath, agentID: agentID)
-                current.withLockedValue { $0 = connection }
-                return await connection.open()
-            },
-            submit: { submission in
-                await current.withLockedValue { $0 }?.submit(submission) ?? .rejected(.unavailable)
-            },
-            answer: { binding, requestID, decision in
-                await current.withLockedValue { $0 }?.answer(binding, requestID, decision) ?? false
-            }
-        )
+        remote(worktreePath: worktreePath, agentID: agentID) {
+            guard let link = await link() as? any AgentChatHostLink else { throw ChannelError.ioOnClosedChannel }
+            return try await link.makeAgentChatClient()
+        }
     }
 
     /// Chat for one tab over a paired link. Each `open` uses a fresh channel

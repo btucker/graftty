@@ -17,30 +17,12 @@ struct MobileAgentChatView: View {
         AgentChatView(
             model: model, tabID: "\(agent.id)/\(agent.assignmentID ?? "")",
             connection: coordinator?.agentChatConnection(worktreePath: worktreePath, agentID: agent.id, on: host)
-                ?? AgentChatConnection(
-                    open: { .unavailable("The host connection is unavailable.") },
-                    submit: { _ in .rejected(.unavailable) }, answer: { _, _, _ in false }
-                ),
+                ?? .unavailable("The host connection is unavailable."),
             showTerminal: showTerminal
         )
         .foregroundStyle(theme.foreground)
         .background(theme.background)
         .environment(\.colorScheme, theme.isDark ? .dark : .light)
-    }
-}
-
-/// The segmented Chat / Terminal control in an iPad tab row.
-struct MobileChatSwitch: View {
-    @Binding var showsChat: Bool
-
-    var body: some View {
-        Picker("View", selection: $showsChat) {
-            Text("Chat").tag(true)
-            Text("Terminal").tag(false)
-        }
-        .pickerStyle(.segmented).labelsHidden().fixedSize()
-        .padding(.horizontal, 8)
-        .accessibilityIdentifier("workspace.chat.switch")
     }
 }
 #endif

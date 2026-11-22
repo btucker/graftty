@@ -146,7 +146,6 @@ struct CodexChatDecoderTests {
         #expect(history.items.map(\.id) == ["u1", "a1", "u2", "a2"])
         #expect(history.items.map(\.isComplete) == [true, true, true, false])
         #expect(history.turnState == .active)
-        #expect(history.activeTurnID == "t2")
     }
 
     @Test func enabledSkillsBecomeCommands() throws {

@@ -576,7 +576,7 @@ struct MainWindow: View {
         guard let worktree = selectedWorktreeBinding else { return nil }
         return { id in
             guard let slot = worktree.wrappedValue.showAgentTab(id) else { return }
-            if worktree.wrappedValue.hasCompletedContent(in: slot) { terminalManager.clearFocus() }
+            if worktree.wrappedValue.showsNonTerminalContent(in: slot) { terminalManager.clearFocus() }
             else { terminalManager.setFocus(slot) }
         }
     }
@@ -1160,7 +1160,7 @@ struct MainWindow: View {
         // typing immediately after a sidebar click without having to also
         // click into the terminal.
         if let wt = appState.worktree(forPath: path),
-           let target = wt.presentationPane, wt.hasCompletedContent(in: target) {
+           let target = wt.presentationPane, wt.showsNonTerminalContent(in: target) {
             terminalManager.clearFocus()
         } else if let wt = appState.worktree(forPath: path), let target = wt.presentationPane {
             makePaneFirstResponder(

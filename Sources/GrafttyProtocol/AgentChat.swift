@@ -187,7 +187,8 @@ public struct AgentChatTranscript: Sendable, Equatable {
         case .item(let item):
             upsert(item)
         case .textDelta(let itemID, let turnID, let kind, let delta):
-            if let index = snapshot.items.firstIndex(where: { $0.id == itemID }) {
+            // The row being streamed is nearly always the last one.
+            if let index = snapshot.items.lastIndex(where: { $0.id == itemID }) {
                 guard !snapshot.items[index].isComplete else { return }
                 snapshot.items[index].text += delta
             } else {
@@ -215,7 +216,7 @@ public struct AgentChatTranscript: Sendable, Equatable {
     }
 
     private mutating func upsert(_ item: AgentChatItem) {
-        guard let index = snapshot.items.firstIndex(where: { $0.id == item.id }) else {
+        guard let index = snapshot.items.lastIndex(where: { $0.id == item.id }) else {
             snapshot.items.append(item)
             return
         }
@@ -296,5 +297,12 @@ public struct AgentChatConnection: Sendable {
         self.open = open
         self.submit = submit
         self.answer = answer
+    }
+
+    /// A connection to nothing, which says why.
+    public static func unavailable(_ reason: String) -> AgentChatConnection {
+        AgentChatConnection(
+            open: { .unavailable(reason) }, submit: { _ in .rejected(.unavailable) }, answer: { _, _, _ in false }
+        )
     }
 }

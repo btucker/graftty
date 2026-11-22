@@ -48,11 +48,6 @@ public final class AgentChatService {
         )
     }
 
-    /// Whether this tab can offer the Chat / Terminal switch right now.
-    public func isAvailable(worktreePath: String, agentID: String) async -> Bool {
-        await resolve(worktreePath: worktreePath, agentID: agentID).binding != nil
-    }
-
     public func open(worktreePath: String, agentID: String) async -> AgentChatFeed {
         switch await resolve(worktreePath: worktreePath, agentID: agentID).resolution {
         case .unavailable(let reason):
@@ -118,13 +113,18 @@ public final class AgentChatService {
 
     private func resolve(worktreePath: String, agentID: String) async -> Resolved {
         let state = state()
-        guard let repo = state.repos.first(where: { $0.worktrees.contains { $0.path == worktreePath } }),
+        guard let repo = state.repo(forWorktreePath: worktreePath),
               let worktree = state.worktree(forPath: worktreePath),
               let agent = worktree.agents.first(where: { $0.id == agentID }) else {
             return Resolved(resolution: AgentChatHost.resolve(agent: nil, record: nil, appServerIsRunning: false),
                             sessionName: nil)
         }
         let sessionName = agent.paneSlotID.flatMap { worktree.paneSessions[$0] }.map(ZmxLauncher.sessionName(for:))
+        // A tab that cannot offer Chat needs no record: skip the disk read.
+        guard AgentChatHost.offers(agent) else {
+            return Resolved(resolution: AgentChatHost.resolve(agent: agent, record: nil, appServerIsRunning: false),
+                            sessionName: sessionName)
+        }
         let storage = storage
         let teamID = repo.path
         let record: CodexAppServerSessionRecord? = await OffMainIO.run {

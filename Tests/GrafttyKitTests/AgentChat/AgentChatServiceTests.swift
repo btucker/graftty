@@ -166,11 +166,9 @@ struct AgentChatServiceTests {
 
     @Test func aTabWithNoRegisteredServerIsUnavailable() async throws {
         let fixture = try Fixture()
-        #expect(await fixture.service.isAvailable(worktreePath: fixture.path, agentID: fixture.agent.id))
         try fixture.storage.delete(teamID: "/repo", worktree: fixture.path, paneSessionName: fixture.sessionName)
 
-        #expect(await fixture.service.isAvailable(worktreePath: fixture.path, agentID: fixture.agent.id) == false)
         #expect(attached(await fixture.service.open(worktreePath: fixture.path, agentID: fixture.agent.id)) == nil)
-        #expect(await fixture.service.isAvailable(worktreePath: fixture.path, agentID: "codex-unknown") == false)
+        #expect(attached(await fixture.service.open(worktreePath: fixture.path, agentID: "codex-unknown")) == nil)
     }
 }

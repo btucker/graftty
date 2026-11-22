@@ -36,7 +36,6 @@ actor CodexChatSession {
     private var answerable: [String: Any] = [:]
     private var submissions: [String: AgentChatSubmissionResult] = [:]
     private var isAdmitting = false
-    private var activeTurnID: String?
     private var skills: [CodexChatDecoder.Skill] = []
 
     init(binding: AgentChatBinding, transport: any CodexChatTransport) {
@@ -54,7 +53,7 @@ actor CodexChatSession {
             do {
                 for try await text in stream { await self?.receive(text) }
             } catch {}
-            await self?.connectionEnded()
+            await self?.end(reason: Self.agentExited)
         }
         _ = try await call("initialize", [
             "clientInfo": ["name": "graftty-chat", "title": "Graftty", "version": "1"],
@@ -150,11 +149,6 @@ actor CodexChatSession {
         }
     }
 
-    func interrupt() async -> Bool {
-        guard let activeTurnID else { return false }
-        return (try? await call("turn/interrupt", ["threadId": threadID, "turnId": activeTurnID])) != nil
-    }
-
     // MARK: Incoming messages
 
     private func receive(_ text: String) {
@@ -189,10 +183,6 @@ actor CodexChatSession {
             refreshCommands()
             return
         }
-        if params["threadId"] as? String == threadID, let turn = params["turn"] as? [String: Any] {
-            if method == "turn/started" { activeTurnID = turn["id"] as? String }
-            if method == "turn/completed" { activeTurnID = nil }
-        }
         for event in CodexChatDecoder.events(notification: method, params: params, threadID: threadID) {
             if case .requestResolved(let id) = event { answerable[id] = nil }
             guard isLoaded else {
@@ -210,7 +200,6 @@ actor CodexChatSession {
     private func install(history result: [String: Any]) -> Bool {
         guard let history = CodexChatDecoder.history(threadResult: result) else { return false }
         isLoaded = true
-        activeTurnID = history.activeTurnID
         for item in history.items { emit(.item(item)) }
         emit(.turnState(history.turnState))
         earlyItems.forEach(emit)
@@ -224,10 +213,6 @@ actor CodexChatSession {
             self.skills = CodexChatDecoder.skills(skillsResult: result)
             self.emit(.commands(self.skills.map(\.command)))
         } onSendFailure: { _ in }
-    }
-
-    private func connectionEnded() {
-        end(reason: Self.agentExited)
     }
 
     /// Fails whatever waits on the server and ends every viewer's feed.
@@ -285,14 +270,12 @@ actor CodexChatSession {
         Task {
             do {
                 try await transport.send(text)
-                self.markSent(onSent)
+                onSent()
             } catch {
                 self.sendFailed(id: id, error: error, onSendFailure)
             }
         }
     }
-
-    private func markSent(_ onSent: () -> Void) { onSent() }
 
     private func sendFailed(id: Int, error: Error, _ onSendFailure: (Error) -> Void) {
         guard pending.removeValue(forKey: id) != nil else { return }

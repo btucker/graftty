@@ -27,7 +27,7 @@ public final class AgentChatChannelHandler: ChannelInboundHandler, @unchecked Se
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let bytes = Data(unwrapInboundIn(data).readableBytesView)
         guard bytes.count <= AgentChatClientMessage.maximumEncodedBytes,
-              let message = try? JSONDecoder().decode(AgentChatClientMessage.self, from: bytes) else {
+              let message = try? JSONDecoder.shared.decode(AgentChatClientMessage.self, from: bytes) else {
             context.close(promise: nil)
             return
         }
@@ -93,7 +93,7 @@ public final class AgentChatChannelHandler: ChannelInboundHandler, @unchecked Se
     /// Writes one frame and waits for it, so a slow viewer slows its own feed.
     @discardableResult
     private func send(_ message: AgentChatServerMessage, on channel: Channel) async -> Bool {
-        guard let body = try? JSONEncoder().encode(message) else { return false }
+        guard let body = try? JSONEncoder.shared.encode(message) else { return false }
         do {
             try await channel.eventLoop.flatSubmit { [self] () -> EventLoopFuture<Void> in
                 guard !inactive else { return channel.eventLoop.makeFailedFuture(ChannelError.ioOnClosedChannel) }

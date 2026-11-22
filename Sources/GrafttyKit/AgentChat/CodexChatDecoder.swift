@@ -10,7 +10,6 @@ enum CodexChatDecoder {
     struct History: Equatable {
         var items: [AgentChatItem]
         var turnState: AgentChatTurnState
-        var activeTurnID: String?
     }
 
     static func events(notification method: String, params: [String: Any], threadID: String) -> [AgentChatEvent] {
@@ -67,11 +66,10 @@ enum CodexChatDecoder {
     /// Reads the `thread` object returned by `thread/read` or `thread/resume`.
     static func history(threadResult: [String: Any]) -> History? {
         guard let thread = threadResult["thread"] as? [String: Any] else { return nil }
-        var history = History(items: [], turnState: .idle, activeTurnID: nil)
+        var history = History(items: [], turnState: .idle)
         for turn in thread["turns"] as? [[String: Any]] ?? [] {
             let turnID = turn["id"] as? String
             let inProgress = turn["status"] as? String == "inProgress"
-            if inProgress { history.activeTurnID = turnID }
             let rawItems = turn["items"] as? [[String: Any]] ?? []
             for (index, raw) in rawItems.enumerated() {
                 // Only the last item of a running turn can still be streaming.

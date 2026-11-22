@@ -43,38 +43,14 @@ extension DirectSSHHostConnection: MCPHostLink {}
 extension RemoteHostConnection: MCPHostLink {}
 #endif
 
-/// A link that can reach the host's Chat for an agent tab. Real connections
-/// conform; consumers that hold `any RemoteHostLink` ask through
-/// `RemoteHostLink.agentChat(worktreePath:agentID:)`.
+/// A link that can open the host's Chat channel for an agent tab.
 public protocol AgentChatHostLink: RemoteHostLink {
-    func agentChatConnection(worktreePath: String, agentID: String) async -> AgentChatConnection
+    func makeAgentChatClient() async throws -> AgentChatChannelClient
 }
 
-extension RemoteHostLink {
-    /// Chat for one tab, or a connection that reports why there is none.
-    public func agentChat(worktreePath: String, agentID: String) async -> AgentChatConnection {
-        if let link = self as? any AgentChatHostLink {
-            return await link.agentChatConnection(worktreePath: worktreePath, agentID: agentID)
-        }
-        return AgentChatConnection(
-            open: { .unavailable(AgentChatChannelClient.unsupported) },
-            submit: { _ in .rejected(.unavailable) },
-            answer: { _, _, _ in false }
-        )
-    }
-}
-
-extension DirectSSHHostConnection: AgentChatHostLink {
-    public nonisolated func agentChatConnection(worktreePath: String, agentID: String) -> AgentChatConnection {
-        .remote(worktreePath: worktreePath, agentID: agentID) { try await self.makeAgentChatClient() }
-    }
-}
+extension DirectSSHHostConnection: AgentChatHostLink {}
 #if canImport(WebRTC)
-extension RemoteHostConnection: AgentChatHostLink {
-    public nonisolated func agentChatConnection(worktreePath: String, agentID: String) -> AgentChatConnection {
-        .remote(worktreePath: worktreePath, agentID: agentID) { try await self.makeAgentChatClient() }
-    }
-}
+extension RemoteHostConnection: AgentChatHostLink {}
 #endif
 
 /// A link dialed by exchanging a signed SDP offer and answer.

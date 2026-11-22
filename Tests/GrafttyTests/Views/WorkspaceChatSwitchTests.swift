@@ -26,7 +26,7 @@ struct WorkspaceChatSwitchTests {
         let (original, slot) = worktree()
         var entry = original
 
-        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry, chatAvailable: true)
+        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry)
         #expect(entry.workspaceLayout?.showsChat(slot) == true)
         #expect(entry.agents == original.agents)
         #expect(entry.paneSessions == original.paneSessions)
@@ -34,7 +34,7 @@ struct WorkspaceChatSwitchTests {
         #expect(entry.focusedPaneSlotID == original.focusedPaneSlotID)
         #expect(entry.workspaceLayout?.groups == original.workspaceLayout?.groups)
 
-        WorkspaceChatSwitch.setView(chat: false, slot: slot, in: &entry, chatAvailable: true)
+        WorkspaceChatSwitch.setView(chat: false, slot: slot, in: &entry)
         #expect(entry == original)
     }
 
@@ -44,9 +44,9 @@ struct WorkspaceChatSwitchTests {
         let models = AgentChatModelStore<PaneSlotID>()
         models.model(for: slot).draft = "half-written prompt"
 
-        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry, chatAvailable: true)
-        WorkspaceChatSwitch.setView(chat: false, slot: slot, in: &entry, chatAvailable: true)
-        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry, chatAvailable: true)
+        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry)
+        WorkspaceChatSwitch.setView(chat: false, slot: slot, in: &entry)
+        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry)
 
         #expect(models.model(for: slot).draft == "half-written prompt")
         #expect(models.model(for: PaneSlotID()).draft.isEmpty)
@@ -54,16 +54,20 @@ struct WorkspaceChatSwitchTests {
         #expect(models.model(for: slot).draft.isEmpty)
     }
 
+    @Test func aTabShowingChatDoesNotTakeTheTerminalKeyboard() {
+        var (entry, slot) = worktree()
+        #expect(entry.showsNonTerminalContent(in: slot) == false)
+        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry)
+        #expect(entry.showsNonTerminalContent(in: slot))
+        // An agent that can no longer offer Chat falls back to its terminal.
+        entry.agents[0].providerSessionID = nil
+        #expect(entry.showsNonTerminalContent(in: slot) == false)
+    }
+
     @Test func aTabThatCannotAttachStaysInTerminal() {
         var (entry, slot) = worktree(provider: .claude)
-        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry, chatAvailable: false)
+        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry)
         #expect(entry.workspaceLayout?.showsChat(slot) != true)
     }
 
-    @Test func availabilityIsRecheckedWhenTheConversationChanges() {
-        var (entry, _) = worktree()
-        let before = WorkspaceChatSwitch.availabilityKey(entry)
-        entry.agents[0].providerSessionID = "thread-2"
-        #expect(WorkspaceChatSwitch.availabilityKey(entry) != before)
-    }
 }

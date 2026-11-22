@@ -117,6 +117,8 @@ struct SingleSessionView: View {
     /// The iPad workspace's Chat or Terminal choice for this tab.
     private let embeddedShowsChat: Bool
     private let onEmbeddedShowTerminal: () -> Void
+    /// The iPad workspace's model for this tab, which outlives a tab change.
+    private let embeddedChatModel: AgentChatModel?
     /// The iPhone's choice for this tab, mirrored from `MobileChatViewChoice`.
     @State private var compactShowsChat = false
     /// Kept while Terminal shows, so the draft is here on the way back.
@@ -357,6 +359,7 @@ struct SingleSessionView: View {
         embeddedPaneBanner: AnyView? = nil,
         embeddedShowsChat: Bool = false,
         onEmbeddedShowTerminal: @escaping () -> Void = {},
+        embeddedChatModel: AgentChatModel? = nil,
         isTerminalSheet: Bool = false,
         onPaneInteraction: (() -> Void)? = nil,
         onBackToWorktrees: (() -> Void)? = nil,
@@ -384,6 +387,7 @@ struct SingleSessionView: View {
         self.embeddedPaneBanner = embeddedPaneBanner
         self.embeddedShowsChat = embeddedShowsChat
         self.onEmbeddedShowTerminal = onEmbeddedShowTerminal
+        self.embeddedChatModel = embeddedChatModel
         self._compactShowsChat = State(initialValue: step.worktreePath.map {
             MobileChatViewChoice.showsChat(hostID: step.host.id, worktreePath: $0, sessionName: step.sessionName)
         } ?? false)
@@ -616,7 +620,7 @@ struct SingleSessionView: View {
                 .padding(.top, compactContentTopInset)
             } else if showsChat, let agent = chatAgent, let path = step.worktreePath {
                 // The terminal session stays attached underneath; only this view changes.
-                MobileAgentChatView(host: step.host, worktreePath: path, agent: agent, model: chatModel,
+                MobileAgentChatView(host: step.host, worktreePath: path, agent: agent, model: embeddedChatModel ?? chatModel,
                     theme: terminalTheme,
                     showTerminal: { if isEmbeddedPane { onEmbeddedShowTerminal() } else { setCompactShowsChat(false) } })
                     .padding(.top, compactContentTopInset)

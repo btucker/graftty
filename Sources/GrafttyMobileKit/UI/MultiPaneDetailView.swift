@@ -25,6 +25,8 @@ struct MultiPaneDetailView: View {
 
     @Environment(\.retainedMobilePanes) private var retainedPanes
     @State private var drawerResizeStart: Double?
+    /// One Chat model per tab, so a draft survives a tab change.
+    @State private var chatModels = AgentChatModelStore<String>()
     @State private var retentionOwner = UUID()
     /// The tree's only keyboard subscription; embedded panes read it from
     /// the environment (IPAD-2.10).
@@ -130,6 +132,7 @@ struct MultiPaneDetailView: View {
                             paneBanner: currentWorkspace.group(containing: sessionName)?.id == inputRequestGroupID
                                 ? AnyView(inputRequestBanner) : nil,
                             showsChat: showsChat(sessionName),
+                            chatModel: showsChat(sessionName) ? chatModels.model(for: sessionName) : nil,
                             onShowTerminal: { setShowsChat(false, for: sessionName) }
                         )
                         .id(sessionName)
@@ -184,6 +187,7 @@ struct MultiPaneDetailView: View {
     private func reconcileWorkspace(revealFocused: Bool) {
         let previous = Set(currentWorkspace.sessions)
         let live = Set(worktree.layout?.leaves.map(\.sessionName) ?? [])
+        chatModels.prune(keeping: live)
         retainedPanes?.retainWorkspace(Set(live.map { .init(hostID: host.id, sessionName: $0) }), owner: retentionOwner)
         workspaceStore.synchronize(hostID: host.id, worktree: worktree, focused: focusedPaneId, revealFocused: revealFocused)
         if let selected = currentWorkspace.focusedSession, selected != focusedPaneId,
@@ -214,7 +218,7 @@ struct MultiPaneDetailView: View {
         HStack(spacing: 0) {
             tabs(group)
             if worktree.chatAgent(session: group.selected) != nil {
-                MobileChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
+                AgentChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
                                                     set: { setShowsChat($0, for: group.selected) }))
             }
         }
@@ -438,6 +442,7 @@ private struct MultiPaneLeafView: View {
     var paneHeader: AnyView? = nil
     var paneBanner: AnyView? = nil
     var showsChat = false
+    var chatModel: AgentChatModel? = nil
     var onShowTerminal: () -> Void = {}
 
     @State private var unusedNavigationPath = NavigationPath()
@@ -461,6 +466,7 @@ private struct MultiPaneLeafView: View {
             embeddedPaneBanner: paneBanner,
             embeddedShowsChat: showsChat,
             onEmbeddedShowTerminal: onShowTerminal,
+            embeddedChatModel: chatModel,
             onPaneInteraction: onSelect,
             onBackToWorktrees: onBackToWorktrees,
             retainedPanes: retainedPanes
