@@ -4,7 +4,7 @@
 
 Start a review in **Chat**. Switch to **Terminal** while the agent is working, use the provider's keyboard controls to answer an approval, then switch back to **Chat** to read the result. The same tab stays selected throughout. The review runs once, the approval is answered once, and the next message continues the same conversation.
 
-The proposed GUI uses assistant-ui for editing and command completion. Graftty owns the tab, the connection to its live session, and the choice of view. A user can open the TUI for the full provider interface, including interactions the GUI cannot yet render.
+Chat is a native SwiftUI view in `GrafttyCommandUI`, shared by Mac and GrafttyMobile. Graftty owns the tab, the connection to its live session, and the choice of view. A user can open the TUI for the full provider interface, including interactions the GUI cannot yet render.
 
 ## Switching views
 
@@ -35,7 +35,7 @@ Start with multiline text and command completion. For sessions that advertise im
 1. **Identify the running agent.** The worktree host binds the existing Graftty agent and assignment to its pane, terminal session, live provider process, and current provider conversation ID. On a switch, it validates that binding and attaches the requested view. Matching a provider name and worktree path is insufficient: two Codex tabs can share both. Launching an adapter that creates a second agent or resuming a copy of a saved conversation would fork the user's work. If live attachment fails, keep the terminal usable and explain why Chat is unavailable. [Terminal launch path](../../../Sources/GrafttyKit/Teams/WorktreeAgentLaunchCommand.swift)
 2. **Catch up from the same conversation.** The host supplies history, current turn state, pending requests, and live output over the authenticated connection. Take a snapshot with an event cursor, or buffer live events while reading history and reconcile them using provider item IDs. Switching views or reconnecting midway through a reply must yield one copy of each message in order. Revalidate on a provider-side thread change such as a TUI resume. Invalidate the old binding, draft destination, commands, and request handles before enabling Send for the new conversation.
 3. **Populate the picker.** Use the live session's command catalog when the provider exposes one. Agent Client Protocol (ACP) publishes it through `available_commands_update`. Replace that session's entire list on each update. A native provider transport may expose commands differently. Preserve ordinary text input when discovery is unavailable, and offer Terminal for the provider's full command menu. [ACP slash commands](https://agentclientprotocol.com/protocol/v1/slash-commands)
-4. **Edit the draft.** Bundle a local assistant-ui React composer in a `WKWebView` on both platforms. Supply the session catalog through its trigger popover. Its standard slash action fires on selection and can insert a directive chip. Wire selection to insert editable literal text instead. Swift owns session routing and the connection to the host. [Composer primitives](https://www.assistant-ui.com/docs/primitives/composer) · [Slash action behavior](https://www.assistant-ui.com/docs/guides/slash-commands)
+4. **Edit the draft.** Use a native multiline editor with the existing completion popover (`AgentCompletionPicker`) fed by the session catalog. Selecting a row inserts editable literal text. An earlier draft proposed an assistant-ui React composer in a `WKWebView`. The Mac app has no web view or JavaScript bridge today, GrafttyMobile does not link the web bundle, and a web composer would need its own focus, input-method, and VoiceOver work on each platform. The session catalog and submission contract are the same either way.
 5. **Send once.** Submit the binding, a submission ID, and the draft to the host. Verify control, current thread, and turn state before sending through the live provider connection. Deduplicate the submission ID across reconnects. Clear only the submitted draft once the host accepts it. Preserve a rejected draft. If the provider may have received it before a disconnect, show its delivery as uncertain and require an explicit resend. A switch itself never emits input. [ACP prompt turn](https://agentclientprotocol.com/protocol/v1/prompt-turn)
 
 For example, choosing `/review` edits the draft. With an ACP connection to the live agent, Send issues one `session/prompt` containing `{"type":"text","text":"/review"}`. With a native connection, offer that completion only when the host can invoke the equivalent command on the bound thread. Typing `/review` into an arbitrary JSON text field does not establish command support.
@@ -44,7 +44,7 @@ For example, choosing `/review` edits the draft. With an ACP connection to the l
 
 | Agent | Existing integration | What the prototype must prove |
 | --- | --- | --- |
-| Codex | Graftty registers the native TUI's [app-server socket](../../../Sources/GrafttyKit/Teams/Resources/codex-wrapper.sh). Its [client](../../../Sources/GrafttyKit/Teams/CodexAppServerClient.swift) can read a bound thread and submit turns. | Use the registered server first. Confirm that the TUI sees a GUI-originated turn, the GUI sees a TUI-originated turn, and requests resolve in both views. The stock [codex-acp adapter](https://github.com/agentclientprotocol/codex-acp) starts its own app server by default. |
+| Codex | Graftty registers the native TUI's [app-server socket](../../../Sources/GrafttyKit/Teams/Resources/codex-wrapper.sh). Chat joins the bound thread on that server as a second client. | **Verified with codex-cli 0.171.0** (see below). The stock [codex-acp adapter](https://github.com/agentclientprotocol/codex-acp) starts its own app server, so it is not used. |
 | Claude Code | The [peer session registry](../../../Sources/GrafttyKit/Teams/ClaudePeerSessionRegistry.swift) identifies a running Claude instance for team messages. The [ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp) uses the Claude Agent SDK. | Find a supported way to observe and submit **human** turns to the same interactive session. Peer-message delivery alone does not prove this. Test a worktree slash command and a permission prompt in the original TUI. |
 | Antigravity | [Google's `agy acp`](https://antigravity.google/docs/cli/acp/) exposes an ACP server. This checkout's [managed runtime enum](../../../Sources/GrafttyKit/Notification/NotificationMessage.swift) lists Codex and Claude. | Verify that a structured client and the native TUI can share the live conversation before adding the provider to Graftty's launcher. |
 
@@ -67,4 +67,20 @@ The [pending requirements AGENT-6.166 through AGENT-6.173](../../../Tests/Graftt
 | Two viewers submit to an idle session at the same time, or one loses its acknowledgment. | The host admits one active turn. Both viewers can see the outcome of their own submission. An uncertain delivery is never automatically replayed. |
 | Disconnect the phone during a permission request, then reconnect. | The host retains the pending request or reports its resolution. A reply goes only to the request that is still pending. |
 
-Before adopting assistant-ui, try its composer in the actual Mac and iOS web views with the picker open above the software keyboard. Check focus, marked text, VoiceOver, and argument editing. Pin the version used for the trial: the popover primitives are stable, but the slash adapter helper is marked unstable. If the web view fails these checks, the same session catalog and submission contract can drive Graftty's native text editor.
+## Codex trial results
+
+Two clients on one app-server, and then Graftty's own session code against a live server, showed the following on codex-cli 0.171.0.
+
+- `thread/resume` with the ID of a running thread joins it. The reply carries the history, and later notifications arrive live. It starts no thread and no process. A thread created as ephemeral cannot be joined.
+- Each client receives the other's turns. A user message carries the `clientUserMessageId` given to `turn/start`, so Chat can match a row to its submission.
+- An approval request reaches every joined client with the same request ID. After one client answers, the others receive `serverRequest/resolved`. The thread status reports `waitingOnApproval` while it is pending.
+- `skills/list` supplies the command catalog and `skills/changed` signals a refresh. Built-in TUI commands such as `/review` and `/compact` are separate requests (`review/start`, `thread/compact/start`), so Chat offers one only when the host maps it to that request.
+
+## Build order
+
+1. **Session core (done).** Wire types and a shared transcript reducer in `GrafttyProtocol`, and `CodexChatSession` in `GrafttyKit`: join the bound thread, fan out ordered updates, admit one turn per submission ID, answer each request once.
+2. **Host service.** Resolve a tab to its agent, assignment, socket, and thread. Invalidate on a thread change. Check the display controller before a submission or an answer. Expose it to paired viewers as a new SSH subsystem, and to the Mac app directly.
+3. **Chat view.** Transcript, composer, slash picker, and request actions in `GrafttyCommandUI`. Add the Chat / Terminal switch for local Mac tabs.
+4. **Other viewers.** Mac remote viewer, iPad, and iPhone, with the per-viewer view choice stored beside each viewer's workspace layout.
+
+The switch appears only for a tab whose provider passed this trial. Claude Code and Antigravity tabs stay Terminal-only until each has a verified way to share its live conversation.
