@@ -115,6 +115,8 @@ public struct TerminalPaneView: UIViewRepresentable {
     public let onOpenURL: ((URL) -> Void)?
     /// Change when the origin or owner changes to invalidate captured menu actions.
     public let linkContext: AnyHashable?
+    /// The host's name, shown on the link action that opens a link there.
+    public let hostLabel: String?
 
     public init(
         session: InMemoryTerminalSession,
@@ -140,7 +142,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil,
         retainedContainer: TerminalInputContainerView? = nil,
         onOpenURL: ((URL) -> Void)? = nil,
-        linkContext: AnyHashable? = nil
+        linkContext: AnyHashable? = nil,
+        hostLabel: String? = nil
     ) {
         self.session = session
         self.controller = controller
@@ -166,6 +169,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.retainedContainer = retainedContainer
         self.onOpenURL = onOpenURL
         self.linkContext = linkContext
+        self.hostLabel = hostLabel
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -216,6 +220,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.onBackRequested = onBackRequested
         view.openURL = onOpenURL ?? { _ in }
         view.linkContext = linkContext
+        view.hostLabel = hostLabel
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         captureContainer?(view)
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
@@ -248,6 +253,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.onBackRequested = onBackRequested
         view.openURL = onOpenURL ?? { _ in }
         view.linkContext = linkContext
+        view.hostLabel = hostLabel
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
     }

@@ -1492,7 +1492,8 @@ struct SingleSessionView: View {
             },
             linkContext: AnyHashable(TerminalBrowserRequest.Scope(hostID: step.host.id,
                 worktree: step.worktreePath ?? "", sessionName: step.sessionName,
-                ownerDeviceID: client.isOwner ? coordinator?.localDeviceID : nil))
+                ownerDeviceID: client.isOwner ? coordinator?.localDeviceID : nil)),
+            hostLabel: step.host.label
         )
         pane
             .onAppear {
