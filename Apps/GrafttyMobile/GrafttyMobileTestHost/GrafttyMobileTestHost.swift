@@ -220,43 +220,65 @@ private struct WorktreeContextFixture: View {
 /// Uses the production terminal container and recognizers with deterministic
 /// output. No pairing or network timing is involved in these gesture probes.
 private struct ScrollbackFixture: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> ScrollbackFixtureController { .init() }
+    var colors = ""
+    func makeUIViewController(context: Context) -> ScrollbackFixtureController {
+        let controller = ScrollbackFixtureController()
+        controller.colors = colors
+        return controller
+    }
     func updateUIViewController(_ controller: ScrollbackFixtureController, context: Context) {}
 }
 
-private struct TranscriptMapFixture: View {
-    @State private var requestedRow = -1
-    private let timeline: WorktreeTimeline = {
+/// Use the live rail host so the fixture exercises theme changes and message lookup.
+private final class TranscriptMapTerminal: ObservableObject, TerminalScrollback {
+    @Published var requestedRow = -1
+    let timeline: WorktreeTimeline
+    let snapshot: ScrollbackRows
+    lazy var model = ScrollbackMapModel(terminal: self, debounce: .zero)
+
+    init() {
         var history = WorktreeHistory()
-        let start = Date(timeIntervalSince1970: 1000)
-        history.record(.init(text: "Earlier prompt", at: start))
-        history.record(.init(text: "Earlier in the group", at: start.addingTimeInterval(45)))
-        history.record(.init(text: "Later prompt", at: start.addingTimeInterval(60)))
-        return WorktreeTimeline(history: history, brief: nil)
-    }()
+        var rows = Array(repeating: "", count: 1000)
+        let start = Date.now.addingTimeInterval(-3600)
+        for (row, text) in [(230, "Earlier prompt"), (760, "Earlier in the group"), (800, "Later prompt")] {
+            rows[row] = text
+            history.record(.init(text: text, at: start.addingTimeInterval(Double(row))))
+        }
+        rows[500] = "Middle reply"
+        history.record(.init(id: "middle", text: rows[500], at: start.addingTimeInterval(500), runtime: "codex"))
+        timeline = WorktreeTimeline(history: history, brief: nil)
+        snapshot = ScrollbackRows(rows: rows, firstRow: 0, totalRows: rows.count)
+    }
+
+    func scrollbackRows(limit: Int) -> ScrollbackRows? { snapshot }
+    func firstRowText() -> String? { snapshot.rows.first }
+    func scroll(toRow row: Int) { requestedRow = row }
+}
+
+private struct TranscriptMapFixture: View {
+    @StateObject private var terminal = TranscriptMapTerminal()
+    private let colors = ProcessInfo.processInfo.arguments.contains("--light-terminal")
+        ? "background = #f5f5f5\nforeground = #282a30" : "background = #282a30\nforeground = #f5f5f5"
 
     var body: some View {
-        let prompts = timeline.events.filter { $0.kind == .user }
-        ScrollbackFixture()
+        let theme = GhosttyThemeColors(parsingConfigText: colors)
+        ScrollbackFixture(colors: colors)
             .overlay(alignment: .topTrailing) {
-                ScrollbackMapOverlay(map: ScrollbackMap(totalRows: 1000, marks: [
-                    .init(row: 230, kind: .input, eventID: prompts[0].id),
-                    .init(row: 500, kind: .peer, eventID: "middle"),
-                    .init(row: 760, kind: .input, eventID: prompts[1].id),
-                    .init(row: 800, kind: .input, eventID: prompts[2].id),
-                ]), viewport: .init(offset: 960, length: 40, total: 1000),
-                    entries: ScrollbackMapEntry.entries(in: timeline)) {
-                    requestedRow = $0
-                }
-                .padding(.top, 110)
+                ScrollbackMapOverlayHost(model: terminal.model, timeline: terminal.timeline, terminalTheme: theme)
+                    .padding(.top, 110)
             }
             .overlay(alignment: .bottomLeading) {
-                Text("\(requestedRow)").accessibilityIdentifier("transcript-map.requested-row")
+                Text("\(terminal.requestedRow)")
+                    .foregroundStyle(theme.foreground)
+                    .accessibilityIdentifier("transcript-map.requested-row")
             }
+            .preferredColorScheme(theme.isDark ? .light : .dark)
+            .onAppear { terminal.model.update(viewport: .init(offset: 960, length: 40, total: 1000)) }
     }
 }
 
 private final class ScrollbackFixtureController: UIViewController {
+    var colors = ""
     let container = TerminalInputContainerView()
     let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
     let status = UILabel()
@@ -267,7 +289,7 @@ private final class ScrollbackFixtureController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14\nscrollback-limit = 10000000")
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14\nscrollback-limit = 10000000\n" + colors)
         container.terminalView.configuration = .init(backend: .inMemory(session))
         // Fullscreen panes install this recognizer even when the test does not
         // navigate back, so exercise its competition with vertical drags.

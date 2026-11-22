@@ -302,6 +302,51 @@ final class WorktreeContextInteractionTests: XCTestCase {
 }
 
 final class ScrollbackInteractionTests: XCTestCase {
+    /// @spec CONTEXT-36.1: While the iPhone scrollback rail or its message previews are visible, the application shall use the terminal's light or dark appearance for their backgrounds, text and message marks.
+    func testRailAndPreviewsFollowTerminalAppearance() throws {
+        let app = XCUIApplication()
+        for dark in [true, false] {
+            app.launchArguments = ["--transcript-map-fixture"] + (dark ? [] : ["--light-terminal"])
+            app.launch()
+            defer { app.terminate() }
+            let map = app.descendants(matching: .any)["terminal.scrollbackMap"]
+            XCTAssertTrue(map.waitForExistence(timeout: 5))
+            let frame = map.frame
+            let idle = app.screenshot().image
+            let markY = frame.minY + 6 + 0.23 * (frame.height - 12)
+            let input = try rgb(in: idle, x: frame.maxX - 4, y: markY)
+            let reply = try rgb(in: idle, x: frame.maxX - 4, y: frame.midY)
+            let backing = try rgb(in: idle, x: frame.maxX - 2, y: frame.minY + 20)
+            XCTAssertGreaterThan(input.r, input.g)
+            XCTAssertGreaterThan(reply.b, reply.r)
+            XCTAssertEqual(input.r > 200, dark, "User mark brightness")
+            XCTAssertEqual(reply.b > 200, dark, "Reply mark brightness")
+            XCTAssertEqual(backing.r < 128, dark, "Idle rail background")
+
+            map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+            let preview = app.screenshot()
+            let attachment = XCTAttachment(screenshot: preview)
+            attachment.name = dark ? "Dark terminal on a light iPhone" : "Light terminal on a dark iPhone"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let card = try rgb(in: preview.image, x: frame.maxX - 60, y: markY)
+            XCTAssertEqual(card.r < 128, dark, "Message card background")
+        }
+    }
+
+    private func rgb(in image: UIImage, x: CGFloat, y: CGFloat) throws -> (r: UInt8, g: UInt8, b: UInt8) {
+        let rect = CGRect(x: x * image.scale, y: y * image.scale, width: 1, height: 1)
+        let sample = try XCTUnwrap(image.cgImage?.cropping(to: rect))
+        var pixel = [UInt8](repeating: 0, count: 4)
+        try pixel.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                bytesPerRow: 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+            context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return (pixel[0], pixel[1], pixel[2])
+    }
+
     func testLeaderScrollbackGestures() throws { try exerciseScrollback(follower: false) }
     func testFollowerScrollbackGestures() throws { try exerciseScrollback(follower: true) }
 

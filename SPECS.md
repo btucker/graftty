@@ -5570,6 +5570,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-36** While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks, incoming agent messages with purple square-ended marks, and local agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.
 
+**CONTEXT-36.1** While the iPhone scrollback rail or its message previews are visible, the application shall use the terminal's light or dark appearance for their backgrounds, text and message marks.
+
 ### CONTEXT-37.x
 
 **CONTEXT-37** While GrafttyMobile shows the scrollback map on the focused agent pane, the application shall place the card below the pane's floating top-right controls, including the Worktree context button, so the card and the controls never overlap.

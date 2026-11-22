@@ -713,7 +713,7 @@ struct SingleSessionView: View {
                 if let model = scrollbackMapModel, let timeline = agentScrollbackTimeline {
                     // CONTEXT-37: below the floating controls, which hold Worktree context.
                     let controlsHeight = step.worktreePath != nil && coordinator != nil ? floatingControlsHeight : 0
-                    ScrollbackMapOverlayHost(model: model, timeline: timeline,
+                    ScrollbackMapOverlayHost(model: model, timeline: timeline, terminalTheme: terminalTheme,
                                              isVisible: scenePhase == .active && connection == .live,
                                              recovery: .pairedCodex(sessionAgent),
                                              loadEarlier: loadEarlierCodexPage)

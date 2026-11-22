@@ -802,17 +802,19 @@ public struct ScrollbackMapOverlayHost: View {
     @ObservedObject var model: ScrollbackMapModel
     let timeline: WorktreeTimeline
     let isVisible: Bool
+    private let terminalTheme: GhosttyThemeColors?
     let recovery: ScrollbackMapRecovery?
     private let loadEarlier: (() -> Void)?
     var gists: PeerMessageGistProvider = .shared
     /// Derived once per parent update, not on every viewport report that redraws this body.
     private let messages: [ScrollbackMap.Message]
 
-    public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, isVisible: Bool = true,
+    public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, terminalTheme: GhosttyThemeColors? = nil, isVisible: Bool = true,
                 recovery: ScrollbackMapRecovery? = nil, loadEarlier: (() -> Void)? = nil,
                 gists: PeerMessageGistProvider = .shared) {
         self.model = model; self.timeline = timeline; self.isVisible = isVisible; self.gists = gists
         self.recovery = recovery
+        self.terminalTheme = terminalTheme
         self.loadEarlier = loadEarlier
         self.messages = ScrollbackMap.messages(in: timeline)
     }
@@ -845,6 +847,9 @@ public struct ScrollbackMapOverlayHost: View {
                 .accessibilityLabel("Load earlier messages")
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
+        }
+        .transformEnvironment(\.colorScheme) { scheme in
+            if let terminalTheme { scheme = terminalTheme.isDark ? .dark : .light }
         }
         .onAppear {
             model.update(timeline: timeline, recovery: recovery)
