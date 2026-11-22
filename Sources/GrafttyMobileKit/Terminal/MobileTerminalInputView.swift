@@ -19,6 +19,13 @@ final class MobileTerminalInputView: UITerminalView {
     override func touchSelectionMenuItems(for context: TerminalTouchSelectionMenuContext) -> [UIMenuElement] {
         selectionMenuItems?(context) ?? super.touchSelectionMenuItems(for: context)
     }
+
+    /// The terminal library's own selection actions, keyed by identifier:
+    /// `terminal.copy`, `terminal.paste` and `terminal.selectAll`.
+    func librarySelectionAction(_ identifier: String, for context: TerminalTouchSelectionMenuContext) -> UIAction? {
+        super.touchSelectionMenuItems(for: context).compactMap { $0 as? UIAction }
+            .first { $0.identifier.rawValue == identifier }
+    }
     var isAutocorrectionEnabled = false {
         didSet {
             guard oldValue != isAutocorrectionEnabled, isFirstResponder else { return }

@@ -377,35 +377,15 @@ struct MountedTerminalSnapshotCanvasTests {
         let canvasPan = container.snapshotScrollView.panGestureRecognizer
         let canvasPinch = container.snapshotScrollView.followerPinchGesture
         #expect(canvasPinch.delegate?.gestureRecognizer?(canvasPinch, shouldRecognizeSimultaneouslyWith: canvasPan) == true)
-        let intent = container.snapshotScrollView.historyIntentPan
-        let savedIntentTouchTypes = intent.allowedTouchTypes
-        let savedTouchTypes = canvasPan.allowedTouchTypes
-        container.enterSelectionModeForTesting()
-        #expect(canvasPan.allowedTouchTypes == TerminalInputContainerView.indirectPointerOnlyTouchTypes)
-        #expect(intent.allowedTouchTypes == TerminalInputContainerView.indirectPointerOnlyTouchTypes)
-        #expect(!container.snapshotScrollView.followerPinchGesture.isEnabled)
-        container.exitSelectionModeForTesting()
-        #expect(canvasPan.allowedTouchTypes == savedTouchTypes)
-        #expect(intent.allowedTouchTypes == savedIntentTouchTypes)
-        #expect(container.snapshotScrollView.followerPinchGesture.isEnabled)
         #expect(!pinch.isEnabled)
         container.authoritativeGrid = nil
         #expect(pans.allSatisfy { $0.isEnabled })
         #expect(!container.snapshotScrollView.followerPinchGesture.isEnabled)
         #expect(pinch.isEnabled)
 
-        container.enterSelectionModeForTesting()
-        container.authoritativeGrid = .init(cols: 80, rows: 24)
-        container.authoritativeGrid = nil
-        #expect(!pinch.isEnabled)
-        container.exitSelectionModeForTesting()
-        #expect(pinch.isEnabled)
-
         pinch.isEnabled = false
         container.authoritativeGrid = .init(cols: 80, rows: 24)
-        container.enterSelectionModeForTesting()
         container.authoritativeGrid = nil
-        container.exitSelectionModeForTesting()
         #expect(!pinch.isEnabled)
     }
 

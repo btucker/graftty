@@ -5,6 +5,13 @@ import Testing
 @testable import GrafttyMobileKit
 import UIKit
 
+/// A long press already in `.began` at a point a test chooses.
+final class ScriptedLongPress: UILongPressGestureRecognizer {
+    var point: CGPoint = .zero
+    override var state: UIGestureRecognizer.State { get { .began } set {} }
+    override func location(in _: UIView?) -> CGPoint { point }
+}
+
 /// A pan whose state and location a test sets directly.
 final class ScriptedPan: UIPanGestureRecognizer {
     var scriptedState: UIGestureRecognizer.State = .began
@@ -183,7 +190,7 @@ struct TerminalTouchSelectionTests {
         #expect(!view.dismissTouchSelectionForTap(), "With nothing selected a tap stays an ordinary tap")
     }
 
-    @Test
+    @Test("@spec IOS-11.6: When the user chooses Copy from a mobile terminal selection menu, the application shall write the selected text to the pasteboard and clear the selection; if nothing is selected, then the pasteboard shall not be modified.")
     func copyTouchSelectionTakesTheSelectionDown() async throws {
         let harness = try await TouchSelectionHarness()
         defer { harness.tearDown() }
@@ -218,7 +225,7 @@ struct TerminalTouchSelectionTests {
         #expect(menuText == "beta")
     }
 
-    @Test
+    @Test("@spec IOS-11.5: When the user finishes dragging a selection handle on mobile, the application shall present the edit menu clear of the selection and its handles.")
     func menuAfterAHandleDragAvoidsTheSelection() async throws {
         let harness = try await TouchSelectionHarness()
         defer { harness.tearDown() }
@@ -234,6 +241,110 @@ struct TerminalTouchSelectionTests {
         #expect(!avoid.isEmpty)
         #expect(view.touchMenuTargetRect(at: point) == avoid)
         #expect(view.hasTouchSelection)
+    }
+
+    @Test("@spec IOS-11.1: When the user presses and holds terminal text on mobile, the application shall select the word under the press, show a handle at each end of the selection, and present an edit menu containing Copy, Select All, and Paste when the clipboard holds text or an image, without synthesizing mouse input.")
+    func longPressSelectsTheWordWithHandles() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("alpha beta gamma", until: "gamma")
+        let view = harness.view
+        let press = ScriptedLongPress()
+        press.point = try harness.point(column: 7, row: 0)
+
+        view.handleLongPressForSelection(press)
+
+        #expect(view.hasTouchSelection)
+        #expect(view.touchSelectionText == "beta")
+        let overlay = try #require(view.touchSelection.overlay)
+        #expect(!overlay.startHandle.isHidden)
+        #expect(!overlay.endHandle.isHidden)
+        #expect(view.surface?.hasSelection() == false)
+        #expect(harness.container.longPressSelectedText == "beta")
+        #expect(harness.container.selectionMenuActionTitlesForTesting(hasPasteContent: false) == ["Copy", "Select All"])
+        #expect(harness.container.selectionMenuActionTitlesForTesting(hasPasteContent: true) == ["Copy", "Select All", "Paste"])
+        let menu = view.touchSelectionMenu(at: press.point, suggestedActions: [])
+        #expect(menu.children.compactMap { ($0 as? UIAction)?.title }.prefix(2) == ["Copy", "Select All"])
+    }
+
+    @Test("@spec IOS-11.2: If the user presses and holds a blank region of a mobile terminal with no text nearby, then the application shall present Select All and Paste without creating a selection.")
+    func blankLongPressFallsBackToPlainMenu() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        let press = ScriptedLongPress()
+        press.point = try harness.point(column: 3, row: 2)
+
+        harness.view.handleLongPressForSelection(press)
+
+        #expect(!harness.view.hasTouchSelection)
+        #expect(harness.container.longPressSelectedText == nil)
+        #expect(harness.container.longPressMenuActionTitlesForTesting(hasPasteContent: true) == ["Select All", "Paste"])
+        #expect(harness.container.longPressMenuActionTitlesForTesting(hasPasteContent: false) == ["Select All"])
+    }
+
+    @Test("@spec IOS-11.3: When the user chooses Select All from a mobile terminal menu, the application shall select all terminal text including scrollback and show its handles.")
+    func selectAllCoversScrollback() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        let lines = (0..<200).map { "line \($0)" }.joined(separator: "\r\n")
+        try await harness.show("first words\r\n" + lines, until: "line 199")
+        let view = harness.view
+        // The scrollbar, which bounds Select All, is published on a tick.
+        try await harness.waitForViewportOffset { $0 > 100 }
+        let press = ScriptedLongPress()
+        press.point = try harness.point(column: 1, row: 3)
+        view.handleLongPressForSelection(press)
+        try #require(view.hasTouchSelection)
+        let selectAll = try #require(view.touchSelectionMenu(at: press.point, suggestedActions: [])
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Select All" })
+
+        let button = UIButton()
+        button.addAction(selectAll, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
+        // The library selects once its menu has finished dismissing.
+        let pending = try #require(view.touchSelection.pendingAction)
+        view.touchSelection.pendingAction = nil
+        pending()
+
+        let text = try #require(view.touchSelectionText)
+        #expect(text.hasPrefix("first words"))
+        #expect(text.contains("line 199"))
+        #expect(view.touchSelection.overlay != nil)
+    }
+
+    @Test("@spec IOS-11.7: When the user taps outside a mobile terminal selection or presses a terminal control-bar key, the application shall clear the selection without modifying the pasteboard.")
+    func controlBarKeyClearsTheSelection() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("alpha beta gamma", until: "gamma")
+        let view = harness.view
+        try #require(view.beginHostTouchSelection(at: try harness.point(column: 7, row: 0)))
+
+        harness.container.cancelActiveSelectionIfAny()
+
+        #expect(!view.hasTouchSelection)
+        #expect(view.touchSelection.overlay == nil)
+        try #require(view.beginHostTouchSelection(at: try harness.point(column: 7, row: 0)))
+        #expect(view.dismissTouchSelectionForTap())
+        #expect(!view.hasTouchSelection)
+    }
+
+    @Test("@spec IOS-11.10: A mobile terminal selection shall belong to its own pane and shall not affect the selection of any other pane.")
+    func selectionIsPerPane() async throws {
+        let first = try await TouchSelectionHarness()
+        defer { first.tearDown() }
+        let second = try await TouchSelectionHarness()
+        defer { second.tearDown() }
+        try await first.show("alpha beta gamma", until: "gamma")
+        try await second.show("delta epsilon", until: "epsilon")
+
+        try #require(first.view.beginHostTouchSelection(at: try first.point(column: 7, row: 0)))
+        #expect(!second.view.hasTouchSelection)
+        try #require(second.view.beginHostTouchSelection(at: try second.point(column: 1, row: 0)))
+        first.container.cancelActiveSelectionIfAny()
+
+        #expect(!first.view.hasTouchSelection)
+        #expect(second.view.touchSelectionText == "delta")
     }
 }
 #endif

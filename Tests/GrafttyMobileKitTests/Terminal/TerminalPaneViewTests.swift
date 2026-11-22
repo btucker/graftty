@@ -638,7 +638,7 @@ struct TerminalPaneViewTests {
             text: text
         )
         #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false) == [
-            "Open Link", "Copy Link", "Select", "Select All",
+            "Open Link", "Copy Link", "Select All",
         ])
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
             .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
@@ -646,13 +646,13 @@ struct TerminalPaneViewTests {
         button.addAction(action, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)
         #expect(opened.map(\.absoluteString) == ["https://example.org/path?q=hello#part"])
-        #expect(!container.selectionController.isActive)
+        #expect(!container.terminalView.hasTouchSelection)
 
         container.prepareLongPressMenu(
             at: CGPoint(x: 5, y: 10), text: text
         )
         #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false) == [
-            "Select", "Select All",
+            "Select All",
         ])
         button.sendActions(for: .touchUpInside)
         #expect(opened.count == 1, "A dismissed menu must not open a stale URL")
@@ -816,8 +816,13 @@ struct TerminalPaneViewTests {
             for _ in 0..<100 where !surface.isMouseCaptured { try await Task.sleep(for: .milliseconds(10)) }
             try #require(surface.isMouseCaptured)
         } else if fixture == 4 || fixture == 8 {
-            container.selectionController.beginSelection(at: CGPoint(x: 20, y: 10))
-            try #require(container.selectionController.isActive)
+            // A pointer (trackpad or mouse) selection holds Ghostty's own selection.
+            surface.sendMousePos(x: 20, y: 10)
+            surface.sendLeftMouseDown()
+            surface.sendLeftMouseUp()
+            surface.sendLeftMouseDown()
+            surface.sendLeftMouseUp()
+            try #require(surface.hasSelection())
         }
         let before = responses.snapshot().count
         var opened: URL?
@@ -826,16 +831,18 @@ struct TerminalPaneViewTests {
         gesture.point = point
         container.terminalView.handleLongPressForSelection(gesture)
         if [3, 4, 7, 8].contains(fixture) {
-            let titles = container.longPressMenuActionTitlesForTesting(hasPasteContent: false)
+            let titles = container.terminalView.hasTouchSelection
+                ? container.selectionMenuActionTitlesForTesting(hasPasteContent: false)
+                : container.longPressMenuActionTitlesForTesting(hasPasteContent: false)
             #expect(!titles.contains("Open Link"))
             #expect(!titles.contains("Copy Link"))
-            #expect(titles.contains("Select"))
+            #expect(titles.contains("Select All"))
             if fixture == 3 || fixture == 7 {
                 try await Task.sleep(for: .milliseconds(20))
                 let report = String(decoding: responses.snapshot().dropFirst(before), as: UTF8.self)
                 #expect(report.components(separatedBy: "\u{1b}[<").count - 1 == 1,
                         "Only the wrapper's original move may report to the mouse-capturing application")
-            } else { #expect(container.selectionController.isActive) }
+            }
             return
         }
         if fixture == 6 {
@@ -906,12 +913,11 @@ struct TerminalPaneViewTests {
             columns: 100, rows: 1, widthPixels: 1000, heightPixels: 20,
             cellWidthPixels: 10, cellHeightPixels: 20
         ))
-        container.selectionController.beginSelection(at: .zero)
-        container.enterSelectionModeForTesting()
+        container.terminalView.touchSelection.range = 0 ... 3
         container.prepareLongPressMenu(at: CGPoint(x: 100, y: 10), text: "https://example.com/old-surface")
         #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Open Link"))
         container.terminalDidDetachSurface()
-        #expect(!container.selectionController.isActive)
+        #expect(!container.terminalView.hasTouchSelection)
         #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Open Link"))
         container.prepareLongPressMenu(at: .zero, text: "New text")
         #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Open Link"))
@@ -978,9 +984,7 @@ struct TerminalPaneViewTests {
                 "No terminal recognizer receives trackpad scroll events")
     }
 
-    @Test("""
-@spec IOS-11.1: While a focused terminal pane is interactive, the application shall handle libghostty's built-in long-press selection request through `TerminalInputContainerView` and present a menu at the touch point containing **Select**, **Select All**, and (when the clipboard contains text or an image at menu-build time) **Paste**, without installing a competing long-press recognizer on the container.
-""")
+    @Test("the terminal's own long press drives selection; the container adds no competing recognizer")
     func terminalLongPressUsesGhosttySelectionRequestDelegate() throws {
         let container = TerminalInputContainerView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 240)
@@ -994,12 +998,6 @@ struct TerminalPaneViewTests {
         #expect(container.terminalView.delegate === container)
         #expect(container.terminalView.gestureRecognizerShouldBegin(terminalLongPress))
         #expect(container.gestureRecognizers?.contains { $0 is UILongPressGestureRecognizer } == false)
-        #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false) == [
-            "Select", "Select All",
-        ])
-        #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: true) == [
-            "Select", "Select All", "Paste",
-        ])
     }
 
     @Test("""
@@ -1613,39 +1611,34 @@ struct TerminalPaneViewTests {
         #expect(rebuilt?.input == "j")
     }
 
-    @Test("selection mode keeps indirect terminal pan recognizers enabled")
-    func selectionModeKeepsIndirectScrollingEnabled() {
-        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-
-        container.enterSelectionModeForTesting()
-
-        let pans = container.terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer } ?? []
-        #expect(!pans.isEmpty)
-        #expect(pans.allSatisfy { $0.isEnabled })
-    }
-
     @Test("""
-@spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
+@spec IOS-11.4: While a mobile terminal has a text selection, one-finger drags outside the selection handles shall scroll the terminal or checkpoint canvas and shall leave the selection unchanged.
 """)
-    func selectionModeStripsDirectTouchesFromScrollPans() {
+    func selectionLeavesEveryScrollGestureLive() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let maskedPans = {
-            (container.terminalView.gestureRecognizers ?? [])
+        let direct = NSNumber(value: UITouch.TouchType.direct.rawValue)
+        func scrollPans() -> [UIPanGestureRecognizer] {
+            let terminalPans = (container.terminalView.gestureRecognizers ?? [])
                 .compactMap { $0 as? UIPanGestureRecognizer }
                 .filter { !$0.allowedScrollTypesMask.isEmpty }
+            return terminalPans + [
+                container.snapshotScrollView.panGestureRecognizer, container.snapshotScrollView.historyIntentPan,
+            ]
         }
-        let savedTouchTypes = maskedPans().map(\.allowedTouchTypes)
-        #expect(!maskedPans().isEmpty)
+        func containerPans() -> [Bool] {
+            (container.gestureRecognizers ?? []).filter { $0 is UIPanGestureRecognizer }.map(\.isEnabled)
+        }
+        let enabledBefore = scrollPans().map(\.isEnabled)
+        let containerBefore = containerPans()
+        #expect(enabledBefore.count >= 3)
 
-        container.enterSelectionModeForTesting()
-        // allowedScrollTypesMask only adds indirect scroll recognition; the
-        // direct-touch block must come from narrowing allowedTouchTypes.
-        #expect(maskedPans().allSatisfy {
-            $0.allowedTouchTypes == TerminalInputContainerView.indirectPointerOnlyTouchTypes
-        })
+        container.terminalView.touchSelection.range = 0 ... 3
+        container.updateTerminalGestureEnablement()
 
-        container.exitSelectionModeForTesting()
-        #expect(maskedPans().map(\.allowedTouchTypes) == savedTouchTypes)
+        #expect(scrollPans().map(\.isEnabled) == enabledBefore)
+        #expect(scrollPans().allSatisfy { $0.allowedTouchTypes.contains(direct) })
+        #expect(containerPans() == containerBefore)
+        #expect(container.terminalView.touchSelection.range == 0 ... 3)
     }
 
     @Test("focus requests require an eligible terminal owned by the requesting attachment")
@@ -1756,34 +1749,6 @@ struct TerminalPaneViewTests {
         container.performPasteForTesting()
 
         #expect(didRequestPaste)
-        #expect(!container.terminalView.isFirstResponder)
-        try? await Task.sleep(nanoseconds: 10_000_000)
-        #expect(container.terminalView.isFirstResponder)
-        _ = window
-    }
-
-    @Test("selection-menu dismissal cannot consume a pending Paste refocus")
-    func selectionMenuDismissalDoesNotConsumePendingPasteRefocus() async {
-        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let controller = UIViewController()
-        controller.view = container
-        let window = UIWindow(frame: container.frame)
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
-
-        container.performPasteForTesting()
-        let selectionAnimator = DeferredEditMenuAnimator()
-        container.dismissSelectionMenuForTesting(animator: selectionAnimator)
-        selectionAnimator.finish()
-
-        try? await Task.sleep(nanoseconds: 10_000_000)
-        #expect(!container.terminalView.isFirstResponder)
-
-        let longPressAnimator = DeferredEditMenuAnimator()
-        container.dismissLongPressMenuForTesting(animator: longPressAnimator)
-        longPressAnimator.finish()
-
         #expect(!container.terminalView.isFirstResponder)
         try? await Task.sleep(nanoseconds: 10_000_000)
         #expect(container.terminalView.isFirstResponder)

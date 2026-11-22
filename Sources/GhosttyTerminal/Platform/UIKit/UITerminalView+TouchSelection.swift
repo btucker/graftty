@@ -74,6 +74,13 @@
             return touchSelection.range != nil && touchSelection.overlay !== before
         }
 
+        /// Runs `action` once the terminal's edit menu has finished
+        /// dismissing, for a host menu item that must not race UIKit's
+        /// dismissal (taking focus, presenting another menu).
+        public func performAfterTouchMenuDismissal(_ action: @escaping () -> Void) {
+            touchSelection.pendingAction = action
+        }
+
         /// A tap while text is selected only takes the selection down.
         /// Returns whether it did, so the caller leaves the keyboard and
         /// the program alone.
