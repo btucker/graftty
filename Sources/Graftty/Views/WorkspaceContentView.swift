@@ -14,6 +14,17 @@ extension EnvironmentValues {
     }
 }
 
+private struct AgentChatServiceKey: EnvironmentKey {
+    static let defaultValue: AgentChatService? = nil
+}
+extension EnvironmentValues {
+    /// Chat for agent tabs hosted on this Mac.
+    var agentChatService: AgentChatService? {
+        get { self[AgentChatServiceKey.self] }
+        set { self[AgentChatServiceKey.self] = newValue }
+    }
+}
+
 private struct LocalAttentionAnswerKey: EnvironmentKey {
     static let defaultValue: (@MainActor (AttentionAnswer) async -> WorktreeManagementResponse)? = nil
 }
@@ -42,6 +53,10 @@ struct WorkspaceContentView: View {
     var agentScrollbackMap: AgentScrollbackMap?
     var attentionContext: SidebarWorktreeContext?
     @Environment(\.agentWorkspaceRequest) private var request
+    @Environment(\.agentChatService) private var chatService
+    /// Tabs whose agent the host confirmed Chat can attach to.
+    @State private var chatAvailable: Set<PaneSlotID> = []
+    @State private var chatModels = AgentChatModelStore<PaneSlotID>()
     @State private var failure: String?
     @State private var launching = false
     @State private var resizeStart: Double?
@@ -66,6 +81,7 @@ struct WorkspaceContentView: View {
                             return AnyView(inputRequestBanner)
                         },
                         paneContent: { slot in
+                            if let chat = chatContent(slot) { return AnyView(chat) }
                             guard let agent = agent(slot), agent.completion != nil || agent.status == .closed else { return nil }
                             return AnyView(CompletedAgentContent(agent: agent, launching: launching,
                                 onResume: { perform(.init(action: .resume, callerWorktree: worktree.path, agentID: agent.id)) }))
@@ -105,6 +121,7 @@ struct WorkspaceContentView: View {
             .foregroundStyle(theme.foreground)
         }
         .onAppear { synchronize(initial: true) }
+        .task(id: WorkspaceChatSwitch.availabilityKey(worktree)) { await refreshChatAvailability() }
         .onChange(of: worktree.path) { _, _ in synchronize(initial: true) }
         .onChange(of: worktree.splitTree.allLeaves) { _, _ in synchronize() }
         .onChange(of: worktree.agents) { _, _ in synchronize() }
@@ -163,6 +180,15 @@ struct WorkspaceContentView: View {
                         }
                         newAgentMenu.menuStyle(.borderlessButton)
                     }
+                }
+                if let selected = group?.selected, chatAvailable.contains(selected) {
+                    Picker("View", selection: Binding(get: { showsChat(selected) },
+                                                      set: { setView(selected, chat: $0) })) {
+                        Text("Chat").tag(true)
+                        Text("Terminal").tag(false)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
+                    .padding(.horizontal, 8)
                 }
             }.font(.system(size: 13))
                 .background { theme.background.worktreeHeaderWash() }
@@ -346,6 +372,40 @@ struct WorkspaceContentView: View {
             liveness: agentLiveness.livenessBySession)
     }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
+    func showsChat(_ slot: PaneSlotID) -> Bool { chatAvailable.contains(slot) && layout.showsChat(slot) }
+    /// AGENT-6.169: a view change keeps the terminal mounted in its manager and sends the agent nothing.
+    func setView(_ slot: PaneSlotID, chat: Bool) {
+        var entry = worktree
+        WorkspaceChatSwitch.setView(chat: chat, slot: slot, in: &entry, chatAvailable: chatAvailable.contains(slot))
+        worktree = entry
+        if showsChat(slot) {
+            terminalManager.clearFocus()
+        } else if worktree.splitTree.containsLeaf(slot) {
+            onFocusTerminal(slot)
+            onActivateTerminal(slot)
+        }
+    }
+    private func chatContent(_ slot: PaneSlotID) -> AgentChatView? {
+        guard showsChat(slot), let chatService, let agent = agent(slot) else { return nil }
+        return AgentChatView(
+            model: chatModels.model(for: slot),
+            tabID: "\(agent.id)/\(agent.providerSessionID ?? "")",
+            connection: chatService.connection(worktreePath: worktree.path, agentID: agent.id, viewer: .host),
+            showTerminal: { setView(slot, chat: false) }
+        )
+    }
+    private func refreshChatAvailability() async {
+        guard let chatService else { chatAvailable = []; return }
+        var available: Set<PaneSlotID> = []
+        for agent in worktree.agents {
+            guard let slot = agent.paneSlotID,
+                  await chatService.isAvailable(worktreePath: worktree.path, agentID: agent.id) else { continue }
+            available.insert(slot)
+        }
+        guard !Task.isCancelled else { return }
+        chatAvailable = available
+        chatModels.prune(keeping: Set(worktree.agents.compactMap(\.presentationSlotID)))
+    }
     private func title(_ slot: PaneSlotID) -> String {
         SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: agent(slot)?.name ?? "Terminal")
     }
@@ -363,7 +423,7 @@ struct WorkspaceContentView: View {
     private func focus(_ slot: PaneSlotID, activate: Bool) {
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
         mutate { $0.select(slot) }
-        if worktree.hasCompletedContent(in: slot) {
+        if worktree.hasCompletedContent(in: slot) || showsChat(slot) {
             terminalManager.clearFocus()
         } else if worktree.splitTree.containsLeaf(slot) {
             onFocusTerminal(slot)

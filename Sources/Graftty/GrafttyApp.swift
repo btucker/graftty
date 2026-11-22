@@ -272,6 +272,7 @@ struct GrafttyApp: App {
                     let router = SocketRequestRouter(appState: $appState, terminalManager: terminalManager, services: services)
                     return await router.handleRequest(.agent(request)) ?? .error("Agent operation returned no response")
                 })
+                .environment(\.agentChatService, services.agentChatService)
                 .environment(\.localAttentionAnswer, { answer in
                     let router = SocketRequestRouter(appState: $appState, terminalManager: terminalManager, services: services)
                     return await AttentionAnswerDelivery.deliver(worktreeID: answer.worktree.path, paneID: answer.paneID,
