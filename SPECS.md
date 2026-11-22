@@ -5660,6 +5660,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.7** When the user clicks or taps a scrollback message box, the application shall scroll to the first message associated with the box, including when its excerpt is hidden.
 
+**CONTEXT-57.8** When a paired Codex pane shows a submitted user prompt missing from the host timeline, the application shall mark its loaded terminal row and show its text, excluding the editable composer and generated notices.
+
+**CONTEXT-57.9** When a paired Codex pane on iPhone has scanned its loaded rows without finding a message and older history is available, the application shall offer a control to load an earlier page and replace it with the rail when it finds a message.
+
 ### CONTEXT-58.x
 
 **CONTEXT-58** While Context shows a brief on Mac or mobile, the application shall end the scroll with the present state, its current-state sentence above a dimmer Next line when a next step exists, after the timeline, followed by any waiting question and a status line.

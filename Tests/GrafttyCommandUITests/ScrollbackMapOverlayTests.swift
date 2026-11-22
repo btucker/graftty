@@ -625,6 +625,59 @@ struct ScrollbackMapMobileCollapseTests {
 @MainActor
 @Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
 struct ScrollbackMapRebuildTests {
+    @Test("@spec CONTEXT-57.9: When a paired Codex pane on iPhone has scanned its loaded rows without finding a message and older history is available, the application shall offer a control to load an earlier page and replace it with the rail when it finds a message.")
+    func loadEarlierPageFromEmptyRail() async throws {
+        let terminal = FakeScrollback(rows: ["• Reading the logs."])
+        let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
+        let timeline = WorktreeTimeline(history: nil, brief: nil)
+        let agent = AgentSessionInfo(id: "agent", name: "agent", provider: "codex", status: "running", sessionName: "pane")
+        let recovery = try #require(ScrollbackMapRecovery.pairedCodex(agent))
+        let host = ScrollbackMapOverlayHost(model: model, timeline: timeline, recovery: recovery, loadEarlier: {
+            terminal.rows.insert(contentsOf: ["› Please check", ""], at: 0)
+            model.update(viewport: .init(offset: 2, length: 1, total: 3))
+        })
+        #expect(host.earlierHistoryAction == nil)
+        model.update(timeline: timeline, recovery: recovery)
+        model.setVisible(true)
+        await waitUntil { model.map != nil }
+        #expect(ScrollbackMapOverlayHost(model: model, timeline: timeline).earlierHistoryAction == nil)
+        let load = try #require(host.earlierHistoryAction)
+        load()
+        await waitUntil { model.map?.marks.first?.row == 0 }
+        #expect(model.map?.marks.count == 1)
+        #expect(host.earlierHistoryAction == nil)
+    }
+
+    @Test("@spec CONTEXT-57.8: When a paired Codex pane shows a submitted user prompt missing from the host timeline, the application shall mark its loaded terminal row and show its text, excluding the editable composer and generated notices.")
+    func pairedCodexRecoversSubmittedPrompts() async throws {
+        let terminal = FakeScrollback(rows: [
+            "› <graftty-forge-message provider=\"github\">", "  CI changed", "  </graftty-forge-message>", "", "• Checking CI.",
+            "› install this on my iPhone", "", "• Installed.",
+            "› the rail isn't appearing in this codex", "  session on iPhone", "", "• Checking the rail.",
+            "› still typing", "", "  GPT-6 · context"
+        ])
+        let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
+        let agent = AgentSessionInfo(id: "agent", name: "agent", provider: "codex", status: "running", sessionName: "codex-pane")
+        let recovery = try #require(ScrollbackMapRecovery.pairedCodex(agent))
+        model.update(timeline: WorktreeTimeline(history: nil, brief: nil),
+                     recovery: recovery)
+        model.setVisible(true)
+        await waitUntil { model.map != nil }
+        let marks = try #require(model.map?.marks)
+        #expect(marks.map(\.row) == [5, 8])
+        #expect(marks.compactMap { model.entries[$0.id]?.text } ==
+                ["install this on my iPhone", "the rail isn't appearing in this codex session on iPhone"])
+        #expect(marks.allSatisfy { model.entries[$0.id]?.timestamp == nil })
+
+        var captured = WorktreeHistory()
+        let input = WorktreeHistory.UserInput(text: "install this on my iPhone", at: start, runtime: "codex")
+        captured.record(input)
+        model.update(timeline: WorktreeTimeline(history: captured, brief: nil), recovery: recovery)
+        await waitUntil { model.map?.row(for: input.id.uuidString) != nil }
+        #expect(model.map?.marks.map(\.row) == [5, 8])
+        #expect(model.entries[input.id.uuidString]?.timestamp == input.timestamp)
+    }
+
     @Test("@spec CONTEXT-57.5: While a local Codex pane displays submitted prompts, the application shall mark matching prompts from its saved conversation even when captured agent replies already match, preserving captured marks and showing each prompt row once.", arguments: [false, true])
     func supplementsCapturedMarksWithSubmittedPrompts(hasCapturedInput: Bool) async {
         var rows = sampleRows()

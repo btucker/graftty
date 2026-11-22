@@ -649,11 +649,16 @@ struct ScrollbackMapPreviewFrame: ViewModifier {
 
 public struct ScrollbackMapRecovery: Sendable {
     public let id: String
-    let load: @Sendable () -> WorktreeTimeline?
+    let load: (@Sendable () -> WorktreeTimeline?)?
 
-    public init(id: String, load: @escaping @Sendable () -> WorktreeTimeline?) {
+    public init(id: String, load: (@Sendable () -> WorktreeTimeline?)? = nil) {
         self.id = id
         self.load = load
+    }
+
+    public static func pairedCodex(_ agent: AgentSessionInfo?) -> Self? {
+        guard let agent, agent.provider == "codex", let session = agent.sessionName else { return nil }
+        return Self(id: session)
     }
 }
 
@@ -734,9 +739,10 @@ public final class ScrollbackMapModel: ObservableObject {
             let (map, entries) = await Task.detached(priority: .userInitiated) { () -> (ScrollbackMap?, [String: ScrollbackMapEntry]) in
                 guard let snapshot else { return (nil, [:]) }
                 let captured = ScrollbackMap.locate(messages, in: snapshot)
-                guard let timeline = recovery?.load() else { return (captured, capturedEntries) }
-                let saved = ScrollbackMap.messages(in: timeline)
-                let entries = capturedEntries.merging(ScrollbackMapEntry.entries(in: timeline)) { captured, _ in captured }
+                guard let recovery else { return (captured, capturedEntries) }
+                let timeline = recovery.load?()
+                let saved = timeline.map(ScrollbackMap.messages(in:)) ?? []
+                var entries = capturedEntries.merging(timeline.map(ScrollbackMapEntry.entries(in:)) ?? [:]) { captured, _ in captured }
                 let base = captured.marks.isEmpty ? ScrollbackMap.locate(saved, in: snapshot) : captured
                 let savedInputs = ScrollbackMap.codexInputMarks(saved, in: snapshot)
                 let capturedInputs = ScrollbackMap.codexInputMarks(messages, in: snapshot)
@@ -750,6 +756,13 @@ public final class ScrollbackMapModel: ObservableObject {
                 }
                 // Keep the captured event ID when both sources describe the same prompt row.
                 for mark in confirmed { marksByRow[mark.row] = mark }
+                if recovery.load == nil {
+                    for (row, text) in ScrollbackMap.renderedCodexInputs(in: snapshot) where marksByRow[row]?.kind != .input {
+                        let id = "codex-rendered:\(row)"
+                        marksByRow[row] = .init(row: row, kind: .input, eventID: id)
+                        entries[id] = .init(kind: .input, text: text, timestamp: nil, sender: nil)
+                    }
+                }
                 return (ScrollbackMap(totalRows: snapshot.totalRows, marks: Array(marksByRow.values)), entries)
             }.value
             guard !Task.isCancelled else { return }
@@ -790,16 +803,22 @@ public struct ScrollbackMapOverlayHost: View {
     let timeline: WorktreeTimeline
     let isVisible: Bool
     let recovery: ScrollbackMapRecovery?
+    private let loadEarlier: (() -> Void)?
     var gists: PeerMessageGistProvider = .shared
     /// Derived once per parent update, not on every viewport report that redraws this body.
     private let messages: [ScrollbackMap.Message]
 
     public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, isVisible: Bool = true,
-                recovery: ScrollbackMapRecovery? = nil,
+                recovery: ScrollbackMapRecovery? = nil, loadEarlier: (() -> Void)? = nil,
                 gists: PeerMessageGistProvider = .shared) {
         self.model = model; self.timeline = timeline; self.isVisible = isVisible; self.gists = gists
         self.recovery = recovery
+        self.loadEarlier = loadEarlier
         self.messages = ScrollbackMap.messages(in: timeline)
+    }
+
+    var earlierHistoryAction: (() -> Void)? {
+        isVisible && model.map?.marks.isEmpty == true ? loadEarlier : nil
     }
 
     public var body: some View {
@@ -811,8 +830,20 @@ public struct ScrollbackMapOverlayHost: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .onAppear {
                         let userCount = map.marks.count { $0.kind == .input }
-                        scrollbackLog.debug("Showing rail with \(userCount) user marks among \(map.marks.count) total. Local Codex session: \(recovery != nil).")
+                        scrollbackLog.debug("Showing rail with \(userCount) user marks among \(map.marks.count) total. Codex recovery: \(recovery != nil).")
                     }
+            } else if let load = earlierHistoryAction {
+                Button(action: load) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.callout)
+                        .padding(5)
+                        .background(.regularMaterial, in: Circle())
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Load earlier messages")
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .onAppear {

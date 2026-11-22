@@ -846,7 +846,8 @@ struct MainWindow: View {
         for session in sessions {
             if let remote = selectedRemoteIdentity {
                 if let slot = remoteViewer.existingTerminalID(identity: remote, worktreePath: worktree, sessionName: session) {
-                    maps[slot] = AgentScrollbackMap(timeline: timeline)
+                    let agent = context.worktree.agents?.first { $0.sessionName == session }
+                    maps[slot] = AgentScrollbackMap(timeline: timeline, recovery: .pairedCodex(agent))
                 }
             } else if let slot = terminalManager.handle(forSessionName: session)?.terminalID {
                 let thread = selectedWorktree?.agents.first {

@@ -130,6 +130,36 @@ public struct ScrollbackMap: Sendable, Equatable {
         return marks.reversed()
     }
 
+    /// On a paired viewer the provider's saved conversation lives on another device.
+    /// Read only left-margin Codex submissions followed by a turn or another prompt.
+    /// The editable composer ends at its footer and does not meet that condition.
+    public static func renderedCodexInputs(in snapshot: ScrollbackRows) -> [(row: Int, text: String)] {
+        let rows = snapshot.rows
+        func startsTurn(_ row: String) -> Bool {
+            ["• ", "◦ ", "─ ", "› "].contains(where: row.hasPrefix)
+        }
+        var inputs: [(row: Int, text: String)] = []
+        for index in rows.indices where rows[index].hasPrefix("› ") {
+            var text = String(rows[index].dropFirst(2))
+            var next = index + 1
+            while next < rows.count, !startsTurn(rows[next]), !rows[next].allSatisfy(\.isWhitespace) {
+                // Codex indents its own wraps. Reflowing the host grid on a narrower
+                // phone can also split a word at column zero on the next physical row.
+                let row = rows[next]
+                if text.count < 2000 {
+                    text += row.hasPrefix("  ") ? " " + row.drop(while: \.isWhitespace) : row
+                }
+                next += 1
+            }
+            while next < rows.count, rows[next].allSatisfy(\.isWhitespace) { next += 1 }
+            guard next < rows.count, startsTurn(rows[next]) else { continue }
+            let parts = WorktreePromptContent.parts(in: text, runtime: "codex")
+            guard parts.count == 1, let part = parts.first, part.source == .user else { continue }
+            inputs.append((snapshot.firstRow + index, String(part.text.prefix(2000))))
+        }
+        return inputs
+    }
+
     static func needle(for text: String) -> [UInt8]? {
         let line = text.split(whereSeparator: \.isNewline).lazy.map { canonicalize(String($0)) }.first { !$0.isEmpty }
         guard let line else { return nil }
