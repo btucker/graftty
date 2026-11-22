@@ -70,5 +70,11 @@ public actor HostAgentSetup {
             }.joined(separator: "; ")
             throw HostRuntimeError.invalid("Install and authenticate the requested provider CLI, then run graftty-host setup --install-agent-plugins. \(failures)")
         }
+        if provider == nil {
+            do { _ = try await installer.autoInstallAntigravity(executor: resolvedExecutor) }
+            catch {
+                throw HostRuntimeError.invalid("Install and authenticate the Antigravity CLI on the host, then retry. \(error)")
+            }
+        }
     }
 }

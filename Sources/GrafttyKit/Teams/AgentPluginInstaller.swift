@@ -82,7 +82,11 @@ public struct AgentPluginInstallationReport: Equatable, Sendable {
     public var summary: String {
         let successCount = results.count(where: \.succeeded)
         guard successCount != results.count else {
-            return "Installed all provider plugins. Start new Codex and Claude sessions."
+            let providers = Set(results.map(\.step.provider))
+            if providers.count == 1, let provider = providers.first {
+                return "Installed the \(provider.displayName) plugin. Start a new \(provider.displayName) session."
+            }
+            return "Installed all provider plugins. Start new agent sessions."
         }
         let failures = results.compactMap { result -> String? in
             guard let error = result.errorDescription else { return nil }
@@ -95,6 +99,23 @@ public struct AgentPluginInstallationReport: Equatable, Sendable {
 public enum AgentPluginInstallerError: Error, Equatable {
     case bundledResourcesMissing
     case invalidPluginManifest
+}
+
+public enum AntigravityAutoInstallOutcome: Equatable, Sendable {
+    case installed
+    case optedOut
+    case cliNotFound
+}
+
+/// @spec AGENT-6.172
+/// Each provider's plugin shall report a status of one of: installed,
+/// disabled, notInstalled, cliNotFound, error.
+public enum AgentPluginProviderStatus: Equatable, Sendable {
+    case installed
+    case disabled
+    case notInstalled
+    case cliNotFound
+    case error(String)
 }
 
 public struct AgentPluginInstaller: Sendable {
@@ -229,16 +250,9 @@ public struct AgentPluginInstaller: Sendable {
                     throw AgentPluginInstallerError.bundledResourcesMissing
                 }
             }
-            if let pluginVersion {
-                let manifestURL = staging.appendingPathComponent("plugins/graftty/.\(provider.rawValue)-plugin/plugin.json")
-                let contents = try Data(contentsOf: manifestURL)
-                guard var manifest = try JSONSerialization.jsonObject(with: contents) as? [String: Any] else {
-                    throw AgentPluginInstallerError.invalidPluginManifest
-                }
-                manifest["version"] = pluginVersion
-                try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
-                    .write(to: manifestURL)
-            }
+            try stampPluginVersion(
+                at: staging.appendingPathComponent("plugins/graftty/.\(provider.rawValue)-plugin/plugin.json")
+            )
             if FileManager.default.fileExists(atPath: destination.path) {
                 #if os(Linux)
                 // Foundation replacement cannot overwrite nonempty Linux
@@ -300,7 +314,10 @@ public struct AgentPluginInstaller: Sendable {
 
     /// Antigravity copies a local plugin into its own profile. Stage it
     /// separately so existing Codex and Claude installations never require agy.
-    public func installAntigravity(executor: any CLIExecutor = CLIRunner()) async throws {
+    public func installAntigravity(
+        executor: any CLIExecutor = CLIRunner(),
+        timeout: Duration = .seconds(60)
+    ) async throws {
         guard let sourceRoot = resourceRoot ?? Self.bundledResourceRoot() else {
             throw AgentPluginInstallerError.bundledResourcesMissing
         }
@@ -316,8 +333,181 @@ public struct AgentPluginInstaller: Sendable {
         try FileManager.default.copyItem(at: skills, to: destination)
         try materializeSymbolicLinks(from: skills, into: destination)
         try materializeHookCommands(at: plugin.appendingPathComponent("hooks.json"))
+        try stampPluginVersion(at: plugin.appendingPathComponent("plugin.json"))
         _ = try await executor.run(command: TeamHookRuntime.antigravity.executable,
-            args: ["plugin", "install", plugin.path], at: staging.path, timeout: .seconds(60))
+            args: ["plugin", "install", plugin.path], at: staging.path, timeout: timeout)
+    }
+
+    /// Native plugin caches key by manifest version, so every provider's
+    /// manifest carries this build's version.
+    private func stampPluginVersion(at manifestURL: URL) throws {
+        guard let pluginVersion else { return }
+        let contents = try Data(contentsOf: manifestURL)
+        guard var manifest = try JSONSerialization.jsonObject(with: contents) as? [String: Any] else {
+            throw AgentPluginInstallerError.invalidPluginManifest
+        }
+        manifest["version"] = pluginVersion
+        try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+            .write(to: manifestURL)
+    }
+
+    /// Automatically installs or refreshes the Antigravity plugin when the
+    /// `agy` CLI is available, unless the user explicitly disabled it in
+    /// Antigravity. Returns `.cliNotFound` without throwing when `agy` is
+    /// absent.
+    public func autoInstallAntigravity(
+        executor: any CLIExecutor = CLIRunner(),
+        timeout: Duration = .seconds(60)
+    ) async throws -> AntigravityAutoInstallOutcome {
+        let enabled: Bool?
+        do {
+            enabled = try await antigravityPluginEnabled(executor: executor, timeout: timeout)
+        } catch let error where Self.isMissingCLI(error) {
+            return .cliNotFound
+        }
+        if enabled == false { return .optedOut }
+        try await installAntigravity(executor: executor, timeout: timeout)
+        return .installed
+    }
+
+    /// Whether Antigravity's inventory lists Graftty's plugin as enabled, or
+    /// `nil` when it does not list the plugin.
+    private func antigravityPluginEnabled(
+        executor: any CLIExecutor,
+        timeout: Duration
+    ) async throws -> Bool? {
+        let output = try await executor.run(
+            command: TeamHookRuntime.antigravity.executable,
+            args: ["plugin", "list", "--json"],
+            at: FileManager.default.temporaryDirectory.path,
+            timeout: timeout
+        )
+        let entries = try JSONDecoder().decode([AntigravityPluginEntry]?.self, from: Data(output.stdout.utf8)) ?? []
+        let states = entries.filter { $0.name == "graftty" }.map(\.enabled)
+        return states.isEmpty ? nil : !states.contains(false)
+    }
+
+    /// GNU `env` names itself by path, so `CLIRunner` on a Linux host reports
+    /// a missing CLI as exit 127 rather than `.notFound` (#666). Graftty's
+    /// launch wrappers also exit 127 when no real CLI is on `PATH`.
+    private static func isMissingCLI(_ error: Error) -> Bool {
+        switch error {
+        case CLIError.notFound:
+            return true
+        case CLIError.nonZeroExit(_, 127, let stderr):
+            return stderr.contains("No such file or directory")
+                || stderr.contains("graftty: unable to find real")
+        default:
+            return false
+        }
+    }
+
+    /// Queries one provider's native plugin inventory and durable settings to
+    /// report whether Graftty's plugin is installed, disabled, missing, or
+    /// unavailable because the provider CLI is not on PATH.
+    public func providerStatus(
+        for provider: AgentPluginProvider,
+        executor: any CLIExecutor = CLIRunner(),
+        timeout: Duration = .seconds(15)
+    ) async -> AgentPluginProviderStatus {
+        do {
+            switch provider {
+            case .codex, .claude:
+                let state = try await installedPlugins(
+                    for: provider,
+                    directory: FileManager.default.temporaryDirectory.path,
+                    executor: executor,
+                    timeout: timeout
+                )
+                if state.currentDisabled { return .disabled }
+                if state.currentEnabled { return .installed }
+                return .notInstalled
+            case .antigravity:
+                switch try await antigravityPluginEnabled(executor: executor, timeout: timeout) {
+                case .some(true): return .installed
+                case .some(false): return .disabled
+                case .none: return .notInstalled
+                }
+            }
+        } catch let error where Self.isMissingCLI(error) {
+            return .cliNotFound
+        } catch {
+            return .error(Self.describe(error, action: "status check"))
+        }
+    }
+
+    /// Probes every supported provider concurrently.
+    public func providerStatuses(
+        executor: any CLIExecutor = CLIRunner(),
+        timeout: Duration = .seconds(15)
+    ) async -> [AgentPluginProvider: AgentPluginProviderStatus] {
+        await withTaskGroup(of: (AgentPluginProvider, AgentPluginProviderStatus).self) { group in
+            for provider in TeamHookRuntime.allCases {
+                group.addTask {
+                    (provider, await self.providerStatus(for: provider, executor: executor, timeout: timeout))
+                }
+            }
+            var result: [AgentPluginProvider: AgentPluginProviderStatus] = [:]
+            for await (provider, status) in group {
+                result[provider] = status
+            }
+            return result
+        }
+    }
+
+    /// Prepares and installs the Graftty plugin for a single provider without
+    /// touching other providers.
+    public func install(
+        provider: AgentPluginProvider,
+        destinationRoot: URL = AppState.defaultDirectory
+            .appendingPathComponent("agent-plugins", isDirectory: true),
+        executor: any CLIExecutor = CLIRunner(),
+        timeout: Duration = .seconds(60)
+    ) async -> AgentPluginInstallationReport {
+        if provider == .antigravity {
+            let step = AgentPluginInstallStep(
+                provider: .antigravity,
+                executable: TeamHookRuntime.antigravity.executable,
+                arguments: ["plugin", "install", "graftty"]
+            )
+            do {
+                try await installAntigravity(executor: executor, timeout: timeout)
+                return AgentPluginInstallationReport(results: [
+                    AgentPluginInstallResult(step: step, output: nil, errorDescription: nil)
+                ])
+            } catch {
+                return AgentPluginInstallationReport(results: [
+                    AgentPluginInstallResult(step: step, output: nil, errorDescription: Self.describe(error))
+                ])
+            }
+        }
+        do {
+            // Settings can ask for the manual commands while an install runs.
+            // Both rewrite the snapshots the provider marketplaces point at,
+            // so they take turns on the one queue.
+            let plan = try await OffMainIO.run { try prepare(destinationRoot: destinationRoot) }
+            let selected = AgentPluginSetupPlan(
+                rootDirectory: plan.rootDirectory,
+                installSteps: plan.installSteps.filter { $0.provider == provider }
+            )
+            return await installReplacingLegacy(selected, executor: executor, timeout: timeout)
+        } catch {
+            let step = AgentPluginInstallStep(provider: provider, executable: provider.executable, arguments: [])
+            return AgentPluginInstallationReport(results: [
+                AgentPluginInstallResult(step: step, output: nil, errorDescription: Self.describe(error))
+            ])
+        }
+    }
+
+    /// Prepares the local plugin snapshots and returns manual shell commands
+    /// for all providers so users can inspect or run them in a terminal.
+    public func manualCommandsScript(
+        destinationRoot: URL = AppState.defaultDirectory
+            .appendingPathComponent("agent-plugins", isDirectory: true)
+    ) throws -> String {
+        let plan = try prepare(destinationRoot: destinationRoot)
+        let antigravityCommand = "\(AgentPluginInstallStep.shellToken(grafttyCLIPath)) agent install-antigravity"
+        return plan.shellScript + "\n" + antigravityCommand
     }
 
     /// Resolve source links before traversing them: a provider cache cannot
@@ -481,10 +671,24 @@ public struct AgentPluginInstaller: Sendable {
         executor: any CLIExecutor,
         timeout: Duration
     ) async throws -> InstalledPlugins {
+        try await installedPlugins(
+            for: provider,
+            directory: plan.rootDirectory.path,
+            executor: executor,
+            timeout: timeout
+        )
+    }
+
+    private func installedPlugins(
+        for provider: AgentPluginProvider,
+        directory: String,
+        executor: any CLIExecutor,
+        timeout: Duration
+    ) async throws -> InstalledPlugins {
         let step = Self.listStep(for: provider)
         let output = try await executor.run(
             command: step.executable, args: step.arguments,
-            at: plan.rootDirectory.path, timeout: timeout
+            at: directory, timeout: timeout
         )
         var state = try Self.installedPlugins(for: provider, data: Data(output.stdout.utf8))
         let registrations: [String: Bool]
@@ -669,6 +873,11 @@ public struct AgentPluginInstaller: Sendable {
         let enabled: Bool
     }
 
+    private struct AntigravityPluginEntry: Decodable {
+        let name: String
+        let enabled: Bool
+    }
+
     /// SwiftPM's flat bundle keeps resources at its root, but Foundation
     /// reports its `Resources` subdirectory (the web assets) as
     /// `resourceURL`; Swift Build nests them under `Contents/Resources`.
@@ -679,19 +888,19 @@ public struct AgentPluginInstaller: Sendable {
             .first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    private static func describe(_ error: Error) -> String {
+    private static func describe(_ error: Error, action: String = "installation") -> String {
         switch error {
         case CLIError.notFound(let command):
-            return "\(command) was not found on Graftty's PATH. Copy the commands above and run them in your configured terminal."
+            return "\(command) was not found on Graftty's PATH. Copy the manual setup commands from Agent Teams Settings and run them in your configured terminal."
         case CLIError.nonZeroExit(_, let exitCode, let stderr):
             let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return detail.isEmpty
-                ? "installation exited with status \(exitCode)."
-                : "installation exited with status \(exitCode): \(detail)"
+                ? "\(action) exited with status \(exitCode)."
+                : "\(action) exited with status \(exitCode): \(detail)"
         case CLIError.launchFailed(_, let message):
-            return "installation could not start: \(message)"
+            return "\(action) could not start: \(message)"
         case CLIError.timedOut(_, let seconds):
-            return "installation timed out after \(seconds) seconds."
+            return "\(action) timed out after \(seconds) seconds."
         default:
             return String(describing: error)
         }

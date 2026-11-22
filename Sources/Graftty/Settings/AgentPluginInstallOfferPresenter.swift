@@ -88,8 +88,8 @@ enum AgentPluginInstallOfferPresenter {
                     in: defaults
                 )
                 let details = report.succeeded
-                    ? report.summary + " Start new agent sessions to use the plugins."
-                    : report.summary + " Review and retry the displayed commands in Agent Teams Settings."
+                    ? report.summary
+                    : report.summary + " Retry from Agent Teams Settings."
                 SheetAlert.present(
                     .init(
                         messageText: report.succeeded

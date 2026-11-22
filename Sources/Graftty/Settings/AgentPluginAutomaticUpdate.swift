@@ -12,6 +12,7 @@ final class AgentPluginAutomaticUpdate {
     private(set) var isRunning = false
     private(set) var status: String?
     private var attempted = false
+    private var antigravityAttempted = false
 
     func runAtLaunch(defaults: UserDefaults = .standard) async {
         let installer = AgentPluginInstaller(grafttyCLIPath: GrafttyApp.agentHookCLIPath())
@@ -19,6 +20,44 @@ final class AgentPluginAutomaticUpdate {
             let plan = try await OffMainIO.run { try installer.prepare() }
             return await installer.refresh(plan)
         }, refreshHookAssets: { GrafttyApp.installAgentHookAssets() })
+        // Antigravity needs no launch offer. Run it apart from this call so a
+        // slow `agy` cannot hold back the Codex and Claude offer that follows.
+        Task {
+            await runAntigravityIfNeeded(defaults: defaults) {
+                try await installer.autoInstallAntigravity()
+            }
+        }
+    }
+
+    func runAntigravityIfNeeded(
+        defaults: UserDefaults,
+        buildVersion: String? = AgentPluginInstallOfferPolicy.currentBuildVersion,
+        install: () async throws -> AntigravityAutoInstallOutcome
+    ) async {
+        guard !antigravityAttempted,
+              let buildVersion, !buildVersion.isEmpty,
+              defaults.string(forKey: SettingsKeys.antigravityPluginInstalledBuildVersion) != buildVersion
+        else { return }
+
+        antigravityAttempted = true
+        // Settings holds its own installs while this is set, so a manual
+        // install cannot run `agy plugin install` alongside this one.
+        isRunning = true
+        defer { isRunning = false }
+        do {
+            switch try await install() {
+            case .installed, .optedOut:
+                defaults.set(buildVersion, forKey: SettingsKeys.antigravityPluginInstalledBuildVersion)
+            case .cliNotFound:
+                // Leave the build checkpoint unset so installing `agy` later
+                // triggers automatic plugin installation on the next launch.
+                break
+            }
+        } catch {
+            // Leave the build checkpoint unset so transient errors retry on
+            // the next launch without disturbing Codex/Claude update status.
+            NSLog("[Graftty] Antigravity plugin auto-install failed: %@", String(describing: error))
+        }
     }
 
     func runIfNeeded(

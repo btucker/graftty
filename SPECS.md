@@ -5410,6 +5410,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.169** If a resumed Antigravity conversation omits its session-start hook, then the application shall bind the saved conversation to its managed agent when the first turn begins.
 
+**AGENT-6.170** When Graftty automatically installs or refreshes the Antigravity plugin, the application shall query `agy plugin list --json`, install the bundled plugin with the current build version and materialized hooks and skills when missing or enabled, preserve an explicitly disabled plugin, skip silently when `agy` is not found, and report inventory or installation failures as retryable errors.
+
+**AGENT-6.171** When Graftty launches, the application shall automatically install or refresh the Antigravity plugin once per build checkpoint without requiring prior Codex or Claude plugin installation, preserve opt-outs, and leave the checkpoint unset when `agy` is missing or installation fails so future launches retry.
+
+**AGENT-6.172** When Graftty inspects provider plugin status, the application shall query each provider's native inventory and report installed, disabled, notInstalled, cliNotFound, or error independently per provider, and shall support installing a single provider without affecting other providers.
+
+**AGENT-6.173** When live provider plugin statuses are inspected in Agent Teams Settings, the application shall treat the integration as installed once at least one Codex or Claude provider is installed and no available Codex or Claude provider remains uninstalled or errored, and shall select only available providers for bulk installation.
+
 **AGENT-6.174** When inbox rows are deliverable to a reachable Antigravity agent whose presence records a local agent server, the application shall send all of those rows as one message to that agent's conversation through the server and update shared delivery state only after the server accepts the message; if the server credential is unavailable or the server rejects the message, then the rows shall remain unread for hook delivery or retry.
 
 **AGENT-6.175** When an Antigravity hook registers a session launched with a Graftty server credential, the application shall record the provider process's listening local port that accepts that credential for the session's conversation and shall store the credential in a file that only the user can read; if no listening port accepts the credential, then the application shall record no local agent server.
@@ -5417,6 +5425,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.176** When `agy` is launched from a Graftty terminal, the wrapper shall start the real `agy` outside the wrapper directory with the caller's arguments and a server credential that Graftty's hooks can read, minting a new credential for each launch unless the caller already supplied one.
 
 **AGENT-6.177** While rows remain unread for a worktree whose Antigravity presence records a local agent server, the application shall retry native delivery on every presence refresh, so rows that arrived before a hook recorded the server or whose send failed are delivered without waiting for another message.
+
+**AGENT-6.178** When an installation started from Agent Teams Settings completes, the application shall advance the Codex and Claude automatic-refresh build checkpoint only if that installation installed every enabled Codex and Claude plugin, and shall advance the Antigravity build checkpoint only if it installed the Antigravity plugin, so that a plugin it did not install is still refreshed on the next launch.
 
 ## CLI — CLI
 

@@ -6,6 +6,12 @@ import GrafttyCommandUI
 /// Settings pane for provider integration, team event routing, and the
 /// per-event prompt.
 struct AgentTeamsSettingsPane: View {
+    private enum ProviderRowState: Equatable {
+        case checking
+        case status(AgentPluginProviderStatus)
+        case installing
+    }
+
     @AppStorage private var defaultAgentProvider: String
     @AppStorage private var teamPrompt: String
     /// Mirrors `SettingsKeys.agentPluginInstalledRevision` so the missing-plugin
@@ -13,14 +19,40 @@ struct AgentTeamsSettingsPane: View {
     @AppStorage private var installedPluginRevision: Int
     @AppStorage("teamEventRoutingPreferences") private var teamEventRoutingPreferences = TeamEventRoutingPreferences()
     private let defaults: UserDefaults
-    @State private var pluginSetupCommands = ""
+    @State private var providerStates: [AgentPluginProvider: ProviderRowState] = Dictionary(
+        uniqueKeysWithValues: TeamHookRuntime.allCases.map { ($0, .checking) }
+    )
+    @State private var isRefreshingStatuses = false
+    @State private var isInstallingBulk = false
     @State private var pluginSetupStatus: String?
-    @State private var preparedPluginPlan: AgentPluginSetupPlan?
-    @State private var showingPluginInstallOffer = false
-    @State private var pluginInstallInProgress = false
+    @State private var showingManualCommands = false
+    @State private var manualCommands = ""
+    @State private var manualCommandsError: String?
+    @State private var copiedManualCommands = false
     private let automaticUpdate = AgentPluginAutomaticUpdate.shared
 
-    private var pluginSetupIsBusy: Bool { pluginInstallInProgress || automaticUpdate.isRunning }
+    private var isAnyProviderInstalling: Bool {
+        isInstallingBulk || providerStates.values.contains(.installing)
+    }
+
+    private var pluginSetupIsBusy: Bool {
+        isAnyProviderInstalling || automaticUpdate.isRunning
+    }
+
+    private var resolvedStatuses: [AgentPluginProvider: AgentPluginProviderStatus] {
+        providerStates.compactMapValues { state in
+            if case .status(let status) = state { return status }
+            return nil
+        }
+    }
+
+    private var availableProviders: [AgentPluginProvider] {
+        Self.availableProviders(in: resolvedStatuses)
+    }
+
+    private var allAvailableInstalled: Bool {
+        !availableProviders.isEmpty && availableProviders.allSatisfy { resolvedStatuses[$0] == .installed }
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -61,49 +93,82 @@ struct AgentTeamsSettingsPane: View {
                 Text("Used for new agents on this host unless you choose a provider when launching. Existing agents keep their provider.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+
             Section {
-                if let pluginsWarning {
+                if let pluginsWarning, !isRefreshingStatuses {
                     Label(pluginsWarning, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
-                Button(
-                    pluginsWarning == nil
-                        ? "Reinstall Codex and Claude Plugins…"
-                        : "Install Codex and Claude Plugins…"
-                ) {
-                    prepareProviderPlugins()
+
+                ForEach(TeamHookRuntime.allCases, id: \.rawValue) { provider in
+                    providerRow(for: provider)
                 }
-                .disabled(pluginSetupIsBusy)
-                Button("Install Antigravity Plugin") { installAntigravityPlugin() }
-                    .disabled(pluginSetupIsBusy)
-                if preparedPluginPlan != nil {
-                    Button("Install Prepared Plugins…") {
-                        showingPluginInstallOffer = true
+
+                HStack(spacing: 8) {
+                    Button(allAvailableInstalled ? "Reinstall All" : "Install All") {
+                        installAllAvailableProviders()
                     }
-                    .disabled(pluginSetupIsBusy)
+                    .disabled(pluginSetupIsBusy || isRefreshingStatuses || availableProviders.isEmpty)
+
+                    Button {
+                        Task { await refreshStatuses() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .help("Refresh plugin status")
+                    .accessibilityLabel("Refresh plugin status")
+                    .disabled(pluginSetupIsBusy || isRefreshingStatuses)
+
+                    Spacer()
+
+                    if let status = pluginSetupStatus ?? automaticUpdate.status {
+                        Text(status)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                            .lineLimit(2)
+                            .help(status)
+                    }
                 }
-                if pluginInstallInProgress {
-                    ProgressView("Installing provider plugins…")
-                        .controlSize(.small)
+
+                DisclosureGroup("Manual setup commands", isExpanded: $showingManualCommands) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let manualCommandsError {
+                            Text(manualCommandsError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        } else if manualCommands.isEmpty {
+                            Text("Preparing commands…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(manualCommands)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            HStack {
+                                Button(copiedManualCommands ? "Copied" : "Copy Commands") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(manualCommands, forType: .string)
+                                    copiedManualCommands = true
+                                }
+                                .controlSize(.small)
+                                Spacer()
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
                 }
-                if !pluginSetupCommands.isEmpty {
-                    Text(pluginSetupCommands)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                }
-                if let pluginSetupStatus {
-                    Text(pluginSetupStatus)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if let status = automaticUpdate.status {
-                    Text(status)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                .onChange(of: showingManualCommands) { _, isExpanded in
+                    if isExpanded && manualCommands.isEmpty {
+                        loadManualCommands()
+                    }
                 }
             } header: {
                 Text("Provider plugins")
             } footer: {
-                Text("The Codex and Claude plugins give agents Graftty's skills and lifecycle hooks, which connect them to Attention and agent teams. Install them once; Graftty then refreshes them automatically after app updates, and failed updates retry on the next launch. Start new agent sessions after installation or an update to use the new plugins. To customize agents, add `.graftty/GRAFTTY.md` instruction files to a repository.")
+                Text("Plugins connect agents to Graftty's skills, Attention, and agent teams, and refresh automatically after app updates. Start new agent sessions after installing. Add `.graftty/GRAFTTY.md` to customize agents per repository.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -113,7 +178,7 @@ struct AgentTeamsSettingsPane: View {
             } header: {
                 Text("Team event routing")
             } footer: {
-                Text("Choose which agents receive each automated team event. Events flow into the team inbox and are delivered to agents through hook context. \"Worktree agent\" means the agent in the worktree the event is about; \"Other worktree agents\" means agents in every other linked worktree in the same repo.")
+                Text("Choose which agents receive each automated team event. \"Worktree agent\" is the agent in the event's worktree; \"Other worktree agents\" are agents in every other linked worktree in the same repo.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -140,24 +205,86 @@ struct AgentTeamsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog(
-            "Install Codex and Claude plugins now?",
-            isPresented: $showingPluginInstallOffer,
-            titleVisibility: .visible
-        ) {
-            Button("Install Plugins") {
-                AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
-                installPreparedProviderPlugins()
-            }
-            Button("Not Now", role: .cancel) {
-                AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
-            }
-        } message: {
-            Text("Graftty will run the five displayed provider-native commands and refresh these plugins automatically after future app updates. Failures are reported without preventing the other provider from being attempted.")
-        }
         // Tall enough to fit the pane without scrolling on a typical laptop;
         // macOS clamps to the screen, so smaller displays still scroll.
         .frame(minWidth: 540, minHeight: 640)
+        // Launch-time plugin work changes what the providers report, so read
+        // the statuses once it has finished.
+        .task(id: automaticUpdate.isRunning) {
+            guard !automaticUpdate.isRunning else { return }
+            await refreshStatuses()
+        }
+    }
+
+    @ViewBuilder
+    private func providerRow(for provider: AgentPluginProvider) -> some View {
+        let state = providerStates[provider] ?? .checking
+        HStack(spacing: 10) {
+            AgentProviderIcon(provider: provider.rawValue)
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(provider.displayName)
+                providerStatusLabel(for: provider, state: state)
+            }
+            Spacer()
+            switch state {
+            case .checking, .installing:
+                ProgressView()
+                    .controlSize(.small)
+            case .status(.cliNotFound):
+                EmptyView()
+            case .status(.installed):
+                Button("Reinstall") { install(provider: provider) }
+                    .controlSize(.small)
+                    .disabled(pluginSetupIsBusy || isRefreshingStatuses)
+            case .status(.notInstalled), .status(.disabled), .status(.error):
+                Button("Install") { install(provider: provider) }
+                    .controlSize(.small)
+                    .disabled(pluginSetupIsBusy || isRefreshingStatuses)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func providerStatusLabel(for provider: AgentPluginProvider, state: ProviderRowState) -> some View {
+        switch state {
+        case .checking:
+            Text("Checking…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .installing:
+            Text("Installing…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .status(.installed):
+            statusDot(color: .green, text: "Installed")
+        case .status(.disabled):
+            statusDot(color: .orange, text: "Disabled in \(provider.displayName)")
+        case .status(.notInstalled):
+            statusDot(color: .secondary, text: "Not installed")
+        case .status(.cliNotFound):
+            Text("`\(provider.executable)` CLI not found")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .status(.error(let message)):
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .lineLimit(2)
+                .help(message)
+        }
+    }
+
+    private func statusDot(color: Color, text: String) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var pluginsWarning: String? {
@@ -179,53 +306,151 @@ struct AgentTeamsSettingsPane: View {
         )
     }
 
-    private func prepareProviderPlugins() {
-        guard !pluginSetupIsBusy else { return }
-        do {
-            let plan = try AgentPluginInstaller(
-                grafttyCLIPath: GrafttyApp.agentHookCLIPath()
-            ).prepare()
-            preparedPluginPlan = plan
-            pluginSetupCommands = plan.shellScript
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(plan.shellScript, forType: .string)
-            pluginSetupStatus = "Setup commands copied. Approve the installation offer to run them now, or review and run them in a terminal."
-            showingPluginInstallOffer = true
-        } catch {
-            preparedPluginPlan = nil
-            pluginSetupCommands = ""
-            pluginSetupStatus = "Could not prepare provider plugins: \(error)"
+    /// AGENT-6.173: live Codex/Claude statuses satisfy the integration once at
+    /// least one is installed and no available one remains uninstalled or errored.
+    static func isIntegrationSatisfied(
+        by statuses: [AgentPluginProvider: AgentPluginProviderStatus]
+    ) -> Bool {
+        let marketplace: [AgentPluginProvider] = [.codex, .claude]
+        let hasInstalled = marketplace.contains { statuses[$0] == .installed }
+        guard hasInstalled else { return false }
+        return marketplace.allSatisfy { provider in
+            switch statuses[provider] {
+            case .installed, .disabled, .cliNotFound:
+                return true
+            case .notInstalled, .error, .none:
+                return false
+            }
         }
     }
 
-    private func installPreparedProviderPlugins() {
-        guard !pluginSetupIsBusy, let plan = preparedPluginPlan else { return }
-        pluginInstallInProgress = true
-        pluginSetupStatus = "Installing Codex and Claude plugins…"
+    struct InstallCheckpoints: Equatable {
+        var recordsIntegration: Bool
+        var advancesIntegrationBuild: Bool
+        var advancesAntigravityBuild: Bool
+    }
+
+    /// AGENT-6.178: a build checkpoint stops the next launch from refreshing
+    /// that plugin, and a live status of installed says nothing about which
+    /// build installed it. Advance a checkpoint only for plugins this
+    /// installation installed, so one it failed on or skipped still refreshes.
+    static func checkpoints(
+        afterInstalling installed: Set<AgentPluginProvider>,
+        statuses: [AgentPluginProvider: AgentPluginProviderStatus]
+    ) -> InstallCheckpoints {
+        let recordsIntegration = isIntegrationSatisfied(by: statuses)
+        let marketplace: [AgentPluginProvider] = [.codex, .claude]
+        return InstallCheckpoints(
+            recordsIntegration: recordsIntegration,
+            advancesIntegrationBuild: recordsIntegration && marketplace.allSatisfy {
+                statuses[$0] != .installed || installed.contains($0)
+            },
+            advancesAntigravityBuild: installed.contains(.antigravity)
+        )
+    }
+
+    /// AGENT-6.173: bulk install targets only providers whose CLI is available.
+    static func availableProviders(
+        in statuses: [AgentPluginProvider: AgentPluginProviderStatus]
+    ) -> [AgentPluginProvider] {
+        TeamHookRuntime.allCases.filter { provider in
+            guard let status = statuses[provider] else { return false }
+            return status != .cliNotFound
+        }
+    }
+
+    private func makeInstaller() -> AgentPluginInstaller {
+        AgentPluginInstaller(grafttyCLIPath: GrafttyApp.agentHookCLIPath())
+    }
+
+    private func refreshStatuses() async {
+        guard !isRefreshingStatuses else { return }
+        isRefreshingStatuses = true
+        for provider in TeamHookRuntime.allCases where providerStates[provider] != .installing {
+            providerStates[provider] = .checking
+        }
+        let installer = makeInstaller()
+        let statuses = await installer.providerStatuses()
+        for (provider, status) in statuses where providerStates[provider] != .installing {
+            providerStates[provider] = .status(status)
+        }
+        isRefreshingStatuses = false
+    }
+
+    private func install(provider: AgentPluginProvider) {
+        guard !pluginSetupIsBusy else { return }
+        providerStates[provider] = .installing
+        pluginSetupStatus = nil
         Task {
-            let report = await AgentPluginInstaller(
-                grafttyCLIPath: GrafttyApp.agentHookCLIPath()
-            ).installReplacingLegacy(plan)
-            AgentPluginInstallOfferPolicy.recordInstallation(
-                succeeded: report.succeeded,
-                in: defaults
-            )
-            pluginInstallInProgress = false
+            let installer = makeInstaller()
+            let report = await installer.install(provider: provider)
+            let updatedStatus = await installer.providerStatus(for: provider)
+            providerStates[provider] = .status(updatedStatus)
+            if report.succeeded {
+                recordCheckpoints(afterInstalling: [provider])
+            }
             pluginSetupStatus = report.summary
         }
     }
 
-    private func installAntigravityPlugin() {
-        guard !pluginSetupIsBusy else { return }
-        pluginInstallInProgress = true
-        pluginSetupStatus = "Installing Antigravity plugin…"
+    private func installAllAvailableProviders() {
+        let targets = availableProviders
+        guard !pluginSetupIsBusy, !targets.isEmpty else { return }
+        isInstallingBulk = true
+        pluginSetupStatus = nil
+        for provider in targets {
+            providerStates[provider] = .installing
+        }
         Task {
-            defer { pluginInstallInProgress = false }
+            defer { isInstallingBulk = false }
+            let installer = makeInstaller()
+            var failures: [String] = []
+            var installed: Set<AgentPluginProvider> = []
+            for provider in targets {
+                let report = await installer.install(provider: provider)
+                let updatedStatus = await installer.providerStatus(for: provider)
+                providerStates[provider] = .status(updatedStatus)
+                if report.succeeded {
+                    installed.insert(provider)
+                } else {
+                    failures.append(report.summary)
+                }
+            }
+            recordCheckpoints(afterInstalling: installed)
+            if failures.isEmpty {
+                pluginSetupStatus = "All available plugins installed. Start new agent sessions."
+            } else {
+                pluginSetupStatus = failures.joined(separator: " ")
+            }
+        }
+    }
+
+    private func recordCheckpoints(afterInstalling installed: Set<AgentPluginProvider>) {
+        let checkpoints = Self.checkpoints(afterInstalling: installed, statuses: resolvedStatuses)
+        let buildVersion = AgentPluginInstallOfferPolicy.currentBuildVersion
+        if checkpoints.recordsIntegration {
+            AgentPluginInstallOfferPolicy.recordInstalled(
+                in: defaults,
+                buildVersion: checkpoints.advancesIntegrationBuild ? buildVersion : nil
+            )
+        }
+        if checkpoints.advancesAntigravityBuild, let buildVersion, !buildVersion.isEmpty {
+            defaults.set(buildVersion, forKey: SettingsKeys.antigravityPluginInstalledBuildVersion)
+        }
+    }
+
+    private func loadManualCommands() {
+        copiedManualCommands = false
+        manualCommandsError = nil
+        let installer = makeInstaller()
+        Task {
             do {
-                try await AgentPluginInstaller(grafttyCLIPath: GrafttyApp.agentHookCLIPath()).installAntigravity()
-                pluginSetupStatus = "Installed the Graftty plugin. Start a new Antigravity session to load it."
+                manualCommands = try await OffMainIO.run {
+                    try installer.manualCommandsScript()
+                }
             } catch {
-                pluginSetupStatus = "Could not install the Antigravity plugin. Install the agy CLI and try again. \(error.localizedDescription)"
+                // The commands stay empty, so opening the section again retries.
+                manualCommandsError = "Could not prepare manual commands: \(error)"
             }
         }
     }

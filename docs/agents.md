@@ -102,8 +102,9 @@ automatically after app updates. Start new agent sessions after installing.
 To use Antigravity from Mac or GrafttyMobile, install the
 [Antigravity CLI](https://antigravity.google/download#antigravity-cli) on the
 host that owns the worktree. Run `agy` there and sign in. On a Mac host,
-choose **Settings → Agent Teams → Install Antigravity Plugin**. From a host
-terminal, use `graftty agent install-antigravity`.
+Graftty installs its Antigravity plugin the next time it launches; to install
+it right away, choose **Install** beside Antigravity in **Settings → Agent
+Teams**. From a host terminal, use `graftty agent install-antigravity`.
 
 Choose **New Antigravity agent** in Graftty or pass
 `--provider antigravity` to `graftty agent add`. The plugin connects
