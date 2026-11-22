@@ -5670,7 +5670,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.11** When a paired viewer opens earlier messages in a live Codex session, the host shall return that session’s saved visible messages in order across pages, including prompts that have left terminal scrollback.
 
-**CONTEXT-57.12** While the user touches or scrubs the mobile scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.
+**CONTEXT-57.12** While the user hovers over, touches, or scrubs the scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.
 
 ### CONTEXT-58.x
 

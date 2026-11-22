@@ -29,15 +29,7 @@ struct ScrollbackMapPreviewGroup: Identifiable {
         return (runs + replies).map(Self.init(messages:)).sorted { $0.y < $1.y }
     }
 
-    func excerpts(focusedID: String?) -> ArraySlice<ScrollbackMapPreview> {
-        let count = min(messages.count, 3)
-        let start = messages.firstIndex { $0.id == focusedID }.map {
-            min(messages.count - count, max(0, $0 - 1))
-        } ?? messages.count - count
-        return messages[start ..< start + count]
-    }
-
-    /// The rows of a mobile fisheye card: a window of up to `limit` messages around
+    /// The rows of a grouped card: a window of up to `limit` messages around
     /// the focused one, each with its distance from it, or the latest messages when
     /// no message in the group is focused.
     func fisheye(focusedID: String?, limit: Int = 7)
@@ -53,7 +45,7 @@ struct ScrollbackMapPreviewGroup: Identifiable {
 }
 
 /// @spec CONTEXT-57.12
-/// While the user touches or scrubs the mobile scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.
+/// While the user hovers over, touches, or scrubs the scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.
 enum ScrollbackMapFisheye {
     struct Style: Equatable {
         let size: CGFloat
@@ -61,7 +53,7 @@ enum ScrollbackMapFisheye {
         let lineLimit: Int
     }
 
-    /// Text size falls off with distance from the thumb, like the rail lens.
+    /// Text size falls off with distance from the focused mark, like the rail lens.
     static func style(distance: Int?) -> Style {
         switch distance {
         case nil: Style(size: 12, opacity: 0.85, lineLimit: 1)
@@ -90,7 +82,6 @@ struct ScrollbackMapPreviews: View {
     let maximumShift: CGFloat
     let focusedID: String?
     let responseGist: (entry: ScrollbackMapEntry, gist: PeerMessageGist)?
-    var fisheye = false
     let onSelect: (String) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
@@ -128,32 +119,8 @@ struct ScrollbackMapPreviews: View {
         let entry = group.messages[0].entry
         if group.messages.count == 1 {
             ScrollbackMapLabel(entry: entry, gist: gist(for: entry), width: cardWidth, now: now)
-        } else if fisheye {
-            fisheyeCard(for: group, now: now)
         } else {
-            let excerpts = group.excerpts(focusedID: focusedID)
-            let hiddenCount = group.messages.count - excerpts.count
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.speaker)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(ScrollbackMapPalette(scheme: colorScheme).input)
-                ForEach(excerpts) { message in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(message.entry.text)
-                            .font(.caption)
-                            .lineLimit(message.id == focusedID ? 3 : 1)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if let age = message.entry.relativeAge(at: now) {
-                            Text(age).font(.caption2).monospacedDigit().foregroundStyle(.secondary).fixedSize()
-                        }
-                    }
-                }
-                if hiddenCount > 0 {
-                    Text("+\(hiddenCount) more").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-            .modifier(ScrollbackMapPreviewFrame(width: cardWidth))
+            fisheyeCard(for: group, now: now)
         }
     }
 

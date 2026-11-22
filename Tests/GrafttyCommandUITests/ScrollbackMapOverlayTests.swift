@@ -421,19 +421,7 @@ struct ScrollbackMapPreviewTests {
         #expect(groups[1].startY == 30 && groups[1].endY == 76 && groups[1].y == 53)
     }
 
-    @Test func capsExcerptsAndKeepsTheFocusedMessageInTheGroup() throws {
-        let messages = (0..<7).map { index in
-            ScrollbackMapPreview(id: String(index),
-                entry: ScrollbackMapEntry(kind: .input, text: "Message", timestamp: nil, sender: nil),
-                y: Double(index) * 4)
-        }
-        let group = try #require(ScrollbackMapPreviewGroup.group(messages, maximumGap: 28, maximumSpan: 96).first)
-        #expect(group.excerpts(focusedID: "1").map(\.id) == ["0", "1", "2"])
-        #expect(group.excerpts(focusedID: nil).map(\.id) == ["4", "5", "6"])
-        #expect(group.messages.count == 7)
-    }
-
-    @Test("@spec CONTEXT-57.12: While the user touches or scrubs the mobile scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.")
+    @Test("@spec CONTEXT-57.12: While the user hovers over, touches, or scrubs the scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.")
     func fisheyeListsTheGroupAroundTheFocusedMessage() throws {
         let messages = (0..<10).map { index in
             ScrollbackMapPreview(id: String(index),
@@ -458,7 +446,7 @@ struct ScrollbackMapPreviewTests {
     }
 
     @MainActor
-    @Test func rendersTheMobileFisheyeCard() throws {
+    @Test func rendersTheFisheyeCard() throws {
         let texts = ["rerun the flaky port tests alone", "ok now bump the timeout? no — find why it hangs",
                      "also check the CI log for run 4077", "ship it once green"]
         let previews = texts.enumerated().map { index, text in
@@ -469,7 +457,7 @@ struct ScrollbackMapPreviewTests {
         let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: 36, maximumSpan: 64)
         try render(ScrollbackMapPreviews(groups: groups, height: 330, cardWidth: 180, gap: 48, railCenter: 18,
                                          focusY: 154, maximumShift: 16, focusedID: "1", responseGist: nil,
-                                         fisheye: true, onSelect: { _ in }),
+                                         onSelect: { _ in }),
                    size: CGSize(width: 300, height: 330), named: "scrollback-map-fisheye")
     }
 

@@ -70,12 +70,6 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
 public struct ScrollbackMapLayout: Equatable {
     public static let cardSize = CGSize(width: 34, height: 150)
     static let mobileTouchWidth: CGFloat = 44
-    /// Mobile scrubs with a thumb that covers the rail, so grouped cards magnify the focused message.
-    #if os(macOS)
-    static let usesFisheyeGroups = false
-    #else
-    static let usesFisheyeGroups = true
-    #endif
     static let mobileCollapsedWidth: CGFloat = 8
     static let macGutterWidth: CGFloat = 14
     static let macLensWidth: CGFloat = 26
@@ -444,8 +438,7 @@ public struct ScrollbackMapOverlay: View {
             let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: maximumGap, maximumSpan: maximumSpan)
             ScrollbackMapPreviews(groups: groups, height: availableHeight, cardWidth: cardWidth,
                                   gap: gap, railCenter: railCenter, focusY: focusY, maximumShift: maximumShift,
-                                  focusedID: focused?.eventID, responseGist: responseGist,
-                                  fisheye: ScrollbackMapLayout.usesFisheyeGroups) { firstID in
+                                  focusedID: focused?.eventID, responseGist: responseGist) { firstID in
                 if let row = map.row(for: firstID) { scroll(row) }
                 #if !os(macOS)
                 scrub = nil
