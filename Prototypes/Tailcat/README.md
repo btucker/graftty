@@ -150,6 +150,52 @@ loss or delay, interactive latency during concurrent bulk output, physical
 device power use, and cellular transitions. A controlled real-device test
 remains necessary before a migration performance claim.
 
+## Where startup time goes
+
+On 22 November 2026 the iPhone 18 Pro simulator reproduced the cold start.
+For three rounds, the startup probe timed the listener, a fresh client dial,
+pinned SSH authentication, terminal opening, and the first verified byte echo.
+It then connected a second fresh client to the same host. Both clients opened
+a second terminal channel on the established SSH connection. Set
+`TEST_RUNNER_GRAFTTY_TAILCAT_STARTUP=1` on the simulator test command to repeat it.
+
+| Tailcat phase | Median |
+| --- | ---: |
+| Start listener, automatic relay selection | 340 ms |
+| Restart listener with saved identity and relay | 1.2 ms |
+| First client dial immediately after listener start, automatic / saved relay | 4,104 / 4,121 ms |
+| Fresh client to already-running host, dial through terminal open, automatic / saved relay | 196 / 206 ms |
+| Open another terminal on the authenticated SSH connection | 2.0 ms |
+
+A separate simulator probe called `tc_client_ping` before the first TCP dial.
+The median registration time across three fresh processes was 4,061 ms when
+the client started immediately and 135 ms when the listener had a five-second
+head start. The five seconds were an experimental control. An application can
+start the listener when host access is enabled and reuse it across connections.
+
+At the pinned revision, the host starts relay endpoint discovery in the
+background. The client sends a registration packet through DERP and retries
+once a second until the host acknowledges it. Returning from listen does not
+guarantee that the relay can deliver to the host yet. Restoring the selected
+relay saved selection time but did not remove this registration delay.
+
+In a separate simulator build, selecting the known home DERP immediately
+on the server (`mc.ForceSetNearestDERP(derpRegion)` after starting the network
+monitor in `locoBackend.Start`) reduced the three immediate registration times
+to 135, 330, and 1,061 ms. These are registration measurements, not complete
+terminal opens. This upstream experiment is separate from the pinned app build.
+Test cold starts across real networks and relay failover before adopting it.
+
+## Paired reconnect release check
+
+With graftty-server unreachable and the relay reachable, restart the full Mac
+host process using its persisted pairing store. Verify that the still-paired
+phone can open a terminal with its original SSH pin and key. Unpair it locally
+while connected and verify the active session closes. Restart again and verify
+that the same phone, key, and saved address are denied. An identity rejection
+must end the attempt on every transport. Exercise both mixed-version directions
+before retiring WebRTC. These checks are pending.
+
 ## Limits
 
 Tailcat addresses contain connection secrets. This harness generates them

@@ -93,6 +93,64 @@ struct TailcatIntegrationTests {
         }
     }
 
+    @Test("Tailcat startup phase timings", .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TAILCAT_STARTUP"] == "1"), .timeLimit(.minutes(5)))
+    func startupTimings() async throws {
+        for round in 0..<3 {
+            let identity = try TailcatServerIdentity.generate()
+            let hostKey = Curve25519.Signing.PrivateKey()
+            let clientKey = Curve25519.Signing.PrivateKey()
+            var savedAddress: String?
+            for mode in ["discover", "restore"] {
+                let start = ContinuousClock.now
+                let server = try TailcatPeer.server(identity: identity, previousAddress: savedAddress)
+                do {
+                    let listener = try await server.listen(port: 8801)
+                    let listenerMS = milliseconds(since: start)
+                    let address = try await server.address()
+                    let addressMS = milliseconds(since: start) - listenerMS
+                    let destination = savedAddress ?? address
+                    savedAddress = destination
+                    for index in 0..<2 {
+                        let fixture = Fixture(server: server, listener: listener, hostKey: hostKey, clientKey: clientKey)
+                        let connectStart = ContinuousClock.now
+                        let client = try TailcatPeer.client(address: destination)
+                        let ssh = DirectSSHHostConnection(clientKey: clientKey, expectedHostFingerprint: try fingerprint(hostKey))
+                        do {
+                            let pipe = try await client.dial(port: 8801)
+                            let dialMS = milliseconds(since: connectStart)
+                            try await ssh.connect(input: pipe.file, output: pipe.file)
+                            try pipe.file.close()
+                            let authMS = milliseconds(since: connectStart) - dialMS
+                            for channel in 0..<2 {
+                                let opened = ContinuousClock.now
+                                let terminal = try await ssh.openTerminalSession(sessionName: "startup-probe")
+                                defer { terminal.close() }
+                                let openMS = milliseconds(since: opened)
+                                let payload = Data([UInt8(channel)])
+                                try await terminal.send(.binary(payload))
+                                #expect(try await terminal.receive() == .binary(payload))
+                                let echoMS = milliseconds(since: opened) - openMS
+                                print("[tailcat-startup] round=\(round) host=\(mode) connection=\(index) channel=\(channel) listener_ms=\(listenerMS) address_ms=\(addressMS) dial_ms=\(dialMS) ssh_ms=\(authMS) terminal_ms=\(openMS) echo_ms=\(echoMS)")
+                            }
+                            await ssh.close()
+                            await pipe.close()
+                        } catch {
+                            await ssh.close()
+                            await client.close()
+                            fixture.accepted.cancel()
+                            throw error
+                        }
+                        await client.close()
+                        let (channel, pipe) = try await fixture.accepted.value
+                        try? await channel.close().get()
+                        await pipe.close()
+                    }
+                } catch { await server.close(); throw error }
+                await server.close()
+            }
+        }
+    }
+
     @Test("@spec SSH-1.13: When the Tailcat prototype connects a paired SSH client to a pinned host, the application shall preserve terminal byte order and contents.", .timeLimit(.minutes(2)))
     func authenticatedTerminalRoundTrip() async throws {
         try await withFixture { fixture in
@@ -310,14 +368,15 @@ private func fingerprint(_ key: Curve25519.Signing.PrivateKey) throws -> RemoteI
 
 private final class Fixture: @unchecked Sendable {
     let server: TailcatPeer
-    let hostKey = Curve25519.Signing.PrivateKey()
-    let clientKey = Curve25519.Signing.PrivateKey()
+    let hostKey: Curve25519.Signing.PrivateKey
+    let clientKey: Curve25519.Signing.PrivateKey
     let accepted: Task<(Channel, TailcatPipe), Error>
 
-    init(server: TailcatPeer, listener: TailcatListener) {
+    init(server: TailcatPeer, listener: TailcatListener, hostKey: Curve25519.Signing.PrivateKey = .init(),
+         clientKey: Curve25519.Signing.PrivateKey = .init()) {
         self.server = server
-        let hostKey = hostKey
-        let clientKey = clientKey
+        self.hostKey = hostKey
+        self.clientKey = clientKey
         accepted = Task {
             let pipe = try await listener.accept()
             var descriptors: (Int32, Int32)?
