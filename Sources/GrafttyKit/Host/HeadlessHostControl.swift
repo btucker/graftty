@@ -78,6 +78,8 @@ public extension HeadlessHostRuntime {
                 try save()
             case let .explainRequest(path, pane):
                 return await AttentionExplainDelivery.deliver(worktreeID: path, paneID: pane, platform: controlPlatform)
+            case let .terminalText(path, pane, lines):
+                return await TerminalTextDelivery.read(worktreeID: path, paneID: pane, lines: lines, platform: controlPlatform)
             case let .answerRequest(path, pane, occurrence, text):
                 return await AttentionAnswerDelivery.deliver(worktreeID: path, paneID: pane, occurrence: occurrence,
                                                              text: text, platform: controlPlatform)

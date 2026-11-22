@@ -5,6 +5,11 @@ options:
     iOS: "17.0"
   developmentLanguage: en
 
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
 packages:
   GrafttyMobileKit:
     path: ../..
@@ -35,6 +40,39 @@ targets:
     dependencies:
       - package: GrafttyMobileKit
         product: GrafttyMobileKit
+      - target: GrafttyWatch
+        embed: true
+
+  GrafttyWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - GrafttyWatch
+    info:
+      path: GrafttyWatch/Info.plist
+      properties:
+        CFBundleDisplayName: Graftty
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.quotably.graftty
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quotably.graftty.watchkitapp
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_IDENTITY[sdk=watchos*]: Apple Development
+        CODE_SIGNING_REQUIRED: NO
+        DEVELOPMENT_TEAM: 67APXH3J92
+        SWIFT_VERSION: "5.10"
+        TARGETED_DEVICE_FAMILY: "4"
+        SUPPORTED_PLATFORMS: "watchsimulator watchos"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SKIP_INSTALL: YES
+    dependencies:
+      - package: GrafttyMobileKit
+        product: GrafttyWatchKit
 
   GrafttyMobileTestHost:
     type: application
@@ -170,6 +208,14 @@ targets:
         product: GrafttyRemoteTestSupport
 
 schemes:
+  GrafttyWatch:
+    build:
+      targets:
+        GrafttyWatch: all
+    run:
+      config: Debug
+    archive:
+      config: Release
   GrafttyBrowserInteraction:
     build:
       targets:

@@ -11,6 +11,20 @@ import Testing
 @Suite("RemoteMacsModel")
 @MainActor
 struct RemoteMacsModelTests {
+    @Test("@spec WATCH-3.6: When terminal text is requested through a paired relay, the application shall translate both worktree and pane aliases to the owning host and refuse a pane from another worktree.")
+    func terminalTextRelaysOnlyWithinItsWorktree() async throws {
+        let remote = try remoteMac()
+        let recorder = RemoteMacsModelManagementRecorder(response: .terminalText("$ make\ndone"))
+        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
+        let target = model.relayRouter.registerCreatedWorktree(identity: RemoteMacIdentity(remote), path: "/repo/watch", paneSessionName: "agent")
+        let other = model.relayRouter.registerCreatedWorktree(identity: RemoteMacIdentity(remote), path: "/repo/other", paneSessionName: "shell")
+        #expect(await model.sendRelayedWorktreeManagement(.terminalText(worktreeID: target.worktreeID, paneID: target.paneID, lines: 200))
+            == .terminalText("$ make\ndone"))
+        #expect(await model.sendRelayedWorktreeManagement(.terminalText(worktreeID: target.worktreeID, paneID: other.paneID, lines: 200)) == nil)
+        #expect(await recorder.requests() == [.terminalText(worktreeID: "/repo/watch", paneID: "agent", lines: 200)])
+    }
+
     @Test("@spec REMOTE-13.60: When a Mac opens a worktree available directly and through an intermediary, the application shall use the direct host's identifiers if it connects, otherwise reconnect through the intermediary and use its identifiers.", arguments: [false, true])
     func worktreeOpenChoosesDirectOrRelay(directAvailable: Bool) async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())

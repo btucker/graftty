@@ -84,7 +84,7 @@ struct IosTodo {
     func ios_4_10() async throws { }
 
     @Test("""
-@spec IOS-4.11: When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The authenticated terminal channel is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
+@spec IOS-4.11: When the user taps a pane tile, the application shall open a fullscreen terminal view for that session, using a single `TerminalPaneView` with the navigation bar hidden, the background reaching the screen edges, and the viewport below top chrome (`IOS-4.8`). The authenticated terminal channel is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
 """, .disabled("not yet implemented"))
     func ios_4_11() async throws { }
 
