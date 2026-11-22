@@ -20,11 +20,14 @@ final class MobileTerminalInputView: UITerminalView {
         selectionMenuItems?(context) ?? super.touchSelectionMenuItems(for: context)
     }
 
-    /// The terminal library's own selection actions, keyed by identifier:
-    /// `terminal.copy`, `terminal.paste` and `terminal.selectAll`.
-    func librarySelectionAction(_ identifier: String, for context: TerminalTouchSelectionMenuContext) -> UIAction? {
-        super.touchSelectionMenuItems(for: context).compactMap { $0 as? UIAction }
-            .first { $0.identifier.rawValue == identifier }
+    /// The terminal library's own selection actions with these identifiers,
+    /// in the order asked: `terminal.copy`, `terminal.paste` and
+    /// `terminal.selectAll`.
+    func librarySelectionActions(
+        _ identifiers: [String], for context: TerminalTouchSelectionMenuContext
+    ) -> [UIAction] {
+        let actions = super.touchSelectionMenuItems(for: context).compactMap { $0 as? UIAction }
+        return identifiers.compactMap { identifier in actions.first { $0.identifier.rawValue == identifier } }
     }
     var isAutocorrectionEnabled = false {
         didSet {

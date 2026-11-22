@@ -15,6 +15,10 @@
                     let tap = UITapGestureRecognizer(target: self, action: #selector(handleSelectionTap(_:)))
                     tap.numberOfTapsRequired = count
                     tap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+                    // A host delegate handles the single tap in `touchesEnded`.
+                    // A double or triple tap still waiting for its later taps
+                    // must not hold that touch's end back until it gives up.
+                    tap.delaysTouchesEnded = false
                     tap.delegate = self
                     addGestureRecognizer(tap)
                     touchSelection.tapRecognizers.append(tap)

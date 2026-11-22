@@ -41,28 +41,43 @@
             #if targetEnvironment(macCatalyst)
                 becomeFirstResponder()
             #else
+                guard let touch = touches.first else {
+                    softwareKeyboard.tapCandidateArmed = false
+                    return
+                }
+                beginTapCandidate(
+                    at: touch.location(in: self), tapCount: touch.tapCount, timestamp: touch.timestamp,
+                    // View-scoped on purpose: `allTouches` spans the whole
+                    // app, and a finger resting on host chrome (sidebar,
+                    // tab bar) must not swallow a tap here.
+                    isOnlyTouch: (event?.touches(for: self)?.count ?? touches.count) == 1,
+                )
+            #endif
+        }
+
+        #if !targetEnvironment(macCatalyst)
+            /// Starts the host tap path for a finger that came down: a lone
+            /// finger on a terminal at rest may turn out to be a tap.
+            func beginTapCandidate(at point: CGPoint, tapCount: Int, timestamp: TimeInterval, isOnlyTouch: Bool) {
                 if momentumScroll.displayLink != nil {
                     // A touch during momentum is a scroll-stop, not a tap.
                     stopMomentumScrolling()
                     softwareKeyboard.tapCandidateArmed = false
-                } else if let touch = touches.first,
-                          // View-scoped on purpose: `allTouches` spans the
-                          // whole app, and a finger resting on host chrome
-                          // (sidebar, tab bar) must not swallow a tap here.
-                          (event?.touches(for: self)?.count ?? touches.count) == 1
-                {
-                    noteTapBegan(at: touch.location(in: self), tapCount: touch.tapCount)
+                    noteTapBegan(at: nil, tapCount: tapCount)
+                } else if isOnlyTouch {
+                    noteTapBegan(at: point, tapCount: tapCount)
                     softwareKeyboard.tapCandidateArmed = true
-                    softwareKeyboard.tapCandidateStart = touch.location(in: self)
-                    softwareKeyboard.tapCandidateTimestamp = touch.timestamp
+                    softwareKeyboard.tapCandidateStart = point
+                    softwareKeyboard.tapCandidateTimestamp = timestamp
                 } else {
                     // A second finger means pinch (or some other
                     // multi-touch gesture) — the sequence can no longer
                     // be a tap.
                     softwareKeyboard.tapCandidateArmed = false
+                    noteTapBegan(at: nil, tapCount: tapCount)
                 }
-            #endif
-        }
+            }
+        #endif
 
         override open func touchesMoved(
             _ touches: Set<UITouch>,
@@ -193,8 +208,9 @@
             /// Any pointer-drag selection is over by definition — ghostty
             /// clears its selection on the click.
             func sendTapClick(at point: CGPoint) {
-                // The host selection controller may keep a mouse button
-                // held between drags. A click would release its anchor.
+                // With a host selection delegate a tap sends no click. The
+                // rule began with a host selection that held a mouse button
+                // between drags, which a click would have released.
                 guard !usesHostTextSelection, let surface else { return }
                 let mods = pointerMods()
                 sendPointerPosition(at: tapClickPoint(for: point, on: surface))

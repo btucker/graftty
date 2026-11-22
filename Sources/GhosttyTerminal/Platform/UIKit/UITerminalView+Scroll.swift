@@ -43,6 +43,7 @@
             case .began:
                 // A selection stays through a scroll; its overlay follows
                 // the viewport and only its handles change it.
+                noteUserScrolledTouchSelection()
                 stopMomentumScrolling()
             case .changed, .ended:
                 // `.ended` still carries whatever moved since the last
@@ -104,6 +105,7 @@
                 #if !targetEnvironment(macCatalyst)
                     softwareKeyboard.tapCandidateArmed = false
                 #endif
+                noteUserScrolledTouchSelection()
                 TerminalDebugLog.log(.input, "touch scroll began")
                 stopMomentumScrolling()
 

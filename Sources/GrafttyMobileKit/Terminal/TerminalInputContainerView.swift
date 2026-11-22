@@ -424,6 +424,12 @@ public final class TerminalInputContainerView: UIView,
     var lastLongPressPoint: CGPoint = .zero
     /// The word the latest long press selected, nil when it selected nothing.
     var longPressSelectedText: String?
+    /// The cells of that word. The same text selected elsewhere, by a double
+    /// tap for one, is not the pressed word and has no claim on its link.
+    var longPressSelectedCells: ClosedRange<Int>?
+    /// True while the terminal selects the pressed word. UIKit asks for the
+    /// selection's menu inside that call, before the word can be recorded.
+    var isSelectingLongPressedWord = false
     var longPressURL: URL?
     private(set) var terminalGridMetrics: TerminalGridMetrics?
     /// Opens a link through the originating pane's browser on the host.
@@ -587,8 +593,11 @@ public final class TerminalInputContainerView: UIView,
             && pan.allowedScrollTypesMask.isEmpty
     }
 
-    @objc private func handleFocusKeyboardInputTap(_ recognizer: UITapGestureRecognizer) {
-        guard acceptsTerminalInput(at: recognizer.location(in: self)) else { return }
+    @objc func handleFocusKeyboardInputTap(_ recognizer: UITapGestureRecognizer) {
+        // A tap while text is selected only takes the selection down; the
+        // terminal view does that as the touch ends, after this fires.
+        guard !terminalView.hasTouchSelection,
+              acceptsTerminalInput(at: recognizer.location(in: self)) else { return }
         _ = focusKeyboardInput()
     }
 

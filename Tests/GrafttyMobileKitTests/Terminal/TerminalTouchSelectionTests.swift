@@ -336,7 +336,7 @@ struct TerminalTouchSelectionTests {
         #expect(!view.hasTouchSelection)
     }
 
-    @Test("@spec IOS-11.10: A mobile terminal selection shall belong to its own pane and shall not affect the selection of any other pane.")
+    @Test("@spec IOS-11.10: When the user selects or clears text in one mobile terminal pane, the application shall leave the selection of every other pane unchanged.")
     func selectionIsPerPane() async throws {
         let first = try await TouchSelectionHarness()
         defer { first.tearDown() }
@@ -440,6 +440,220 @@ struct TerminalTouchSelectionTests {
         #expect(!view.tapActsOnTerminal(tapCount: 3))
         view.usesInlineTextSelection = false
         #expect(view.tapActsOnTerminal(tapCount: 2), "With touch selection off every tap is an ordinary tap")
+    }
+
+    @Test
+    func doubleAndTripleTapsDoNotHoldBackTheHostsSingleTap() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let taps = container.terminalView.touchSelection.tapRecognizers
+
+        // UIKit keeps a touch's end from the view while a recognizer that
+        // delays it still waits for another tap. The host's single tap is
+        // handled in the view's `touchesEnded`, so it would answer late.
+        #expect(taps.count == 3)
+        #expect(taps.allSatisfy { !$0.delaysTouchesEnded })
+    }
+
+    @Test
+    func commandCCopiesAHostTouchSelection() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("alpha beta gamma", until: "gamma")
+        let view = harness.view
+        try #require(view.beginHostTouchSelection(at: try harness.point(column: 7, row: 0)))
+
+        // The hostless test runner may not read the pasteboard back; a copy takes the selection down.
+        #expect(view.sendKey(.c, modifiers: .super_))
+
+        #expect(!view.hasTouchSelection, "Command-C on a hardware keyboard copies the text the handles show")
+    }
+
+    @Test
+    func menuPresentedForALongPressedLinkOffersTheLink() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("see https://example.com/docs now", until: "now")
+        let view = harness.view
+        harness.container.hostLabel = "Studio"
+        // Each menu the terminal asks its host for, as it is asked.
+        let build = try #require(view.selectionMenuItems)
+        var presented: [[String]] = []
+        view.selectionMenuItems = { context in
+            let items = build(context)
+            presented.append(items.compactMap { ($0 as? UIAction)?.title })
+            return items
+        }
+        let press = ScriptedLongPress()
+        press.point = try harness.point(column: 10, row: 0)
+
+        view.handleLongPressForSelection(press)
+        for _ in 0..<50 where presented.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+
+        // UIKit asks while the terminal presents the menu, before the long
+        // press has returned. Paste depends on the simulator's pasteboard.
+        let first = try #require(presented.first, "UIKit asked for no menu")
+        #expect(first.filter { $0 != "Paste" } == ["Open Link", "Open on Studio", "Copy Link", "Copy", "Select All"])
+    }
+
+    @Test
+    func linkOfAnEarlierPressDoesNotFollowTheSameTextElsewhere() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        // The first "docs" is a hyperlink; the second is plain text.
+        try await harness.show(
+            "\u{1b}]8;;https://example.com/guide\u{1b}\\docs\u{1b}]8;;\u{1b}\\ and docs here", until: "here"
+        )
+        let view = harness.view
+        let container = harness.container
+        let press = ScriptedLongPress()
+        press.point = try harness.point(column: 1, row: 0)
+        view.handleLongPressForSelection(press)
+        try #require(view.touchSelectionText == "docs")
+        try #require(container.selectionMenuActionTitlesForTesting(hasPasteContent: false).first == "Open Link")
+        view.dismissTouchSelection()
+
+        let double = ScriptedTap()
+        double.numberOfTapsRequired = 2
+        double.point = try harness.point(column: 10, row: 0)
+        view.handleSelectionTap(double)
+
+        try #require(view.touchSelectionText == "docs")
+        #expect(container.selectionMenuActionTitlesForTesting(hasPasteContent: false) == ["Copy", "Select All"])
+    }
+
+    /// When UIKit runs a chosen menu item relative to dismissing its menu.
+    enum MenuDismissalOrder: CaseIterable {
+        case actionFirst, dismissalBeginsFirst, dismissalFinishesFirst
+    }
+
+    @Test(
+        "Paste from the selection menu returns the keyboard once the menu has gone, whichever UIKit reports first",
+        arguments: MenuDismissalOrder.allCases
+    )
+    func pasteFromTheSelectionMenuRefocusesAfterItsDismissal(order: MenuDismissalOrder) async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("alpha beta gamma", until: "gamma")
+        let view = harness.view
+        let container = harness.container
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        try #require(container.focusKeyboardInput())
+        var pasteRequests = 0
+        container.onPasteRequested = { pasteRequests += 1 }
+        let point = try harness.point(column: 7, row: 0)
+        try #require(view.beginHostTouchSelection(at: point))
+        let paste = try #require(container.selectionMenuElements(
+            for: TerminalTouchSelectionMenuContext(sourcePoint: point, selectedText: "beta"), hasPasteContent: true
+        ).compactMap { $0 as? UIAction }.first { $0.title == "Paste" })
+        let button = UIButton()
+        button.addAction(paste, for: .touchUpInside)
+        // Put UIKit's own menu away, so the dismissal scripted below is the only one in play.
+        let menu = view.selectionEditMenuInteraction
+        let configuration = UIEditMenuConfiguration(identifier: nil, sourcePoint: point)
+        menu.dismissMenu()
+        for _ in 0..<200 where view.touchSelection.menuVisible || view.touchSelection.menuDismissals > 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(!view.touchSelection.menuVisible && view.touchSelection.menuDismissals == 0)
+        view.editMenuInteraction(menu, willPresentMenuFor: configuration, animator: DeferredEditMenuAnimator())
+
+        // UIKit may begin, or finish, dismissing the menu before it runs the chosen action.
+        let animator = DeferredEditMenuAnimator()
+        if order != .actionFirst {
+            view.editMenuInteraction(menu, willDismissMenuFor: configuration, animator: animator)
+        }
+        if order == .dismissalFinishesFirst { animator.finish() }
+        button.sendActions(for: .touchUpInside)
+        // The dismissal can take first responder from the terminal.
+        _ = view.resignFirstResponder()
+        if order == .actionFirst {
+            view.editMenuInteraction(menu, willDismissMenuFor: configuration, animator: animator)
+        }
+        if order != .dismissalFinishesFirst { animator.finish() }
+
+        #expect(pasteRequests == 1)
+        for _ in 0..<100 where !view.isFirstResponder { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(view.isFirstResponder)
+        #expect(view.touchSelection.pendingAction == nil, "Nothing is left for a later, unrelated menu to run")
+    }
+
+    @Test
+    func doubleTapAfterStoppingAFlingSelectsUnderTheFinger() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        let lines = (0..<200).map { "line \($0)" }.joined(separator: "\r\n")
+        try await harness.show("alpha beta gamma\r\n" + lines, until: "line 199")
+        let view = harness.view
+        let surface = try #require(view.surface)
+        _ = surface.scrollToRow(0)
+        try await harness.waitForViewportOffset { $0 == 0 }
+        let point = try harness.point(column: 7, row: 0)
+
+        // The flick's own finger came down on "beta", and the text scrolled away.
+        view.beginTapCandidate(at: point, tapCount: 1, timestamp: 0, isOnlyTouch: true)
+        _ = surface.scrollToRow(50)
+        try await harness.waitForViewportOffset { $0 == 50 }
+        // The first tap of the double tap lands while the fling still runs, and only stops it.
+        view.startMomentumScrolling(velocity: CGPoint(x: 0, y: 900))
+        view.beginTapCandidate(at: point, tapCount: 1, timestamp: 1, isOnlyTouch: true)
+        #expect(!view.softwareKeyboard.tapCandidateArmed)
+        view.beginTapCandidate(at: point, tapCount: 2, timestamp: 1.2, isOnlyTouch: true)
+        let double = ScriptedTap()
+        double.numberOfTapsRequired = 2
+        double.point = point
+        view.handleSelectionTap(double)
+
+        #expect(view.touchSelectionText == "line 49", "The row now under the finger, not the word the flick began on")
+    }
+
+    @Test
+    func tapThatDismissesASelectionDoesNotRaiseTheKeyboard() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        try await harness.show("alpha beta gamma", until: "gamma")
+        let view = harness.view
+        let container = harness.container
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        try #require(!view.isFirstResponder)
+        let point = try harness.point(column: 7, row: 0)
+        try #require(view.beginHostTouchSelection(at: point))
+        let tap = ScriptedTap()
+        tap.point = container.convert(point, from: view)
+
+        // The container's tap fires before the terminal view takes the selection down.
+        container.handleFocusKeyboardInputTap(tap)
+        #expect(!view.isFirstResponder, "The tap belongs to the selection")
+
+        view.dismissTouchSelection()
+        container.handleFocusKeyboardInputTap(tap)
+        #expect(view.isFirstResponder, "With nothing selected a tap focuses the keyboard as before")
+    }
+
+    @Test
+    func scrollingAfterAHandleDragKeepsTheViewportWhenTheSelectionGoes() async throws {
+        let harness = try await TouchSelectionHarness()
+        defer { harness.tearDown() }
+        let lines = (0..<200).map { "line \($0)" }.joined(separator: "\r\n")
+        try await harness.show("alpha beta gamma\r\n" + lines, until: "line 199")
+        let view = harness.view
+        let surface = try #require(view.surface)
+        _ = surface.scrollToRow(50)
+        try await harness.waitForViewportOffset { $0 == 50 }
+        try #require(view.beginHostTouchSelection(at: try harness.point(column: 1, row: 3)))
+        // A handle dragged past the top edge scrolled the viewport ten rows into history.
+        _ = surface.scrollToRow(40)
+        view.touchSelection.autoscrolledOffset = 40
+        try await harness.waitForViewportOffset { $0 == 40 }
+
+        // The user then scrolls by hand and ends where the drag had left the viewport.
+        view.handleTouchScrollGesture(ScriptedPan())
+        view.dismissTouchSelection()
+        for _ in 0..<20 {
+            view.controller?.tick()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(view.touchViewportOffset == 40, "A viewport the user moved stays where they left it")
     }
 }
 #endif

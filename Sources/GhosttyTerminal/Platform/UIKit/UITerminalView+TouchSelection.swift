@@ -33,6 +33,8 @@
         var pivot: ClosedRange<Int>?
         var selectsRows = false
         var pendingAction: (() -> Void)?
+        /// Edit-menu dismissals that have begun and not yet finished.
+        var menuDismissals = 0
         var overlay: TerminalTouchSelectionOverlay?
         var dragPoint: CGPoint?
         var dragOrigin: CGPoint?
@@ -67,6 +69,13 @@
             touchSelection.text
         }
 
+        /// The cells the touch selection covers, counted from the top of the
+        /// scrollback, nil without one. Selected text keeps its cells while
+        /// it scrolls; the same text selected elsewhere has other cells.
+        public var touchSelectionCells: ClosedRange<Int>? {
+            touchSelection.range
+        }
+
         /// Begins a touch selection for a host that owns the long press:
         /// the word at `point`, or all text with `selectAll`. Returns false,
         /// leaving any earlier selection alone, when there is no text to
@@ -80,20 +89,31 @@
 
         /// Runs `action` once the terminal's edit menu has finished
         /// dismissing, for a host menu item that must not race UIKit's
-        /// dismissal (taking focus, presenting another menu).
+        /// dismissal (taking focus, presenting another menu). With no menu
+        /// up or on its way down the action runs now: nothing else would
+        /// run it before a later, unrelated menu went away.
         public func performAfterTouchMenuDismissal(_ action: @escaping () -> Void) {
+            guard isTouchMenuVisible || touchSelection.menuDismissals > 0 else {
+                action()
+                return
+            }
             touchSelection.pendingAction = action
         }
 
         /// Remembers the cell a tap sequence began on, for a double or
-        /// triple tap that completes after the text has moved.
-        func noteTapBegan(at point: CGPoint, tapCount: Int) {
+        /// triple tap that completes after the text has moved. A first
+        /// touch that cannot be a tap passes nil: a double tap it leads
+        /// selects under the finger, not where an earlier touch landed.
+        func noteTapBegan(at point: CGPoint?, tapCount: Int) {
             guard touchSelection.enabled, tapCount == 1 else { return }
-            touchSelection.tapCell = touchSelectionGrid()?.cell(at: point, viewportOffset: touchViewportOffset)
+            touchSelection.tapCell = point.flatMap {
+                touchSelectionGrid()?.cell(at: $0, viewportOffset: touchViewportOffset)
+            }
         }
 
-        /// Whether a host-mode tap clicks the program and toggles the
-        /// keyboard. The later taps of a double or triple tap only select.
+        /// Whether a host-mode tap acts as a tap: toggles the keyboard, and
+        /// clicks the program where taps click at all (`sendTapClick`). The
+        /// later taps of a double or triple tap only select.
         func tapActsOnTerminal(tapCount: Int) -> Bool {
             !(touchSelection.enabled && tapCount >= 2)
         }
@@ -214,6 +234,13 @@
             } else if touchSelection.enabled {
                 UIMenuController.shared.hideMenu()
             }
+        }
+
+        /// A scroll gesture is the user moving the viewport. A selection
+        /// that stays through it no longer puts back a viewport one of its
+        /// handles had scrolled, wherever the scroll ends.
+        func noteUserScrolledTouchSelection() {
+            touchSelection.autoscrolledOffset = nil
         }
 
         private func currentTouchViewport(rows: Int) -> (offset: Int, atBottom: Bool) {

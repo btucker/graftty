@@ -45,11 +45,16 @@ extension TerminalInputContainerView {
         }
         // The terminal selects the pressed word and presents its own menu,
         // clear of the handles. A press with no text nearby selects nothing.
-        if terminalView.beginHostTouchSelection(at: request.sourcePoint) {
+        longPressSelectedText = nil
+        longPressSelectedCells = nil
+        isSelectingLongPressedWord = true
+        let selected = terminalView.beginHostTouchSelection(at: request.sourcePoint)
+        isSelectingLongPressedWord = false
+        if selected {
             longPressSelectedText = terminalView.touchSelectionText
+            longPressSelectedCells = terminalView.touchSelectionCells
             return
         }
-        longPressSelectedText = nil
         let config = UIEditMenuConfiguration(
             identifier: longPressMenuIdentifier(for: longPressMenuGeneration),
             sourcePoint: convert(request.sourcePoint, from: terminalView)
@@ -90,8 +95,12 @@ extension TerminalInputContainerView {
         onPasteRequested?()
         guard hadFocus else { return }
         terminalView.performAfterTouchMenuDismissal { [weak self] in
-            guard let self, self.terminalView.canBecomeFirstResponder else { return }
-            _ = self.focusKeyboardInput()
+            // Leave UIKit's dismissal-completion turn before asking its
+            // terminal responder to focus, as the long-press menu does.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.terminalView.canBecomeFirstResponder else { return }
+                _ = self.focusKeyboardInput()
+            }
         }
     }
 
@@ -124,12 +133,13 @@ extension TerminalInputContainerView {
         for context: TerminalTouchSelectionMenuContext, hasPasteContent: Bool
     ) -> [UIMenuElement] {
         // The link belongs to the word the long press selected. Once a
-        // handle drag changes the selection, its actions go.
-        var children: [UIMenuElement] = context.selectedText == longPressSelectedText
-            ? linkMenuElements(for: longPressMenuGeneration) : []
-        children += ["terminal.copy", "terminal.selectAll"].compactMap {
-            terminalView.librarySelectionAction($0, for: context)
-        }
+        // handle drag changes the selection, or another selection replaces
+        // it, its actions go.
+        let isPressedWord = isSelectingLongPressedWord
+            || (longPressSelectedCells != nil && terminalView.touchSelectionCells == longPressSelectedCells
+                && context.selectedText == longPressSelectedText)
+        var children: [UIMenuElement] = isPressedWord ? linkMenuElements(for: longPressMenuGeneration) : []
+        children += terminalView.librarySelectionActions(["terminal.copy", "terminal.selectAll"], for: context)
         if hasPasteContent {
             children.append(UIAction(title: "Paste", image: UIImage(systemName: "doc.on.clipboard")) { [weak self] _ in
                 self?.performPasteFromSelectionMenu()

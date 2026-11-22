@@ -125,9 +125,17 @@
             animator: any UIEditMenuInteractionAnimating,
         ) {
             touchSelection.menuVisible = false
-            guard let action = touchSelection.pendingAction else { return }
-            touchSelection.pendingAction = nil
-            animator.addCompletion(action)
+            // UIKit may begin this dismissal before it runs the chosen menu
+            // item, so the action that item registers is read when the
+            // dismissal ends, not here.
+            touchSelection.menuDismissals += 1
+            animator.addCompletion { [weak self] in
+                guard let self else { return }
+                touchSelection.menuDismissals -= 1
+                guard let action = touchSelection.pendingAction else { return }
+                touchSelection.pendingAction = nil
+                action()
+            }
         }
 
         public func editMenuInteraction(

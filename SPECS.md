@@ -2718,7 +2718,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.3** When the user chooses Select All from a mobile terminal menu, the application shall select all terminal text including scrollback and show its handles.
 
-**IOS-11.4** While a mobile terminal has a text selection, one-finger drags outside the selection handles shall scroll the terminal or checkpoint canvas and shall leave the selection unchanged.
+**IOS-11.4** While a mobile terminal has a text selection, the application shall scroll the terminal or checkpoint canvas for one-finger drags outside the selection handles and shall leave the selection unchanged.
 
 **IOS-11.5** When the user finishes dragging a selection handle on mobile, the application shall present the edit menu clear of the selection and its handles.
 
@@ -2730,7 +2730,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.9** `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. Committed software Return normalization from `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
 
-**IOS-11.10** A mobile terminal selection shall belong to its own pane and shall not affect the selection of any other pane.
+**IOS-11.10** When the user selects or clears text in one mobile terminal pane, the application shall leave the selection of every other pane unchanged.
 
 **IOS-11.11** While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`. Guaranteed by `.allowsHitTesting(false)` applied to the inner `TerminalPaneView` in `paneContent` — `TerminalInputContainerView`'s long-press gesture recogniser never receives touches. The `onPasteRequested` closure is also left `nil` at the `TerminalPaneView` call site.
 

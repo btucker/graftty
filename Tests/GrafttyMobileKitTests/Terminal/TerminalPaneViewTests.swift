@@ -65,8 +65,9 @@ private final class TerminalResponseRecorder: @unchecked Sendable {
     }
 }
 
+/// An edit-menu dismissal whose completion a test finishes when it chooses.
 @MainActor
-private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAnimating {
+final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAnimating {
     private var completions: [() -> Void] = []
 
     func addAnimations(_ animations: @escaping () -> Void) {
@@ -1632,7 +1633,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-11.4: While a mobile terminal has a text selection, one-finger drags outside the selection handles shall scroll the terminal or checkpoint canvas and shall leave the selection unchanged.
+@spec IOS-11.4: While a mobile terminal has a text selection, the application shall scroll the terminal or checkpoint canvas for one-finger drags outside the selection handles and shall leave the selection unchanged.
 """)
     func selectionLeavesEveryScrollGestureLive() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

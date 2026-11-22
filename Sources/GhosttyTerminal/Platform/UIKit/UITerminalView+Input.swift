@@ -57,13 +57,15 @@
                 return true
             }
 
-            if usesInlineTextSelection, isPress {
-                if touchSelection.range != nil, copy {
-                    _ = copyTouchSelection()
-                    hardwareKeyboard.touchCopyKeycodes.insert(event.keycode)
-                    return true
-                }
+            // ⌘C copies a touch selection whoever began it: a host selection
+            // delegate shows the same handles as inline selection does.
+            if copy, touchSelection.range != nil {
+                _ = copyTouchSelection()
+                hardwareKeyboard.touchCopyKeycodes.insert(event.keycode)
+                return true
+            }
 
+            if usesInlineTextSelection, isPress {
                 let key = TerminalHardwareKeyRouter.ghosttyKey(
                     forAppKitKeyCode: UInt16(clamping: event.keycode),
                 )
