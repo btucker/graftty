@@ -15,6 +15,10 @@ The Mac stores its listener identity and the client stores the route in Keychain
 Turning off the Mac setting stops its listener and active Tailcat sessions.
 Turning off the client setting applies to subsequent connections.
 
+A terminal-only peer with an empty route cache uses WebRTC in this beta.
+The host rejects its route request on the worktree-management channel, and
+the peer can keep using the terminal on its authenticated WebRTC connection.
+
 ## Transport harness
 
 The separate harness exercises the embedded library with the same SSH transport.
@@ -210,6 +214,14 @@ while connected and verify the active session closes. Restart again and verify
 that the same phone, key, and saved address are denied. An identity rejection
 must end the attempt on every transport. Exercise both mixed-version directions
 before retiring WebRTC. These checks are pending.
+
+Before removing WebRTC, also test a paired phone with terminal access enabled,
+worktree management disabled, and no Tailcat route in Keychain. With WebRTC
+unavailable, the phone must discover its route, verify the original SSH pin,
+and exchange terminal input and output over Tailcat. Verify a management
+request is denied, reconnect using the newly saved route, and verify management
+is still denied. Seeding Keychain or temporarily granting management access
+would skip the discovery step this case is intended to exercise.
 
 ## Limits
 
