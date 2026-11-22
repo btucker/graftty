@@ -16,9 +16,10 @@ public final class WatchInboxModel {
     public func receive(_ snapshot: WatchAttentionSnapshot) {
         guard snapshot.updatedAt >= self.snapshot.updatedAt else { return }
         self.snapshot = snapshot
-        // Keep sent state while a snapshot still contains that occurrence.
+        // Omitted questions may return before their WCSession replies finish.
+        // Keep their in-flight guard until acknowledgement arrives.
         let current = Set(snapshot.cards.map(\.questionID))
-        replies = replies.filter { current.contains($0.key) }
+        replies = replies.filter { current.contains($0.key) || $0.value == .sending }
     }
 
     public func refresh(using send: Send) async {
@@ -55,7 +56,10 @@ public final class WatchInboxModel {
         } catch {
             state = .failed("Delivery wasn't confirmed. Refresh before trying again.")
         }
-        guard snapshot.cards.contains(where: { $0.questionID == card.questionID }) else { return }
+        guard snapshot.cards.contains(where: { $0.questionID == card.questionID }) else {
+            replies[card.questionID] = nil
+            return
+        }
         replies[card.questionID] = state
     }
 }

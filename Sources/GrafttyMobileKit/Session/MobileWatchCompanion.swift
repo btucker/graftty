@@ -11,9 +11,10 @@ import UIKit
 /// connection lifecycle. Only an explicitly enabled, paired watch can use it.
 @MainActor
 final class MobileWatchCompanion: NSObject, WCSessionDelegate {
-    static let shared = MobileWatchCompanion()
+    static let shared = MobileWatchCompanion(coordinator: .init(connectionsAllowedInitially: false))
     static var isSupported: Bool { WCSession.isSupported() }
-    let coordinator = RemoteConnectionCoordinator(connectionsAllowedInitially: false)
+    let coordinator: RemoteConnectionCoordinator
+    private let defaults: UserDefaults
     private lazy var access = WatchConnectionAccess(watchEnabled: isEnabled) { [coordinator] allowed in
         coordinator.setConnectionsAllowed(allowed)
     }
@@ -25,7 +26,13 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
     private var completed: [String: WatchResponse] = [:]
     private var completionOrder: [String] = []
 
-    var isEnabled: Bool { UserDefaults.standard.bool(forKey: WatchCompanionSettings.enabledKey) }
+    init(coordinator: RemoteConnectionCoordinator, defaults: UserDefaults = .standard) {
+        self.coordinator = coordinator
+        self.defaults = defaults
+        super.init()
+    }
+
+    var isEnabled: Bool { defaults.bool(forKey: WatchCompanionSettings.enabledKey) }
 
     func setForegroundConnectionsAllowed(_ allowed: Bool, consumer: UUID) {
         access.setForegroundAllowed(allowed, consumer: consumer)
@@ -33,7 +40,7 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
 
     func install() {
         guard session == nil, WCSession.isSupported() else { return }
-        if let bytes = UserDefaults.standard.data(forKey: WatchCompanionSettings.snapshotKey),
+        if let bytes = defaults.data(forKey: WatchCompanionSettings.snapshotKey),
            let snapshot = try? JSONDecoder().decode(WatchAttentionSnapshot.self, from: bytes) { cached = snapshot }
         let session = WCSession.default
         session.delegate = self
@@ -42,7 +49,7 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
     }
 
     func setEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: WatchCompanionSettings.enabledKey)
+        defaults.set(enabled, forKey: WatchCompanionSettings.enabledKey)
         access.setWatchEnabled(enabled)
         if !enabled {
             for operation in active.values { operation.finish() }
@@ -56,7 +63,9 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
     /// Foreground feed updates are cheap. No watch timer keeps a host awake.
     func update(from feed: MultiHostFeed) {
         guard isEnabled else { return }
-        let snapshot = WatchAttentionProjection.snapshot(from: feed.state, hosts: feed.hosts, previous: cached)
+        // Another window can still retain a host removed from the shared pins.
+        let hosts = feed.hosts.filter { coordinator.isPaired($0) }
+        let snapshot = WatchAttentionProjection.snapshot(from: feed.state, hosts: hosts, previous: cached)
         guard snapshot.cards != cached.cards || snapshot.terminals != cached.terminals || snapshot.unavailableHosts != cached.unavailableHosts || !cached.isEnabled else { return }
         publish(snapshot)
     }
@@ -65,7 +74,7 @@ final class MobileWatchCompanion: NSObject, WCSessionDelegate {
         cacheRevision &+= 1
         cached = snapshot
         guard let bytes = try? snapshot.encodedForTransfer() else { return }
-        UserDefaults.standard.set(bytes, forKey: WatchCompanionSettings.snapshotKey)
+        defaults.set(bytes, forKey: WatchCompanionSettings.snapshotKey)
         guard let session, session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
         do { try session.updateApplicationContext(["snapshot": bytes]) }
         catch { /* An interactive refresh can still retrieve the cached state. */ }

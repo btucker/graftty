@@ -18,7 +18,9 @@ struct WatchTerminalListView: View {
                 }
             }
             if connection.inbox.snapshot.terminals?.isEmpty != false {
-                Text("No running terminals. Refresh to check your Macs.").font(.footnote)
+                Text((connection.inbox.snapshot.omittedTerminalCount ?? 0) > 0
+                    ? "Open Graftty on iPhone to view the remaining terminals."
+                    : "No running terminals. Refresh to check your Macs.").font(.footnote)
             }
             if let omitted = connection.inbox.snapshot.omittedTerminalCount, omitted > 0 {
                 Text("\(omitted) more panes on iPhone.").font(.footnote)

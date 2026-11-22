@@ -3062,7 +3062,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WATCH-1.3** When a watch reply is accepted by the host, the application shall mark that exact question as sent and prevent another submission while allowing a later question in the same worktree to be answered.
 
-**WATCH-1.4** While a watch reply awaits host acknowledgement, the application shall prevent duplicate submissions and show Sent only after the host accepts the answer.
+**WATCH-1.4** While a watch reply awaits host acknowledgement, the application shall prevent duplicate submissions even when snapshots temporarily omit the question, and show Sent only after the host accepts the answer.
 
 **WATCH-1.5** If a watch card is obsolete, cannot accept a text answer, or has a blank reply, then the application shall refuse to submit it.
 
@@ -3087,6 +3087,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **WATCH-2.5** While the phone foreground or any enabled watch request needs a host connection, the application shall share its connection coordinator and keep access until the final consumer releases it.
 
 **WATCH-2.6** When watch access is disabled or a watch request expires, the application shall release that request's connection lease without closing connections still needed by the foreground or another request, and shall refuse disabled or cancelled requests.
+
+**WATCH-2.7** When a phone window reports a host whose pairing was removed, the phone shall exclude that host's cached questions and terminals from watch updates.
+
+**WATCH-2.8** When a worktree has an unread notice, the watch shall show the notice text without offering a reply.
 
 ### WATCH-3.x — Terminal viewing
 

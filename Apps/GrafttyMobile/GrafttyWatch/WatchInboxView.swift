@@ -31,7 +31,7 @@ struct WatchInboxView: View {
                         .font(.footnote)
                 } else if inbox.snapshot.cards.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Image(systemName: inbox.snapshot.updatedAt == .distantPast ? "arrow.triangle.2.circlepath" : "checkmark.bubble")
+                        Image(systemName: emptyIcon)
                             .font(.title2).foregroundStyle(.mint)
                         Text(emptyTitle).font(.headline)
                         Text(emptyDetail)
@@ -86,13 +86,20 @@ struct WatchInboxView: View {
         }
     }
 
+    private var emptyIcon: String {
+        if inbox.snapshot.updatedAt == .distantPast { return "arrow.triangle.2.circlepath" }
+        return inbox.snapshot.omittedCount > 0 ? "iphone" : "checkmark.bubble"
+    }
+
     private var emptyTitle: String {
         if inbox.snapshot.updatedAt == .distantPast { return "Connect to iPhone" }
+        if inbox.snapshot.omittedCount > 0 { return "Requests on iPhone" }
         return inbox.snapshot.unavailableHosts.isEmpty ? "All caught up" : "Macs unavailable"
     }
 
     private var emptyDetail: String {
         if inbox.snapshot.updatedAt == .distantPast { return "Your worktree questions will appear here." }
+        if inbox.snapshot.omittedCount > 0 { return "Open Graftty on iPhone to view the remaining requests." }
         return inbox.snapshot.unavailableHosts.isEmpty ? "No worktrees need an answer." : "Refresh when your Macs are back online."
     }
 }
@@ -145,7 +152,7 @@ private struct WatchQuestionView: View {
                         Button("Send reply") { answer(card, text: reply) }
                             .disabled(!canAnswer(card) || reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         replyStatus(card)
-                    } else {
+                    } else if card.isNotice != true {
                         Text("Open the agent's terminal on iPhone or Mac to respond to this prompt.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }

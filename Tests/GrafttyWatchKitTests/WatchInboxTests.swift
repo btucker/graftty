@@ -49,7 +49,7 @@ struct WatchInboxTests {
         #expect(sent.count == 2)
     }
 
-    @Test("@spec WATCH-1.4: While a watch reply awaits host acknowledgement, the application shall prevent duplicate submissions and show Sent only after the host accepts the answer.")
+    @Test("@spec WATCH-1.4: While a watch reply awaits host acknowledgement, the application shall prevent duplicate submissions even when snapshots temporarily omit the question, and show Sent only after the host accepts the answer.")
     func pendingReplyCannotBeSentTwice() async {
         let question = card()
         let model = WatchInboxModel(snapshot: .init(cards: [question], updatedAt: .now))
@@ -65,6 +65,31 @@ struct WatchInboxTests {
         continuation?.resume(returning: .answered)
         await task.value
         #expect(model.replyState(for: question) == .sent)
+    }
+
+    @Test("A pending watch reply survives temporary snapshot omission", arguments: [false, true])
+    func pendingReplySurvivesSnapshotOmission(questionReturnsBeforeReply: Bool) async {
+        let question = card()
+        let model = WatchInboxModel(snapshot: .init(cards: [question], updatedAt: .now))
+        var pending: CheckedContinuation<WatchResponse, Error>?
+        let task = Task {
+            await model.answer(question, text: "Ship") { _ in
+                try await withCheckedThrowingContinuation { pending = $0 }
+            }
+        }
+        while pending == nil { await Task.yield() }
+        model.receive(.init(updatedAt: .now))
+        #expect(model.replyState(for: question) == .sending)
+        if questionReturnsBeforeReply {
+            model.receive(.init(cards: [question], updatedAt: .now))
+            await model.answer(question, text: "Wait") { _ in
+                Issue.record("Snapshot omission permitted another in-flight answer")
+                return .answered
+            }
+        }
+        pending?.resume(returning: .answered)
+        await task.value
+        #expect(model.replyState(for: question) == (questionReturnsBeforeReply ? .sent : .idle))
     }
 
     @Test("@spec WATCH-1.5: If a watch card is obsolete, cannot accept a text answer, or has a blank reply, then the application shall refuse to submit it.")

@@ -34,6 +34,7 @@ public struct WatchAttentionCard: Codable, Sendable, Equatable, Identifiable {
     public var timestamp: Date?
     public var resourceID: String?
     public var terminal: WatchTerminalTarget?
+    public var isNotice: Bool?
     public var id: String { resourceID ?? hostID.uuidString + ":" + worktreeID }
     public var questionID: String { id + ":" + (target?.occurrence.base64EncodedString() ?? "") + ":" + question }
 
@@ -66,19 +67,41 @@ public struct WatchAttentionSnapshot: Codable, Sendable, Equatable {
     /// Leave headroom beneath WatchConnectivity's message/context limit.
     /// Keep the newest cards and explicitly report anything left on the phone.
     public func encodedForTransfer(maximumBytes: Int = 48_000) throws -> Data {
+        let encoder = JSONEncoder()
+        let full = try encoder.encode(self)
+        if full.count <= maximumBytes { return full }
+
         var copy = self
-        while true {
-            let bytes = try JSONEncoder().encode(copy)
-            if bytes.count <= maximumBytes { return bytes }
-            if copy.terminals?.isEmpty == false {
-                copy.terminals?.removeLast()
-                copy.omittedTerminalCount = (copy.omittedTerminalCount ?? 0) + 1
-                continue
-            }
-            guard !copy.cards.isEmpty else { throw CocoaError(.coderInvalidValue) }
-            copy.cards.removeLast()
-            copy.omittedCount += 1
+        copy.cards = []
+        copy.omittedCount += cards.count
+        if let terminals {
+            copy.terminals = []
+            copy.omittedTerminalCount = (omittedTerminalCount ?? 0) + terminals.count
         }
+        // Start with all omissions counted so their final decimal widths fit.
+        // Encoding each item once avoids repeatedly serializing a large inbox.
+        let overhead = try encoder.encode(copy).count
+        guard overhead <= maximumBytes else { throw CocoaError(.coderInvalidValue) }
+        var remaining = maximumBytes - overhead
+        func fitting<T: Encodable>(_ items: [T]) throws -> [T] {
+            var kept: [T] = []
+            for item in items {
+                let size = try encoder.encode(item).count + (kept.isEmpty ? 0 : 1)
+                if size <= remaining {
+                    kept.append(item)
+                    remaining -= size
+                }
+            }
+            return kept
+        }
+        copy.cards = try fitting(cards)
+        copy.omittedCount -= copy.cards.count
+        if let terminals {
+            let kept = try fitting(terminals)
+            copy.terminals = kept
+            copy.omittedTerminalCount = (omittedTerminalCount ?? 0) + terminals.count - kept.count
+        }
+        return try encoder.encode(copy)
     }
 }
 
