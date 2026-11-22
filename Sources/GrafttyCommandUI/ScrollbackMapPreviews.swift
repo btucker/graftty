@@ -36,6 +36,48 @@ struct ScrollbackMapPreviewGroup: Identifiable {
         } ?? messages.count - count
         return messages[start ..< start + count]
     }
+
+    /// The rows of a mobile fisheye card: a window of up to `limit` messages around
+    /// the focused one, each with its distance from it, or the latest messages when
+    /// no message in the group is focused.
+    func fisheye(focusedID: String?, limit: Int = 7)
+        -> (rows: [(preview: ScrollbackMapPreview, distance: Int?)], earlier: Int, later: Int) {
+        let count = min(messages.count, limit)
+        let focus = messages.firstIndex { $0.id == focusedID }
+        let start = focus.map { min(messages.count - count, max(0, $0 - count / 2)) } ?? messages.count - count
+        let rows = (start ..< start + count).map { index in
+            (preview: messages[index], distance: focus.map { abs(index - $0) })
+        }
+        return (rows, start, messages.count - start - count)
+    }
+}
+
+/// @spec CONTEXT-57.12
+/// While the user touches or scrubs the mobile scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.
+enum ScrollbackMapFisheye {
+    struct Style: Equatable {
+        let size: CGFloat
+        let opacity: Double
+        let lineLimit: Int
+    }
+
+    /// Text size falls off with distance from the thumb, like the rail lens.
+    static func style(distance: Int?) -> Style {
+        switch distance {
+        case nil: Style(size: 12, opacity: 0.85, lineLimit: 1)
+        case 0: Style(size: 15, opacity: 1, lineLimit: 3)
+        case 1: Style(size: 12, opacity: 0.7, lineLimit: 1)
+        default: Style(size: 10.5, opacity: 0.45, lineLimit: 1)
+        }
+    }
+}
+
+private enum FocusedRowBounds: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
 }
 
 struct ScrollbackMapPreviews: View {
@@ -48,6 +90,7 @@ struct ScrollbackMapPreviews: View {
     let maximumShift: CGFloat
     let focusedID: String?
     let responseGist: (entry: ScrollbackMapEntry, gist: PeerMessageGist)?
+    var fisheye = false
     let onSelect: (String) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
@@ -76,6 +119,7 @@ struct ScrollbackMapPreviews: View {
                 }
             }
             .backgroundPreferenceValue(PreviewBounds.self) { connectors(for: $0).allowsHitTesting(false) }
+            .overlayPreferenceValue(FocusedRowBounds.self) { focusedConnector(for: $0).allowsHitTesting(false) }
             .clipped()
         }
     }
@@ -84,6 +128,8 @@ struct ScrollbackMapPreviews: View {
         let entry = group.messages[0].entry
         if group.messages.count == 1 {
             ScrollbackMapLabel(entry: entry, gist: gist(for: entry), width: cardWidth, now: now)
+        } else if fisheye {
+            fisheyeCard(for: group, now: now)
         } else {
             let excerpts = group.excerpts(focusedID: focusedID)
             let hiddenCount = group.messages.count - excerpts.count
@@ -108,6 +154,60 @@ struct ScrollbackMapPreviews: View {
                 }
             }
             .modifier(ScrollbackMapPreviewFrame(width: cardWidth))
+        }
+    }
+
+    private func fisheyeCard(for group: ScrollbackMapPreviewGroup, now: Date) -> some View {
+        let window = group.fisheye(focusedID: focusedID)
+        let palette = ScrollbackMapPalette(scheme: colorScheme)
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(group.messages[0].entry.speaker)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(palette.input)
+            if window.earlier > 0 {
+                Text("+\(window.earlier) earlier").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            ForEach(window.rows, id: \.preview.id) { row in
+                let style = ScrollbackMapFisheye.style(distance: row.distance)
+                let isFocused = row.distance == 0
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(row.preview.entry.text)
+                        .font(.system(size: style.size, weight: isFocused ? .medium : .regular))
+                        .lineLimit(style.lineLimit)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let age = row.preview.entry.relativeAge(at: now) {
+                        Text(age).font(.system(size: 10)).monospacedDigit().fixedSize()
+                            .foregroundStyle(isFocused ? AnyShapeStyle(palette.input) : AnyShapeStyle(.secondary))
+                    }
+                }
+                .opacity(style.opacity)
+                .padding(.vertical, isFocused ? 3 : 0)
+                .anchorPreference(key: FocusedRowBounds.self, value: .bounds) { isFocused ? $0 : nil }
+            }
+            if window.later > 0 {
+                Text("+\(window.later) later").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+        .animation(.snappy(duration: 0.18), value: focusedID)
+        .modifier(ScrollbackMapPreviewFrame(width: cardWidth))
+    }
+
+    /// A solid line from the focused fisheye row to its own mark on the rail.
+    private func focusedConnector(for anchor: Anchor<CGRect>?) -> some View {
+        GeometryReader { geometry in
+            if let anchor, let y = groups.lazy.flatMap(\.messages).first(where: { $0.id == focusedID })?.y {
+                let rect = geometry[anchor]
+                let leadingOnLeft = layoutDirection == .leftToRight
+                let railX = leadingOnLeft ? geometry.size.width - railCenter : railCenter
+                // The row sits inside the card's padding; start the line at the card edge.
+                let edgeX = leadingOnLeft ? rect.maxX + 9 : rect.minX - 9
+                Path { path in
+                    path.move(to: CGPoint(x: edgeX, y: rect.midY))
+                    path.addLine(to: CGPoint(x: railX, y: y))
+                }
+                .stroke(ScrollbackMapPalette(scheme: colorScheme).input, lineWidth: 1.5)
+            }
         }
     }
 
