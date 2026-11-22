@@ -5,10 +5,49 @@ import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
+import GrafttyTailcat
 import Testing
 
 @Suite("Tailcat with the production Graftty SSH host", .serialized)
 struct TailcatHostIntegrationTests {
+    @Test("App connections open control channels over Tailcat and stop on a rejected SSH pin",
+          arguments: [false, true])
+    func applicationLink(rejectPin: Bool) async throws {
+        try await withProductionHost { fixture in
+            let hostKey = rejectPin ? Curve25519.Signing.PrivateKey() : fixture.hostKey
+            let host = PinnedHost(id: .init(value: "test-host"), kind: .mac,
+                publicKey: try .init(rawRepresentation: hostKey.publicKey.rawRepresentation),
+                displayName: "Test Mac", pinnedAt: Date(), pairingURL: URL(fileURLWithPath: "/unused"))
+            let link = RemoteHostConnection(clientKey: fixture.clientKey, expectedHostFingerprint: host.fingerprint)
+            let endpoint = try await TailcatEndpoint(address: fixture.server.address(), port: 8801)
+            try TailcatCredentials.saveEndpoint(endpoint, for: host.fingerprint)
+            defer { try? TailcatCredentials.saveEndpoint(nil, for: host.fingerprint) }
+            func connect() async throws -> PinnedHost {
+                // Empty signaling routes make reaching the host via WebRTC impossible.
+                try await RemoteHostDialer.negotiate(link, signaling: SignalingClient(), pinnedHost: host,
+                    routes: [], clientKey: fixture.clientKey, clientDeviceID: fixture.peer.id,
+                    replacingExistingConnection: false, allowsWake: false, preferTailcat: true, connectedAt: Date.init)
+            }
+            do {
+                if rejectPin {
+                    do {
+                        _ = try await connect()
+                        Issue.record("Connected despite the wrong host pin")
+                    } catch {
+                        #expect(!(error is SignalingClient.Error))
+                    }
+                } else {
+                    _ = try await connect()
+                    let control = try await link.makePaneControlClient()
+                    defer { control.close() }
+                    try await control.open()
+                    #expect(try await control.send(.equalize(target: "worktree")) == .ok)
+                }
+            } catch { await link.close(); throw error }
+            await link.close()
+        }
+    }
+
     @Test("@spec SSH-1.22: When a Tailcat host restarts with its saved identity and relay region, the application shall reconnect with the previously paired address and SSH keys.", .timeLimit(.minutes(2)))
     func reconnectsAfterRestart() async throws {
         let savedIdentity = try JSONEncoder().encode(TailcatServerIdentity.generate())

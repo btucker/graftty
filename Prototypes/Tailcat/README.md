@@ -1,8 +1,23 @@
 # Tailcat transport prototype
 
-This opt-in harness connects the existing `DirectSSHHostConnection` and
-`TerminalSessionClient` through an embedded Tailcat library. It leaves the
-application's WebRTC transport unchanged.
+## Use Tailcat in Graftty
+
+On the Mac, open **Settings → General → Use Tailcat for paired connections (beta)**.
+On the iPhone or iPad, open **Hosts → Paired connections → Use Tailcat (beta)**.
+Both switches default to off. The Mac setting also controls outbound connections
+to paired Macs. An explicit direct SSH endpoint keeps its configured transport.
+
+Pair normally and connect once on a network where the paired Mac is reachable.
+A client with worktree-management access learns the route over the encrypted SSH
+channel. The next fresh connection tries Tailcat using the saved host pin and
+client key. Background and reopen the phone app to initiate a fresh connection.
+The Mac stores its listener identity and the client stores the route in Keychain.
+Turning off the Mac setting stops its listener and active Tailcat sessions.
+Turning off the client setting applies to subsequent connections.
+
+## Transport harness
+
+The separate harness exercises the embedded library with the same SSH transport.
 
 The path is Graftty SSH → local socket pair → Tailcat TCP → WireGuard.
 The socket pair joins SwiftNIO to Tailcat's C API without a local TCP listener.
@@ -37,7 +52,7 @@ Testing with a profile that includes the phone. The app's bundle ID is
 Open **Tailcat Check** and tap **Run transport check**. The app starts two
 peers on the phone, sends 1 KiB over Tailcat TCP, and verifies the echoed bytes.
 It displays the route and echo time. An internet connection is required for
-relay bootstrap. GrafttyMobile terminal sessions still use their existing transport.
+relay bootstrap. The separate check app does not change GrafttyMobile preferences.
 
 ## Test in the simulator
 
@@ -198,16 +213,16 @@ before retiring WebRTC. These checks are pending.
 
 ## Limits
 
-Tailcat addresses contain connection secrets. This harness generates them
-in memory and does not print or persist them. C errors expose numeric status
+Tailcat addresses contain connection secrets. The cached-route integration test
+writes a temporary route under a fresh test pin and removes it after the check. C errors expose numeric status
 only. Do not commit addresses, keys, or unredacted runtime logs.
 
 The Mac restart test recreates the Tailcat listener and SSH host in one process.
 It restores the serialized private and pre-shared keys, takes the relay from the
 original address, and sends a control request to that address with the same SSH
 keys. The test keeps credentials in memory and seeds the paired-key store for
-each host. App credential storage, pairing, and reconnect after process exit
-still need integration. Production capability checks and live peer revocation
+each host. The beta uses Keychain for its route and listener identity. Full app pairing
+and reconnect across a real process exit still need a physical-device check. Production capability checks and live peer revocation
 have passed in the Mac host integration suite.
 Simulator results cannot establish cellular behavior, physical-device power
 use, suspension recovery, or performance across NATs. Those remain migration

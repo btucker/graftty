@@ -131,7 +131,8 @@ public actor DirectSSHHostServer {
 
     /// Admit a stream from a transport such as Tailcat without opening a TCP listener.
     /// The caller retains its handles; this server owns duplicates until SSH closes.
-    public func accept(input: FileHandle, output: FileHandle) async throws {
+    @discardableResult
+    public func accept(input: FileHandle, output: FileHandle) async throws -> EventLoopFuture<Void> {
         try Task.checkCancellation()
         let reader = fcntl(input.fileDescriptor, F_DUPFD_CLOEXEC, 0)
         guard reader >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
@@ -162,6 +163,7 @@ public actor DirectSSHHostServer {
             try? await channel.close().get()
             throw CancellationError()
         }
+        return channel.closeFuture
     }
 
     private func prepareTransport() -> (MultiThreadedEventLoopGroup, DirectSSHConnections) {

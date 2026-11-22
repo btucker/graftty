@@ -233,6 +233,22 @@ public actor WebRTCHostAgent {
         self.delegate = PeerConnectionDelegate()
     }
 
+    /// Stream transports share the desktop's configured PTY, controls and revocation registry.
+    public func makeStreamServer() async -> DirectSSHHostServer {
+        let server = DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: trustedPeerStore,
+            activeRemotePeers: activeRemotePeers, streamFactory: streamFactory, pagedFactory: pagedFactory,
+            panesStateSubscribe: panesStateSubscribe, panesStateV2Subscribe: panesStateV2Subscribe,
+            paneControlMutator: paneControlMutator, worktreeManagementMutator: worktreeManagementMutator,
+            chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+            displayOwnershipStore: displayOwnershipStore, sshConnectionRegistry: sshConnectionRegistry)
+        if let teamHandler {
+            await server.setTeamMessaging(handler: teamHandler, onConnect: teamOnConnect, onDisconnect: teamOnDisconnect)
+        }
+        await server.setMCPControl(mcpControl)
+        await server.setGitControl(gitControl)
+        return server
+    }
+
     /// Replace the panes-state subscription before this agent accepts an
     /// offer. Each new SSH handler reads the latest configured callback.
     public func setPanesStateSubscribe(_ subscribe: @escaping PanesStateChannelHandler.Subscribe) {

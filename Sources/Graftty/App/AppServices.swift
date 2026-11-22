@@ -18,6 +18,7 @@ import WebRTC
 /// and the Settings paired-devices list.
 @MainActor
 final class AppServices {
+    let tailcatHost = TailcatMacHost()
     let parentMCPProcesses = DuplexSubprocessScope()
     lazy var parentMCPConnections: MCPConnectionSupervisor = {
         let peers = trustedPeerStore
@@ -434,10 +435,12 @@ final class AppServices {
                 )
             }
         }
+        tailcatHost.start(pool: hostAgentPool, fingerprint: localHostFingerprint)
         NSLog("[Graftty] paired remote access listening on [::]:%d", port)
     }
 
     func stopRemoteMacAccessServices() {
+        tailcatHost.stop()
         remoteMacsModel.stopDiscovery()
         remoteAccessRouteRefreshTask?.cancel()
         remoteAccessRouteRefreshTask = nil

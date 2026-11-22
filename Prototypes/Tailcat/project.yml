@@ -9,6 +9,7 @@ targetTemplates:
     type: bundle.unit-test
     sources:
       - Sources
+      - ../../Sources/GrafttyTailcat/TailcatTransport.swift
       - ../../Tests/GrafttyTailcatTests
     settings:
       base:
@@ -30,7 +31,7 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - Device
-      - Sources/TailcatTransport.swift
+      - ../../Sources/GrafttyTailcat/TailcatTransport.swift
       - Sources/TailcatDeviceCheck.swift
     settings:
       base:

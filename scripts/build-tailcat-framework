@@ -1,0 +1,51 @@
+#!/bin/bash
+# Called under the native dependency cache lock with a fresh staging directory.
+set -euo pipefail
+BUILD="$1"
+PIN="$2"
+PLATFORMS="$3"
+SOURCE="${GRAFTTY_TAILCAT_SOURCE:-$BUILD/upstream}"
+if [[ ! -d "$SOURCE/.git" ]]; then
+  git init "$SOURCE"
+fi
+if ! git -C "$SOURCE" rev-parse --verify HEAD >/dev/null 2>&1; then
+  if ! git -C "$SOURCE" remote get-url origin >/dev/null 2>&1; then
+    git -C "$SOURCE" remote add origin https://github.com/tailscale/tailcat.git
+  fi
+  git -C "$SOURCE" fetch --depth 1 origin "$PIN"
+  git -C "$SOURCE" checkout --detach FETCH_HEAD
+fi
+[[ "$(git -C "$SOURCE" rev-parse HEAD)" == "$PIN" ]] || { echo 'Tailcat checkout does not match UPSTREAM_COMMIT' >&2; exit 1; }
+TAGS="$(cat "$SOURCE/build-tags.txt")"
+libraries=()
+slices=(macos)
+if [[ "$PLATFORMS" == *ios* ]]; then slices+=(simulator iphone); fi
+for PLATFORM in "${slices[@]}"; do
+  case "$PLATFORM" in
+    macos) SDK=macosx; TARGET=apple-macos14; TARGET_OS=darwin; architectures=(arm64 x86_64) ;;
+    simulator) SDK=iphonesimulator; TARGET=apple-ios17.0-simulator; TARGET_OS=ios; architectures=(arm64 x86_64) ;;
+    iphone) SDK=iphoneos; TARGET=apple-ios17.0; TARGET_OS=ios; architectures=(arm64) ;;
+  esac
+  mkdir -p "$BUILD/$PLATFORM/Headers"
+  archives=()
+  for arch in "${architectures[@]}"; do
+    goarch="$arch"
+    if [[ "$arch" == x86_64 ]]; then goarch=amd64; fi
+    archive="$BUILD/$PLATFORM/$arch.a"
+    (cd "$SOURCE" && env CGO_ENABLED=1 GOOS="$TARGET_OS" GOARCH="$goarch" \
+      CC="$(xcrun --sdk "$SDK" --find clang) -target $arch-$TARGET -isysroot $(xcrun --sdk "$SDK" --show-sdk-path)" \
+      go build -tags "$TAGS" -buildmode=c-archive -o "$archive" ./cmd/libtailcat)
+    archives+=("$archive")
+  done
+  xcrun lipo -create "${archives[@]}" -output "$BUILD/$PLATFORM/libTailcat.a"
+  cp "$SOURCE/cmd/libtailcat/tailcat.h" "$BUILD/$PLATFORM/Headers/"
+  cp "$SOURCE/LICENSE" "$BUILD/$PLATFORM/Headers/LICENSE"
+  cat > "$BUILD/$PLATFORM/Headers/module.modulemap" <<'MODULE'
+module CTailcat {
+  header "tailcat.h"
+  export *
+}
+MODULE
+  libraries+=(-library "$BUILD/$PLATFORM/libTailcat.a" -headers "$BUILD/$PLATFORM/Headers")
+done
+xcodebuild -create-xcframework "${libraries[@]}" -output "$BUILD/Tailcat.xcframework"

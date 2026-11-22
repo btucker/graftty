@@ -18,9 +18,9 @@ private enum Runtime {
 
     // The token exists before cancellation can run. Its close is nonblocking.
     // Buffers and handle owners stay alive until the original C call returns.
-    static func perform<T: Sendable>(_ body: @escaping @Sendable (tc_token) throws -> T) async throws -> T {
+    static func perform<T: Sendable>(timeout: Int64 = 30_000_000_000, _ body: @escaping @Sendable (tc_token) throws -> T) async throws -> T {
         var allocated: tc_token = 0
-        try check(tc_token_new(30_000_000_000, &allocated, nil))
+        try check(tc_token_new(timeout, &allocated, nil))
         let token = allocated
         defer { _ = tc_close(token, nil) }
         return try await withTaskCancellationHandler {
@@ -115,7 +115,7 @@ public final class TailcatPeer: @unchecked Sendable {
         return TailcatPeer(handle)
     }
 
-    static func client(address: String) throws -> TailcatPeer {
+    public static func client(address: String) throws -> TailcatPeer {
         guard tc_abi_version() == 1 else { throw TailcatFailure.incompatibleABI }
         let encoded = try JSONEncoder().encode(["address": address])
         var json = Array(String(decoding: encoded, as: UTF8.self).utf8CString)
@@ -144,7 +144,7 @@ public final class TailcatPeer: @unchecked Sendable {
         }
     }
 
-    func dial(port: UInt16) async throws -> TailcatPipe {
+    public func dial(port: UInt16) async throws -> TailcatPipe {
         try await Runtime.perform { [self] token in
             var handle: tc_handle = 0
             try Runtime.check(tc_client_dial(resource.handle, token, port, Int32(TC_TCP), &handle, nil))
@@ -174,7 +174,7 @@ public final class TailcatListener: @unchecked Sendable {
     private let resource: Resource
     fileprivate init(_ handle: tc_handle) { resource = Resource(handle) }
     public func accept() async throws -> TailcatPipe {
-        try await Runtime.perform { [self] token in
+        try await Runtime.perform(timeout: -1) { [self] token in
             var handle: tc_handle = 0
             try Runtime.check(tc_listener_accept(resource.handle, token, &handle, nil))
             return try TailcatPipe(handle)

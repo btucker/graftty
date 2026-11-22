@@ -3792,6 +3792,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.30** The application shall configure both peers to tolerate high-latency links: a candidate pair shall stop counting as receiving only after ten seconds without inbound traffic, become unwritable (ICE disconnected) only after ten seconds without check responses, and time out (ICE failed) only after thirty seconds without check responses.
 
+**REMOTE-11.31** When a user enables Tailcat on a device, the application shall persist the opt-in for paired remote connections and default to disabled on a new installation.
+
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.

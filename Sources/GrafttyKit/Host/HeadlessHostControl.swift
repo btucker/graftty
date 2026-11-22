@@ -84,6 +84,8 @@ public extension HeadlessHostRuntime {
             case .acknowledgeOccurrence(let path, let pane, let occurrence):
                 _ = SidebarHostNavigation.acknowledge(in: &state, worktreeID: path, paneID: pane, occurrence: occurrence)
                 try save()
+            case .tailcatEndpoint:
+                return .tailcatEndpoint(nil)
             case .hostPresentation:
                 return .hostPresentation(RemoteHostPresentation(ghosttyConfig: "", keybindings: .init(bindings: [:])))
             case .setWorktreeOrder(let repositoryID, let mode):

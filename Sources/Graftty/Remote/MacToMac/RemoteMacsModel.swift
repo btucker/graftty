@@ -1187,7 +1187,7 @@ final class RemoteMacsModel: ObservableObject {
             }
             return response
 
-        case .agentCompletions, .hostPresentation, .listRemoteMacConnections, .moveProject,
+        case .agentCompletions, .tailcatEndpoint, .hostPresentation, .listRemoteMacConnections, .moveProject,
              .connectRemoteMac:
             return nil
 

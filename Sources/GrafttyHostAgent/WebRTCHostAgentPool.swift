@@ -58,6 +58,10 @@ public actor WebRTCHostAgentPool {
         self.negotiate = negotiate
     }
 
+    public func makeStreamServer() async -> DirectSSHHostServer {
+        await makeAgent().makeStreamServer()
+    }
+
     public func acceptOffer(
         _ offer: RTCSessionDescription,
         clientDeviceID: RemoteDeviceID,
