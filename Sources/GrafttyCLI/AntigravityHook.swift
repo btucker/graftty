@@ -27,9 +27,34 @@ struct AntigravityHook {
         let cwd = (payload["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let workspace = (payload["workspacePaths"] as? [String])?.first(where: { !$0.isEmpty })
         workingDirectory = cwd ?? workspace
-        prompt = payload["lastUserInput"] as? String
+        // AGENT-6.179: a delivered message starts a turn that repeats the old prompt.
+        prompt = event == .userPromptSubmit && Self.startedWithoutUserInput(payload)
+            ? nil : payload["lastUserInput"] as? String
         turnID = (payload["executionNum"] as? Int).map { "execution:\($0)" }
         fullyIdle = payload["fullyIdle"] as? Bool ?? true
+    }
+
+    /// Whether the transcript step that began this turn is something other than
+    /// user input. AGY counts `initialNumSteps` before it adds hook-injected
+    /// steps, so the last counted step is the one that began the turn. An
+    /// unreadable transcript counts as user input.
+    private static func startedWithoutUserInput(_ payload: [String: Any]) -> Bool {
+        guard let path = payload["transcriptPath"] as? String,
+              let count = payload["initialNumSteps"] as? Int, count > 0,
+              let handle = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? handle.close() }
+        // The step is at or near the end; a longer final step counts as user input.
+        let tailBytes: UInt64 = 1 << 20
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > tailBytes ? size - tailBytes : 0)
+        let tail = (try? handle.readToEnd()) ?? Data()
+        for line in tail.split(separator: UInt8(ascii: "\n")).reversed() {
+            guard let step = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  let index = step["step_index"] as? Int else { continue }
+            if index == count - 1 { return step["type"] as? String != "USER_INPUT" }
+            if index < count - 1 { return false }
+        }
+        return false
     }
 
     static func output(_ output: String, event: TeamHookEvent) -> String {

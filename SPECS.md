@@ -5428,6 +5428,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.178** When an installation started from Agent Teams Settings completes, the application shall advance the Codex and Claude automatic-refresh build checkpoint only if that installation installed every enabled Codex and Claude plugin, and shall advance the Antigravity build checkpoint only if it installed the Antigravity plugin, so that a plugin it did not install is still refreshed on the next launch.
 
+**AGENT-6.179** When Antigravity starts a turn that no new user input began, such as a turn woken by a delivered team message, the application shall treat it as a turn start without recording the previous user prompt again.
+
 ## CLI — CLI
 
 ### CLI-1.x
