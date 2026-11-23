@@ -13,19 +13,36 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private let configuration: ZmxSpawnConfiguration
     private var activeStartupReceipt: URL?
     private let initialSize: PtyProcess.WindowSize?
-    private var fallback: NativePtySession?
     private let commands: AsyncStream<Command>
     private let commandSink: AsyncStream<Command>.Continuation
-    private var task: Task<Void, Never>?
-    private var engine: PagedZmxAttachEngine?
-    private var closed = false
-    private var started = false
+    /// What carries the terminal's bytes.
+    private enum Transport {
+        /// `run()` has not attached yet.
+        case none
+        /// Screen-first attachment. Resizes wait until the checkpoint is `restored`.
+        case paged(PagedZmxAttachEngine, restored: Bool)
+        /// The plain PTY attach used for a new shell or an old daemon.
+        case legacy(NativePtySession)
+    }
+    private enum Lifecycle {
+        case created
+        case running(Task<Void, Never>, Transport)
+        /// A failure was reported and input is refused. The task and
+        /// transport stay until `close()` releases them.
+        case failed(Task<Void, Never>, Transport)
+        case closed
+    }
+    /// Whether the launch command was accepted, for `waitForStartup()`.
+    private enum Startup {
+        case notStarted
+        case pending(deadline: ContinuousClock.Instant)
+        case finished(Bool)
+    }
+    // Protected by lock.
+    private var lifecycle = Lifecycle.created
+    private var startup = Startup.notStarted
     private var startedAt = ProcessInfo.processInfo.systemUptime
-    private var restored = false
-    private var failed = false
-    private var startupResult: Bool?
     private let startupTimeout: Duration
-    private var startupDeadline: ContinuousClock.Instant?
     private var attachmentFailure: (String) -> Void = { _ in }
     private var prepareGrid: (DisplayGrid?) -> Void = { _ in }
     private var sourceGridHandler: (DisplayGrid?) -> Void = { _ in }
@@ -70,23 +87,29 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
 
     func start() throws {
         try lock.withLock {
-            guard !closed else { throw NativePtySession.Error.closed }
-            guard !started else { throw NativePtySession.Error.alreadyStarted }
-            started = true
+            switch lifecycle {
+            case .created: break
+            case .closed: throw NativePtySession.Error.closed
+            case .running, .failed: throw NativePtySession.Error.alreadyStarted
+            }
             startedAt = ProcessInfo.processInfo.systemUptime
-            startupDeadline = ContinuousClock.now + startupTimeout
-            task = Task { @MainActor [weak self] in await self?.run() }
+            startup = .pending(deadline: ContinuousClock.now + startupTimeout)
+            lifecycle = .running(Task { @MainActor [weak self] in await self?.run() }, .none)
         }
     }
 
     func waitForStartup() async -> Bool {
         while !Task.isCancelled {
-            let (result, deadline) = lock.withLock { (startupResult, startupDeadline) }
-            if let result { return result }
-            guard let deadline else { return false }
-            guard ContinuousClock.now < deadline else {
-                reportFailure("Terminal startup timed out. Reconnect to resume the session.", onlyDuringStartup: true)
-                return lock.withLock { startupResult ?? false }
+            switch lock.withLock({ startup }) {
+            case .finished(let result):
+                return result
+            case .notStarted:
+                return false
+            case .pending(let deadline):
+                guard ContinuousClock.now < deadline else {
+                    reportFailure("Terminal startup timed out. Reconnect to resume the session.", onlyDuringStartup: true)
+                    return lock.withLock { if case .finished(let result) = startup { result } else { false } }
+                }
             }
             do { try await Task.sleep(for: .milliseconds(20)) }
             catch { return false }
@@ -95,15 +118,68 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     }
 
     private func completeStartup(_ result: Bool) {
+        lock.withLock { completeStartupLocked(result) }
+    }
+
+    private func completeStartupLocked(_ result: Bool) {
+        if case .finished = startup { return }
+        startup = .finished(result)
+    }
+
+    private var isClosed: Bool {
+        lock.withLock { if case .closed = lifecycle { true } else { false } }
+    }
+
+    /// Started, and neither failed nor closed.
+    private var isRunning: Bool {
+        lock.withLock { if case .running = lifecycle { true } else { false } }
+    }
+
+    /// Records the transport so `close()` can release it. Returns false,
+    /// leaving it unrecorded, once the session is closed, or failed when
+    /// `evenIfFailed` is false.
+    private func adopt(_ transport: Transport, evenIfFailed: Bool) -> Bool {
         lock.withLock {
-            if startupResult == nil { startupResult = result }
+            switch lifecycle {
+            case .running(let task, _):
+                lifecycle = .running(task, transport)
+                return true
+            case .failed(let task, _) where evenIfFailed:
+                lifecycle = .failed(task, transport)
+                return true
+            case .created, .failed, .closed:
+                return false
+            }
+        }
+    }
+
+    /// The checkpoint is installed, so queued resizes may go out. Returns
+    /// false once the session is closed.
+    private func markRestored() -> Bool {
+        lock.withLock {
+            switch lifecycle {
+            case .running(let task, .paged(let engine, _)): lifecycle = .running(task, .paged(engine, restored: true))
+            case .failed(let task, .paged(let engine, _)): lifecycle = .failed(task, .paged(engine, restored: true))
+            case .closed: return false
+            case .created, .running, .failed: break
+            }
+            return true
+        }
+    }
+
+    private var isRestored: Bool {
+        lock.withLock {
+            switch lifecycle {
+            case .running(_, .paged(_, let restored)), .failed(_, .paged(_, let restored)): restored
+            default: false
+            }
         }
     }
 
     @MainActor
     private func run() async {
         defer { commandSink.finish() }
-        guard !lock.withLock({ closed }) else { return }
+        guard !isClosed else { return }
         guard MacPagedTerminalRenderer.isSupported else {
             await runLegacy()
             return
@@ -114,16 +190,13 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             zmxDir: URL(fileURLWithPath: config.env["ZMX_DIR"] ?? ""),
             sessionName: config.sessionName, workingDirectory: config.workingDirectory
         ))
-        let active = lock.withLock { () -> Bool in
-            guard !closed else { return false }
-            engine = stream
-            return true
-        }
-        guard active else { return }
+        guard adopt(.paged(stream, restored: false), evenIfFailed: true) else { return }
         do { try await stream.start() }
         catch {
-            guard !Task.isCancelled, !lock.withLock({ closed }) else { return }
+            guard !Task.isCancelled, !isClosed else { return }
             // Negotiation failed before any bytes reached the renderer.
+            await stream.close()
+            _ = adopt(.none, evenIfFailed: true)
             await runLegacy()
             return
         }
@@ -131,13 +204,13 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
 
         let prepare: (DisplayGrid?) -> Void = { [weak self] grid in
             guard let self else { return }
-            let handler = self.lock.withLock { self.closed ? nil : self.prepareGrid }
+            let handler = self.isClosed ? nil : self.lock.withLock { self.prepareGrid }
             handler?(grid)
         }
         let renderer = MacPagedTerminalRenderer(surface: surface, prepareGrid: prepare)
         let sourceGrid: (DisplayGrid?) -> Void = { [weak self] grid in
             guard let self else { return }
-            let handler = self.lock.withLock { self.closed ? nil : self.sourceGridHandler }
+            let handler = self.isClosed ? nil : self.lock.withLock { self.sourceGridHandler }
             handler?(grid)
         }
         let attachment = MacPagedAttachment(renderer: renderer, sourceGrid: sourceGrid, finishGrid: { [weak self] in
@@ -145,12 +218,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             prepare(nil)
             // Completion is durable even when startup input fills the queue.
             // The marker only wakes an otherwise idle sender.
-            let active = self.lock.withLock {
-                guard !self.closed else { return false }
-                self.restored = true
-                return true
-            }
-            if active { self.commandSink.yield(.restored) }
+            if self.markRestored() { self.commandSink.yield(.restored) }
         }) { request in
             switch request {
             case .history(let page): try await stream.requestHistory(page)
@@ -167,11 +235,12 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         } catch {
             attachment.close()
             await stream.close()
-            guard !Task.isCancelled, !lock.withLock({ closed }) else { return }
+            guard !Task.isCancelled, !isClosed else { return }
             sourceGrid(nil)
             prepare(nil)
             do { try await renderer.releaseSourceGrid() }
             catch { reportFailure("Terminal restoration failed: \(error)"); return }
+            _ = adopt(.none, evenIfFailed: true)
             await runLegacy()
             return
         }
@@ -194,7 +263,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             for await command in commands {
                 guard !Task.isCancelled else { return }
                 do {
-                    let restored = lock.withLock { self.restored }
+                    let restored = self.isRestored
                     if restored, let size = pendingSize {
                         try stream.resize(windowSize: size)
                         pendingSize = nil
@@ -245,8 +314,11 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
 
     private func enqueue(_ command: Command) throws {
         try lock.withLock {
-            guard !closed else { throw NativePtySession.Error.closed }
-            guard !failed else { throw NativePtySession.Error.notStarted }
+            switch lifecycle {
+            case .closed: throw NativePtySession.Error.closed
+            case .failed: throw NativePtySession.Error.notStarted
+            case .created, .running: break
+            }
             switch commandSink.yield(command) {
             case .enqueued: break
             case .dropped, .terminated: throw NativePtySession.Error.notStarted
@@ -267,7 +339,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             let existing = try await OffMainIO.run {
                 try launcher.listSessions().contains(name)
             }
-            guard !Task.isCancelled, !lock.withLock({ closed || failed }) else { return }
+            guard !Task.isCancelled, isRunning else { return }
             if existing, !(await acceptExistingStartupCommand()) { return }
             var env = configuration.env
             if existing || configuration.startupReceipt.map({ FileManager.default.fileExists(atPath: $0.path) }) == true {
@@ -277,19 +349,16 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
                 env.removeValue(forKey: "GRAFTTY_STARTUP_RECEIPT")
             }
             let fallback = makeLegacySession(env: env, initialSize: initialSize)
-            let active = lock.withLock {
-                guard !closed, !failed else { return false }
-                self.fallback = fallback
+            guard adopt(.legacy(fallback), evenIfFailed: false) else { fallback.close(); return }
+            lock.withLock {
                 activeStartupReceipt = env["GRAFTTY_STARTUP_RECEIPT"].map { URL(fileURLWithPath: $0) }
                 startedAt = ProcessInfo.processInfo.systemUptime
-                return true
             }
-            guard active else { fallback.close(); return }
             try fallback.start()
             let requiresReceipt = env["GRAFTTY_STARTUP_RECEIPT"] != nil
             Task { @MainActor [weak self] in await self?.acknowledgeLegacyStartup(requiresReceipt: requiresReceipt) }
             for await command in commands {
-                guard !Task.isCancelled, !lock.withLock({ failed }) else { break }
+                guard !Task.isCancelled, isRunning else { break }
                 switch command {
                 case .input(let data): try fallback.write(data)
                 case .resize(let size): try fallback.resize(windowSize: size)
@@ -304,9 +373,8 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     @MainActor
     private func acceptExistingStartupCommand() async -> Bool {
         guard configuration.runsInitialCommand else { return true }
-        let deadline = min(lock.withLock { startupDeadline } ?? ContinuousClock.now,
-            ContinuousClock.now + .seconds(5))
-        while !Task.isCancelled, !lock.withLock({ closed || failed }) {
+        let deadline = min(pendingStartupDeadline ?? ContinuousClock.now, ContinuousClock.now + .seconds(5))
+        while !Task.isCancelled, isRunning {
             if let receipt = configuration.startupReceipt,
                FileManager.default.fileExists(atPath: receipt.path) { return true }
             guard ContinuousClock.now < deadline else { break }
@@ -321,8 +389,8 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private func acknowledgeLegacyStartup(requiresReceipt: Bool) async {
         let socket = URL(fileURLWithPath: configuration.env["ZMX_DIR"] ?? "")
             .appendingPathComponent(configuration.sessionName).path
-        guard let deadline = lock.withLock({ startupDeadline }) else { return }
-        while !lock.withLock({ closed || failed || startupResult != nil }) {
+        guard let deadline = pendingStartupDeadline else { return }
+        while isRunning, pendingStartupDeadline != nil {
             let accepted: Bool
             if requiresReceipt, let receipt = configuration.startupReceipt {
                 accepted = FileManager.default.fileExists(atPath: receipt.path)
@@ -349,8 +417,12 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         }
     }
 
+    private var pendingStartupDeadline: ContinuousClock.Instant? {
+        lock.withLock { if case .pending(let deadline) = startup { deadline } else { nil } }
+    }
+
     private func legacyAttachmentExited(status: Int32?) {
-        guard !lock.withLock({ closed }) else { return }
+        guard !isClosed else { return }
         // The short-lived attach process can exit while the daemon and shell
         // are still running. Only a confirmed missing daemon is a shell exit.
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: configuration.argv[0]),
@@ -366,10 +438,10 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
 
     private func reportFailure(_ message: String, onlyDuringStartup: Bool = false) {
         let handler = lock.withLock { () -> ((String) -> Void)? in
-            guard !closed, !failed else { return nil }
-            guard !onlyDuringStartup || startupResult == nil else { return nil }
-            if startupResult == nil { startupResult = false }
-            failed = true
+            guard case .running(let task, let transport) = lifecycle else { return nil }
+            if onlyDuringStartup, case .finished = startup { return nil }
+            completeStartupLocked(false)
+            lifecycle = .failed(task, transport)
             return attachmentFailure
         }
         guard let handler else { return }
@@ -391,20 +463,22 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     }
 
     func close() {
-        completeStartup(false)
-        let current = lock.withLock { () -> (Task<Void, Never>?, PagedZmxAttachEngine?, NativePtySession?) in
-            closed = true
+        let ended = lock.withLock { () -> (Task<Void, Never>, Transport)? in
+            completeStartupLocked(false)
             commandSink.finish()
-            let current = (task, engine, fallback)
-            task = nil
-            engine = nil
-            fallback = nil
-            return current
+            defer { lifecycle = .closed }
+            switch lifecycle {
+            case .running(let task, let transport), .failed(let task, let transport): return (task, transport)
+            case .created, .closed: return nil
+            }
         }
-        current.0?.cancel()
+        ended?.0.cancel()
         surface.close()
-        current.1?.close()
-        current.2?.close()
+        switch ended?.1 {
+        case .paged(let engine, _): engine.close()
+        case .legacy(let fallback): fallback.close()
+        case .some(.none), nil: break
+        }
     }
 
     deinit { close() }
