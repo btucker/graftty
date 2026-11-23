@@ -4,6 +4,13 @@ import Testing
 import GrafttyKit
 
 struct RemoteSetupLinuxCLITests {
+    @Test("@spec REMOTE-21.28: The CLI shall accept graftty remote add-runner as another name for graftty remote setup-linux.")
+    func addRunnerIsAnAlias() throws {
+        let command = try #require(GrafttyCLI.parseAsRoot(["remote", "add-runner", "developer@host", "--version", "1.2.3"]) as? RemoteSetupLinux)
+        #expect(command.destination == "developer@host")
+        #expect(command.version == "1.2.3")
+    }
+
     @Test("@spec REMOTE-21.22: When graftty remote setup-linux runs, the CLI shall require an explicit release or archive, resolve selected repositories and branches, and reuse Linux setup with the running Mac app's public identity.")
     func parsesAndResolvesProjectPlan() async throws {
         let command = try #require(GrafttyCLI.parseAsRoot([

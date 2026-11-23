@@ -1310,7 +1310,7 @@ struct MainWindow: View {
             isShowingLinuxHostSetupSheet = true
         } catch {
             let alert = NSAlert()
-            alert.messageText = "Could not prepare Linux host setup"
+            alert.messageText = "Could not prepare remote runner setup"
             alert.informativeText = LinuxHostSetupError.message(for: error)
             alert.alertStyle = .warning
             alert.runModal()
