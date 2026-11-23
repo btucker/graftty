@@ -751,6 +751,41 @@ struct ScrollbackMapMobileCollapseTests {
 
 @MainActor
 @Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
+struct ScrollbackMapTileRailTests {
+    @Test("@spec CONTEXT-57.15: While an agent is shown as a gallery tile, the application shall show its scrollback map on the tile's right edge, let its preview cards extend beyond the tile, and when a mark or card is activated, put that agent on stage scrolled to that message.")
+    func tileRailJumpsThroughTheGallery() {
+        let terminal = FakeScrollback(rows: sampleRows())
+        let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
+        var jumped: [Int] = []
+        let host = ScrollbackMapOverlayHost(model: model, timeline: sampleTimeline(), previewOverhang: 200,
+                                            onJump: { jumped.append($0) })
+        host.jump(toRow: 12)
+        #expect(jumped == [12])
+        #expect(terminal.scrolled.isEmpty)
+        ScrollbackMapOverlayHost(model: model, timeline: sampleTimeline()).jump(toRow: 7)
+        #expect(terminal.scrolled == [7])
+        #expect(ScrollbackMapOverlay.previewFrame(railHeight: 80, overhang: 200) == .init(top: -200, height: 480))
+        #expect(ScrollbackMapOverlay.previewFrame(railHeight: 80, overhang: 0) == .init(top: 0, height: 80))
+    }
+
+    @Test func aModelShownTwiceKeepsScanningUntilBothHide() async {
+        let terminal = FakeScrollback(rows: sampleRows())
+        let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
+        model.update(timeline: sampleTimeline())
+        model.setVisible(true, for: "stage")
+        model.setVisible(true, for: "tile")
+        model.setVisible(false, for: "stage")
+        await waitUntil { model.map != nil }
+        #expect(model.map?.marks.count == 3)
+        model.setVisible(false, for: "tile")
+        let reads = terminal.reads
+        model.terminalHistoryDidChange()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(terminal.reads == reads)
+    }
+}
+
+@MainActor
 struct ScrollbackMapRebuildTests {
     @Test("@spec CONTEXT-57.10: When a quiet agent terminal becomes readable or installs same-sized history, the application shall locate its existing messages without waiting for another prompt.")
     func quietTerminalBecomesReadable() async throws {

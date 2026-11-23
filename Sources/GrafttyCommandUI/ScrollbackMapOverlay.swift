@@ -321,6 +321,9 @@ public struct ScrollbackMapOverlay: View {
     let scroll: (Int) -> Void
     private let availableHeight: CGFloat
     private let availableWidth: CGFloat
+    /// Room above and below the rail that preview cards may use, so a short
+    /// tile rail can show cards beyond its tile.
+    private let previewOverhang: CGFloat
     @State private var hover: CGFloat?
     #if os(macOS)
     @State private var previewArea: CGRect?
@@ -338,19 +341,27 @@ public struct ScrollbackMapOverlay: View {
 
     public init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
                 gists: PeerMessageGistProvider = .shared, availableHeight: CGFloat = ScrollbackMapLayout.cardSize.height,
-                availableWidth: CGFloat = 360,
+                availableWidth: CGFloat = 360, previewOverhang: CGFloat = 0,
                 scroll: @escaping (Int) -> Void) {
         self.init(map: map, viewport: viewport, entries: entries, gists: gists, availableHeight: availableHeight,
-                  availableWidth: availableWidth, focusY: nil, scroll: scroll)
+                  availableWidth: availableWidth, previewOverhang: previewOverhang, focusY: nil, scroll: scroll)
+    }
+
+    struct PreviewFrame: Equatable { var top: CGFloat; var height: CGFloat }
+
+    /// Where the preview cards may sit, relative to the rail's top.
+    static func previewFrame(railHeight: CGFloat, overhang: CGFloat) -> PreviewFrame {
+        PreviewFrame(top: -overhang, height: railHeight + 2 * overhang)
     }
 
     /// `focusY` starts the overlay mid-scrub, for rendering tests.
     init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
          gists: PeerMessageGistProvider, availableHeight: CGFloat = ScrollbackMapLayout.cardSize.height,
-         availableWidth: CGFloat = 360, focusY: CGFloat?, scroll: @escaping (Int) -> Void) {
+         availableWidth: CGFloat = 360, previewOverhang: CGFloat = 0, focusY: CGFloat?, scroll: @escaping (Int) -> Void) {
         self.map = map; self.viewport = viewport; self.entries = entries; self.gists = gists; self.scroll = scroll
         self.availableHeight = availableHeight
         self.availableWidth = availableWidth
+        self.previewOverhang = previewOverhang
         _scrub = State(initialValue: focusY.map { $0 + ScrollbackMapLayout.stripInset.top })
     }
 
@@ -430,14 +441,15 @@ public struct ScrollbackMapOverlay: View {
         #endif
         let cardWidth = min(preferredWidth, availableWidth - gap)
         if cardWidth > 24 {
+            let frame = Self.previewFrame(railHeight: availableHeight, overhang: previewOverhang)
             let previews = layout.previewAnchors(in: map, focused: focused).compactMap { mark, y in
                 entries[mark.eventID].map {
-                    ScrollbackMapPreview(id: mark.eventID, entry: $0, y: y + ScrollbackMapLayout.stripInset.top)
+                    ScrollbackMapPreview(id: mark.eventID, entry: $0, y: y + ScrollbackMapLayout.stripInset.top - frame.top)
                 }
             }
             let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: maximumGap, maximumSpan: maximumSpan)
-            ScrollbackMapPreviews(groups: groups, height: availableHeight, cardWidth: cardWidth,
-                                  gap: gap, railCenter: railCenter, focusY: focusY, maximumShift: maximumShift,
+            ScrollbackMapPreviews(groups: groups, height: frame.height, cardWidth: cardWidth,
+                                  gap: gap, railCenter: railCenter, focusY: focusY - frame.top, maximumShift: maximumShift,
                                   focusedID: focused?.eventID, responseGist: responseGist) { firstID in
                 if let row = map.row(for: firstID) { scroll(row) }
                 #if !os(macOS)
@@ -445,6 +457,7 @@ public struct ScrollbackMapOverlay: View {
                 previewReleasedAt = nil
                 #endif
             }
+            .offset(y: frame.top)
         }
     }
 
@@ -685,7 +698,9 @@ public final class ScrollbackMapModel: ObservableObject {
     private var messages: [ScrollbackMap.Message] = []
     private var capturedEntries: [String: ScrollbackMapEntry] = [:]
     private var recovery: ScrollbackMapRecovery?
-    private var isVisible = false
+    /// Every view showing this map, such as a stage pane and its gallery tile.
+    private var visibleHosts: Set<AnyHashable> = []
+    private var isVisible: Bool { !visibleHosts.isEmpty }
     private var pending: Task<Void, Never>?
     private var evictionCheck: Task<Void, Never>?
     /// The oldest row when the current map was scanned.
@@ -725,10 +740,14 @@ public final class ScrollbackMapModel: ObservableObject {
 
     public func terminalHistoryDidChange() { scheduleRebuild() }
 
-    public func setVisible(_ visible: Bool) {
-        guard visible != isVisible else { return }
-        isVisible = visible
-        if visible { scheduleRebuild() } else { pending?.cancel(); pending = nil; stopEvictionCheck() }
+    public func setVisible(_ visible: Bool) { setVisible(visible, for: "default") }
+
+    /// The map keeps scanning while any host shows it.
+    public func setVisible(_ visible: Bool, for host: AnyHashable) {
+        let wasVisible = isVisible
+        if visible { visibleHosts.insert(host) } else { visibleHosts.remove(host) }
+        guard isVisible != wasVisible else { return }
+        if isVisible { scheduleRebuild() } else { pending?.cancel(); pending = nil; stopEvictionCheck() }
     }
 
     public func scroll(toRow row: Int) {
@@ -819,18 +838,29 @@ public struct ScrollbackMapOverlayHost: View {
     private let showSavedMessages: (() -> Void)?
     private let loadEarlier: (() -> Void)?
     var gists: PeerMessageGistProvider = .shared
+    private let previewOverhang: CGFloat
+    private let onJump: ((Int) -> Void)?
+    @State private var hostID = UUID()
     /// Derived once per parent update, not on every viewport report that redraws this body.
     private let messages: [ScrollbackMap.Message]
 
     public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, terminalTheme: GhosttyThemeColors? = nil, isVisible: Bool = true,
                 recovery: ScrollbackMapRecovery? = nil, loadEarlier: (() -> Void)? = nil,
-                showSavedMessages: (() -> Void)? = nil, gists: PeerMessageGistProvider = .shared) {
+                showSavedMessages: (() -> Void)? = nil, gists: PeerMessageGistProvider = .shared,
+                previewOverhang: CGFloat = 0, onJump: ((Int) -> Void)? = nil) {
         self.showSavedMessages = showSavedMessages
+        self.previewOverhang = previewOverhang
+        self.onJump = onJump
         self.model = model; self.timeline = timeline; self.isVisible = isVisible; self.gists = gists
         self.recovery = recovery
         self.terminalTheme = terminalTheme
         self.loadEarlier = loadEarlier
         self.messages = ScrollbackMap.messages(in: timeline)
+    }
+
+    /// A tile rail hands the row to the gallery, which stages the agent first.
+    func jump(toRow row: Int) {
+        if let onJump { onJump(row) } else { model.scroll(toRow: row) }
     }
 
     var earlierHistoryAction: (() -> Void)? {
@@ -859,7 +889,7 @@ public struct ScrollbackMapOverlayHost: View {
                 if let map = model.map, !map.marks.isEmpty {
                     ScrollbackMapOverlay(map: map, viewport: model.viewport, entries: model.entries, gists: gists,
                                          availableHeight: max(0, geometry.size.height - (showSavedMessages == nil ? 0 : 44)), availableWidth: geometry.size.width,
-                                         scroll: { [model] in model.scroll(toRow: $0) })
+                                         previewOverhang: previewOverhang, scroll: { jump(toRow: $0) })
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .onAppear {
                             let userCount = map.marks.count { $0.kind == .input }
@@ -876,12 +906,12 @@ public struct ScrollbackMapOverlayHost: View {
         }
         .onAppear {
             model.update(timeline: timeline, recovery: recovery)
-            model.setVisible(isVisible)
+            model.setVisible(isVisible, for: hostID)
         }
-        .onDisappear { model.setVisible(false) }
+        .onDisappear { model.setVisible(false, for: hostID) }
         .onChange(of: messages) { _, _ in model.update(timeline: timeline, recovery: recovery) }
         .onChange(of: recovery?.id) { _, _ in model.update(timeline: timeline, recovery: recovery) }
-        .onChange(of: isVisible) { _, visible in model.setVisible(visible) }
+        .onChange(of: isVisible) { _, visible in model.setVisible(visible, for: hostID) }
     }
 }
 
