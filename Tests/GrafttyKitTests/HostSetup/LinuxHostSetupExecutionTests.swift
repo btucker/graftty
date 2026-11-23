@@ -76,6 +76,7 @@ struct LinuxHostSetupExecutionTests {
         #expect(trust.arguments.contains("StrictHostKeyChecking=yes"))
         #expect(trust.arguments.contains("BatchMode=yes"))
         #expect(trust.arguments.contains("config-alias"))
+        #expect(trust.arguments.last?.contains(LinuxHostScripts.runnerCommand + " trust-client") == true)
         let keys = try #require(JSONSerialization.jsonObject(with: trustData) as? [String: Any])
         #expect(Set(keys.keys) == Set(["deviceID", "displayName", "publicKey"]))
     }
@@ -265,7 +266,7 @@ private actor SetupToolOutcomes {
 }
 
 struct LinuxHostCompatibilityTests {
-    @Test("@spec REMOTE-21.13: When Linux setup stages an archive, the application shall verify its host, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.", arguments: ["none", "graftty-host", "graftty", "zmx"])
+    @Test("@spec REMOTE-21.13: When Linux setup stages an archive, the application shall verify its runner, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.", arguments: ["none", "graftty-runner", "graftty", "zmx"])
     func checksBinariesBeforeInstallation(failingBinary: String) async throws {
         let result = try await runInstallFixture(failingBinary: failingBinary)
         let output = result.output
@@ -332,7 +333,7 @@ struct LinuxHostCompatibilityTests {
           *) exit 99 ;;
         esac
         """)
-        for name in ["graftty-host", "graftty", "zmx"] {
+        for name in ["graftty-runner", "graftty", "zmx"] {
             try executable(source.appendingPathComponent("bin/" + name), name == failingBinary ? "exit 47" : "exit 0")
         }
         let marker = root.appendingPathComponent("installed")

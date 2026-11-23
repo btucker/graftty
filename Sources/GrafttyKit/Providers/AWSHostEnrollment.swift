@@ -130,7 +130,7 @@ public struct AWSHostEnrollment: Sendable {
             let request = ProviderHostEnrollmentRequest(operationID: operationID, parent: parent)
             let input = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
             // SSM runs as root. Execute as the same user and with the explicit
-            // state directory used by graftty-host serve, without a login shell.
+            // state directory used by graftty-runner serve, without a login shell.
             let script = "set -eu\n" + "printf '%s' " + LinuxHostScripts.quote(input)
                 + " | runuser -u " + LinuxHostScripts.quote(target.user) + " -- " + LinuxHostScripts.quote(target.executable)
                 + " enroll-parent --stdin --state-directory " + LinuxHostScripts.quote(target.stateDirectory)
@@ -163,7 +163,7 @@ public struct AWSHostEnrollment: Sendable {
             if ["Pending", "InProgress", "Delayed"].contains(invocation.Status) { try await pause(); continue }
             guard invocation.Status == "Success", invocation.ResponseCode == 0,
                   invocation.StandardErrorContent.isEmpty, invocation.StandardOutputContent.utf8.count <= 8192 else {
-                throw ProviderError("Host enrollment did not complete successfully. Check SSM access, the development user, and graftty-host setup. Fix the failure and explicitly start a new enrollment operation.")
+                throw ProviderError("Host enrollment did not complete successfully. Check SSM access, the development user, and graftty-runner setup. Fix the failure and explicitly start a new enrollment operation.")
             }
             let response = try JSONDecoder().decode(ProviderHostEnrollmentResponse.self, from: Data(invocation.StandardOutputContent.utf8))
             guard response.operationID == operationID, response.parent == parent else {

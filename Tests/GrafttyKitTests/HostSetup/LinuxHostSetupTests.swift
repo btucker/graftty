@@ -24,6 +24,21 @@ struct LinuxHostSetupTests {
         #expect(LinuxHostScripts.quote("a'b $HOME; x") == "'a'\\''b $HOME; x'")
     }
 
+    @Test("@spec REMOTE-21.27: When the application runs a command on an installed Linux runner, it shall invoke graftty-runner, or the graftty-host command of an install that predates the rename.", arguments: ["graftty-runner", "graftty-host"])
+    func runnerCommandFindsTheInstalledLauncher(installed: String) async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("runner-command-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let bin = home.appendingPathComponent(".local/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let launcher = bin.appendingPathComponent(installed)
+        try "#!/bin/sh\necho \"$0 $*\"\n".write(to: launcher, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: launcher.path)
+        let output = try await CLIRunner().capture(command: "/usr/bin/env",
+            args: ["HOME=" + home.path, "/bin/sh", "-c", LinuxHostScripts.runnerCommand + " status --json"], at: home.path)
+        #expect(output.exitCode == 0)
+        #expect(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == launcher.path + " status --json")
+    }
+
     @Test("@spec REMOTE-21.2: If the destination lacks a supported Linux CPU architecture or required capabilities, then the application shall stop setup with an actionable error without rejecting a distribution version alone.")
     func platformAndDependencies() throws {
         #expect(try LinuxHostPlatform.parse("ubuntu\n24.04\nx86_64\n/home/alice\n/home/alice/.local/share\n").architecture == "x86_64")
@@ -34,7 +49,7 @@ struct LinuxHostSetupTests {
         #expect(try LinuxHostPlatform.parse("ubuntu\n26.04\naarch64\n/home/alice\n/home/alice/.local/share\n").architecture == "aarch64")
         #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n26.04\naarch64\n/home/alice\nrelative/data\n") }
         #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n26.04\naarch64\n/home/alice\n/srv/data\tinvalid\n") }
-        #expect(LinuxHostSetupError.remoteFailure("GRAFTTY_INCOMPATIBLE:graftty-host\nPermission denied").localizedDescription.contains("archive cannot run"))
+        #expect(LinuxHostSetupError.remoteFailure("GRAFTTY_INCOMPATIBLE:graftty-runner\nPermission denied").localizedDescription.contains("archive cannot run"))
         #expect(LinuxHostSetupError.remoteFailure("GRAFTTY_MISSING:git").localizedDescription.contains("git"))
     }
 

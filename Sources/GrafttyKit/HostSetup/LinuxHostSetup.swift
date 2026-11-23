@@ -100,7 +100,7 @@ public struct LinuxHostSetup: Sendable {
         await progress(.init(message: "Exchanging Graftty public identities", completed: 2, total: total))
         let trustFile = local.appendingPathComponent("trust.json")
         try JSONEncoder().encode(plan.client).write(to: trustFile, options: .atomic)
-        let response = try await remote(plan.destination, operation: "Exchanging Graftty public identities", command: "\"$HOME/.local/bin/graftty-host\" trust-client --stdin --json", inputFile: trustFile)
+        let response = try await remote(plan.destination, operation: "Exchanging Graftty public identities", command: LinuxHostScripts.runnerCommand + " trust-client --stdin --json", inputFile: trustFile)
         let identity: LinuxHostIdentity
         do { identity = try JSONDecoder().decode(LinuxHostIdentity.self, from: Data(response.stdout.utf8)) }
         catch { throw LinuxHostSetupError.invalidPlan("The Linux host returned invalid identity JSON. Check that the archive matches the Mac's Graftty version.") }
@@ -113,7 +113,7 @@ public struct LinuxHostSetup: Sendable {
             _ = try await remote(plan.destination, operation: "Uploading committed project history", command: "umask 077; cat > \(LinuxHostScripts.quote(bundle))", inputFile: local.appendingPathComponent("\(index).bundle"))
             _ = try await remote(plan.destination, operation: "Importing committed project history", command: LinuxHostScripts.importRepository(bundle: bundle, destination: path, snapshot: snapshots[index]))
             await progress(.init(message: "Registering \(project.directoryName)", completed: 6 + index * 2, total: total))
-            _ = try await remote(plan.destination, operation: "Registering project", command: "\"$HOME/.local/bin/graftty-host\" project add \(LinuxHostScripts.quote(path)) --json")
+            _ = try await remote(plan.destination, operation: "Registering project", command: LinuxHostScripts.runnerCommand + " project add \(LinuxHostScripts.quote(path)) --json")
             paths.append(path)
         }
         try Task.checkCancellation()

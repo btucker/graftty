@@ -113,8 +113,8 @@ struct LinuxHostMaintenanceTests {
         #expect(process.terminationStatus == 0)
     }
 
-    @Test("@spec REMOTE-22.29: When maintenance verifies an existing Linux identity, the application shall compare its exact public key and device ID without transferring private identity data or interpreting identity text as executable code.")
-    func executableIdentityGuard() throws {
+    @Test("@spec REMOTE-22.29: When maintenance verifies an existing Linux identity, the application shall compare its exact public key and device ID without transferring private identity data or interpreting identity text as executable code.", arguments: ["graftty-runner", "graftty-host"])
+    func executableIdentityGuard(installed: String) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("maintenance-identity-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let home = root.appendingPathComponent("user")
@@ -133,7 +133,7 @@ struct LinuxHostMaintenanceTests {
         try JSONSerialization.data(withJSONObject: ["version": 2, "privateKeyData": seed]).write(to: identity.appendingPathComponent("host-identity.json"))
         try JSONSerialization.data(withJSONObject: ["version": 1, "deviceID": ["value": deviceID]]).write(to: identity.appendingPathComponent("host-device-id.json"))
         let status = String(decoding: try JSONSerialization.data(withJSONObject: ["running": true, "sshPort": 9001, "stateDirectory": state.path]), as: UTF8.self)
-        let host = bin.appendingPathComponent("graftty-host")
+        let host = bin.appendingPathComponent(installed)
         try ("#!/bin/sh\nprintf '%s' " + LinuxHostScripts.quote(status)).write(to: host, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: host.path)
         try "1.0.0".write(to: home.appendingPathComponent(".local/VERSION"), atomically: true, encoding: .utf8)
@@ -183,6 +183,35 @@ struct LinuxHostMaintenanceTests {
         #expect(install.contains("--maintenance"))
         #expect(!commands.contains { $0.contains("trust-client") || $0.contains("project add") })
         #expect(commands.count == 3)
+    }
+
+    @Test("@spec REMOTE-22.67: When maintenance checks which service owns the paired state, the application shall query graftty-runner.service, or graftty-host.service on an install that predates the rename.", arguments: [true, false])
+    func ownershipCheckQueriesTheInstalledUnit(renamed: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("maintenance-unit-\(UUID())")
+        let units = root.appendingPathComponent("config/systemd/user")
+        try FileManager.default.createDirectory(at: units, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "".write(to: units.appendingPathComponent(renamed ? "graftty-runner.service" : "graftty-host.service"), atomically: true, encoding: .utf8)
+        let python = #"""
+        import os, pathlib, subprocess, sys
+        state = pathlib.Path(__file__).parent
+        (state / 'host.lock').touch()
+        def record(args, **kwargs):
+            print(args[3])
+            raise SystemExit(0)
+        subprocess.check_output = record
+        """#
+        let script = root.appendingPathComponent("check.py")
+        try (python + "\n" + LinuxHostMaintenanceScripts.serviceOwnershipPython).write(to: script, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["XDG_CONFIG_HOME=" + root.appendingPathComponent("config").path, "python3", script.path]
+        let output = Pipe(); process.standardOutput = output
+        try process.run()
+        let queried = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        #expect(queried.trimmingCharacters(in: .whitespacesAndNewlines) == (renamed ? "graftty-runner.service" : "graftty-host.service"))
     }
 
     @Test("@spec REMOTE-22.34: If the installed Linux service does not own the inspected paired host's state lease, then the application shall reject Graftty maintenance before stopping or replacing that service.", arguments: [1234, 9999])
