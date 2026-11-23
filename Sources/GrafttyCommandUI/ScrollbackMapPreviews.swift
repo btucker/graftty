@@ -62,9 +62,13 @@ enum ScrollbackMapFisheye {
         default: Style(size: 10.5, opacity: 0.45, lineLimit: 1)
         }
     }
+
+    static func animation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .snappy(duration: 0.18)
+    }
 }
 
-private enum FocusedRowBounds: PreferenceKey {
+enum FocusedRowBounds: PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
 
     static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
@@ -106,16 +110,26 @@ struct ScrollbackMapPreviews: View {
                     .focusable(false)
                     #if os(macOS)
                     .overlay {
-                        ScrollbackPreviewButtonInput(railOnRight: layoutDirection == .leftToRight) { onSelect(group.id) }
-                            .accessibilityHidden(true)
+                        // AppKit keeps a transparent native view's pointing-hand cursor rect.
+                        if slot.visible {
+                            ScrollbackPreviewButtonInput(railOnRight: layoutDirection == .leftToRight) { onSelect(group.id) }
+                                .accessibilityHidden(true)
+                        }
                     }
                     #endif
                     .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { heights[group.id] = $0 }
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { cardHeight in
+                        // A first measurement reveals the card in place: sliding it in would
+                        // also move the hover area the pointer crosses on its way to the card.
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = heights[group.id] == nil
+                        withTransaction(transaction) { heights[group.id] = cardHeight }
+                    }
                     .opacity(slot.visible ? 1 : 0)
                     .allowsHitTesting(slot.visible)
                     .accessibilityHidden(!slot.visible)
                     .anchorPreference(key: PreviewBounds.self, value: .bounds) { slot.visible ? [group.id: $0] : [:] }
+                    .transformPreference(FocusedRowBounds.self) { if !slot.visible { $0 = nil } }
                     // Padding, unlike an offset, moves the anchors that place connectors and the Mac hover area.
                     .padding(.top, slot.top)
                 }
@@ -169,7 +183,7 @@ struct ScrollbackMapPreviews: View {
                 Text("+\(window.later) later").font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
-        .animation(.snappy(duration: 0.18), value: focusedID)
+        .animation(ScrollbackMapFisheye.animation(reduceMotion: reduceMotion), value: focusedID)
         .modifier(ScrollbackMapPreviewFrame(width: cardWidth))
     }
 
@@ -198,11 +212,7 @@ struct ScrollbackMapPreviews: View {
 
     private func connectors(for bounds: [String: Anchor<CGRect>]) -> some View {
         GeometryReader { geometry in
-            let visible = groups.compactMap { group -> (ScrollbackMapPreviewGroup, CGRect)? in
-                guard let anchor = bounds[group.id] else { return nil }
-                let rect = geometry[anchor]
-                return rect.midY < height ? (group, rect) : nil
-            }
+            let visible = groups.compactMap { group in bounds[group.id].map { (group, geometry[$0]) } }
             let palette = ScrollbackMapPalette(scheme: colorScheme)
             let leadingOnLeft = layoutDirection == .leftToRight
             let railX = leadingOnLeft ? geometry.size.width - railCenter : railCenter
@@ -297,8 +307,13 @@ enum ScrollbackPreviewStack {
             let (cardHeight, top) = measured
             if let top { return Slot(top: top, visible: true) }
             guard let cardHeight else { return Slot(top: min(height, anchor), visible: false) }
-            return Slot(top: min(max(0, height - cardHeight), max(0, anchor - cardHeight / 2)), visible: false)
+            return Slot(top: preferredTop(anchor: anchor, cardHeight: cardHeight, height: height), visible: false)
         }
+    }
+
+    /// A card centered on its mark, kept inside the pane where it fits.
+    private static func preferredTop(anchor: CGFloat, cardHeight: CGFloat, height: CGFloat) -> CGFloat {
+        min(max(0, height - cardHeight), max(0, anchor - cardHeight / 2))
     }
 
     static func tops(anchors: [CGFloat], heights: [CGFloat], height: CGFloat, focusY: CGFloat,
@@ -312,7 +327,7 @@ enum ScrollbackPreviewStack {
             for (position, index) in indices.enumerated() {
                 let cardHeight = heights[index]
                 guard cardHeight <= height else { return nil }
-                let preferred = min(height - cardHeight, max(0, anchors[index] - cardHeight / 2))
+                let preferred = preferredTop(anchor: anchors[index], cardHeight: cardHeight, height: height)
                 let lower = max(0, preferred - maximumShift) - nextOffset
                 let upper = min(height - cardHeight, preferred + maximumShift) - nextOffset
                 earliest = max(earliest, lower)

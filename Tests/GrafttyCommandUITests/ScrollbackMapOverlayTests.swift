@@ -49,6 +49,24 @@ private func sampleRows() -> [String] {
     for _ in 0..<200 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
 }
 
+/// Shows `view` offscreen long enough for preview cards, hidden until measured, to settle.
+@MainActor private func settledWindow(showing view: some View, size: CGSize) async throws -> NSWindow {
+    _ = NSApplication.shared
+    let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -10000, y: -10000), size: size),
+                          styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = NSHostingView(rootView: view)
+    window.orderFront(nil)
+    try await Task.sleep(for: .milliseconds(400))
+    window.contentView?.layoutSubtreeIfNeeded()
+    return window
+}
+
+private final class FocusedRowProbe: @unchecked Sendable {
+    var anchorsFocusedRow: Bool?
+    func record(_ anchors: Bool) { anchorsFocusedRow = anchors }
+}
+
 private func render(_ view: some View, size: CGSize, named name: String) throws {
     guard let path = ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_RENDER_DIR"] else { return }
     let directory = URL(fileURLWithPath: path, isDirectory: true)
@@ -492,6 +510,58 @@ struct ScrollbackMapPreviewTests {
         #expect(slots.map(\.top) == [22, 64, 61, 130])
         #expect(ScrollbackPreviewStack.animation(reduceMotion: true) == nil)
         #expect(ScrollbackPreviewStack.animation(reduceMotion: false) != nil)
+        #expect(ScrollbackMapFisheye.animation(reduceMotion: true) == nil, "Grouped rows resize without motion too")
+        #expect(ScrollbackMapFisheye.animation(reduceMotion: false) != nil)
+    }
+
+    @MainActor
+    @Test func aHiddenCardLeavesThePointerToTheShownCard() async throws {
+        func group(_ id: String, y: CGFloat) -> ScrollbackMapPreviewGroup {
+            ScrollbackMapPreviewGroup(messages: [ScrollbackMapPreview(id: id,
+                entry: ScrollbackMapEntry(kind: .input, text: "Message \(id)", timestamp: nil, sender: nil), y: y)])
+        }
+        var selected: [String] = []
+        // The focused card fits; the next one cannot fit beside it and stays hidden, drawn over it.
+        let window = try await settledWindow(showing: ScrollbackMapPreviews(
+            groups: [group("shown", y: 70), group("hidden", y: 72)], height: 150, cardWidth: 180, gap: 48,
+            railCenter: 18, focusY: 70, maximumShift: 16, focusedID: "shown", responseGist: nil,
+            onSelect: { selected.append($0) }), size: CGSize(width: 228, height: 150))
+        defer { window.close() }
+        let host = try #require(window.contentView)
+        func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+        // AppKit applies a native view's pointing-hand cursor rect even where SwiftUI shows nothing.
+        #expect(descendants(host).filter { $0 is ScrollbackPreviewButtonInput.InputView }.count == 1,
+                "Only the shown card may claim the pointer")
+        let location = host.convert(NSPoint(x: 90, y: 70), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try #require(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)))
+        }
+        await waitUntil { !selected.isEmpty }
+        #expect(selected == ["shown"])
+    }
+
+    @MainActor
+    @Test func aGroupCardThatCannotFitAnchorsNoFocusedConnector() async throws {
+        let group = ScrollbackMapPreviewGroup(messages: (0..<4).map { index in
+            ScrollbackMapPreview(id: String(index), entry: ScrollbackMapEntry(kind: .input,
+                text: "Grouped message \(index)", timestamp: nil, sender: nil), y: 20 + CGFloat(index) * 6)
+        })
+        func anchorsFocusedRow(height: CGFloat) async throws -> Bool? {
+            let probe = FocusedRowProbe()
+            let window = try await settledWindow(showing: ScrollbackMapPreviews(groups: [group], height: height,
+                    cardWidth: 180, gap: 48, railCenter: 18, focusY: 29, maximumShift: 16, focusedID: "1",
+                    responseGist: nil, onSelect: { _ in })
+                .backgroundPreferenceValue(FocusedRowBounds.self) { anchor in
+                    let _ = probe.record(anchor != nil)
+                    Color.clear
+                }, size: CGSize(width: 228, height: height))
+            window.close()
+            return probe.anchorsFocusedRow
+        }
+        #expect(try await anchorsFocusedRow(height: 300) == true)
+        #expect(try await anchorsFocusedRow(height: 40) == false, "A hidden card must not start the focused connector")
     }
 
     @Test func nudgesOnlyTheOverlappingPair() {
