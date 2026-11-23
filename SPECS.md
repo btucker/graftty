@@ -1864,7 +1864,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### DIST-4.x — Linux host distribution
 
-**DIST-4.1** When a Linux host archive is built, the release scripts shall include the host, CLI, pinned zmx, resources, shared runtime libraries, and a root installer for its architecture.
+**DIST-4.1** When a Linux runner archive is built, the release scripts shall include the runner, a graftty-host compatibility launcher, the CLI, pinned zmx, resources, shared runtime libraries, and a root installer for its architecture.
 
 **DIST-4.2** When a Linux archive is installed, the installer shall use the invoking user's directories and systemd service with explicit ports and KillMode=process so zmx sessions survive host restarts.
 
@@ -1889,6 +1889,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **DIST-4.12** When graftty-runner starts with a persistent home volume, the image shall serve as a non-root user without systemd, support terminal input and output, and retain its identity and repositories after container replacement.
 
 **DIST-4.13** When publishing graftty-runner, release automation shall preserve the full release version by mapping build metadata's plus sign to an underscore and shall assign latest only to stable releases.
+
+**DIST-4.14** The Linux runner executable shall name itself graftty-runner in its usage text.
 
 ## WEB — Web Access
 
@@ -4116,7 +4118,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.12** When a remote setup command fails, the application shall identify the operation and exit status, preserve available output, and explicitly report when no output was returned.
 
-**REMOTE-21.13** When Linux setup stages an archive, the application shall verify its host, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.
+**REMOTE-21.13** When Linux setup stages an archive, the application shall verify its runner, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.
 
 **REMOTE-21.14** When Linux setup probes an archive, the application shall stage it privately on the configured installation data filesystem and remove only that staging directory after completion.
 
@@ -4143,6 +4145,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-21.25** When CLI Linux setup is cancelled while resolving a project, the application shall stop before subsequent Git probes or remote setup commands.
 
 **REMOTE-21.26** When Linux setup reports agent tool outcomes, the application shall bound failure diagnostics and emit concise success messages before serializing the setup result.
+
+**REMOTE-21.27** When the application runs a command on an installed Linux runner, it shall invoke graftty-runner, or the graftty-host command of an install that predates the rename.
+
+**REMOTE-21.28** The CLI shall accept graftty remote add-runner as another name for graftty remote setup-linux.
 
 ### REMOTE-22.x
 
@@ -4196,7 +4202,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.25** When selected agent tools are installed on Linux, the application shall use bounded official native installers, verify their executable versions in the user's local bin directory, and keep authentication separate.
 
-**REMOTE-22.26** While a trusted Linux host is connected, the application shall offer Update Host; direct SSH transport alone shall not identify a host as Linux.
+**REMOTE-22.26** While a trusted Linux runner is connected, the application shall offer Update Runner; direct SSH transport alone shall not identify a host as a Linux runner.
 
 **REMOTE-22.27** When Linux host maintenance restarts Graftty, the installer shall preserve the existing service options and require effective KillMode=process without rerunning setup or importing projects.
 
@@ -4277,6 +4283,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.65** When a headless host answers agent-completion or remote-team requests that read presence, the application shall decode presence files off the main actor while preserving responses and request errors.
 
 **REMOTE-22.66** While a headless host publishes its projects, the application shall give each an id unique to that host, so two hosts with the same checkout path stay separate members of a merged project.
+
+**REMOTE-22.67** When maintenance checks which service owns the paired state, the application shall query graftty-runner.service, or graftty-host.service on an install that predates the rename.
 
 ### REMOTE-23.x
 

@@ -1,7 +1,7 @@
 # Windows headless host
 
 For Docker Desktop with the WSL2 backend, use
-[Run a headless host with Docker](docker-runner.md).
+[Run the runner in Docker](remote-runner.md#run-the-runner-in-docker).
 
 V1 targets the existing Linux headless host and Graftty-patched zmx inside
 WSL2 on Windows 11. Retain the same session ownership, detach and reattach,
@@ -143,7 +143,7 @@ such as `~/projects`, for the Linux workload.
 ## Native Windows groundwork
 
 This branch starts the port with `GrafttyWindowsTerminal`, a Swift library
-backed by Win32 ConPTY. **There is no Windows `graftty-host.exe` yet.**
+backed by Win32 ConPTY. **There is no Windows `graftty-runner.exe` yet.**
 The Windows package builds this library and its tests. Native Windows SSH is
 excluded until its dependency has a verified Windows cryptographic random
 source. The full host and CLI still require the platform work below.
