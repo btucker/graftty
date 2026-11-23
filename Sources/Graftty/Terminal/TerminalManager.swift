@@ -1220,6 +1220,13 @@ final class TerminalManager: ObservableObject {
     /// Focus exactly one surface (by ID); unfocus the rest.
     func setFocus(_ terminalID: PaneSlotID) {
         guard wakePane(terminalID) else { return }
+        if let view = view(for: terminalID), let window = view.window, !window.isMainWindow,
+           let keyWindow = NSApp?.keyWindow, keyWindow !== window {
+            // Keep the background window's responder ready for its next
+            // activation without clearing the foreground terminal's focus.
+            window.makeFirstResponder(view)
+            return
+        }
         focusedTerminalID = terminalID
         for (id, handle) in surfaces {
             if id == terminalID {

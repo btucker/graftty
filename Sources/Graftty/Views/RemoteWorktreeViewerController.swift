@@ -201,6 +201,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
     private let surfaces: RemoteWorktreeViewerSurfaces
     private let presentError: @MainActor (String) -> Void
     private let viewportBounds: @MainActor () -> CGRect?
+    private let allowsAppFocus: @MainActor () -> Bool
     private let sleep: @MainActor (Duration) async -> Void
     var resolveWorktreeRoute: (@MainActor (RemoteMac, WorktreePanes, Set<RemoteMacIdentity>) async throws -> (mac: RemoteMac, worktree: WorktreePanes))?
     private var lastSelectedRoute: (mac: RemoteMac, worktree: WorktreePanes)?
@@ -231,6 +232,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         workspaceDefaults: UserDefaults = .standard,
         presentError: @escaping @MainActor (String) -> Void = RemoteWorktreeViewerController.presentAlert,
         viewportBounds: @escaping @MainActor () -> CGRect? = { NSApp.keyWindow?.contentView?.bounds },
+        allowsAppFocus: @escaping @MainActor () -> Bool = { true },
         sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) },
         resolveWorktreeRoute: (@MainActor (RemoteMac, WorktreePanes, Set<RemoteMacIdentity>) async throws -> (mac: RemoteMac, worktree: WorktreePanes))? = nil
     ) {
@@ -238,6 +240,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         self.surfaces = surfaces
         self.workspaceDefaults = workspaceDefaults
         self.presentError = presentError
+        self.allowsAppFocus = allowsAppFocus
         self.viewportBounds = viewportBounds
         self.sleep = sleep
         self.resolveWorktreeRoute = resolveWorktreeRoute
@@ -2034,7 +2037,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         guard selectedRemoteIdentity == target.identity,
               selectedRemoteWorktreePath == target.worktreePath,
               focusedTerminalID == terminalID else { return }
-        surfaces.setFocus(terminalID)
+        if allowsAppFocus() { surfaces.setFocus(terminalID) }
         surfaces.promoteToFirstResponder(
             terminalID,
             when: { [self] in

@@ -9,6 +9,38 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarNavigationStateTests {
+    @Test("@spec LAYOUT-1.18: While multiple macOS windows are open, the application shall share sidebar attention history and dismissals while keeping each window's navigation independent.")
+    func attentionHistoryIsSharedAcrossWindows() throws {
+        let suite = "attention-windows-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = SidebarNavigationState(prefix: "test", defaults: defaults)
+        let second = SidebarNavigationState(prefix: "test", defaults: defaults, sharingAttentionWith: first)
+        let project = SidebarProject(id: "p", repositoryID: "r", name: "Project")
+        let items = (0..<2).map { index in
+            SidebarActivityItem(id: "item-\(index)", projectID: project.id, worktreeID: "wt-\(index)",
+                paneID: nil, projectName: project.name, worktreeName: "Task \(index)", title: "Review",
+                occurrence: .init(timestamp: Date(timeIntervalSince1970: Double(index)),
+                    text: "Review", source: .agentStop), isBusy: false)
+        }
+        first.showProject("left")
+        second.showProject("right")
+        first.opened(items[0])
+        second.opened(items[1])
+
+        #expect(first.selectedProjectID == "left")
+        #expect(second.selectedProjectID == "right")
+        #expect(first.history.entries.map(\.id) == [items[1].id, items[0].id])
+        let restored = SidebarNavigationState(prefix: "test", defaults: defaults)
+        #expect(restored.history.entries.map(\.id) == first.history.entries.map(\.id))
+
+        let opening = second.beginOpening(items[0])
+        first.forget(items[0].id)
+        second.finishOpening(opening, succeeded: true)
+        #expect(!second.history.entries.contains { $0.id == items[0].id })
+        #expect(!second.attentionItems(live: items, projects: [project]).contains { $0.id == items[0].id })
+    }
+
     @Test("@spec LAYOUT-2.84: When an agent resumes after requesting user input, the application shall retain its latest request report as previous context and replace it when a newer request arrives.")
     func resumedStopStaysInNeedsYou() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))

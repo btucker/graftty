@@ -42,6 +42,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.17** When the user selects a local worktree already displayed in another main window, the application shall bring that window forward and preserve the current worktree in each window.
 
+**LAYOUT-1.18** While multiple macOS windows are open, the application shall share sidebar attention history and dismissals while keeping each window's navigation independent.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.

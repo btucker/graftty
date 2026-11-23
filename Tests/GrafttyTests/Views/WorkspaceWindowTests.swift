@@ -68,6 +68,23 @@ struct WorkspaceWindowTests {
         #expect(windows.select(original, in: second))
         #expect(windows.windowShowing(original) === second)
     }
+
+    @Test func closingFlushesPendingWindowFrame() {
+        let window = NSWindow()
+        window.isReleasedWhenClosed = false
+        var reported: CGRect?
+        let tracker = WindowFrameTracker.Coordinator(
+            initialFrame: nil, onFrameChange: { reported = $0 }, debounceInterval: 1
+        )
+        tracker.attach(to: window)
+        window.setFrameOrigin(NSPoint(x: 50, y: 50))
+        NotificationCenter.default.post(name: NSWindow.didMoveNotification, object: window)
+        let frame = window.frame
+
+        window.close()
+
+        #expect(reported == frame)
+    }
 }
 
 private final class WindowSpy: NSWindow {

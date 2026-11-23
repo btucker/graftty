@@ -59,6 +59,7 @@ struct WindowFrameTracker: NSViewRepresentable {
         private let onDetach: (NSWindow) -> Void
         private var observers: [NSObjectProtocol] = []
         private var pendingTask: Task<Void, Never>?
+        private var pendingFrame: CGRect?
         private weak var window: NSWindow?
         private var didApplyInitialFrame = false
 
@@ -104,7 +105,10 @@ struct WindowFrameTracker: NSViewRepresentable {
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.detach() }
+                MainActor.assumeIsolated {
+                    self?.reportPendingFrame()
+                    self?.detach()
+                }
             }
             observers = [resize, move, close]
         }
@@ -114,6 +118,7 @@ struct WindowFrameTracker: NSViewRepresentable {
             observers.removeAll()
             pendingTask?.cancel()
             pendingTask = nil
+            pendingFrame = nil
             if let window {
                 self.window = nil
                 onDetach(window)
@@ -148,13 +153,19 @@ struct WindowFrameTracker: NSViewRepresentable {
         private func scheduleFrameChange() {
             pendingTask?.cancel()
             guard let window else { return }
-            let frame = window.frame
+            pendingFrame = window.frame
             pendingTask = Task { [weak self] in
                 guard let self else { return }
                 try? await Task.sleep(for: .seconds(self.debounceInterval))
                 if Task.isCancelled { return }
-                self.onFrameChange(frame)
+                self.reportPendingFrame()
             }
+        }
+
+        private func reportPendingFrame() {
+            guard let frame = pendingFrame else { return }
+            pendingFrame = nil
+            onFrameChange(frame)
         }
 
         deinit {

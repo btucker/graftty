@@ -144,6 +144,7 @@ struct GrafttyApp: App {
 
     @State var appState: AppState
     @State var workspaceWindows = WorkspaceWindows()
+    @State private var sidebarAttention = SidebarNavigationState(prefix: "sidebar.mac")
     @StateObject var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
     @NSApplicationDelegateAdaptor(WebAccessTerminationDelegate.self)
@@ -261,6 +262,7 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager,
                 worktreeManagement: WorktreeManagement(appState: $appState, terminalManager: terminalManager, services: services),
                 workspaceWindows: workspaceWindows,
+                sidebarAttention: sidebarAttention,
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
                 claudeSessionRegistry: services.claudeSessionRegistry,
@@ -488,10 +490,19 @@ struct GrafttyApp: App {
                 )
             }
         ) else { return }
+        let path = appState.selectedWorktreePath
+        let worktree = path.flatMap { appState.worktree(forPath: $0) }
         NSApp.activate(ignoringOtherApps: true)
-        if let path = appState.selectedWorktreePath,
-           let worktree = appState.worktree(forPath: path) {
-            workspaceWindows.windowShowing(worktree.id)?.bringForward()
+        guard let worktree else { return }
+        workspaceWindows.windowShowing(worktree.id)?.bringForward()
+        // Window activation mirrors that window's selection into AppState.
+        appState.selectedWorktreePath = worktree.path
+        if worktree.state == .running, let pane = worktree.focusedPaneSlotID,
+           !worktree.hasCompletedContent(in: pane) {
+            terminalManager.promoteToFirstResponder(pane, when: {
+                appState.selectedWorktreePath == worktree.path
+                    && appState.worktree(forPath: worktree.path)?.focusedPaneSlotID == pane
+            }, onFocused: { terminalManager.setFocus(pane) })
         }
     }
 
