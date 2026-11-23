@@ -90,12 +90,8 @@ struct SidebarView: View {
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State var navigation = SidebarNavigationState(prefix: "sidebar.mac")
     @StateObject private var reportController = SidebarReportController()
-    @State private var frozenWorktreeOrder: [UUID: [UUID]] = [:]
-    @State private var frozenPins: [UUID: Bool] = [:]
-    @State private var frozenRemoteRows: [RemoteMacIdentity: [WorktreePanes]] = [:]
-    @State private var frozenMergedOrder: [String: [String]] = [:]
-    /// Keeps rows in their sections while a report is open.
-    @State private var frozenActivity: [String: WorktreeActivitySections.Hold] = [:]
+    /// Keeps rows in their order and sections while a report is open.
+    @State private var reportFreeze = SidebarReportFreeze()
     /// The row last selected in each merged project. Paths alone can repeat across hosts.
     @State private var rememberedRowIDs: [String: String] = [:]
     @State private var collapsedMergedFolders: Set<String> = []
@@ -136,13 +132,13 @@ struct SidebarView: View {
 
     private func displayedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
         let live = SidebarHostNavigation.displayedWorktrees(in: repo)
-        guard let order = frozenWorktreeOrder[repo.id] else { return live }
+        guard let frozen = reportFreeze.snapshot, let order = frozen.worktreeOrder[repo.id] else { return live }
         let positions = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
         return live.enumerated().sorted {
             positions[$0.element.id, default: order.count + $0.offset] < positions[$1.element.id, default: order.count + $1.offset]
         }.map { entry in
             var row = entry.element
-            row.isPinned = frozenPins[row.id] ?? row.isPinned
+            row.isPinned = frozen.pins[row.id] ?? row.isPinned
             return row
         }
     }
@@ -165,7 +161,7 @@ struct SidebarView: View {
 
     private var displayedRemoteRows: [RemoteMacIdentity: [WorktreePanes]] {
         Dictionary(uniqueKeysWithValues: remoteMacsModel.worktreePanesByRemote.map { identity, live in
-            guard let frozen = frozenRemoteRows[identity] else { return (identity, live) }
+            guard let frozen = reportFreeze.snapshot?.remoteRows[identity] else { return (identity, live) }
             let rows = SidebarWorktreeReportOrder(worktrees: frozen).orderedWorktrees(live)
             return (identity, rows)
         })
@@ -520,20 +516,18 @@ struct SidebarView: View {
             }
         }
         .onChange(of: reportController.activeID) { _, id in
-            if id != nil {
-                if frozenWorktreeOrder.isEmpty {
-                    frozenWorktreeOrder = Dictionary(uniqueKeysWithValues: appState.repos.map { ($0.id, SidebarHostNavigation.displayedWorktrees(in: $0).map(\.id)) })
-                    frozenPins = Dictionary(uniqueKeysWithValues: appState.repos.flatMap(\.worktrees).map { ($0.id, $0.isPinned) })
-                    frozenRemoteRows = remoteMacsModel.worktreePanesByRemote
-                    frozenMergedOrder = mergedSidebar.temporaryOrder()
-                    frozenActivity = Dictionary(uniqueKeysWithValues: mergedSidebar.projects.map { project in
-                        let sections = mergedSidebar.sections(for: project.id)
+            reportFreeze.reportChanged(isOpen: id != nil) {
+                let merged = mergedSidebar
+                return .init(
+                    worktreeOrder: Dictionary(uniqueKeysWithValues: appState.repos.map { ($0.id, SidebarHostNavigation.displayedWorktrees(in: $0).map(\.id)) }),
+                    pins: Dictionary(uniqueKeysWithValues: appState.repos.flatMap(\.worktrees).map { ($0.id, $0.isPinned) }),
+                    remoteRows: remoteMacsModel.worktreePanesByRemote,
+                    mergedOrder: merged.temporaryOrder(),
+                    activity: Dictionary(uniqueKeysWithValues: merged.projects.map { project in
+                        let sections = merged.sections(for: project.id)
                         return (project.id, WorktreeActivitySections.make(pinned: sections.pinned, temporary: sections.temporary,
                             context: { navigation.worktreeContext($0) }, holding: nil).hold)
-                    })
-                }
-            } else {
-                frozenWorktreeOrder = [:]; frozenPins = [:]; frozenRemoteRows = [:]; frozenMergedOrder = [:]; frozenActivity = [:]
+                    }))
             }
         }
         .onChange(of: navigation.selectedProjectID) { _, _ in reportController.close() }
@@ -741,9 +735,9 @@ struct SidebarView: View {
     @ViewBuilder
     private func mergedProjectRows(_ project: MergedProject, merged: SidebarMergedRows, section: SidebarWorktreeSection,
                                    counts: SidebarActivityCounts, remoteContexts: [String: SidebarWorktreeContext]) -> some View {
-        let sections = merged.sections(for: project.id, frozenOrder: frozenMergedOrder[project.id])
+        let sections = merged.sections(for: project.id, frozenOrder: reportFreeze.snapshot?.mergedOrder[project.id])
         let activity = WorktreeActivitySections.make(pinned: sections.pinned, temporary: sections.temporary,
-            context: { navigation.worktreeContext($0) }, holding: frozenActivity[project.id],
+            context: { navigation.worktreeContext($0) }, holding: reportFreeze.snapshot?.activity[project.id],
             pullsWaitingPins: false).placed(in: section)
         if section != .tasks {
             pinnedTiles(activity.pinned, project: project, remoteContexts: remoteContexts)

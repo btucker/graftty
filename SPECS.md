@@ -454,6 +454,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.245** When agent tabs are wider than their row, the application shall shrink the widest tabs first to an equal width, no narrower than a minimum, truncating their titles in the middle, and scroll only the tabs that still do not fit.
 
+**LAYOUT-2.246** While a Mac report popover is open, the application shall keep sidebar rows in the positions they had when the first report opened, including when the user moves to another report and when the Mac has no local repository, and shall release them when the last report closes.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -4022,6 +4024,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.65** While the mobile host list is open, the application shall render each relay host as an indented row beneath its paired intermediary Mac and preserve a separate reconnect action for each route.
 
+**REMOTE-13.66** While an explicitly selected remote worktree resolves its route, the application shall show a connecting screen, and shall remove that screen when the route resolves, when resolving fails for a pane, or when any other navigation supersedes the selection.
+
 ### REMOTE-14.x — Shared project navigation
 
 **REMOTE-14.1** When a host publishes sidebar metadata, the application shall preserve the original worktree snapshot fields and decode older snapshots without navigation metadata.
@@ -6403,6 +6407,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.22** When a Tailcat host restarts with its saved identity and relay region, the application shall reconnect with the previously paired address and SSH keys.
 
 **SSH-1.23** When a user runs the standalone iPhone Tailcat check, the application shall verify an echo between two on-device peers and report the route and elapsed echo time.
+
+**SSH-1.24** If an SSH client repeats a shell request on a terminal channel that is attaching or attached, then the host shall refuse the repeat and keep the one existing attachment.
 
 ## TEST — TEST
 

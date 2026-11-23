@@ -16,7 +16,10 @@ public struct AgentSessionInfo: Codable, Sendable, Hashable, Identifiable {
     public var canResume: Bool?
     public var transcriptRevision: String?
     public var presentationSessionName: String? { sessionName ?? retainedSessionName }
-    public var isCompleted: Bool { completionID != nil || status == "closed" }
+    /// The status the host recorded, typed; an unrecognised value from a newer host is `.unknown`.
+    /// `AgentAssignmentStatus(agent:needsInput:)` additionally folds in process observation.
+    public var recordedStatus: AgentAssignmentStatus { AgentAssignmentStatus(rawValue: status) ?? .unknown }
+    public var isCompleted: Bool { completionID != nil || recordedStatus == .closed }
     public var failure: String?
     public var processObservation: AgentProcessObservation?
     public var outcome: String?

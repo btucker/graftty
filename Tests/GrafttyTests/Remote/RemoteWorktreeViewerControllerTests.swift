@@ -1247,3 +1247,183 @@ private final class FakeViewerSurfaces: RemoteWorktreeViewerSurfaces {
         }
     }
 }
+
+@Suite("@spec REMOTE-13.66: While an explicitly selected remote worktree resolves its route, the application shall show a connecting screen, and shall remove that screen when the route resolves, when resolving fails for a pane, or when any other navigation supersedes the selection.")
+@MainActor
+struct RemoteRouteSelectorTests {
+    @Test func connectingScreenLastsUntilTheRouteResolves() async throws {
+        let route = try await SelectorHarness()
+        route.selectWorktree()
+        #expect(route.selector.wakeFlow?.phase == .waking)
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.selector.wakeFlow == nil)
+        #expect(route.applied == 1)
+        #expect(route.viewer.controller.selectedRemoteWorktreePath == SelectorHarness.other)
+    }
+
+    @Test func failedPaneSelectionRemovesAnEarlierConnectingScreen() async throws {
+        let route = try await SelectorHarness()
+        route.selectWorktree()
+        route.failure = RouteDown()
+        route.selectPane("b")
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.selector.wakeFlow == nil)
+        #expect(route.viewer.errors.messages == ["route down"])
+        #expect(route.applied == 0)
+    }
+
+    @Test func paneWithoutAKnownRowRemovesAnEarlierConnectingScreen() async throws {
+        let route = try await SelectorHarness()
+        route.selectWorktree()
+        route.selector.select(.init(remoteMac: route.viewer.mac, worktreePath: "/repo/gone", target: .pane(sessionName: "b")),
+                              source: nil, willApply: { route.applied += 1 })
+        #expect(route.selector.wakeFlow == nil)
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.applied == 0)
+    }
+
+    @Test func failedWorktreeOffersRetryUntilNavigationMovesOn() async throws {
+        let route = try await SelectorHarness()
+        route.failure = RouteDown()
+        route.selectWorktree()
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.selector.wakeFlow?.phase == .failed(message: "route down"))
+        #expect(route.viewer.errors.messages.isEmpty)
+        route.selector.cancel()
+        #expect(route.selector.wakeFlow == nil)
+    }
+
+    @Test func supersededSelectionIsNeverApplied() async throws {
+        let route = try await SelectorHarness()
+        var published = 0
+        let changes = route.viewer.controller.objectWillChange.sink { published += 1 }
+        defer { changes.cancel() }
+        route.selectWorktree()
+        #expect(published > 0)
+        route.selector.cancel()
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.selector.wakeFlow == nil)
+        #expect(route.applied == 0)
+        #expect(route.viewer.controller.selectedRemoteWorktreePath == ViewerHarness.path)
+    }
+
+    @Test func resolvedPaneIsSelected() async throws {
+        let route = try await SelectorHarness()
+        route.selectPane("b")
+        #expect(route.selector.wakeFlow == nil)
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.applied == 1)
+        #expect(route.viewer.controller.selectedRemotePaneSessionName == "b")
+    }
+
+    /// A pane selection shows no connecting screen, so the terminal it would
+    /// replace stays on screen and can be focused while the route resolves.
+    @Test func focusingAVisiblePaneSupersedesAPendingPaneSelection() async throws {
+        let route = try await SelectorHarness()
+        route.selectPane("b")
+        route.viewer.controller.focusTerminal(try route.viewer.terminal("a"))
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.applied == 0)
+        #expect(route.viewer.controller.selectedRemotePaneSessionName == "a")
+    }
+
+    /// The connecting screen covers the terminals, so a focus that arrives
+    /// while a worktree resolves did not come from the user.
+    @Test func focusLeavesAWorktreeSelectionResolving() async throws {
+        let route = try await SelectorHarness()
+        route.selectWorktree()
+        route.viewer.controller.focusTerminal(try route.viewer.terminal("a"))
+        #expect(route.selector.wakeFlow?.phase == .waking)
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.applied == 1)
+        #expect(route.viewer.controller.selectedRemoteWorktreePath == SelectorHarness.other)
+    }
+
+    @Test func routeToARowThatStartedDeletingChangesNothing() async throws {
+        let route = try await SelectorHarness()
+        route.selectWorktree()
+        route.startDeletingOther()
+        route.gate.open()
+        await route.viewer.settle()
+        #expect(route.selector.wakeFlow == nil)
+        #expect(route.applied == 0)
+        #expect(route.viewer.controller.selectedRemoteWorktreePath == ViewerHarness.path)
+    }
+}
+
+private struct RouteDown: LocalizedError {
+    var errorDescription: String? { "route down" }
+}
+
+/// A viewer on `/repo/feature` (panes a and b) with a second worktree, whose
+/// route resolver waits on `gate` and then throws `failure` if one is set.
+@MainActor
+private final class SelectorHarness {
+    static let other = "/repo/other"
+    let viewer: ViewerHarness
+    let gate = RouteGate()
+    var failure: (any Error)?
+    var applied = 0
+    var selector: RemoteRouteSelector { viewer.controller.routeSelector }
+
+    init() async throws {
+        viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let row = try #require(viewer.model.worktreePanesByRemote[viewer.identity]?.first)
+        viewer.model.worktreePanesByRemote = [viewer.identity: [row, row.with(path: Self.other, layout: Layout.leaf("c").node)]]
+        viewer.controller.reconcile(worktreePanesByRemote: viewer.model.worktreePanesByRemote)
+        viewer.controller.resolveWorktreeRoute = { [unowned self] mac, worktree, _ in
+            let failure = self.failure
+            await self.gate.wait()
+            if let failure { throw failure }
+            return (mac, worktree)
+        }
+    }
+
+    private func row(_ path: String) -> WorktreePanes? {
+        viewer.model.worktreePanesByRemote[viewer.identity]?.first { $0.path == path }
+    }
+
+    func selectWorktree() {
+        selector.select(.init(remoteMac: viewer.mac, worktreePath: Self.other, target: .worktree),
+                        source: row(Self.other), willApply: { self.applied += 1 })
+    }
+
+    /// Publishes a snapshot in which the second worktree is being deleted.
+    func startDeletingOther() {
+        let deleting = WorktreePanes(path: Self.other, displayName: "other", repoDisplayName: "graftty",
+            displayBranch: "other", state: .deleting, isMainCheckout: false, prBadge: nil, stats: nil,
+            attentionText: nil, layout: nil)
+        viewer.model.worktreePanesByRemote = [viewer.identity: [row(ViewerHarness.path), deleting].compactMap { $0 }]
+        viewer.controller.reconcile(worktreePanesByRemote: viewer.model.worktreePanesByRemote)
+    }
+
+    func selectPane(_ sessionName: String) {
+        selector.select(.init(remoteMac: viewer.mac, worktreePath: ViewerHarness.path, target: .pane(sessionName: sessionName)),
+                        source: row(ViewerHarness.path), willApply: { self.applied += 1 })
+    }
+}
+
+@MainActor
+private final class RouteGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        waiters.forEach { $0.resume() }
+        waiters = []
+    }
+}
