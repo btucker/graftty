@@ -39,19 +39,20 @@ enum FullDiskAccessPromptPresenter {
         style: .informational,
         primaryButton: "Open System Settings",
         secondaryButton: "Not Now",
-        tertiaryButton: "Don't Ask Again"
+        tertiaryButton: "Don't Ask Again",
+        escapeButton: .secondary
     )
 
     @MainActor
-    static func handleResponse(
+    private static func handleResponse(
         _ response: SheetAlert.Response,
-        defaults: UserDefaults = .standard,
-        openURL: (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
+        defaults: UserDefaults,
+        openURL: (URL) -> Void
     ) {
         switch response {
         case .primary:
             openURL(FullDiskAccess.settingsURL)
-        case .secondary:
+        case .secondary, .cancelled:
             break
         case .tertiary:
             FullDiskAccessPromptPolicy.recordSuppressed(in: defaults)
@@ -59,13 +60,11 @@ enum FullDiskAccessPromptPresenter {
     }
 
     @MainActor
-    static func defaultPresentOnReadyWindow(
-        _ config: SheetAlert.Configuration,
-        completion: @escaping (SheetAlert.Response) -> Void
-    ) -> Bool {
-        guard let window = SheetAlert.readyHostWindow() else { return false }
-        SheetAlert.present(config, on: window, completion: completion)
-        return true
+    private static func defaultPresentWhenWindowReady(
+        _ config: SheetAlert.Configuration
+    ) async -> SheetAlert.Response? {
+        guard let window = await SheetAlert.awaitReadyHostWindow() else { return nil }
+        return await SheetAlert.presentAsync(config, on: window)
     }
 
     @MainActor
@@ -74,12 +73,8 @@ enum FullDiskAccessPromptPresenter {
         checkStatus: @escaping @Sendable () -> FullDiskAccessStatus = {
             FullDiskAccess.checkStatus()
         },
-        presentOnReadyWindow: @escaping @MainActor (
-            SheetAlert.Configuration,
-            @escaping (SheetAlert.Response) -> Void
-        ) -> Bool = defaultPresentOnReadyWindow,
-        openURL: @escaping @MainActor (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
-        retryDelay: Duration = .milliseconds(500)
+        presentSheet: @escaping @MainActor (SheetAlert.Configuration) async -> SheetAlert.Response? = defaultPresentWhenWindowReady,
+        openURL: @escaping @MainActor (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
     ) async {
         guard !hasCheckedThisProcess else { return }
         guard !FullDiskAccessPromptPolicy.isSuppressed(in: defaults) else { return }
@@ -93,19 +88,8 @@ enum FullDiskAccessPromptPresenter {
             return
         }
 
-        while !Task.isCancelled {
-            guard !FullDiskAccessPromptPolicy.isSuppressed(in: defaults) else { return }
-            if presentOnReadyWindow(alertConfiguration, { response in
-                handleResponse(response, defaults: defaults, openURL: openURL)
-            }) {
-                return
-            }
-            do {
-                try await Task.sleep(for: retryDelay)
-            } catch {
-                return
-            }
-        }
+        guard let response = await presentSheet(alertConfiguration) else { return }
+        handleResponse(response, defaults: defaults, openURL: openURL)
     }
 
     @MainActor

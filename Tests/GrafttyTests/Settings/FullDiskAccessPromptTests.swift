@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import os
@@ -50,28 +51,70 @@ struct FullDiskAccessPromptTests {
         #expect(visited == ["/missing/TCC.db", "/system/TCC.db"])
     }
 
-    @Test func probeReturnsDeniedWhenExistingPathsDenyPermission() {
-        let epermStatus = FullDiskAccess.checkStatus(
-            probePaths: ["/missing/TCC.db", "/system/TCC.db"],
+    @Test func probeReturnsDeniedImmediatelyOnEPERMWithoutFallingBack() {
+        var visited: [String] = []
+        let status = FullDiskAccess.checkStatus(
+            probePaths: ["/missing/TCC.db", "/system/TCC.db", "/fallback/TimeMachine.plist"],
             openFile: { path in
-                path == "/missing/TCC.db" ? .failed(ENOENT) : .failed(EPERM)
+                visited.append(path)
+                switch path {
+                case "/missing/TCC.db": return .failed(ENOENT)
+                case "/system/TCC.db": return .failed(EPERM)
+                default: return .opened
+                }
             }
         )
-        #expect(epermStatus == .denied)
-
-        let eaccesStatus = FullDiskAccess.checkStatus(
-            probePaths: ["/system/TCC.db"],
-            openFile: { _ in .failed(EACCES) }
-        )
-        #expect(eaccesStatus == .denied)
+        #expect(status == .denied)
+        #expect(visited == ["/missing/TCC.db", "/system/TCC.db"])
     }
 
-    @Test func probeReturnsUnknownWhenNoCandidatePathExists() {
-        let status = FullDiskAccess.checkStatus(
+    @Test func probeTreatsPosixEACCESAsInconclusiveAndContinues() {
+        let grantedViaFallback = FullDiskAccess.checkStatus(
+            probePaths: ["/restricted/TCC.db", "/readable/TCC.db"],
+            openFile: { path in
+                path == "/restricted/TCC.db" ? .failed(EACCES) : .opened
+            }
+        )
+        #expect(grantedViaFallback == .granted)
+
+        let onlyEACCES = FullDiskAccess.checkStatus(
+            probePaths: ["/restricted/TCC.db"],
+            openFile: { _ in .failed(EACCES) }
+        )
+        #expect(onlyEACCES == .unknown)
+    }
+
+    @Test func probeReturnsUnknownWhenNoCandidatePathExistsOrListIsEmpty() {
+        let missing = FullDiskAccess.checkStatus(
             probePaths: ["/missing/one", "/missing/two"],
             openFile: { _ in .failed(ENOENT) }
         )
-        #expect(status == .unknown)
+        #expect(missing == .unknown)
+
+        let empty = FullDiskAccess.checkStatus(probePaths: [], openFile: { _ in .opened })
+        #expect(empty == .unknown)
+    }
+
+    @Test func defaultOpenFileReportsOpenedMissingAndPermissionFailure() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FullDiskAccessProbe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let readable = dir.appendingPathComponent("readable.txt")
+        try Data("ok".utf8).write(to: readable)
+        #expect(FullDiskAccess.defaultOpenFile(readable.path) == .opened)
+
+        let missing = dir.appendingPathComponent("missing.txt")
+        #expect(FullDiskAccess.defaultOpenFile(missing.path) == .failed(ENOENT))
+
+        if geteuid() != 0 {
+            let unreadable = dir.appendingPathComponent("unreadable.txt")
+            try Data("locked".utf8).write(to: unreadable)
+            try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: unreadable.path) }
+            #expect(FullDiskAccess.defaultOpenFile(unreadable.path) == .failed(EACCES))
+        }
     }
 
     @Test func policyOnlyPromptsWhenDeniedAndNotSuppressed() {
@@ -81,11 +124,13 @@ struct FullDiskAccessPromptTests {
         #expect(!FullDiskAccessPromptPolicy.shouldPrompt(status: .unknown, isSuppressed: false))
     }
 
-    @Test func primaryOpensSystemSettingsWithoutSuppressingAndFiresOncePerProcess() async {
+    @Test func primaryProbesOffMainOpensSystemSettingsWithoutSuppressingAndFiresOncePerProcess() async {
+        defer { FullDiskAccessPromptPresenter.resetForTests() }
         let (defaults, suite) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let probeCount = OSAllocatedUnfairLock(initialState: 0)
+        let ranOnMain = OSAllocatedUnfairLock(initialState: true)
         var presentedConfigs: [SheetAlert.Configuration] = []
         var openedURLs: [URL] = []
 
@@ -93,24 +138,25 @@ struct FullDiskAccessPromptTests {
             defaults: defaults,
             checkStatus: {
                 probeCount.withLock { $0 += 1 }
+                ranOnMain.withLock { $0 = Thread.isMainThread }
                 return .denied
             },
-            presentOnReadyWindow: { config, completion in
+            presentSheet: { config in
                 presentedConfigs.append(config)
-                completion(.primary)
-                return true
+                return .primary
             },
             openURL: { url in
                 openedURLs.append(url)
-            },
-            retryDelay: .zero
+            }
         )
 
         #expect(probeCount.withLock { $0 } == 1)
+        #expect(!ranOnMain.withLock { $0 })
         #expect(presentedConfigs.count == 1)
         #expect(presentedConfigs[0].primaryButton == "Open System Settings")
         #expect(presentedConfigs[0].secondaryButton == "Not Now")
         #expect(presentedConfigs[0].tertiaryButton == "Don't Ask Again")
+        #expect(presentedConfigs[0].escapeButton == .secondary)
         #expect(openedURLs == [FullDiskAccess.settingsURL])
         #expect(
             FullDiskAccess.settingsURL.absoluteString
@@ -125,42 +171,44 @@ struct FullDiskAccessPromptTests {
                 probeCount.withLock { $0 += 1 }
                 return .denied
             },
-            presentOnReadyWindow: { config, _ in
+            presentSheet: { config in
                 presentedConfigs.append(config)
-                return true
+                return .primary
             },
-            openURL: { openedURLs.append($0) },
-            retryDelay: .zero
+            openURL: { openedURLs.append($0) }
         )
         #expect(probeCount.withLock { $0 } == 1)
         #expect(presentedConfigs.count == 1)
     }
 
-    @Test func notNowDismissesWithoutSuppressingOrOpeningSettings() async {
+    @Test func notNowAndCancelledDismissWithoutSuppressingOrOpeningSettings() async {
+        defer { FullDiskAccessPromptPresenter.resetForTests() }
         let (defaults, suite) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        var openedURLs: [URL] = []
-        var presented = false
+        for response in [SheetAlert.Response.secondary, .cancelled] {
+            FullDiskAccessPromptPresenter.resetForTests()
+            var openedURLs: [URL] = []
+            var presented = false
 
-        await FullDiskAccessPromptPresenter.presentWhenWindowIsReady(
-            defaults: defaults,
-            checkStatus: { .denied },
-            presentOnReadyWindow: { _, completion in
-                presented = true
-                completion(.secondary)
-                return true
-            },
-            openURL: { openedURLs.append($0) },
-            retryDelay: .zero
-        )
+            await FullDiskAccessPromptPresenter.presentWhenWindowIsReady(
+                defaults: defaults,
+                checkStatus: { .denied },
+                presentSheet: { _ in
+                    presented = true
+                    return response
+                },
+                openURL: { openedURLs.append($0) }
+            )
 
-        #expect(presented)
-        #expect(openedURLs.isEmpty)
-        #expect(!FullDiskAccessPromptPolicy.isSuppressed(in: defaults))
+            #expect(presented)
+            #expect(openedURLs.isEmpty)
+            #expect(!FullDiskAccessPromptPolicy.isSuppressed(in: defaults))
+        }
     }
 
     @Test func dontAskAgainPersistsSuppressionAcrossLaunches() async {
+        defer { FullDiskAccessPromptPresenter.resetForTests() }
         let (defaults, suite) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -169,15 +217,12 @@ struct FullDiskAccessPromptTests {
         await FullDiskAccessPromptPresenter.presentWhenWindowIsReady(
             defaults: defaults,
             checkStatus: { .denied },
-            presentOnReadyWindow: { _, completion in
-                completion(.tertiary)
-                return true
-            },
-            openURL: { openedURLs.append($0) },
-            retryDelay: .zero
+            presentSheet: { _ in .tertiary },
+            openURL: { openedURLs.append($0) }
         )
 
         #expect(openedURLs.isEmpty)
+        #expect(defaults.bool(forKey: SettingsKeys.suppressFullDiskAccessPrompt))
         #expect(FullDiskAccessPromptPolicy.isSuppressed(in: defaults))
 
         // Simulate next app launch: suppressed launches skip probing and prompting.
@@ -190,12 +235,11 @@ struct FullDiskAccessPromptTests {
                 probedNextLaunch.withLock { $0 = true }
                 return .denied
             },
-            presentOnReadyWindow: { _, _ in
+            presentSheet: { _ in
                 presentedNextLaunch = true
-                return true
+                return .primary
             },
-            openURL: { openedURLs.append($0) },
-            retryDelay: .zero
+            openURL: { openedURLs.append($0) }
         )
 
         #expect(!probedNextLaunch.withLock { $0 })
@@ -203,6 +247,7 @@ struct FullDiskAccessPromptTests {
     }
 
     @Test func skipsWhenGrantedOrUnknown() async {
+        defer { FullDiskAccessPromptPresenter.resetForTests() }
         let (defaults, suite) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -212,34 +257,92 @@ struct FullDiskAccessPromptTests {
             await FullDiskAccessPromptPresenter.presentWhenWindowIsReady(
                 defaults: defaults,
                 checkStatus: { status },
-                presentOnReadyWindow: { _, _ in
+                presentSheet: { _ in
                     presented = true
-                    return true
+                    return .primary
                 },
-                openURL: { _ in },
-                retryDelay: .zero
+                openURL: { _ in }
             )
             #expect(!presented)
         }
     }
 
-    @Test func retriesUntilWindowIsReady() async {
-        let (defaults, suite) = makeDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+    @Test func sheetAlertResponseMappingAndButtonHelpers() {
+        #expect(SheetAlert.response(for: .alertFirstButtonReturn) == .primary)
+        #expect(SheetAlert.response(for: .alertSecondButtonReturn) == .secondary)
+        #expect(SheetAlert.response(for: .alertThirdButtonReturn) == .tertiary)
+        #expect(SheetAlert.response(for: .abort) == .cancelled)
+        #expect(SheetAlert.response(for: .cancel) == .cancelled)
+        #expect(SheetAlert.response(for: .stop) == .cancelled)
 
-        var attempts = 0
-        await FullDiskAccessPromptPresenter.presentWhenWindowIsReady(
-            defaults: defaults,
-            checkStatus: { .denied },
-            presentOnReadyWindow: { _, completion in
-                attempts += 1
-                guard attempts >= 3 else { return false }
-                completion(.secondary)
-                return true
-            },
-            openURL: { _ in },
-            retryDelay: .zero
+        let config = FullDiskAccessPromptPresenter.alertConfiguration
+        #expect(SheetAlert.buttonTitles(for: config) == [
+            "Open System Settings",
+            "Not Now",
+            "Don't Ask Again",
+        ])
+        #expect(SheetAlert.escapeButtonIndex(for: config) == 1)
+    }
+
+    @Test func sheetAlertSelectReadyHostWindowEnforcesVisibilitySheetAndModalGuards() {
+        let main = SheetAlert.HostWindowCandidate(
+            index: 0, isVisible: true, isPanel: false, isSheet: false,
+            isChildWindow: false, canBecomeMain: true, isNormalLevel: true
         )
-        #expect(attempts == 3)
+        let panel = SheetAlert.HostWindowCandidate(
+            index: 1, isVisible: true, isPanel: true, isSheet: false,
+            isChildWindow: false, canBecomeMain: true, isNormalLevel: true
+        )
+        let sheet = SheetAlert.HostWindowCandidate(
+            index: 2, isVisible: true, isPanel: false, isSheet: true,
+            isChildWindow: false, canBecomeMain: true, isNormalLevel: true
+        )
+        let child = SheetAlert.HostWindowCandidate(
+            index: 3, isVisible: true, isPanel: false, isSheet: false,
+            isChildWindow: true, canBecomeMain: true, isNormalLevel: true
+        )
+        let hidden = SheetAlert.HostWindowCandidate(
+            index: 4, isVisible: false, isPanel: false, isSheet: false,
+            isChildWindow: false, canBecomeMain: true, isNormalLevel: true
+        )
+
+        #expect(SheetAlert.selectReadyHostWindow(
+            hasModalWindow: true,
+            anyWindowHasAttachedSheet: false,
+            mainWindow: main,
+            keyWindow: main,
+            windows: [main]
+        ) == nil)
+
+        #expect(SheetAlert.selectReadyHostWindow(
+            hasModalWindow: false,
+            anyWindowHasAttachedSheet: true,
+            mainWindow: main,
+            keyWindow: main,
+            windows: [main]
+        ) == nil)
+
+        #expect(SheetAlert.selectReadyHostWindow(
+            hasModalWindow: false,
+            anyWindowHasAttachedSheet: false,
+            mainWindow: nil,
+            keyWindow: panel,
+            windows: [panel, sheet, child, hidden, main]
+        ) == 0)
+    }
+
+    @Test func awaitReadyHostWindowReturnsNilWhenCancelledBeforeWindowAppears() async {
+        let center = NotificationCenter()
+        let task = Task { @MainActor in
+            await SheetAlert.awaitReadyHostWindow(
+                initialGraceDelay: .seconds(60),
+                center: center,
+                readyWindow: { nil }
+            )
+        }
+        await Task.yield()
+        task.cancel()
+        let result = await task.value
+        #expect(result == nil)
     }
 }

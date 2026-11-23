@@ -36,26 +36,34 @@ enum FullDiskAccess {
         probePaths: [String] = defaultProbePaths(),
         openFile: (String) -> ProbeOutcome = defaultOpenFile
     ) -> FullDiskAccessStatus {
-        var sawDenied = false
         for path in probePaths {
             switch openFile(path) {
             case .opened:
                 return .granted
-            case .failed(let code) where code == EPERM || code == EACCES:
-                sawDenied = true
+            case .failed(let code) where code == EPERM:
+                // macOS MACF/TCC rejects SystemPolicyAllFiles opens with EPERM.
+                // Stop immediately so a weaker fallback path cannot override an
+                // authoritative TCC denial; POSIX EACCES/ENOENT fall through.
+                return .denied
             case .failed:
                 continue
             }
         }
-        return sawDenied ? .denied : .unknown
+        return .unknown
     }
 
     static func defaultOpenFile(_ path: String) -> ProbeOutcome {
-        let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC)
-        if fd >= 0 {
-            Darwin.close(fd)
-            return .opened
+        path.withCString { cPath in
+            while true {
+                let fd = Darwin.open(cPath, O_RDONLY | O_CLOEXEC | O_NONBLOCK)
+                if fd >= 0 {
+                    Darwin.close(fd)
+                    return .opened
+                }
+                let code = errno
+                if code == EINTR { continue }
+                return .failed(code)
+            }
         }
-        return .failed(errno)
     }
 }
