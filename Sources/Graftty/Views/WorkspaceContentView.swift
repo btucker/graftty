@@ -47,6 +47,7 @@ struct WorkspaceContentView: View {
     /// LAYOUT-2.190: explicit tab selection hands keyboard focus to the
     /// terminal. Clicks inside a terminal already make it first responder.
     var onActivateTerminal: (PaneSlotID) -> Void = { _ in }
+    var onClearFocus: (() -> Void)?
     /// A hair of breathing room so terminal text doesn't slam into the
     /// sidebar divider, while tab rows stay flush with the window edge.
     static let leadingContentInset: CGFloat = 6
@@ -269,7 +270,7 @@ struct WorkspaceContentView: View {
             Button("Close tab") {
                 mutate { $0.remove(slot) }
                 if let next = layout.focusedSession { focus(next) }
-                else { terminalManager.clearFocus() }
+                else { clearFocus() }
             }
         } else if let agent = agent(slot), let completion = agent.completion {
             Button(completion.outcome == .interrupted || completion.outcome == .failed ? "Acknowledge and close agent" : "Close completed agent") { perform(.init(action: .close, callerWorktree: worktree.path, agentID: agent.id, completionID: completion.id)) }
@@ -370,7 +371,7 @@ struct WorkspaceContentView: View {
         WorkspaceChatSwitch.setView(chat: chat, slot: slot, in: &entry)
         worktree = entry
         if showsChat(slot) {
-            terminalManager.clearFocus()
+            clearFocus()
         } else if worktree.splitTree.containsLeaf(slot) {
             onFocusTerminal(slot)
             onActivateTerminal(slot)
@@ -404,17 +405,21 @@ struct WorkspaceContentView: View {
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
         mutate { $0.select(slot) }
         if worktree.showsNonTerminalContent(in: slot) {
-            terminalManager.clearFocus()
+            clearFocus()
         } else if worktree.splitTree.containsLeaf(slot) {
             onFocusTerminal(slot)
             if activate { onActivateTerminal(slot) }
         }
     }
+    private func clearFocus() {
+        if let onClearFocus { onClearFocus() }
+        else { terminalManager.clearFocus() }
+    }
     private func synchronize(initial: Bool = false) {
         let hadLayout = worktree.workspaceLayout != nil
         worktree.ensureWorkspaceLayout()
         if initial && !hadLayout, let focused = worktree.focusedPaneSlotID { mutate { $0.select(focused) } }
-        if let slot = worktree.presentationPane, worktree.showsNonTerminalContent(in: slot) { terminalManager.clearFocus() }
+        if let slot = worktree.presentationPane, worktree.showsNonTerminalContent(in: slot) { clearFocus() }
         chatModels.prune(keeping: Set(worktree.agents.compactMap(\.presentationSlotID)))
     }
     private func receive(_ providers: [NSItemProvider], action: @escaping @MainActor (PaneSlotID) -> Void) -> Bool {

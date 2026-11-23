@@ -2,6 +2,7 @@ import Testing
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
+import SwiftUI
 @testable import Graftty
 
 @MainActor
@@ -62,6 +63,27 @@ struct WorkspaceChatSwitchTests {
         // An agent that can no longer offer Chat falls back to its terminal.
         entry.agents[0].providerSessionID = nil
         #expect(entry.showsNonTerminalContent(in: slot) == false)
+    }
+
+    @Test func selectingChatClearsTerminalFocusThroughItsWindow() {
+        var (entry, slot) = worktree()
+        WorkspaceChatSwitch.setView(chat: true, slot: slot, in: &entry)
+        var clears = 0
+        var focused: [PaneSlotID] = []
+        let view = WorkspaceContentView(
+            terminalManager: TerminalManager(socketPath: "/tmp/graftty-chat-window-focus-test.sock"),
+            worktree: Binding(get: { entry }, set: { entry = $0 }),
+            onFocusTerminal: { focused.append($0) }, onNewTerminal: {}, onCloseTerminal: { _ in },
+            onClearFocus: { clears += 1 }
+        )
+        view.selectTab(slot)
+        #expect(clears == 1)
+        #expect(focused.isEmpty)
+
+        WorkspaceChatSwitch.setView(chat: false, slot: slot, in: &entry)
+        view.selectTab(slot)
+        #expect(clears == 1)
+        #expect(focused == [slot])
     }
 
     @Test func aTabThatCannotAttachStaysInTerminal() {

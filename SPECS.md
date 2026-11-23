@@ -8,7 +8,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### LAYOUT-1.x — Window Structure
 
-**LAYOUT-1.1** The application shall display a single main window with a resizable sidebar on the left and a terminal content area on the right.
+**LAYOUT-1.1** While a main window is open, the application shall display a resizable sidebar on the left and a terminal content area on the right.
 
 **LAYOUT-1.2** The sidebar shall be resizable via a drag handle between the sidebar and the terminal content area.
 
@@ -35,6 +35,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-1.13** While agent tabs are visible, the application shall keep Back, Forward, the repository/worktree breadcrumb, and Context visible and clickable in the window header above the tabs.
 
 **LAYOUT-1.14** While a worktree preview is open, the header shall name that preview and allow its primary control to hide it without deleting its history.
+
+**LAYOUT-1.15** When the user opens another main window on macOS, the application shall open a separate window even when macOS prefers tabbing.
+
+**LAYOUT-1.16** While several main windows are open on macOS, the application shall keep each window's worktree selection independent and restore the saved selection only when opening the first main window.
+
+**LAYOUT-1.17** When the user selects a local worktree already displayed in another main window, the application shall bring that window forward and preserve the current worktree in each window.
+
+**LAYOUT-1.18** While multiple macOS windows are open, the application shall share sidebar attention history and dismissals while keeping each window's navigation independent.
 
 ### LAYOUT-2.x — Sidebar — Repository List
 
@@ -5912,7 +5920,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### MEM-1.x
 
-**MEM-1.1** While more than 4 worktrees have live surfaces, including surfaces created in the background by web or CLI worktree creation, the application shall evict the least-recently-selected worktree's surfaces; a background-created worktree that has never been selected shall enter as least recent.
+**MEM-1.1** While more than 4 worktrees have live surfaces, the application shall evict the least-recently-selected worktree outside the open windows. A background-created worktree that has never been selected enters as least recent.
 
 **MEM-1.2** When a worktree's surfaces are evicted via the LRU budget, the application shall preserve its zmx sessions, pane-to-session mapping, titles, PWDs, and rehydration state so re-selection re-attaches transparently.
 
@@ -5929,6 +5937,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **MEM-1.8** When a previously-evicted pane is re-attached via the rehydration path, the application shall pre-size the new libghostty surface to the captured pixel dimensions before starting its host-managed backend, so the first post-layout resize event is a no-op when the layout container has not changed.
 
 **MEM-1.9** When a previously-evicted pane is destroyed (rather than re-attached), the application shall drop its captured grid size from the cache.
+
+**MEM-1.10** While a worktree is displayed in any open macOS window, the application shall keep its terminal surfaces even when the number of open worktrees exceeds the surface budget.
 
 ## PERF — PERF
 

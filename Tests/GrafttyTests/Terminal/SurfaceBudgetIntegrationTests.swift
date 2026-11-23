@@ -32,7 +32,7 @@ struct SurfaceBudgetIntegrationTests {
     }
 
     @Test("""
-@spec MEM-1.1: While more than 4 worktrees have live surfaces, including surfaces created in the background by web or CLI worktree creation, the application shall evict the least-recently-selected worktree's surfaces; a background-created worktree that has never been selected shall enter as least recent.
+@spec MEM-1.1: While more than 4 worktrees have live surfaces, the application shall evict the least-recently-selected worktree outside the open windows. A background-created worktree that has never been selected enters as least recent.
 """)
     func fifthSelectionEvictsFirstWorktree() {
         let paths = ["/a", "/b", "/c", "/d", "/e"]

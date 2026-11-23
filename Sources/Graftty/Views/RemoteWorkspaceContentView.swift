@@ -10,7 +10,8 @@ struct RemoteWorkspaceContentView: View {
     let worktree: WorktreePanes
     let identity: RemoteMacIdentity
     let focused: PaneSlotID?
-    let onFocus: (PaneSlotID) -> Void
+    let onFocus: (PaneSlotID?) -> Void
+    let onPaneCommandTargetChange: (PaneSlotID?) -> Void
     var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
     var requestedAgent: String? = nil
@@ -30,6 +31,10 @@ struct RemoteWorkspaceContentView: View {
     @State private var pendingAgentSession: String?
 
     private var layout: WorkspaceLayout<String> { workspace ?? .initial(for: worktree) }
+    private var paneCommandTarget: PaneSlotID? {
+        guard let session = layout.focusedSession, !showsNonTerminalContent(session) else { return nil }
+        return slot(session)
+    }
     private func slot(_ session: String) -> PaneSlotID? {
         viewer.existingTerminalID(identity: identity, worktreePath: worktree.path, sessionName: session)
             ?? worktree.agents?.first(where: { $0.presentationSessionName == session })?.retainedSlotID
@@ -43,6 +48,9 @@ struct RemoteWorkspaceContentView: View {
         worktree.chatAgent(session: session)
     }
     private func showsChat(_ session: String) -> Bool { chatAgent(session) != nil && layout.showsChat(session) }
+    private func showsNonTerminalContent(_ session: String) -> Bool {
+        showsChat(session) || worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true
+    }
     /// AGENT-6.187: only this viewer's saved layout changes. Nothing is sent to the host.
     private func setView(_ session: String, chat: Bool) {
         workspace?.setShowsChat(chat, for: session)
@@ -57,8 +65,8 @@ struct RemoteWorkspaceContentView: View {
     private func select(_ session: String) {
         zoomed = nil
         workspace?.select(session)
-        if showsChat(session) || worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
-            terminalManager.clearFocus()
+        if showsNonTerminalContent(session) {
+            onFocus(nil)
         } else if let id = slot(session) { onFocus(id) }
     }
 
@@ -126,6 +134,9 @@ struct RemoteWorkspaceContentView: View {
             viewer.clearWorkspaceVisibility(identity: identity, worktreePath: worktree.path)
         }
         .onChange(of: requestedAgent) { _, _ in showRequestedAgent() }
+        .onChange(of: paneCommandTarget, initial: true) { _, pane in
+            onPaneCommandTargetChange(pane)
+        }
         .onChange(of: worktree) { _, _ in reconcile(); showNewAgent(); viewer.workspaceCommandHandler = handleCommand }
         .onChange(of: focused) { _, id in
             revealFocused()
@@ -180,7 +191,7 @@ struct RemoteWorkspaceContentView: View {
     private func revealFocused() {
         if let selected = layout.focusedSession,
            worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true {
-            terminalManager.clearFocus()
+            onFocus(nil)
             zoomed = nil
             return
         }
@@ -333,7 +344,7 @@ struct RemoteWorkspaceContentView: View {
                                     Button("Close tab") {
                                         workspace?.remove(session)
                                         if let next = layout.focusedSession { select(next) }
-                                        else { terminalManager.clearFocus() }
+                                        else { onFocus(nil) }
                                     }
                                 }
                                 if worktree.agents?.contains(where: { $0.presentationSessionName == session }) != true {
@@ -383,6 +394,6 @@ struct RemoteWorkspaceContentView: View {
         workspace?.reconcile(with: worktree, preservingSelection: true)
         chatModels.prune(keeping: Set(layout.sessions))
         reconcileZoom()
-        if let selected = layout.focusedSession, worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true { terminalManager.clearFocus() }
+        if let selected = layout.focusedSession, showsNonTerminalContent(selected) { onFocus(nil) }
     }
 }

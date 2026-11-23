@@ -2,17 +2,12 @@ import Foundation
 import GrafttyKit
 
 /// @spec MEM-1.1
-/// LRU cap on the number of worktrees whose Ghostty surfaces are kept
-/// alive. User selections are most-recently-used; background-created
-/// surfaces enter at the tail because they have never been selected. When
-/// the budget overflows, the least-recently-selected worktree's leaves are
-/// dispatched to `onEvict`. Self-prunes any LRU entry that is no longer in
-/// the running snapshot, so stop/delete/stale transitions don't need to
-/// call into the budget directly.
+/// While more than 4 worktrees have live surfaces, the application shall evict the least-recently-selected worktree outside the open windows. A background-created worktree that has never been selected enters as least recent.
 @MainActor
 final class WorktreeSurfaceBudget {
     let capacity: Int
     private let onEvict: @MainActor (PaneSlotID) -> Void
+    var isPresented: (String) -> Bool = { _ in false }
 
     /// Most-recently-used first.
     private(set) var lru: [String] = []
@@ -29,7 +24,7 @@ final class WorktreeSurfaceBudget {
         prune(using: splitTreesByPath)
         lru.removeAll { $0 == worktreePath }
         lru.insert(worktreePath, at: 0)
-        enforceCapacity(using: splitTreesByPath)
+        evictBackgroundSurfaces(using: splitTreesByPath)
     }
 
     /// Counts a surface created without a Mac-window selection (for example,
@@ -45,16 +40,23 @@ final class WorktreeSurfaceBudget {
         if !lru.contains(worktreePath) {
             lru.append(worktreePath)
         }
-        enforceCapacity(using: splitTreesByPath)
+        evictBackgroundSurfaces(using: splitTreesByPath)
+    }
+
+    func trim(using splitTreesByPath: [String: SplitTree]) {
+        prune(using: splitTreesByPath)
+        evictBackgroundSurfaces(using: splitTreesByPath)
     }
 
     private func prune(using splitTreesByPath: [String: SplitTree]) {
         lru.removeAll { !splitTreesByPath.keys.contains($0) }
     }
 
-    private func enforceCapacity(using splitTreesByPath: [String: SplitTree]) {
+    private func evictBackgroundSurfaces(using splitTreesByPath: [String: SplitTree]) {
         while lru.count > capacity {
-            let evictedPath = lru.removeLast()
+            // Open windows can temporarily exceed the background cache limit.
+            guard let index = lru.lastIndex(where: { !isPresented($0) }) else { return }
+            let evictedPath = lru.remove(at: index)
             guard let tree = splitTreesByPath[evictedPath] else { continue }
             for leaf in tree.allLeaves {
                 onEvict(leaf)

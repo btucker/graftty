@@ -45,7 +45,8 @@ private struct HostedSidebarScrollView: View {
                 paneTitleInvalidations: PaneTitleInvalidationSource(), voiceDictation: harness.voice,
                 selectedVoicePaneID: nil, theme: .fallback, statsStore: harness.stats, prStatusStore: harness.prs,
                 claudeSessionRegistry: harness.registry, remoteBranchStore: harness.branches,
-                remoteMacsModel: harness.remotes, appStateChanges: harness.changes, selectedRemoteIdentity: nil, selectedRemoteWorktreePath: nil,
+                remoteMacsModel: harness.remotes, appStateChanges: harness.changes,
+                selectedLocalWorktreePath: harness.state.selectedWorktreePath, selectedRemoteIdentity: nil, selectedRemoteWorktreePath: nil,
                 selectedRemotePaneSessionName: nil, onSelect: {
                     harness.selections.append($0)
                     harness.state.selectedWorktreePath = $0
