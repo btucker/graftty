@@ -54,6 +54,7 @@ public enum TeamHookRenderer {
         let redrawRequest = switch drawingRedraw {
         case .widen: " This worktree's `icon` still uses the older square canvas. Redraw it once on the wide canvas, `<svg viewBox='0 0 96 64'>`, and include it in this turn's report. Graftty accepts it without resending `purpose`."
         case .varyComposition: " This worktree's `icon` predates the varied drawing guidance. Draw it once with a new composition and a distinct silhouette on the wide canvas, `<svg viewBox='0 0 96 64'>`. Include it and its `iconDescription` in this turn's report. Graftty accepts it without resending `purpose`."
+        case .first: " This worktree has no `icon` yet. Draw one on the wide canvas, `<svg viewBox='0 0 96 64'>`, and include it and its `iconDescription` in this turn's report. Graftty accepts it without resending `purpose`."
         case nil: ""
         }
         return try hookJSON(eventName: "UserPromptSubmit", additionalContext: recapGuidance

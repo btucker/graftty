@@ -200,8 +200,7 @@ struct MultiPaneDetailView: View {
         worktree.workspaceSessionTitle(session)
     }
     private func tabHeader(_ group: WorkspaceLayout<String>.Group) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+        AgentTabStrip(spacing: 4) {
                 ForEach(group.sessions, id: \.self) { session in
                     Button { selectSession(session) } label: {
                         HStack(spacing: 6) {
@@ -212,9 +211,9 @@ struct MultiPaneDetailView: View {
                             } else {
                                 Image(systemName: "terminal")
                             }
-                            Text(sessionTitle(session)).lineLimit(1)
+                            Text(sessionTitle(session)).lineLimit(1).truncationMode(.middle)
                                 .fontWeight(group.selected == session ? .medium : .regular)
-                        }.padding(.horizontal, 10).frame(minHeight: 44)
+                        }.worktreeHeaderWashText().padding(.horizontal, 10).frame(minHeight: 44)
                             .foregroundStyle(theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                             .overlay(alignment: .bottom) {
                                 Rectangle().fill(group.selected == session ? theme.foreground.opacity(0.55) : .clear)
@@ -255,7 +254,6 @@ struct MultiPaneDetailView: View {
                             }
                         }
                 }
-            }
         }.font(.subheadline).foregroundStyle(theme.foreground)
             .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
                 guard let session = sessions.first?.session, currentWorkspace.sessions.contains(session) else { return false }

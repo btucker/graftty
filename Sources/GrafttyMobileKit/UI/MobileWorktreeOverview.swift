@@ -60,7 +60,8 @@ struct MobileWorktreeOverview: Equatable {
                 state = .idle
                 message = leaf?.attentionText
             }
-            return Agent(session: session, title: worktree.workspaceSessionTitle(session), provider: info.provider,
+            let title = SidebarAgentTitle.display(terminalTitle: leaf?.title ?? "", agentName: info.name)
+            return Agent(session: session, title: title, provider: info.provider,
                          state: state, status: status, message: message?.trimmedNonEmpty, info: info)
         }
         // Stable within a state: keep the host's agent order.

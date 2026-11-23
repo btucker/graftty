@@ -1,6 +1,8 @@
 #if canImport(UIKit)
 @testable import GhosttyTerminal
 import GhosttyKit
+import GrafttyCommandUI
+import GrafttyProtocol
 import Testing
 @testable import GrafttyMobileKit
 import SwiftUI
@@ -2213,6 +2215,33 @@ struct TerminalTouchScrollTests {
 @Suite(.serialized)
 @MainActor
 struct FirstLineClearanceRefreshTests {
+    @Test("The iPhone rail finds a submitted Codex prompt above the viewport and preserves the scroll position")
+    func codexRailReadsLoadedHistory() async throws {
+        let mounted = try await mountedContainer()
+        defer { mounted.tearDown() }
+        let container = mounted.container
+        container.scrollbackSession = mounted.session
+        let rows = Int(try #require(container.terminalGridMetrics).rows)
+        let transcript = ["› the rail isn't appearing in this codex", "  session on iPhone", "", "• Checking the rail."]
+            + Array(repeating: "terminal output", count: rows * 2)
+            + ["› still typing", "", "  GPT-6 · context"]
+        mounted.session.receive(Data(transcript.joined(separator: "\r\n").utf8))
+        try await waitUntil("submitted prompt moved into scrollback") {
+            container.snapshotScrollView.hasScrollback && mounted.session.readViewportText()?.contains("still typing") == true
+        }
+        let viewport = mounted.session.readViewportRowsText()
+        let model = container.scrollbackMapModel
+        let agent = AgentSessionInfo(id: "agent", name: "agent", provider: "codex", status: "running", sessionName: "pane")
+        model.update(timeline: WorktreeTimeline(history: nil, brief: nil), recovery: .pairedCodex(agent))
+        model.setVisible(true)
+        defer { model.setVisible(false) }
+        try await waitUntil("rail scan finished") { model.map != nil }
+        let marks = try #require(model.map?.marks)
+        #expect(marks.map(\.row) == [0], "First physical rows: \(container.scrollbackRows(limit: 200)?.rows.prefix(6) ?? [])")
+        #expect(marks.compactMap { model.entries[$0.id]?.text } == ["the rail isn't appearing in this codex session on iPhone"])
+        #expect(mounted.session.readViewportRowsText() == viewport)
+    }
+
     @Test("@spec IOS-6.41: While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall poll its viewport for first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.")
     func clearancePollsOnlyWithoutScrollback() async throws {
         let mounted = try await mountedContainer()

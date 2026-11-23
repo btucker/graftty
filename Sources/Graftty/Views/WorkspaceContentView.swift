@@ -31,7 +31,7 @@ struct WorkspaceContentView: View {
     let onFocusTerminal: (PaneSlotID) -> Void
     let onNewTerminal: () -> Void
     let onCloseTerminal: (PaneSlotID) -> Void
-    /// AGENT-2.7: hook-reported turn activity, so stopped turns stop spinning.
+    /// AGENT-2.7: hook-reported turn activity distinguishes working and idle agents.
     var agentLiveness: ClaudeSessionRegistry? = nil
     /// LAYOUT-2.190: explicit tab selection hands keyboard focus to the
     /// terminal. Clicks inside a terminal already make it first responder.
@@ -39,7 +39,7 @@ struct WorkspaceContentView: View {
     /// A hair of breathing room so terminal text doesn't slam into the
     /// sidebar divider, while tab rows stay flush with the window edge.
     static let leadingContentInset: CGFloat = 6
-    var agentScrollbackMap: AgentScrollbackMap?
+    var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
     @Environment(\.agentWorkspaceRequest) private var request
     @State private var failure: String?
@@ -59,7 +59,7 @@ struct WorkspaceContentView: View {
                             worktree.canvasTree
                         }, set: { tree in mutate { $0.updateGeometry(from: tree) } }),
                         focusedPaneSlotID: worktree.presentationPane, theme: theme, onFocusTerminal: focus,
-                        previewWorktreePath: worktree.path, agentScrollbackMap: agentScrollbackMap,
+                        previewWorktreePath: worktree.path, agentScrollbackMaps: agentScrollbackMaps,
                         paneHeader: { slot in AnyView(groupHeader(for: slot)) },
                         paneBanner: { slot in
                             guard let group = layout.group(containing: slot), group.id == inputRequestGroupID else { return nil }
@@ -124,8 +124,7 @@ struct WorkspaceContentView: View {
         let group = layout.group(containing: slot)
         return VStack(spacing: 0) {
             HStack(spacing: 2) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) {
+                AgentTabStrip(spacing: 2) {
                         ForEach(group?.sessions ?? [], id: \.self) { tab in
                             Button { selectTab(tab) } label: {
                                 HStack(spacing: 6) {
@@ -137,12 +136,12 @@ struct WorkspaceContentView: View {
                                     } else {
                                         Image(systemName: "terminal")
                                     }
-                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, fallback: agent(tab)?.name ?? "Terminal").lineLimit(1)
+                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, agentName: agent(tab)?.name, provider: agent(tab)?.provider.rawValue).lineLimit(1).truncationMode(.middle)
                                         .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if agent(tab) == nil, worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
                                     }
-                                }.padding(.horizontal, 12).padding(.vertical, 9)
+                                }.worktreeHeaderWashText().padding(.horizontal, 12).padding(.vertical, 9)
                                     .foregroundStyle(theme.foreground.opacity(agent(tab)?.completion != nil || agent(tab)?.status == .closed ? 0.4 : group?.selected == tab ? 1 : 0.65))
                                     .overlay(alignment: .bottom) {
                                         Rectangle().fill(group?.selected == tab ? theme.foreground.opacity(0.55) : .clear)
@@ -161,8 +160,7 @@ struct WorkspaceContentView: View {
                                 })
                                 .contextMenu { tabMenu(tab, group: group?.id) }
                         }
-                        newAgentMenu.menuStyle(.borderlessButton)
-                    }
+                        newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText().agentTabStripFixed()
                 }
             }.font(.system(size: 13))
                 .background { theme.background.worktreeHeaderWash() }
@@ -269,7 +267,7 @@ struct WorkspaceContentView: View {
                     HStack(spacing: 2) {
                 ForEach(layout.terminals, id: \.self) { slot in
                     Button { selectTerminalTab(slot) } label: {
-                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, fallback: agent(slot)?.name ?? "Terminal").lineLimit(1).padding(.horizontal, 8).frame(height: 30)
+                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, agentName: agent(slot)?.name, provider: agent(slot)?.provider.rawValue).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
                             .workspaceTabUnderline(selected: layout.selectedTerminal == slot, color: theme.foreground)
                     }.buttonStyle(.plain)
                         .fontWeight(layout.selectedTerminal == slot ? .semibold : .regular)
@@ -347,7 +345,8 @@ struct WorkspaceContentView: View {
     }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
     private func title(_ slot: PaneSlotID) -> String {
-        SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: agent(slot)?.name ?? "Terminal")
+        WorkspaceTerminalTitle.text(terminalManager: terminalManager, slot: slot,
+                                    agentName: agent(slot)?.name, provider: agent(slot)?.provider.rawValue)
     }
     private func mutate(_ action: (inout WorkspaceLayout<PaneSlotID>) -> Void) {
         var next = layout; action(&next); worktree.workspaceLayout = next
@@ -444,10 +443,18 @@ private struct WorkspaceTerminalTitle: View {
     let terminalManager: TerminalManager
     @ObservedObject var invalidations: PaneTitleInvalidationSource
     let slot: PaneSlotID
-    let fallback: String
+    /// Only the fields the title reads, so tab diffs never compare whole agent records.
+    let agentName: String?
+    let provider: String?
+
+    static func text(terminalManager: TerminalManager, slot: PaneSlotID, agentName: String?, provider: String?) -> String {
+        SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
+                                  agentName: agentName ?? "Terminal", tabProvider: provider)
+    }
 
     var body: some View {
         let _ = invalidations.generation
-        Text(SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: fallback))
+        let title = Self.text(terminalManager: terminalManager, slot: slot, agentName: agentName, provider: provider)
+        Text(title).help(title)
     }
 }

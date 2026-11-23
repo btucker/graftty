@@ -7,25 +7,33 @@ import UIKit
 /// The published terminal package reads only viewport rows, so this pages the native
 /// viewport through the loaded scrollback in one main-actor turn and restores it.
 extension TerminalInputContainerView: TerminalScrollback {
+    private var railScrollbar: TerminalScrollbar? {
+        #if GRAFTTY_PAGED_HISTORY
+        return terminalView.surface?.currentScrollbar ?? snapshotScrollView.scrollbar
+        #else
+        return snapshotScrollView.scrollbar
+        #endif
+    }
+
     public func scrollbackRows(limit: Int) -> ScrollbackRows? {
         guard let session = scrollbackSession, let surface = terminalView.surface,
-              let scrollbar = snapshotScrollView.scrollbar, scrollbar.total > 0, scrollbar.len > 0 else { return nil }
+              let scrollbar = railScrollbar, scrollbar.total > 0, scrollbar.len > 0 else { return nil }
         let total = Int(clamping: scrollbar.total), page = Int(clamping: scrollbar.len)
         let first = max(0, total - max(0, limit))
         var rows = [String](repeating: "", count: total - first)
+        defer { surface.scrollToRow(UInt(clamping: scrollbar.offset)) }
         var top = first
         while top < total {
             // scroll_to_row clamps the final page so it ends at the last row.
             let pageTop = max(0, min(top, total - page))
             surface.scrollToRow(UInt(pageTop))
-            guard let text = session.readViewportRowsText() else { break }
+            guard let text = session.readViewportRowsText() else { return nil }
             for (offset, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
                 let row = pageTop + offset
                 if row >= first, row < total { rows[row - first] = String(line) }
             }
             top = pageTop + page
         }
-        surface.scrollToRow(UInt(clamping: scrollbar.offset))
         return ScrollbackRows(rows: rows, firstRow: first, totalRows: total)
     }
 
@@ -33,7 +41,7 @@ extension TerminalInputContainerView: TerminalScrollback {
     /// the top for one read and restores the offset in the same main-actor turn.
     public func firstRowText() -> String? {
         guard let session = scrollbackSession, let surface = terminalView.surface,
-              let scrollbar = snapshotScrollView.scrollbar, scrollbar.total > 0 else { return nil }
+              let scrollbar = railScrollbar, scrollbar.total > 0 else { return nil }
         let atTop = scrollbar.offset == 0
         if !atTop { surface.scrollToRow(0) }
         let text = session.readViewportRowsText()

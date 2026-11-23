@@ -1522,8 +1522,7 @@ struct IPadDetailColumn: View {
             // IPAD-1.31: one emoji wash band from under the toolbar through
             // the top row of tabs; each surface draws its slice.
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
-            .coordinateSpace(name: WorktreeHeaderWash.coordinateSpace)
-            .environment(\.worktreeHeaderWashBand, washBand(for: worktree, host: host))
+            .worktreeHeaderWashBand(washBand(for: worktree, host: host))
             .id("\(host.id)-\(worktree.path)")
         } else {
             ContentUnavailableView(

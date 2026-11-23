@@ -20,6 +20,72 @@ struct SidebarWorktreeContextTests {
                                          lastAgentStop: last, brief: brief, agentProgressTimes: progress))
     }
 
+    @Test("@spec CONTEXT-57.4: If the worktree’s retained report points to a missing pane and exactly one active agent remains, then the application shall use that agent’s pane for the scrollback map and history jumps on Mac and mobile.")
+    func transcriptUsesTheLiveAgentAfterTheReviewerCloses() {
+        let primary = PaneLayoutNode.leaf(sessionName: "primary", title: "Shell", attentionText: nil,
+                                          isBusy: false, attentionSource: nil)
+        let codex = PaneLayoutNode.leaf(sessionName: "codex", title: "Codex", attentionText: nil,
+                                        isBusy: false, attentionSource: nil)
+        let layout = PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: primary, right: codex)
+        let previousAgent = SidebarAgentStop(agentName: "Claude", stoppedAt: .now, paneSlotID: "closed-slot")
+        let failed = AgentSessionInfo(id: "failed", name: "Primary", provider: "codex",
+                                      status: "failed", sessionName: "primary")
+        let running = AgentSessionInfo(id: "running", name: "Codex", provider: "codex",
+                                       status: "running", sessionName: "codex")
+        let closed = AgentSessionInfo(id: "closed", name: "Claude", provider: "claude",
+                                      status: "closed", sessionName: nil, retainedSessionName: "review")
+        let row = WorktreePanes(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+            sidebar: .init(id: "/wt", projectID: "p", paneIDs: ["primary": "failed-slot", "codex": "live-slot"],
+                           lastAgentStop: previousAgent), agents: [failed, running, closed])
+
+        let context = SidebarWorktreeContext(worktree: row)
+        #expect(context.agentPaneID == nil)
+        #expect(context.transcriptPaneID == "codex")
+        #expect(context.item.agentStop == previousAgent)
+        #expect(SidebarWorktreeContext(worktree: row.with(agents: [failed, closed])).transcriptPaneID == nil)
+    }
+
+    @Test("@spec CONTEXT-57.6: While several agent panes are open in a worktree, the application shall offer a scrollback map in each live agent pane, independent of which agent submitted the latest report.")
+    func codexAndClaudeBothGetRailsWhenClaudeLastReported() {
+        let shell = PaneLayoutNode.leaf(sessionName: "shell", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil)
+        let claude = PaneLayoutNode.leaf(sessionName: "claude", title: "Claude", attentionText: nil, isBusy: false, attentionSource: nil)
+        let codex = PaneLayoutNode.leaf(sessionName: "codex", title: "Codex", attentionText: nil, isBusy: true, attentionSource: nil)
+        let layout = PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: shell,
+            right: .split(direction: .horizontal, ratio: 0.5, left: claude, right: codex))
+        let agents = [
+            AgentSessionInfo(id: "a", name: "Claude", provider: "claude", status: "waiting", sessionName: "claude"),
+            AgentSessionInfo(id: "b", name: "Codex", provider: "codex", status: "running", sessionName: "codex"),
+            AgentSessionInfo(id: "c", name: "Failed", provider: "codex", status: "failed", sessionName: "shell"),
+        ]
+        let stop = SidebarAgentStop(agentName: "Claude", stoppedAt: .now, paneSlotID: "claude-slot")
+        let row = WorktreePanes(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+            sidebar: .init(id: "/wt", projectID: "p", paneIDs: ["claude": "claude-slot", "codex": "codex-slot"],
+                           lastAgentStop: stop), agents: agents)
+        let context = SidebarWorktreeContext(worktree: row)
+        #expect(context.transcriptPaneID == "claude")
+        #expect(context.scrollbackPaneIDs == ["claude", "codex"])
+    }
+
+    @Test func launchingAgentPanesKeepTheirRailThroughStartup() {
+        let shell = PaneLayoutNode.leaf(sessionName: "shell", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil)
+        let codex = PaneLayoutNode.leaf(sessionName: "codex", title: "Codex", attentionText: nil, isBusy: false, attentionSource: nil)
+        let layout = PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: shell, right: codex)
+        func row(_ status: String) -> WorktreePanes {
+            WorktreePanes(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+                sidebar: .init(id: "/wt", projectID: "p", paneIDs: ["codex": "codex-slot"]),
+                agents: [AgentSessionInfo(id: "a", name: "Codex", provider: "codex", status: status, sessionName: "codex")])
+        }
+        // The rail's gutter narrows the terminal, so it must not appear only once the provider reports in.
+        for status in ["starting", "running", "waiting", "awaiting-cleanup"] {
+            #expect(SidebarWorktreeContext(worktree: row(status)).scrollbackPaneIDs == ["codex"], "status \(status)")
+        }
+        #expect(SidebarWorktreeContext(worktree: row("starting")).transcriptPaneID == nil)
+        #expect(SidebarWorktreeContext(worktree: row("running")).transcriptPaneID == "codex")
+    }
+
     @Test("@spec LAYOUT-2.191: When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.")
     func routineStopsAreUpdatesNotRequests() {
         for need: String? in [nil, "", " \n"] {

@@ -113,6 +113,69 @@ struct WorktreeContextLifecycleTests {
         #expect(entry.unseenAgentStop?.question == "Second?")
     }
 
+    @Test("@spec CONTEXT-86: If a worktree's primary agent has failed or closed, then the application shall accept retained context from the earliest running agent the user launched there, never from a CLI-added additional agent.")
+    func userLaunchedAgentTakesOverContextFromAnEndedPrimary() {
+        let primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil, status: .failed, isPrimary: true)
+        var additional = ManagedAgent(name: "Reviewer", provider: .codex, parent: nil, isPrimary: false)
+        additional.launchOrigin = .cliAgentAdd
+        var replacement = ManagedAgent(name: "Replacement", provider: .claude, parent: nil, isPrimary: false)
+        replacement.launchOrigin = .userInterface
+        var entry = WorktreeEntry(path: "/wt", branch: "fix")
+        entry.agents = [primary, additional, replacement]
+        var state = AppState(repos: [.init(path: "/repo", displayName: "Repo", worktrees: [entry])])
+
+        state.recordAgentRecap(.init(title: "Reviewer", completed: "Reviewed.", next: "Finish."),
+            callerPath: "/wt", reportedAt: start, callerAgentID: additional.id)
+        #expect(state.repos[0].worktrees[0].brief == nil)
+
+        state.recordAgentRecap(.init(title: "Header wash", completed: "Enlarged it.", next: "Review."),
+            callerPath: "/wt", reportedAt: start.addingTimeInterval(1), callerAgentID: replacement.id)
+        #expect(state.repos[0].worktrees[0].brief?.title == "Header wash")
+        #expect(state.repos[0].worktrees[0].isPrimaryAgent(replacement))
+        #expect(!state.repos[0].worktrees[0].isPrimaryAgent(additional))
+
+        // A live primary keeps ownership.
+        state.repos[0].worktrees[0].agents[0] = ManagedAgent(name: "Primary", provider: .codex, parent: nil, isPrimary: true)
+        #expect(!state.repos[0].worktrees[0].isPrimaryAgent(replacement))
+    }
+
+    @Test func anEndedUserAgentDoesNotHoldContextFromARunningSuccessor() {
+        let primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil, status: .failed, isPrimary: true)
+        let interrupted = ManagedAgent(name: "Interrupted", provider: .codex, parent: nil, status: .interrupted,
+                                       launchOrigin: .userInterface, isPrimary: false)
+        let running = ManagedAgent(name: "Running", provider: .claude, parent: nil,
+                                   launchOrigin: .userInterface, isPrimary: false)
+        var entry = WorktreeEntry(path: "/wt", branch: "fix")
+        entry.agents = [primary, interrupted, running]
+        #expect(entry.isPrimaryAgent(running))
+        #expect(!entry.isPrimaryAgent(interrupted))
+    }
+
+    @Test("@spec AGENT-3.52: While a linked worktree has no drawing, the application shall adopt the first valid drawing any agent in that worktree reports, while only the context owner may replace an existing drawing or change the rest of the retained context.")
+    func anyAgentMayProvideTheFirstDrawing() {
+        let primary = ManagedAgent(name: "Primary", provider: .codex, parent: nil, isPrimary: true)
+        var helper = ManagedAgent(name: "Helper", provider: .claude, parent: nil, isPrimary: false)
+        helper.launchOrigin = .cliAgentAdd
+        var entry = WorktreeEntry(path: "/repo/wt", branch: "fix")
+        entry.agents = [primary, helper]
+        var state = AppState(repos: [.init(path: "/repo", displayName: "Repo",
+            worktrees: [WorktreeEntry(path: "/repo", branch: "main"), entry])])
+        let first = "<svg viewBox='0 0 96 64'><circle cx='48' cy='32' r='20' fill='primary'/></svg>"
+        let second = first.replacingOccurrences(of: "primary", with: "accent")
+
+        var update = WorktreeContextUpdate(purpose: .init(title: "Helper purpose", context: "Not the owner."))
+        update.icon = first
+        state.recordAgentRecap(.init(update: update), callerPath: "/repo/wt", reportedAt: start, callerAgentID: helper.id)
+        #expect(state.repos[0].worktrees[1].drawing?.svg == first)
+        #expect(state.repos[0].worktrees[1].brief == nil)
+
+        var replacement = WorktreeContextUpdate(purpose: .init(title: "Helper again", context: "Still not the owner."))
+        replacement.icon = second
+        state.recordAgentRecap(.init(update: replacement), callerPath: "/repo/wt", reportedAt: start.addingTimeInterval(1),
+            callerAgentID: helper.id)
+        #expect(state.repos[0].worktrees[1].drawing?.svg == first)
+    }
+
     @Test func legacyAndSparseDrawingsUseTheSameClock() {
         var state = AppState(repos: [.init(path: "/repo", displayName: "Repo", worktrees: [.init(path: "/wt", branch: "fix")])])
         let first = "<svg viewBox='0 0 96 64'><circle cx='48' cy='32' r='20' fill='primary'/></svg>"
