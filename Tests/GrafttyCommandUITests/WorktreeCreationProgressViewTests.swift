@@ -33,5 +33,6 @@ struct WorktreeCreationProgressViewTests {
         }
         #expect(progress.output == "Saved hook output.")
     }
+
 }
 #endif

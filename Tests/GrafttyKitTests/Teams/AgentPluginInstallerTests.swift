@@ -8,8 +8,8 @@ struct AgentPluginInstallerTests {
     @Test("Plugin providers are the hook runtimes, so every runtime has exactly one plugin provider and display name.")
     func pluginProvidersAreHookRuntimes() {
         let providers: [AgentPluginProvider] = TeamHookRuntime.allCases
-        #expect(providers.map(\.rawValue) == ["codex", "claude"])
-        #expect(providers.map(\.displayName) == ["Codex", "Claude"])
+        #expect(providers.map(\.rawValue) == ["codex", "claude", "antigravity"])
+        #expect(providers.map(\.displayName) == ["Codex", "Claude", "Antigravity"])
     }
 
     @Test("@spec AGENT-6.40: When a development build's bundled plugin content changes without a new app build number, the application shall give the plugin a distinct cache version.")
@@ -1034,6 +1034,220 @@ struct AgentPluginInstallerTests {
         #expect(report.summary.contains("4 of 5"))
         #expect(report.summary.contains("Codex"))
     }
+
+    @Test("""
+    @spec AGENT-6.170: When Graftty automatically installs or refreshes the Antigravity plugin, the application shall query `agy plugin list --json`, install the bundled plugin with the current build version and materialized hooks and skills when missing or enabled, preserve an explicitly disabled plugin, skip silently when `agy` is not found, and report inventory or installation failures as retryable errors.
+    """)
+    func autoInstallAntigravityInstallsRefreshesAndRespectsOptOuts() async throws {
+        let installer = AgentPluginInstaller(
+            grafttyCLIPath: "/Applications/Graftty.app/Contents/Helpers/graftty",
+            pluginVersion: "100.60.0"
+        )
+
+        for inventory in [
+            "[]",
+            "null",
+            #"[{"name":"graftty","enabled":true,"version":"1.0.0"}]"#,
+            #"[{"name":"other","enabled":false,"version":"1.0.0"}]"#,
+        ] {
+            let executor = AntigravityPluginCLIExecutor(inventory: inventory)
+            let outcome = try await installer.autoInstallAntigravity(executor: executor, timeout: .seconds(5))
+            #expect(outcome == .installed)
+            let calls = await executor.invocations()
+            try #require(calls.count == 2)
+            #expect(calls[0] == Invocation(command: "agy", arguments: ["plugin", "list", "--json"]))
+            #expect(calls[1].command == "agy")
+            #expect(calls[1].arguments.prefix(2) == ["plugin", "install"])
+            #expect(await executor.capturedManifestVersion() == "100.60.0")
+            let hooks = try #require(await executor.capturedHooksJSON())
+            #expect(hooks.contains("/Applications/Graftty.app/Contents/Helpers/graftty team hook"))
+            #expect(await executor.capturedSkillExists())
+        }
+
+        let disabled = AntigravityPluginCLIExecutor(
+            inventory: #"[{"name":"graftty","enabled":false,"version":"1.0.0"}]"#
+        )
+        #expect(try await installer.autoInstallAntigravity(executor: disabled, timeout: .seconds(5)) == .optedOut)
+        #expect(await disabled.invocations() == [Invocation(command: "agy", arguments: ["plugin", "list", "--json"])])
+
+        // GNU env names itself by path, so a Linux host reports a missing CLI
+        // as exit 127 rather than notFound (#666). Graftty's own `agy` wrapper
+        // also exits 127 when no real `agy` is on PATH.
+        for inventory in ["missing-cli", "missing-cli-gnu-env", "missing-cli-wrapper"] {
+            let missing = AntigravityPluginCLIExecutor(inventory: inventory)
+            #expect(try await installer.autoInstallAntigravity(executor: missing, timeout: .seconds(5)) == .cliNotFound)
+        }
+
+        for brokenInventory in ["not JSON", "{}", #"[{"name":"graftty"}]"#, "error"] {
+            let broken = AntigravityPluginCLIExecutor(inventory: brokenInventory)
+            await #expect(throws: (any Error).self) {
+                try await installer.autoInstallAntigravity(executor: broken, timeout: .seconds(5))
+            }
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.172: When Graftty inspects provider plugin status, the application shall query each provider's native inventory and report installed, disabled, notInstalled, cliNotFound, or error independently per provider, and shall support installing a single provider without affecting other providers.
+    """)
+    func inspectsProviderStatusesAndInstallsSingleProvider() async throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-provider-status-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(
+            grafttyCLIPath: "/Applications/Graftty.app/Contents/Helpers/graftty",
+            pluginVersion: "100.60.0",
+            codexConfigurationURL: destination.appendingPathComponent("config.toml"),
+            claudeSettingsURL: destination.appendingPathComponent("claude-settings.json")
+        )
+
+        let mixed = ProviderStatusCLIExecutor(inventories: [
+            "codex": .output(Self.currentCodexPlugin),
+            "claude": .output(#"[{"id":"graftty@graftty","scope":"user","enabled":false}]"#),
+            "agy": .missing,
+        ])
+        let statuses = await installer.providerStatuses(executor: mixed, timeout: .seconds(5))
+        #expect(statuses[.codex] == .installed)
+        #expect(statuses[.claude] == .disabled)
+        #expect(statuses[.antigravity] == .cliNotFound)
+
+        let secondary = ProviderStatusCLIExecutor(inventories: [
+            "codex": .output(#"{"installed":[]}"#),
+            "claude": .failure("boom"),
+            "agy": .output(#"[{"name":"graftty","enabled":true}]"#),
+        ])
+        let secondStatuses = await installer.providerStatuses(executor: secondary, timeout: .seconds(5))
+        #expect(secondStatuses[.codex] == .notInstalled)
+        if case .error(let detail) = secondStatuses[.claude] {
+            #expect(detail.contains("boom"))
+        } else {
+            Issue.record("Expected Claude error status, got \(String(describing: secondStatuses[.claude]))")
+        }
+        #expect(secondStatuses[.antigravity] == .installed)
+
+        let gnuEnv = ProviderStatusCLIExecutor(inventories: [
+            "codex": .missingUnderGNUEnv, "claude": .missingUnderGNUEnv, "agy": .missingUnderGNUEnv,
+        ])
+        let gnuEnvStatuses = await installer.providerStatuses(executor: gnuEnv, timeout: .seconds(5))
+        #expect(gnuEnvStatuses == [.codex: .cliNotFound, .claude: .cliNotFound, .antigravity: .cliNotFound])
+
+        // Single-provider install touches only the selected provider.
+        let singleClaude = InventoryPluginCLIExecutor(codex: "missing-cli", claude: Self.currentClaudePlugin)
+        let claudeReport = await installer.install(
+            provider: .claude,
+            destinationRoot: destination,
+            executor: singleClaude,
+            timeout: .seconds(5)
+        )
+        #expect(claudeReport.succeeded)
+        let claudeMutations = await singleClaude.mutations()
+        #expect(!claudeMutations.isEmpty)
+        #expect(claudeMutations.allSatisfy { $0.command == "claude" })
+
+        let singleAgy = AntigravityPluginCLIExecutor(inventory: "[]")
+        let agyReport = await installer.install(
+            provider: .antigravity,
+            destinationRoot: destination,
+            executor: singleAgy,
+            timeout: .seconds(5)
+        )
+        #expect(agyReport.succeeded)
+        #expect(await singleAgy.invocations().map(\.command) == ["agy"])
+
+        let script = try installer.manualCommandsScript(destinationRoot: destination)
+        #expect(script.contains("codex plugin"))
+        #expect(script.contains("claude plugin"))
+        #expect(script.contains("agent install-antigravity"))
+    }
+}
+
+private extension CLIError {
+    /// What `CLIRunner` throws on Linux for a command that is not installed.
+    static func missingUnderGNUEnv(_ command: String) -> CLIError {
+        .nonZeroExit(
+            command: command, exitCode: 127,
+            stderr: "/usr/bin/env: '\(command)': No such file or directory\n"
+        )
+    }
+}
+
+private actor ProviderStatusCLIExecutor: CLIExecutor {
+    enum Response: Sendable {
+        case output(String)
+        case missing
+        case missingUnderGNUEnv
+        case failure(String)
+    }
+
+    private let inventories: [String: Response]
+
+    init(inventories: [String: Response]) {
+        self.inventories = inventories
+    }
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        switch inventories[command] ?? .missing {
+        case .output(let stdout):
+            return CLIOutput(stdout: stdout, stderr: "", exitCode: 0)
+        case .missing:
+            throw CLIError.notFound(command: command)
+        case .missingUnderGNUEnv:
+            throw CLIError.missingUnderGNUEnv(command)
+        case .failure(let stderr):
+            throw CLIError.nonZeroExit(command: command, exitCode: 1, stderr: stderr)
+        }
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory)
+    }
+}
+
+private actor AntigravityPluginCLIExecutor: CLIExecutor {
+    private let inventory: String
+    private var recorded: [Invocation] = []
+    private var manifestVersion: String?
+    private var hooksJSON: String?
+    private var skillExists = false
+
+    init(inventory: String) {
+        self.inventory = inventory
+    }
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        recorded.append(Invocation(command: command, arguments: args))
+        if args == ["plugin", "list", "--json"] {
+            if inventory == "missing-cli" { throw CLIError.notFound(command: command) }
+            if inventory == "missing-cli-gnu-env" { throw CLIError.missingUnderGNUEnv(command) }
+            if inventory == "missing-cli-wrapper" {
+                throw CLIError.nonZeroExit(command: command, exitCode: 127,
+                    stderr: "graftty: unable to find real agy outside /wrappers/bin\n")
+            }
+            if inventory == "error" { throw CLIError.nonZeroExit(command: command, exitCode: 1, stderr: "boom") }
+            return CLIOutput(stdout: inventory, stderr: "", exitCode: 0)
+        }
+        if args.prefix(2) == ["plugin", "install"], let path = args.dropFirst(2).first {
+            let root = URL(fileURLWithPath: path, isDirectory: true)
+            if let data = try? Data(contentsOf: root.appendingPathComponent("plugin.json")),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                manifestVersion = json["version"] as? String
+            }
+            hooksJSON = try? String(contentsOf: root.appendingPathComponent("hooks.json"), encoding: .utf8)
+            skillExists = FileManager.default.fileExists(
+                atPath: root.appendingPathComponent("skills/graftty/SKILL.md").path
+            )
+            return CLIOutput(stdout: "installed", stderr: "", exitCode: 0)
+        }
+        throw CLIError.nonZeroExit(command: command, exitCode: 1, stderr: "unexpected command")
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory)
+    }
+
+    func invocations() -> [Invocation] { recorded }
+    func capturedManifestVersion() -> String? { manifestVersion }
+    func capturedHooksJSON() -> String? { hooksJSON }
+    func capturedSkillExists() -> Bool { skillExists }
 }
 
 private struct Invocation: Equatable, Sendable {

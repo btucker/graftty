@@ -1,0 +1,22 @@
+{
+  "graftty-session": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "graftty team hook antigravity session-start"
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "graftty team hook antigravity user-prompt-submit"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "graftty team hook antigravity stop"
+      }
+    ]
+  }
+}

@@ -15,6 +15,7 @@ final class WorktreeAutoSleepController {
     private weak var terminalManager: TerminalManager?
     private var timer: Timer?
     private var state: (() -> AppState)?
+    private var isPresented: (UUID) -> Bool = { _ in false }
     private var windows: [String: WorktreeSleepActivityWindow] = [:]
     private let jobTracker = WorktreeSleepJobTracker()
     private var providerEvidence: [String: (sessionID: String, activity: ProviderSleepActivity, uptime: TimeInterval)] = [:]
@@ -35,8 +36,9 @@ final class WorktreeAutoSleepController {
         )
     }
 
-    func start(state: @escaping () -> AppState) {
+    func start(isPresented: @escaping (UUID) -> Bool, state: @escaping () -> AppState) {
         self.state = state
+        self.isPresented = isPresented
         guardian.recoverPreviousInstances()
         guardian.start()
         timer?.invalidate()
@@ -151,6 +153,7 @@ final class WorktreeAutoSleepController {
               UserDefaults.standard.bool(forKey: SettingsKeys.worktreeAutoSleep),
               !WorktreeSleepPreferences.keepsAwake(worktree.path),
               !unknownProviderPaths.contains(worktree.path),
+              !isPresented(worktree.id),
               state.selectedWorktreePath != worktree.path else { return false }
         for pane in worktree.splitTree.allLeaves {
             guard let session = manager.zmxSessionName(for: pane), manager.isShellReady(pane),

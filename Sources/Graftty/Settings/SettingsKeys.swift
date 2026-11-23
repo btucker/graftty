@@ -10,6 +10,7 @@ enum SettingsKeys {
     static let agentPluginInstallOfferRevision = "agentPluginInstallOfferRevision"
     static let agentPluginInstalledRevision = "agentPluginInstalledRevision"
     static let agentPluginInstalledBuildVersion = "agentPluginInstalledBuildVersion"
+    static let antigravityPluginInstalledBuildVersion = "antigravityPluginInstalledBuildVersion"
     static let channelsEnabled           = "channelsEnabled"
     static let teamEventRoutingPreferences = "teamEventRoutingPreferences"
     static let teamPrompt                = "teamPrompt"

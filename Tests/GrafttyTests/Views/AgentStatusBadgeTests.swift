@@ -6,18 +6,24 @@ import GrafttyCommandUI
 @MainActor
 @Suite(.serialized)
 struct AgentStatusBadgeTests {
-    @Test("@spec LAYOUT-2.187: While an agent is running without a failure or input request, its shared tab and sidebar status badge shall display an indeterminate progress indicator; waiting, completed, failed, and disconnected agents shall display their corresponding static status symbols.")
-    func runningBadgeUsesProgress() async throws {
-        for (status, needsInput, failure, expected) in [
-            ("running", false, nil as String?, true),
-            ("running", true, nil, false),
-            ("running", false, "Launch failed", false),
-            ("awaiting-cleanup", false, nil, false),
-            ("closed", false, nil, false),
-            ("failed", false, nil, false),
-            ("disconnected", false, nil, false)
+    @Test("@spec LAYOUT-2.187: While an agent tab is visible, the application shall omit the running spinner and display static indicators for idle, waiting, completed, failed, or disconnected agents.")
+    func tabBadgeOmitsProgress() async throws {
+        for (status, busy, needsInput, failure, disconnected, expectsIcon) in [
+            ("running", true as Bool?, false, nil as String?, false, false),
+            ("running", nil, false, nil, false, false),
+            ("running", false, false, nil, false, true),
+            ("running", true, true, nil, false, true),
+            ("running", true, false, "Launch failed", false, true),
+            ("running", true, false, nil, true, true),
+            ("awaiting-cleanup", nil, false, nil, false, true),
+            ("closed", nil, false, nil, false, true),
+            ("failed", nil, false, nil, false, true),
+            ("disconnected", nil, false, nil, false, true)
         ] {
-            let hosted = NSHostingView(rootView: AgentStatusBadge(status: status, needsInput: needsInput, failure: failure))
+            let hosted = NSHostingView(rootView: HStack {
+                AgentStatusBadge(status: status, needsInput: needsInput, failure: failure,
+                    disconnected: disconnected, isBusy: busy)
+            }.fixedSize())
             let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 80, height: 40),
                 styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = hosted
@@ -25,9 +31,8 @@ struct AgentStatusBadgeTests {
             defer { window.orderOut(nil); window.contentView = nil }
             try await Task.sleep(for: .milliseconds(50))
             hosted.layoutSubtreeIfNeeded()
-            let indicator = progress(in: hosted)
-            #expect((indicator != nil) == expected, "Status: \(status), input: \(needsInput), failure: \(failure ?? "none")")
-            if let indicator { #expect(indicator.isIndeterminate) }
+            #expect(progress(in: hosted) == nil)
+            #expect((hosted.fittingSize.width > 0) == expectsIcon)
         }
     }
 

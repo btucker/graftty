@@ -28,6 +28,10 @@ public extension HeadlessHostRuntime {
             presenceRecords: { (try? storage.listAll()) ?? [] },
             agentReachability: { TeamAgentReachability.isReachableForNativeDelivery($0, liveness: liveness) },
             eventLog: nil, replyBridge: bridge)
+        let antigravity = AntigravityDeliveryService(inbox: inbox,
+            presenceRecords: { (try? storage.listAll()) ?? [] },
+            agentReachability: { TeamAgentReachability.isReachableForNativeDelivery($0, liveness: liveness) },
+            eventLog: nil)
         deliveryTask = Task { [weak self] in
             defer { Task { await bridge.close() } }
             while !Task.isCancelled {
@@ -40,6 +44,7 @@ public extension HeadlessHostRuntime {
                     guard let team = records.first?.teamID else { continue }
                     await codex.onMessageArrival(team: team, worktree: path)
                     await claude.onMessageArrival(team: team, worktree: path)
+                    await antigravity.onMessageArrival(team: team, worktree: path)
                 }
                 try? await Task.sleep(for: .seconds(1))
             }

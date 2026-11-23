@@ -15,6 +15,10 @@ public enum SSHChannelTypeNames {
     public static let chromeTabs = "chrome-tabs-v1@graftty.dev"
     public static let team = "team@graftty.dev"
 
+    /// Chat for one agent tab: a snapshot, then live updates, with the
+    /// viewer's submissions and answers going the other way.
+    public static let agentChat = "agent-chat-v1@graftty.dev"
+
     public static let terminalPaged = "terminal-paged-v1@graftty.dev"
     /// Server-pushed snapshots of `[WorktreePanes]`. One channel per
     /// `RemoteHostConnection`.

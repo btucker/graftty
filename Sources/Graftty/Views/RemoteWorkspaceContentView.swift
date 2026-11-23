@@ -10,8 +10,9 @@ struct RemoteWorkspaceContentView: View {
     let worktree: WorktreePanes
     let identity: RemoteMacIdentity
     let focused: PaneSlotID?
-    let onFocus: (PaneSlotID) -> Void
-    var agentScrollbackMap: AgentScrollbackMap?
+    let onFocus: (PaneSlotID?) -> Void
+    let onPaneCommandTargetChange: (PaneSlotID?) -> Void
+    var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
     var requestedAgent: String? = nil
     var consumeAgentRequest: () -> Void = {}
@@ -21,12 +22,19 @@ struct RemoteWorkspaceContentView: View {
     var conversationRequest: @MainActor (String, AgentConversationAction) async throws -> WorktreeManagementResponse = { _, _ in
         .error(code: "unavailable", message: "The host connection is unavailable.", forceAllowed: false, shortStatus: nil)
     }
+    /// Chat for one of this worktree's agents, through the host connection.
+    var chatConnection: @MainActor (String) -> AgentChatConnection? = { _ in nil }
+    @State private var chatModels = AgentChatModelStore<String>()
     @State private var zoomed: PaneSlotID?
     @State private var workspace: WorkspaceLayout<String>?
     @State private var drawerResizeStart: Double?
     @State private var pendingAgentSession: String?
 
     private var layout: WorkspaceLayout<String> { workspace ?? .initial(for: worktree) }
+    private var paneCommandTarget: PaneSlotID? {
+        guard let session = layout.focusedSession, !showsNonTerminalContent(session) else { return nil }
+        return slot(session)
+    }
     private func slot(_ session: String) -> PaneSlotID? {
         viewer.existingTerminalID(identity: identity, worktreePath: worktree.path, sessionName: session)
             ?? worktree.agents?.first(where: { $0.presentationSessionName == session })?.retainedSlotID
@@ -35,11 +43,30 @@ struct RemoteWorkspaceContentView: View {
     private func title(_ session: String) -> String {
         worktree.workspaceSessionTitle(session)
     }
+    /// The agent whose conversation the host can show in Chat for this tab.
+    private func chatAgent(_ session: String) -> AgentSessionInfo? {
+        worktree.chatAgent(session: session)
+    }
+    private func showsChat(_ session: String) -> Bool { chatAgent(session) != nil && layout.showsChat(session) }
+    private func showsNonTerminalContent(_ session: String) -> Bool {
+        showsChat(session) || worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true
+    }
+    /// AGENT-6.187: only this viewer's saved layout changes. Nothing is sent to the host.
+    private func setView(_ session: String, chat: Bool) {
+        workspace?.setShowsChat(chat, for: session)
+        select(session)
+    }
+    private func chatContent(_ session: String) -> AnyView? {
+        guard showsChat(session), let agent = chatAgent(session), let connection = chatConnection(agent.id) else { return nil }
+        return AnyView(AgentChatView(model: chatModels.model(for: session), tabID: "\(agent.id)/\(agent.assignmentID ?? "")", agentName: agent.name,
+                                     connection: connection, showTerminal: { setView(session, chat: false) })
+            .foregroundStyle(terminalManager.theme.foreground).tint(terminalManager.theme.foreground).background(terminalManager.theme.background))
+    }
     private func select(_ session: String) {
         zoomed = nil
         workspace?.select(session)
-        if worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
-            terminalManager.clearFocus()
+        if showsNonTerminalContent(session) {
+            onFocus(nil)
         } else if let id = slot(session) { onFocus(id) }
     }
 
@@ -107,6 +134,9 @@ struct RemoteWorkspaceContentView: View {
             viewer.clearWorkspaceVisibility(identity: identity, worktreePath: worktree.path)
         }
         .onChange(of: requestedAgent) { _, _ in showRequestedAgent() }
+        .onChange(of: paneCommandTarget, initial: true) { _, pane in
+            onPaneCommandTargetChange(pane)
+        }
         .onChange(of: worktree) { _, _ in reconcile(); showNewAgent(); viewer.workspaceCommandHandler = handleCommand }
         .onChange(of: focused) { _, id in
             revealFocused()
@@ -161,7 +191,7 @@ struct RemoteWorkspaceContentView: View {
     private func revealFocused() {
         if let selected = layout.focusedSession,
            worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true {
-            terminalManager.clearFocus()
+            onFocus(nil)
             zoomed = nil
             return
         }
@@ -202,13 +232,16 @@ struct RemoteWorkspaceContentView: View {
             }), focusedPaneSlotID: focused, theme: terminalManager.theme,
             onFocusTerminal: { id in
                 if let session = layout.sessions.first(where: { slot($0) == id }) { select(session) }
-            }, agentScrollbackMap: agentScrollbackMap,
+            }, agentScrollbackMaps: agentScrollbackMaps,
             paneHeader: headers ? { id in AnyView(header(id)) } : nil,
             paneBanner: headers ? { id in
                 guard let group = layout.groups.first(where: { slot($0.selected) == id }), group.id == inputRequestGroupID else { return nil }
                 return AnyView(WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: select))
             } : nil,
             paneContent: { id in
+                if let session = layout.sessions.first(where: { slot($0) == id }), let chat = chatContent(session) {
+                    return chat
+                }
                 guard let agent = worktree.agents?.first(where: { $0.presentationSessionName.flatMap(slot) == id && $0.isCompleted }) else { return nil }
                 return AnyView(AgentConversationView(agent: agent) { action in try await conversationRequest(agent.id, action) })
             },
@@ -270,9 +303,8 @@ struct RemoteWorkspaceContentView: View {
 
     @ViewBuilder private func header(_ id: PaneSlotID) -> some View {
         if let group = layout.groups.first(where: { slot($0.selected) == id }) {
-          VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack {
+          HStack(spacing: 0) {
+            AgentTabStrip(spacing: 8) {
                     ForEach(group.sessions, id: \.self) { session in
                         Button { select(session) } label: {
                             HStack(spacing: 6) {
@@ -286,9 +318,9 @@ struct RemoteWorkspaceContentView: View {
                                 } else {
                                     Image(systemName: "terminal")
                                 }
-                                Text(title(session)).lineLimit(1)
+                                Text(title(session)).lineLimit(1).truncationMode(.middle).help(title(session))
                                     .fontWeight(group.selected == session ? .medium : .regular)
-                            }.padding(.horizontal, 12).padding(.vertical, 9)
+                            }.worktreeHeaderWashText().padding(.horizontal, 12).padding(.vertical, 9)
                                 .foregroundStyle(terminalManager.theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                                 .overlay(alignment: .bottom) {
                                     Rectangle().fill(group.selected == session ? terminalManager.theme.foreground.opacity(0.55) : .clear)
@@ -312,7 +344,7 @@ struct RemoteWorkspaceContentView: View {
                                     Button("Close tab") {
                                         workspace?.remove(session)
                                         if let next = layout.focusedSession { select(next) }
-                                        else { terminalManager.clearFocus() }
+                                        else { onFocus(nil) }
                                     }
                                 }
                                 if worktree.agents?.contains(where: { $0.presentationSessionName == session }) != true {
@@ -320,15 +352,19 @@ struct RemoteWorkspaceContentView: View {
                                 }
                             }
                     }
-                    newAgentMenu.menuStyle(.borderlessButton)
-                }
-            }.font(.system(size: 13))
+                    newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText().agentTabStripFixed()
+            }
+            if chatAgent(group.selected) != nil {
+                AgentChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
+                                                   set: { setView(group.selected, chat: $0) }))
+                    .controlSize(.small)
+            }
+          }.font(.system(size: 13))
                 .background { terminalManager.theme.background.worktreeHeaderWash() }
                 .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
                     guard let session = sessions.first?.session, layout.sessions.contains(session) else { return false }
                     workspace?.move(session, to: group.id); select(session); return true
                 }
-          }
         }
     }
     private var inputRequestGroupID: UUID? {
@@ -356,7 +392,8 @@ struct RemoteWorkspaceContentView: View {
 
     private func reconcile() {
         workspace?.reconcile(with: worktree, preservingSelection: true)
+        chatModels.prune(keeping: Set(layout.sessions))
         reconcileZoom()
-        if let selected = layout.focusedSession, worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true { terminalManager.clearFocus() }
+        if let selected = layout.focusedSession, showsNonTerminalContent(selected) { onFocus(nil) }
     }
 }

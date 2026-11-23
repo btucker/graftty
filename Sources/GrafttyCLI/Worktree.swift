@@ -69,7 +69,7 @@ struct WorktreeAdd: ParsableCommand {
     @Flag(name: .long, help: "Check out an existing local branch instead of creating a new branch")
     var existing: Bool = false
 
-    @Option(name: .long, help: "Agent runtime to launch: codex or claude (default: the destination host's default agent)")
+    @Option(name: .long, help: "Agent runtime to launch: codex, claude, or antigravity (default: the destination host's default agent)")
     var agent: String?
 
     @Option(name: .long, help: "Initial task for the selected or default agent")
@@ -629,7 +629,7 @@ enum AgentLaunchFlags {
             throw ValidationError("--prompt and --prompt-stdin require --agent")
         }
         if let agent, TeamHookRuntime(rawValue: agent) == nil {
-            throw ValidationError("--agent must be one of: codex, claude")
+            throw ValidationError("--agent must be one of: codex, claude, antigravity")
         }
     }
 }

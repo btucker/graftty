@@ -4,13 +4,16 @@ extension LinuxHostScripts {
     /// Keep discovery in the user's interactive login environment, without
     /// allowing profile output to become PATH or installer output to become JSON.
     static func ensureAgentCLI(provider: TeamHookRuntime, staging: String) -> String {
-        let name = provider.rawValue
+        let name = provider.executable
         let url: String
         let invocation: String
         switch provider {
         case .claude:
             url = "https://claude.ai/install.sh"
             invocation = "/bin/bash \"$agent_work/installer\" stable"
+        case .antigravity:
+            url = "https://antigravity.google/cli/install.sh"
+            invocation = "/bin/bash \"$agent_work/installer\""
         case .codex:
             url = "https://chatgpt.com/codex/install.sh"
             invocation = "/usr/bin/env CODEX_NON_INTERACTIVE=true CODEX_INSTALL_DIR=\"$HOME/.local/bin\" /bin/sh \"$agent_work/installer\""

@@ -99,8 +99,9 @@ extension GrafttyApp {
         var seen: Set<TeamDeliveryPresenceWorktreeKey> = []
         var keys: [TeamDeliveryPresenceWorktreeKey] = []
         for record in records {
-            guard record.runtime == .codex
-                    || (record.runtime == .claude && record.transport != nil) else {
+            // Codex finds its app-server in session storage. Claude and
+            // Antigravity deliver natively only through a recorded transport.
+            guard record.runtime == .codex || record.transport != nil else {
                 continue
             }
             let key = TeamDeliveryPresenceWorktreeKey(

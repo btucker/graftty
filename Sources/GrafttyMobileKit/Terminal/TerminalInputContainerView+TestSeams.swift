@@ -19,8 +19,7 @@ extension TerminalInputContainerView {
     }
 
     /// Internal-visibility access for unit tests: terminal pan recognizers
-    /// accept indirect pointer scroll input while selection gestures remain
-    /// owned by `selectionPanRecognizer`.
+    /// accept indirect pointer scroll input.
     var terminalPanRecognizersAllowIndirectScrollingForTesting: Bool {
         let pans = terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }
             .filter { !Self.isPointerDragSelection($0) } ?? []
@@ -28,16 +27,6 @@ extension TerminalInputContainerView {
             $0.allowedScrollTypesMask.contains(.continuous)
                 && $0.allowedScrollTypesMask.contains(.discrete)
         }
-    }
-
-    /// Internal-visibility access for unit tests: invokes `enterSelectionMode`.
-    func enterSelectionModeForTesting() {
-        enterSelectionMode()
-    }
-
-    /// Internal-visibility access for unit tests: invokes `exitSelectionMode`.
-    func exitSelectionModeForTesting() {
-        exitSelectionMode()
     }
 
     /// Internal-visibility access for unit tests: invokes the paste menu
@@ -59,19 +48,6 @@ extension TerminalInputContainerView {
         )
     }
 
-    /// Internal-visibility access for unit tests: proves the independent
-    /// selection-menu interaction cannot consume a pending Paste refocus.
-    func dismissSelectionMenuForTesting(animator: any UIEditMenuInteractionAnimating) {
-        editMenuInteraction(
-            selectionMenu,
-            willDismissMenuFor: UIEditMenuConfiguration(
-                identifier: "selection" as AnyHashable,
-                sourcePoint: .zero
-            ),
-            animator: animator
-        )
-    }
-
     /// Internal-visibility access for unit tests: simulates the any-touch
     /// observer's `touchesBegan` callback without a real UIKit touch event.
     func simulateAnyTouchBeganForTesting(changesCursor: Bool = false) {
@@ -81,6 +57,17 @@ extension TerminalInputContainerView {
     func longPressMenuActionTitlesForTesting(hasPasteContent: Bool) -> [String] {
         longPressMenuForTesting(hasPasteContent: hasPasteContent)
             .children.compactMap { ($0 as? UIAction)?.title }
+    }
+
+    /// Titles of the menu shown while text is selected, built for the
+    /// terminal's current touch selection.
+    func selectionMenuActionTitlesForTesting(hasPasteContent: Bool) -> [String] {
+        selectionMenuElements(
+            for: TerminalTouchSelectionMenuContext(
+                sourcePoint: lastLongPressPoint, selectedText: terminalView.touchSelectionText ?? ""
+            ),
+            hasPasteContent: hasPasteContent
+        ).compactMap { ($0 as? UIAction)?.title }
     }
 
     func longPressMenuForTesting(hasPasteContent: Bool) -> UIMenu {

@@ -93,10 +93,18 @@ public extension AppState {
 
     /// Publishes retained context without marking the agent stopped.
     mutating func recordAgentRecap(_ recap: AttentionRecap, callerPath: String, reportedAt: Date, callerAgentID: String? = nil) {
-        guard ownsContext(callerAgentID: callerAgentID, path: callerPath), let index = indices(forWorktreePath: callerPath) else { return }
-        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos)
-        adoptDrawing(from: recap, callerPath: callerPath, reportedAt: reportedAt)
+        guard let index = indices(forWorktreePath: callerPath) else { return }
+        let owns = ownsContext(callerAgentID: callerAgentID, path: callerPath)
+        if owns { SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos) }
+        if mayAdoptDrawing(owns: owns, path: callerPath) { adoptDrawing(from: recap, callerPath: callerPath, reportedAt: reportedAt) }
+        guard owns else { return }
         repos[index.repo].worktrees[index.worktree].recordAgentRecap(recap.withoutDrawing, at: reportedAt)
+    }
+
+    /// @spec AGENT-3.52
+    /// While a linked worktree has no drawing, the application shall adopt the first valid drawing any agent in that worktree reports, while only the context owner may replace an existing drawing or change the rest of the retained context.
+    private func mayAdoptDrawing(owns: Bool, path: String) -> Bool {
+        owns || worktree(forPath: path)?.drawing == nil
     }
 
     private func ownsContext(callerAgentID: String?, path: String) -> Bool {
@@ -148,9 +156,10 @@ public extension AppState {
             if previous.timestamp == stop.timestamp, previous.providerSessionKey == stop.providerSessionKey { return nil }
         }
         if worktree?.unreadAgentNotices.contains(where: { $0.occurrence == stop.occurrence }) == true { return nil }
-        if ownsContext(callerAgentID: callerAgentID, path: callerPath) {
-            SidebarHostNavigation.adoptReportedEmoji(effectiveRecap, worktreePath: callerPath, in: &repos)
-            if !isConsumed, let recap { adoptDrawing(from: recap, callerPath: callerPath, reportedAt: recapReportedAt ?? stoppedAt) }
+        let owns = ownsContext(callerAgentID: callerAgentID, path: callerPath)
+        if owns { SidebarHostNavigation.adoptReportedEmoji(effectiveRecap, worktreePath: callerPath, in: &repos) }
+        if !isConsumed, let recap, mayAdoptDrawing(owns: owns, path: callerPath) {
+            adoptDrawing(from: recap, callerPath: callerPath, reportedAt: recapReportedAt ?? stoppedAt)
         }
         guard let index = indices(forWorktreePath: callerPath) else { return nil }
         if let effectiveRecap {

@@ -302,10 +302,55 @@ final class WorktreeContextInteractionTests: XCTestCase {
 }
 
 final class ScrollbackInteractionTests: XCTestCase {
+    /// @spec CONTEXT-36.1: While the iPhone scrollback rail or its message previews are visible, the application shall use the terminal's light or dark appearance for their backgrounds, text and message marks.
+    func testRailAndPreviewsFollowTerminalAppearance() throws {
+        let app = XCUIApplication()
+        for dark in [true, false] {
+            app.launchArguments = ["--transcript-map-fixture"] + (dark ? [] : ["--light-terminal"])
+            app.launch()
+            defer { app.terminate() }
+            let map = app.descendants(matching: .any)["terminal.scrollbackMap"]
+            XCTAssertTrue(map.waitForExistence(timeout: 5))
+            let frame = map.frame
+            let idle = app.screenshot().image
+            let markY = frame.minY + 6 + 0.23 * (frame.height - 12)
+            let input = try rgb(in: idle, x: frame.maxX - 4, y: markY)
+            let reply = try rgb(in: idle, x: frame.maxX - 4, y: frame.midY)
+            let backing = try rgb(in: idle, x: frame.maxX - 2, y: frame.minY + 20)
+            XCTAssertGreaterThan(input.r, input.g)
+            XCTAssertGreaterThan(reply.b, reply.r)
+            XCTAssertEqual(input.r > 200, dark, "User mark brightness")
+            XCTAssertEqual(reply.b > 200, dark, "Reply mark brightness")
+            XCTAssertEqual(backing.r < 128, dark, "Idle rail background")
+
+            map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+            let preview = app.screenshot()
+            let attachment = XCTAttachment(screenshot: preview)
+            attachment.name = dark ? "Dark terminal on a light iPhone" : "Light terminal on a dark iPhone"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let card = try rgb(in: preview.image, x: frame.maxX - 60, y: markY)
+            XCTAssertEqual(card.r < 128, dark, "Message card background")
+        }
+    }
+
+    private func rgb(in image: UIImage, x: CGFloat, y: CGFloat) throws -> (r: UInt8, g: UInt8, b: UInt8) {
+        let rect = CGRect(x: x * image.scale, y: y * image.scale, width: 1, height: 1)
+        let sample = try XCTUnwrap(image.cgImage?.cropping(to: rect))
+        var pixel = [UInt8](repeating: 0, count: 4)
+        try pixel.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                bytesPerRow: 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+            context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return (pixel[0], pixel[1], pixel[2])
+    }
+
     func testLeaderScrollbackGestures() throws { try exerciseScrollback(follower: false) }
     func testFollowerScrollbackGestures() throws { try exerciseScrollback(follower: true) }
 
-    func testTranscriptMapTapAndDragIntoExpandedArea() {
+    func testTranscriptMapTapAndDragKeepTheSameVerticalScale() {
         let app = XCUIApplication()
         app.launchArguments = ["--transcript-map-fixture"]
         app.launch()
@@ -314,20 +359,25 @@ final class ScrollbackInteractionTests: XCTestCase {
         let map = app.descendants(matching: .any)["terminal.scrollbackMap"]
         let requestedRow = app.staticTexts["transcript-map.requested-row"]
         XCTAssertTrue(map.waitForExistence(timeout: 5))
-        let idleHeight = map.frame.height
-        XCTAssertEqual(idleHeight, 150, accuracy: 1)
+        let idleFrame = map.frame
+        XCTAssertEqual(idleFrame.height, 150, accuracy: 1)
+        XCTAssertEqual(idleFrame.width, 44, accuracy: 1)
         let start = map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
         start.tap()
         XCTAssertEqual(requestedRow.label, "230")
 
-        let end = start.withOffset(CGVector(dx: 0, dy: 140))
+        let end = map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
         let row = Int(requestedRow.label) ?? -1
-        XCTAssertTrue((875...905).contains(row), "Expected a row in the expanded map, got \(row)")
-        let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            abs(map.frame.height - idleHeight) <= 1
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 3), .completed)
+        XCTAssertTrue((795...817).contains(row), "Expected the row centered at 80% of the idle map, got \(row)")
+        XCTAssertEqual(map.frame, idleFrame)
+
+        // After lifting, tap inside the group box beside the rail.
+        end.withOffset(CGVector(dx: -100, dy: 0)).tap()
+        XCTAssertEqual(requestedRow.label, "760")
+
+        end.tap()
+        XCTAssertEqual(requestedRow.label, "800", "An idle tap still targets the same in-range mark")
     }
 
     private func exerciseScrollback(follower: Bool) throws {
@@ -553,5 +603,76 @@ final class BrowserControlInteractionTests: XCTestCase {
         guard count > 0 else { throw NSError(domain: "BrowserBadgeFixture", code: 1) }
         return CGPoint(x: screen.minX + Double(xSum) / Double(count * cg.width) * screen.width,
                        y: screen.minY + Double(ySum) / Double(count * cg.height) * screen.height)
+    }
+}
+
+@MainActor
+final class TerminalReadabilityInteractionTests: XCTestCase {
+    func testNamedRowsWithKeyboardAndAfterPreview() throws {
+        for rows in [2, 5, 0] { try replay(rows: rows) }
+    }
+
+    func testScrollbackRevealsEveryNamedRow() throws {
+        try replay(rows: 40, scrollPasses: 4)
+    }
+
+    private func replay(rows: Int, scrollPasses: Int = 1) throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--readability-fixture", "--rows", String(rows)]
+        app.launch()
+        defer { app.terminate() }
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            let keyboard = app.buttons["Show keyboard"]
+            XCTAssertTrue(keyboard.waitForExistence(timeout: 10), app.debugDescription)
+            keyboard.tap()
+        }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // Host output arrives five seconds after mount.
+        Thread.sleep(forTimeInterval: 6)
+        capture(app, "rows-\(rows)-initial")
+        for pass in 1...scrollPasses {
+            drag(app, down: true)
+            capture(app, "rows-\(rows)-scrolled-down-\(pass)")
+        }
+        for _ in 1...scrollPasses { drag(app, down: false) }
+        capture(app, "rows-\(rows)-scrolled-up")
+        let preview = app.buttons["Preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5), app.debugDescription)
+        preview.tap()
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 10), app.debugDescription)
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5))
+        if !app.keyboards.firstMatch.exists {
+            let show = app.buttons["Show keyboard"]
+            if show.exists { show.tap() }
+            else {
+                let terminal = app.textViews.firstMatch
+                XCTAssertTrue(terminal.waitForExistence(timeout: 5), app.debugDescription)
+                terminal.tap()
+            }
+        }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "The post-preview replay requires the keyboard")
+        capture(app, "rows-\(rows)-after-preview")
+        for pass in 1...scrollPasses {
+            drag(app, down: true)
+            capture(app, "rows-\(rows)-after-preview-scroll-\(pass)")
+        }
+        if scrollPasses > 1 {
+            for _ in 1...scrollPasses { drag(app, down: false) }
+            capture(app, "rows-\(rows)-after-preview-return-to-bottom")
+        }
+    }
+
+    private func drag(_ app: XCUIApplication, down: Bool) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: down ? 0.23 : 0.43))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: down ? 0.43 : 0.23))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+    }
+    private func capture(_ app: XCUIApplication, _ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "readability-" + name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

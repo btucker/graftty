@@ -431,7 +431,7 @@ enum PaneCommands {
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].workspaceLayout?.select(nextID)
-                if wt.hasCompletedContent(in: nextID) { terminalManager.clearFocus() }
+                if wt.showsNonTerminalContent(in: nextID) { terminalManager.clearFocus() }
                 else { terminalManager.setFocus(nextID) }
                 return
             }
@@ -469,7 +469,7 @@ enum PaneCommands {
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].workspaceLayout?.select(nextID)
-                if wt.hasCompletedContent(in: nextID) { terminalManager.clearFocus() }
+                if wt.showsNonTerminalContent(in: nextID) { terminalManager.clearFocus() }
                 else { terminalManager.setFocus(nextID) }
                 return
             }
@@ -572,7 +572,7 @@ enum PaneCommands {
             for wi in appState.wrappedValue.repos[ri].worktrees.indices {
                 guard appState.wrappedValue.repos[ri].worktrees[wi].dismissCompletedTab(targetID) else { continue }
                 let worktree = appState.wrappedValue.repos[ri].worktrees[wi]
-                if let next = worktree.presentationPane, !worktree.hasCompletedContent(in: next), worktree.splitTree.containsLeaf(next) {
+                if let next = worktree.presentationPane, !worktree.showsNonTerminalContent(in: next), worktree.splitTree.containsLeaf(next) {
                     appState.wrappedValue.repos[ri].worktrees[wi].focusedPaneSlotID = next
                     terminalManager.setFocus(next)
                 } else { terminalManager.clearFocus() }

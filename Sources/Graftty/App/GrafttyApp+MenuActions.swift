@@ -9,15 +9,23 @@ import GrafttyRemoteClient
 extension GrafttyApp {
     // MARK: - Focused-pane helpers for menu actions
 
-    /// The terminal currently holding focus in the selected worktree.
+    private var focusedWorktree: WorktreeEntry? {
+        guard let id = workspaceWindows.active?.worktreeID else { return nil }
+        return appState.repos.lazy.flatMap(\.worktrees).first { $0.id == id }
+    }
+
+    /// The pane presented as focused in the active window's local worktree.
     private var focusedPaneSlotID: PaneSlotID? {
-        guard let path = appState.selectedWorktreePath else { return nil }
-        for repo in appState.repos {
-            for wt in repo.worktrees where wt.path == path && (wt.state == .running || wt.workspaceLayout?.root != nil) {
-                return wt.presentationPane
-            }
-        }
-        return nil
+        guard let worktree = focusedWorktree,
+              worktree.state == .running || worktree.workspaceLayout?.root != nil else { return nil }
+        return worktree.presentationPane
+    }
+
+    var paneCommandTargetID: PaneSlotID? {
+        if workspaceWindows.active?.worktreeID == nil { return workspaceWindows.active?.remotePaneID }
+        guard let worktree = focusedWorktree, let pane = focusedPaneSlotID,
+              !worktree.showsNonTerminalContent(in: pane) else { return nil }
+        return pane
     }
 
     private func handleSplit(_ split: PaneSplit) {
@@ -70,14 +78,14 @@ extension GrafttyApp {
     }
 
     private var focusedPresentationIsCompleted: Bool {
-        guard let path = appState.selectedWorktreePath, let id = focusedPaneSlotID else { return false }
-        return appState.worktree(forPath: path)?.hasCompletedContent(in: id) == true
+        guard let id = focusedPaneSlotID else { return false }
+        return focusedWorktree?.hasCompletedContent(in: id) == true
     }
 
     private func routeFocusedHostManagedPaneCommand(
         _ command: HostManagedPaneCommand
     ) -> Bool {
-        guard !focusedPresentationIsCompleted, let terminalID = terminalManager.focusedTerminalID else {
+        guard let terminalID = paneCommandTargetID else {
             return false
         }
         return terminalManager.routeHostManagedPaneCommand(
@@ -112,7 +120,7 @@ extension GrafttyApp {
     private func handleUnsupportedGhosttyAction(_ action: GhosttyAction) {
         switch action {
         case .increaseFontSize, .decreaseFontSize, .resetFontSize:
-            guard let id = terminalManager.focusedTerminalID else { return }
+            guard let id = paneCommandTargetID else { return }
             terminalManager.handle(for: id)?.followerPresentation?.performZoomAction(action)
         case .toggleSplitZoom:
             handleToggleZoom()

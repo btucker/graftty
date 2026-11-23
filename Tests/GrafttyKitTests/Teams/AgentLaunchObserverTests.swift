@@ -3,6 +3,50 @@ import Testing
 @testable import GrafttyKit
 
 struct AgentLaunchObserverTests {
+    @Test("@spec AGENT-6.166: When a user launches an Antigravity agent, the application shall start agy interactively with the exact initial task, and when reopening that conversation, it shall pass the saved conversation ID without resubmitting the task.", arguments: [false, true])
+    func launchesAntigravityConversation(resuming: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-agy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("agy")
+        try "#!/bin/sh\nprintf '%s\\0' \"$@\"\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+        let provider = try #require(TeamHookRuntime(rawValue: "antigravity"))
+        let task = "- Review $(false) and 'quotes'\nThen report.\n"
+        let conversation = UUID().uuidString
+        var agent = ManagedAgent(name: "Antigravity", provider: provider, parent: nil,
+            status: resuming ? .closed : .starting)
+        agent.paneSessionID = PaneSessionID()
+        if resuming {
+            agent.providerSessionID = conversation
+            try agent.restartConversation()
+        }
+        let launch = try WorktreeAgentLaunchCommand.prepare(
+            agent: provider, prompt: task, exactCommand: nil, managedAgent: resuming ? agent : nil,
+            promptDirectory: root.appendingPathComponent("prompts")
+        )
+        let process = Process()
+        let stdout = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", try #require(launch.command)]
+        process.environment = ["PATH": root.path]
+        process.standardOutput = stdout
+        try process.run()
+        let output = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus == 0)
+        let arguments = output.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+        #expect(arguments == (resuming ? ["--conversation=\(conversation)"] : ["--prompt-interactive=\(task)"]))
+        if resuming {
+            #expect(launch.promptFile == nil)
+        } else {
+            let stagedPrompt = try #require(launch.promptFile)
+            #expect(!FileManager.default.fileExists(atPath: stagedPrompt.path))
+        }
+    }
+
     @Test("@spec AGENT-6.136: When a saved Claude or Codex conversation restarts, the launcher shall pass its exact conversation ID as one argument, publish the new assignment environment, omit synthetic user prompts and bounded finish instructions, and report exits for that new launch.", arguments: [TeamHookRuntime.claude, .codex])
     func resumedProviderReceivesExactConversation(provider: TeamHookRuntime) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-resume-\(UUID().uuidString)")

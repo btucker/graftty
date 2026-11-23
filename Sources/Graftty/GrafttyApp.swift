@@ -50,6 +50,7 @@ protocol CodexAppServerDeliveryTrigger: Sendable {
 
 extension CodexAppServerDeliveryService: CodexAppServerDeliveryTrigger {}
 extension ClaudePeerDeliveryService: CodexAppServerDeliveryTrigger {}
+extension AntigravityDeliveryService: CodexAppServerDeliveryTrigger {}
 
 struct AppTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
     let livePaneSession: @Sendable (String) -> Bool
@@ -142,6 +143,8 @@ struct GrafttyApp: App {
         + GhosttyCommandRegistry.macSettingsActions
 
     @State var appState: AppState
+    @State var workspaceWindows = WorkspaceWindows()
+    @State private var sidebarAttention = SidebarNavigationState(prefix: "sidebar.mac")
     @StateObject var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
     @NSApplicationDelegateAdaptor(WebAccessTerminationDelegate.self)
@@ -184,6 +187,7 @@ struct GrafttyApp: App {
         // opens; this guard catches `open -n` and same-bundle-id dev
         // relaunches.
         Self.terminateIfAnotherInstanceIsRunning()
+        NSWindow.allowsAutomaticWindowTabbing = false
 
         // ZMX-7.4: If Graftty.app was launched from a terminal that
         // was itself inside a zmx session, `ZMX_SESSION=<parent-name>`
@@ -257,6 +261,8 @@ struct GrafttyApp: App {
                 appState: $appState,
                 terminalManager: terminalManager,
                 worktreeManagement: WorktreeManagement(appState: $appState, terminalManager: terminalManager, services: services),
+                workspaceWindows: workspaceWindows,
+                sidebarAttention: sidebarAttention,
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
                 claudeSessionRegistry: services.claudeSessionRegistry,
@@ -272,6 +278,7 @@ struct GrafttyApp: App {
                     let router = SocketRequestRouter(appState: $appState, terminalManager: terminalManager, services: services)
                     return await router.handleRequest(.agent(request)) ?? .error("Agent operation returned no response")
                 })
+                .environment(\.agentChatService, services.agentChatService)
                 .environment(\.localAttentionAnswer, { answer in
                     let router = SocketRequestRouter(appState: $appState, terminalManager: terminalManager, services: services)
                     return await AttentionAnswerDelivery.deliver(worktreeID: answer.worktree.path, paneID: answer.paneID,
@@ -285,12 +292,12 @@ struct GrafttyApp: App {
                     didStartup = true
                     startup()
                 }
-                .onChange(of: appState) { _, newState in
-                    Self.persistAppState(newState)
-                }
                 .onOpenURL { url in
                     handleDeepLink(url)
                 }
+        }
+        .onChange(of: appState) { _, newState in
+            Self.persistAppState(newState)
         }
         // Hide the macOS title bar so the breadcrumb row sits directly
         // under the traffic lights — Andy wanted a terminal-multiplexer
@@ -377,7 +384,7 @@ struct GrafttyApp: App {
                     bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
                         handleGhosttyCommand(command)
                     }
-                    .disabled(terminalManager.focusedTerminalID == nil)
+                    .disabled(paneCommandTargetID == nil)
                 }
             }
 
@@ -484,7 +491,21 @@ struct GrafttyApp: App {
                 )
             }
         ) else { return }
+        let path = appState.selectedWorktreePath
+        let worktree = path.flatMap { appState.worktree(forPath: $0) }
         NSApp.activate(ignoringOtherApps: true)
+        guard let worktree else { return }
+        workspaceWindows.windowShowing(worktree.id)?.bringForward()
+        // Window activation mirrors that window's selection into AppState.
+        appState.selectedWorktreePath = worktree.path
+        if worktree.state == .running, let pane = worktree.focusedPaneSlotID,
+           !worktree.showsNonTerminalContent(in: pane) {
+            terminalManager.promoteToFirstResponder(pane, when: {
+                guard let current = appState.worktree(forPath: worktree.path) else { return false }
+                return appState.selectedWorktreePath == worktree.path
+                    && current.focusedPaneSlotID == pane && !current.showsNonTerminalContent(in: pane)
+            }, onFocused: { terminalManager.setFocus(pane) })
+        }
     }
 
     @MainActor
@@ -653,7 +674,13 @@ struct GrafttyApp: App {
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
         let tm = terminalManager
-        tm.autoSleep.start { binding.wrappedValue }
+        tm.surfaceBudget.isPresented = { [weak workspaceWindows] path in
+            guard let worktree = binding.wrappedValue.worktree(forPath: path) else { return false }
+            return workspaceWindows?.windowShowing(worktree.id) != nil
+        }
+        tm.autoSleep.start(isPresented: { [weak workspaceWindows] worktreeID in
+            workspaceWindows?.windowShowing(worktreeID) != nil
+        }) { binding.wrappedValue }
         let sleepCoordinator = tm.autoSleep.coordinator
         services.remoteAttachmentRegistry.wakeBeforeAttach = { session in
             sleepCoordinator.wake(session: session)
@@ -1056,7 +1083,8 @@ struct GrafttyApp: App {
                         portBindings: running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
                             guard let session = wt.paneSessions[slot], let bindings = panesPortBindings.bindings[slot], !bindings.isEmpty else { return nil }
                             return (ZmxLauncher.sessionName(for: session), bindings)
-                        }) : nil
+                        }) : nil,
+                        offersChat: true
                     )))
                 }
             }
@@ -1114,6 +1142,7 @@ struct GrafttyApp: App {
             Self.makeHostAgentPool(
                 hostKey: hostKey,
                 appState: appStateBinding,
+                workspaceWindows: workspaceWindows,
                 terminalManager: terminalManager,
                 services: services,
                 worktreeManagement: worktreeManagement,

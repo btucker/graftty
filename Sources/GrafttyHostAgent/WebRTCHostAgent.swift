@@ -58,6 +58,7 @@ public actor WebRTCHostAgent {
     /// propagation without sharing the instance itself.
     private let chromeTabMutator: ChromeTabChannelHandler.Mutator?
     private let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect
+    private let agentChatOpener: AgentChatChannelHandler.Opener?
     private let displayOwnershipStore: SessionDisplayOwnershipStore
     private let displayOwnershipBroadcaster: DisplayOwnershipBroadcaster
     private var sshTransport: SSHNIOTransport?
@@ -206,6 +207,7 @@ public actor WebRTCHostAgent {
         worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
         chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil,
         chromeTabOnDisconnect: @escaping ChromeTabChannelHandler.OnDisconnect = { _ in },
+        agentChatOpener: AgentChatChannelHandler.Opener? = nil,
         displayOwnershipStore: SessionDisplayOwnershipStore,
         sshConnectionRegistry: SSHConnectionRegistry = SSHConnectionRegistry()
     ) {
@@ -227,10 +229,27 @@ public actor WebRTCHostAgent {
         }
         self.chromeTabMutator = chromeTabMutator
         self.chromeTabOnDisconnect = chromeTabOnDisconnect
+        self.agentChatOpener = agentChatOpener
         self.displayOwnershipStore = displayOwnershipStore
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         self.sshConnectionRegistry = sshConnectionRegistry
         self.delegate = PeerConnectionDelegate()
+    }
+
+    /// Stream transports share the desktop's configured PTY, controls and revocation registry.
+    public func makeStreamServer() async -> DirectSSHHostServer {
+        let server = DirectSSHHostServer(hostKey: hostKey, trustedPeerStore: trustedPeerStore,
+            activeRemotePeers: activeRemotePeers, streamFactory: streamFactory, pagedFactory: pagedFactory,
+            panesStateSubscribe: panesStateSubscribe, panesStateV2Subscribe: panesStateV2Subscribe,
+            paneControlMutator: paneControlMutator, worktreeManagementMutator: worktreeManagementMutator,
+            chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+            displayOwnershipStore: displayOwnershipStore, sshConnectionRegistry: sshConnectionRegistry)
+        if let teamHandler {
+            await server.setTeamMessaging(handler: teamHandler, onConnect: teamOnConnect, onDisconnect: teamOnDisconnect)
+        }
+        await server.setMCPControl(mcpControl)
+        await server.setGitControl(gitControl)
+        return server
     }
 
     /// Replace the panes-state subscription before this agent accepts an
@@ -739,6 +758,7 @@ public actor WebRTCHostAgent {
                     mcpControl: mcpControl,
                     gitControl: gitControl,
                     chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+                    agentChatOpener: agentChatOpener,
                     ownershipStore: ownershipStore, ownershipBroadcaster: ownershipBroadcaster,
                     teamHandler: teamHandler, teamOnConnect: teamOnConnect, teamOnDisconnect: teamOnDisconnect
                 )

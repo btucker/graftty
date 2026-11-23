@@ -21,6 +21,14 @@ let package = Package(
 #else
 let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 #if os(macOS)
+let tailcatTargets: [Target] = [
+    .binaryTarget(name: "CTailcat", path: ".deps/Tailcat.xcframework"),
+    .target(name: "GrafttyTailcat", dependencies: ["CTailcat", "GrafttyProtocol"],
+            path: "Sources/GrafttyTailcat", linkerSettings: [
+                .linkedFramework("Security"), .linkedFramework("CoreFoundation"), .linkedLibrary("resolv")
+            ])
+]
+let tailcatDependencies: [Target.Dependency] = ["GrafttyTailcat"]
 // libghostty is built from the pinned Ghostty commit and the patch series in
 // deps/ghostty by `scripts/deps prepare`, which links it into .deps/ and
 // records its input key (see deps/README.md). scripts/swiftpm and bundle.sh
@@ -44,6 +52,8 @@ let rendererSettings: [SwiftSetting] = [
 ]
 #else
 let rendererSettings: [SwiftSetting] = []
+let tailcatDependencies: [Target.Dependency] = []
+let tailcatTargets: [Target] = []
 #endif
 // GhosttyKit and GhosttyTerminal came from Lakr233/libghostty-spm (MIT; see
 // deps/ghostty/LICENSE-libghostty-spm). They keep its Swift 6 settings.
@@ -116,7 +126,7 @@ let appleTargets: Set<String> = ["GhosttyKit", "GhosttyTerminal", "GhosttyTermin
 let package = Package(
     name: "Graftty",
     defaultLocalization: "en",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v14), .iOS(.v17), .watchOS(.v10)],
     products: ([
         .executable(name: "Graftty", targets: ["Graftty"]),
         // Product name "graftty-cli" (not "graftty") to avoid case-insensitive
@@ -131,10 +141,12 @@ let package = Package(
         .executable(name: "graftty-host", targets: ["GrafttyHost"]),
         .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
+        .library(name: "GrafttyHostAgent", targets: ["GrafttyHostAgent"]),
         .library(name: "GrafttyWindowsTerminal", targets: ["GrafttyWindowsTerminal"]),
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
+        .library(name: "GrafttyWatchKit", targets: ["GrafttyWatchKit"]),
         // Test-only: the iOS test bundles (Apps/GrafttyMobile/project.yml)
         // can link a package product, not a bare target.
         .library(name: "GrafttyRemoteTestSupport", targets: ["GrafttyRemoteTestSupport"]),
@@ -152,6 +164,8 @@ let package = Package(
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "b9778b054bbdbf2e81deef0494ffecb8683c1e4a"),
     ] + appleDependencies,
     targets: ([
+        .target(name: "GrafttyWatchKit", swiftSettings: strictWarnings),
+        .testTarget(name: "GrafttyWatchKitTests", dependencies: ["GrafttyWatchKit"], swiftSettings: strictWarnings),
         .target(name: "CGrafttyConPTY"),
         .target(
             name: "GrafttyWindowsTerminal",
@@ -231,6 +245,7 @@ let package = Package(
                 "GrafttyKit",
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "NIOExtras", package: "swift-nio-extras"),
             ] + webRTCDependencies + cryptoDependencies,
@@ -246,7 +261,7 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOExtras", package: "swift-nio-extras"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
-            ] + webRTCDependencies + cryptoDependencies,
+            ] + webRTCDependencies + cryptoDependencies + tailcatDependencies,
             swiftSettings: strictWarnings
         ),
         .executableTarget(
@@ -260,7 +275,7 @@ let package = Package(
                 "GhosttyKit",
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Stencil", package: "Stencil"),
-            ],
+            ] + tailcatDependencies,
             swiftSettings: strictWarnings
         ),
         .executableTarget(
@@ -377,6 +392,7 @@ let package = Package(
         .target(
             name: "GrafttyMobileKit",
             dependencies: [
+                "GrafttyWatchKit",
                 "GrafttyRemoteClient",
                 "GrafttyProtocol",
                 "GrafttyCommandUI",
@@ -416,7 +432,7 @@ let package = Package(
             exclude: ["README.md"],
             swiftSettings: strictWarnings
         ),
-    ] as [Target]).filter { !isLinux || !appleTargets.contains($0.name) } + (isLinux ? [
+    ] as [Target]).filter { !isLinux || !appleTargets.contains($0.name) } + tailcatTargets + (isLinux ? [
         .testTarget(
             name: "GrafttyDirectSSHTests",
             dependencies: ["GrafttyHostAgent", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,

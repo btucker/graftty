@@ -22,11 +22,11 @@ public enum WorktreeAgentLaunchCommand {
     /// not supply a structured prompt.
     public static func shouldStagePrompt(agent: TeamHookRuntime?, command: String?, prompt: String?) -> Bool {
         guard let agent else { return false }
-        return prompt != nil || command == nil || command == agent.rawValue
+        return prompt != nil || command == nil || command == agent.rawValue || command == agent.executable
     }
 
     /// Leave ample room below macOS's process-wide argv + environment limit.
-    /// Both supported interactive runtimes require their initial prompt as one
+    /// The interactive runtimes take their initial prompt as one
     /// argv element, so larger tasks must be sent after the session starts.
     // 128 KiB also keeps worst-case JSON escaping below the control socket's
     // 1 MiB request cap (a one-byte control scalar expands to six JSON bytes).
@@ -155,9 +155,12 @@ public enum WorktreeAgentLaunchCommand {
             }
             // Resume the saved conversation without adding a synthetic user turn.
             promptFile = nil
-            loader = agent == .claude
-                ? "claude --resume \(shellLiteral(conversation))"
-                : "codex resume \(shellLiteral(conversation))"
+            let argument = shellLiteral(conversation)
+            loader = switch agent {
+            case .claude: "claude --resume \(argument)"
+            case .codex: "codex resume \(argument)"
+            case .antigravity: "agy --conversation=\(argument)"
+            }
         } else {
             let file = promptDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("prompt")
             let imageFiles = managedAgent?.promptImageSet?.files(in: promptDirectory) ?? []
@@ -193,8 +196,9 @@ public enum WorktreeAgentLaunchCommand {
             let imageArguments = usesImageArguments
                 ? imageFiles.map { " --image " + shellLiteral($0.path) }.joined()
                 : ""
+            let promptArgument = agent == .antigravity ? "--prompt-interactive=" : "-- "
             let invocation = (managedAgent?.paneSessionID == nil ? "exec " : "")
-                + "\(agent.rawValue)\(imageArguments) -- \"$_graftty_agent_prompt\""
+                + "\(agent.executable)\(imageArguments) \(promptArgument)\"$_graftty_agent_prompt\""
             // The sentinel preserves trailing newlines stripped by command substitution.
             loader = "_graftty_agent_prompt_file=\(shellLiteral(file.path)); _graftty_agent_prompt=\"$(/bin/cat \"$_graftty_agent_prompt_file\"; _graftty_status=$?; /usr/bin/printf x; exit \"$_graftty_status\")\" && /bin/rm -f \"$_graftty_agent_prompt_file\" && _graftty_agent_prompt=\"${_graftty_agent_prompt%x}\" && \(invocation)"
         }

@@ -14,6 +14,17 @@ extension EnvironmentValues {
     }
 }
 
+private struct AgentChatServiceKey: EnvironmentKey {
+    static let defaultValue: AgentChatService? = nil
+}
+extension EnvironmentValues {
+    /// Chat for agent tabs hosted on this Mac.
+    var agentChatService: AgentChatService? {
+        get { self[AgentChatServiceKey.self] }
+        set { self[AgentChatServiceKey.self] = newValue }
+    }
+}
+
 private struct LocalAttentionAnswerKey: EnvironmentKey {
     static let defaultValue: (@MainActor (AttentionAnswer) async -> WorktreeManagementResponse)? = nil
 }
@@ -31,17 +42,20 @@ struct WorkspaceContentView: View {
     let onFocusTerminal: (PaneSlotID) -> Void
     let onNewTerminal: () -> Void
     let onCloseTerminal: (PaneSlotID) -> Void
-    /// AGENT-2.7: hook-reported turn activity, so stopped turns stop spinning.
+    /// AGENT-2.7: hook-reported turn activity distinguishes working and idle agents.
     var agentLiveness: ClaudeSessionRegistry? = nil
     /// LAYOUT-2.190: explicit tab selection hands keyboard focus to the
     /// terminal. Clicks inside a terminal already make it first responder.
     var onActivateTerminal: (PaneSlotID) -> Void = { _ in }
+    var onClearFocus: (() -> Void)?
     /// A hair of breathing room so terminal text doesn't slam into the
     /// sidebar divider, while tab rows stay flush with the window edge.
     static let leadingContentInset: CGFloat = 6
-    var agentScrollbackMap: AgentScrollbackMap?
+    var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
     @Environment(\.agentWorkspaceRequest) private var request
+    @Environment(\.agentChatService) private var chatService
+    @State private var chatModels = AgentChatModelStore<PaneSlotID>()
     @State private var failure: String?
     @State private var launching = false
     @State private var resizeStart: Double?
@@ -59,13 +73,14 @@ struct WorkspaceContentView: View {
                             worktree.canvasTree
                         }, set: { tree in mutate { $0.updateGeometry(from: tree) } }),
                         focusedPaneSlotID: worktree.presentationPane, theme: theme, onFocusTerminal: focus,
-                        previewWorktreePath: worktree.path, agentScrollbackMap: agentScrollbackMap,
+                        previewWorktreePath: worktree.path, agentScrollbackMaps: agentScrollbackMaps,
                         paneHeader: { slot in AnyView(groupHeader(for: slot)) },
                         paneBanner: { slot in
                             guard let group = layout.group(containing: slot), group.id == inputRequestGroupID else { return nil }
                             return AnyView(inputRequestBanner)
                         },
                         paneContent: { slot in
+                            if let chat = chatContent(slot) { return chat }
                             guard let agent = agent(slot), agent.completion != nil || agent.status == .closed else { return nil }
                             return AnyView(CompletedAgentContent(agent: agent, launching: launching,
                                 onResume: { perform(.init(action: .resume, callerWorktree: worktree.path, agentID: agent.id)) }))
@@ -124,8 +139,7 @@ struct WorkspaceContentView: View {
         let group = layout.group(containing: slot)
         return VStack(spacing: 0) {
             HStack(spacing: 2) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) {
+                AgentTabStrip(spacing: 2) {
                         ForEach(group?.sessions ?? [], id: \.self) { tab in
                             Button { selectTab(tab) } label: {
                                 HStack(spacing: 6) {
@@ -137,12 +151,12 @@ struct WorkspaceContentView: View {
                                     } else {
                                         Image(systemName: "terminal")
                                     }
-                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, fallback: agent(tab)?.name ?? "Terminal").lineLimit(1)
+                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, agentName: agent(tab)?.name, provider: agent(tab)?.provider.rawValue).lineLimit(1).truncationMode(.middle)
                                         .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if agent(tab) == nil, worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
                                     }
-                                }.padding(.horizontal, 12).padding(.vertical, 9)
+                                }.worktreeHeaderWashText().padding(.horizontal, 12).padding(.vertical, 9)
                                     .foregroundStyle(theme.foreground.opacity(agent(tab)?.completion != nil || agent(tab)?.status == .closed ? 0.4 : group?.selected == tab ? 1 : 0.65))
                                     .overlay(alignment: .bottom) {
                                         Rectangle().fill(group?.selected == tab ? theme.foreground.opacity(0.55) : .clear)
@@ -161,8 +175,12 @@ struct WorkspaceContentView: View {
                                 })
                                 .contextMenu { tabMenu(tab, group: group?.id) }
                         }
-                        newAgentMenu.menuStyle(.borderlessButton)
-                    }
+                        newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText().agentTabStripFixed()
+                }
+                if let selected = group?.selected, chatService != nil, agent(selected).map(AgentChatHost.offers) == true {
+                    AgentChatSwitch(showsChat: Binding(get: { showsChat(selected) },
+                                                       set: { setView(selected, chat: $0) }))
+                        .controlSize(.small)
                 }
             }.font(.system(size: 13))
                 .background { theme.background.worktreeHeaderWash() }
@@ -252,7 +270,7 @@ struct WorkspaceContentView: View {
             Button("Close tab") {
                 mutate { $0.remove(slot) }
                 if let next = layout.focusedSession { focus(next) }
-                else { terminalManager.clearFocus() }
+                else { clearFocus() }
             }
         } else if let agent = agent(slot), let completion = agent.completion {
             Button(completion.outcome == .interrupted || completion.outcome == .failed ? "Acknowledge and close agent" : "Close completed agent") { perform(.init(action: .close, callerWorktree: worktree.path, agentID: agent.id, completionID: completion.id)) }
@@ -269,7 +287,7 @@ struct WorkspaceContentView: View {
                     HStack(spacing: 2) {
                 ForEach(layout.terminals, id: \.self) { slot in
                     Button { selectTerminalTab(slot) } label: {
-                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, fallback: agent(slot)?.name ?? "Terminal").lineLimit(1).padding(.horizontal, 8).frame(height: 30)
+                        WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, agentName: agent(slot)?.name, provider: agent(slot)?.provider.rawValue).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
                             .workspaceTabUnderline(selected: layout.selectedTerminal == slot, color: theme.foreground)
                     }.buttonStyle(.plain)
                         .fontWeight(layout.selectedTerminal == slot ? .semibold : .regular)
@@ -346,8 +364,31 @@ struct WorkspaceContentView: View {
             liveness: agentLiveness.livenessBySession)
     }
     private func agent(_ slot: PaneSlotID) -> ManagedAgent? { worktree.agents.first { $0.presentationSlotID == slot } }
+    func showsChat(_ slot: PaneSlotID) -> Bool { chatService != nil && worktree.showsChat(in: slot) }
+    /// AGENT-6.183: a view change keeps the terminal mounted in its manager and sends the agent nothing.
+    func setView(_ slot: PaneSlotID, chat: Bool) {
+        var entry = worktree
+        WorkspaceChatSwitch.setView(chat: chat, slot: slot, in: &entry)
+        worktree = entry
+        if showsChat(slot) {
+            clearFocus()
+        } else if worktree.splitTree.containsLeaf(slot) {
+            onFocusTerminal(slot)
+            onActivateTerminal(slot)
+        }
+    }
+    private func chatContent(_ slot: PaneSlotID) -> AnyView? {
+        guard showsChat(slot), let chatService, let agent = agent(slot) else { return nil }
+        return AnyView(AgentChatView(
+            model: chatModels.model(for: slot),
+            tabID: "\(agent.id)/\(agent.providerSessionID ?? "")", agentName: agent.name,
+            connection: chatService.connection(worktreePath: worktree.path, agentID: agent.id, viewer: .host),
+            showTerminal: { setView(slot, chat: false) }
+        ).foregroundStyle(theme.foreground).tint(theme.foreground).background(theme.background))
+    }
     private func title(_ slot: PaneSlotID) -> String {
-        SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: agent(slot)?.name ?? "Terminal")
+        WorkspaceTerminalTitle.text(terminalManager: terminalManager, slot: slot,
+                                    agentName: agent(slot)?.name, provider: agent(slot)?.provider.rawValue)
     }
     private func mutate(_ action: (inout WorkspaceLayout<PaneSlotID>) -> Void) {
         var next = layout; action(&next); worktree.workspaceLayout = next
@@ -363,18 +404,23 @@ struct WorkspaceContentView: View {
     private func focus(_ slot: PaneSlotID, activate: Bool) {
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
         mutate { $0.select(slot) }
-        if worktree.hasCompletedContent(in: slot) {
-            terminalManager.clearFocus()
+        if worktree.showsNonTerminalContent(in: slot) {
+            clearFocus()
         } else if worktree.splitTree.containsLeaf(slot) {
             onFocusTerminal(slot)
             if activate { onActivateTerminal(slot) }
         }
     }
+    private func clearFocus() {
+        if let onClearFocus { onClearFocus() }
+        else { terminalManager.clearFocus() }
+    }
     private func synchronize(initial: Bool = false) {
         let hadLayout = worktree.workspaceLayout != nil
         worktree.ensureWorkspaceLayout()
         if initial && !hadLayout, let focused = worktree.focusedPaneSlotID { mutate { $0.select(focused) } }
-        if let slot = worktree.presentationPane, worktree.hasCompletedContent(in: slot) { terminalManager.clearFocus() }
+        if let slot = worktree.presentationPane, worktree.showsNonTerminalContent(in: slot) { clearFocus() }
+        chatModels.prune(keeping: Set(worktree.agents.compactMap(\.presentationSlotID)))
     }
     private func receive(_ providers: [NSItemProvider], action: @escaping @MainActor (PaneSlotID) -> Void) -> Bool {
         guard let provider = providers.first else { return false }
@@ -444,10 +490,18 @@ private struct WorkspaceTerminalTitle: View {
     let terminalManager: TerminalManager
     @ObservedObject var invalidations: PaneTitleInvalidationSource
     let slot: PaneSlotID
-    let fallback: String
+    /// Only the fields the title reads, so tab diffs never compare whole agent records.
+    let agentName: String?
+    let provider: String?
+
+    static func text(terminalManager: TerminalManager, slot: PaneSlotID, agentName: String?, provider: String?) -> String {
+        SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot),
+                                  agentName: agentName ?? "Terminal", tabProvider: provider)
+    }
 
     var body: some View {
         let _ = invalidations.generation
-        Text(SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: slot), agentName: fallback))
+        let title = Self.text(terminalManager: terminalManager, slot: slot, agentName: agentName, provider: provider)
+        Text(title).help(title)
     }
 }

@@ -4,6 +4,7 @@ import GrafttyProtocol
 import Testing
 @testable import GrafttyMobileKit
 #if canImport(UIKit)
+@testable import GhosttyTerminal
 import SwiftUI
 import UIKit
 #endif
@@ -245,13 +246,13 @@ struct TerminalBackNavigationTests {
         container.handleBackSwipe(event)
         #expect(backCount == 0)
         event.phase = .ended
-        container.selectionController.beginSelection(at: .zero)
-        container.enterSelectionModeForTesting()
-        #expect(!swipe.isEnabled)
+        container.terminalView.touchSelection.range = 0 ... 3
+        #expect(!container.gestureRecognizerShouldBegin(swipe))
         container.handleBackSwipe(event)
         #expect(backCount == 0)
         container.cancelActiveSelectionIfAny()
         #expect(swipe.isEnabled)
+        #expect(container.gestureRecognizerShouldBegin(swipe))
         let canvas = try #require(TerminalSnapshotCanvas.layout(
             grid: CGSize(width: 80, height: 24), measuredGrid: CGSize(width: 80, height: 24),
             measuredPixels: CGSize(width: 800, height: 480), cellPixels: CGSize(width: 10, height: 20),

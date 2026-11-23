@@ -359,12 +359,35 @@ struct AgentConversationResumeTests {
         #expect(tree.agents[0].presentationSlotID == slot)
     }
 
-    @Test("@spec AGENT-6.126: When a provider session starts, the application shall retain its exact conversation ID separately from its Graftty routing identity for later resume.", arguments: [TeamHookRuntime.claude, .codex])
+    @Test("@spec AGENT-6.126: When a provider session starts, the application shall retain its exact conversation ID separately from its Graftty routing identity for later resume.", arguments: TeamHookRuntime.allCases)
     func hookRetainsConversationID(provider: TeamHookRuntime) async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()
         let response = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "\(provider.rawValue)-123456789abc", runtime: provider,
             event: .sessionStart, sessionID: "exact-conversation", paneSessionName: platform.paneSession), platform: platform)
         #expect(response != nil)
         #expect(platform.state.repos[0].worktrees[0].agents.first?.providerSessionID == "exact-conversation")
+    }
+
+    @Test("@spec AGENT-6.169: If a resumed Antigravity conversation omits its session-start hook, then the application shall bind the saved conversation to its managed agent when the first turn begins.")
+    func bindsAntigravityResumeOnFirstTurn() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let sessionID = UUID().uuidString
+        let binding = try #require(platform.state.repos[0].worktrees[0].paneSessions.first)
+        var agent = ManagedAgent(name: "Antigravity", provider: .antigravity, parent: nil, status: .starting)
+        agent.paneSlotID = binding.key
+        agent.paneSessionID = binding.value
+        agent.providerSessionID = sessionID
+        agent.resumingSessionID = sessionID
+        platform.state.repos[0].worktrees[0].agents = [agent]
+
+        let nativeID = TeamAgentIdentity(runtime: .antigravity, nativeSessionID: sessionID).rawValue
+        _ = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: nativeID,
+            runtime: .antigravity, event: .userPromptSubmit, sessionID: sessionID,
+            paneSessionName: platform.paneSession), platform: platform)
+
+        let bound = try #require(platform.state.repos[0].worktrees[0].agents.first)
+        #expect(bound.id == agent.id)
+        #expect(bound.status == .running)
+        #expect(bound.nativeAgentID == nativeID)
     }
 }

@@ -1,8 +1,8 @@
 import SwiftUI
 import GrafttyKit
 
-/// Native team-message delivery for Codex app-server and Claude peer
-/// agents: the presence index and sweep ticker, per-team inbox observers,
+/// Native team-message delivery for Codex app-server, Claude peer, and
+/// Antigravity agent-server agents: the presence index and sweep ticker, per-team inbox observers,
 /// the pane-closed presence fallback, and the post-restore retry.
 ///
 /// `GrafttyApp.startup()` builds one instance, calls `install()` once, and
@@ -19,6 +19,7 @@ final class NativeTeamDelivery {
     private let livePaneSessionNames: LivePaneSessionNames
     private let codexAppServerDeliveryService: CodexAppServerDeliveryService
     private let claudePeerDeliveryService: ClaudePeerDeliveryService
+    private let antigravityDeliveryService: AntigravityDeliveryService
 
     init(services: AppServices, terminalManager tm: TerminalManager, appState binding: Binding<AppState>) {
         let sleepCoordinator = tm.autoSleep.coordinator
@@ -91,6 +92,15 @@ final class NativeTeamDelivery {
         self.livePaneSessionNames = livePaneSessionNames
         self.codexAppServerDeliveryService = codexAppServerDeliveryService
         self.claudePeerDeliveryService = claudePeerDeliveryService
+        // Shares the liveness view of the other services; see the Claude service above.
+        self.antigravityDeliveryService = AntigravityDeliveryService(
+            inbox: services.teamInbox,
+            presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
+            agentReachability: { record in
+                TeamAgentReachability.isReachableForNativeDelivery(record, liveness: deliveryLiveness)
+            },
+            wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
+        )
     }
 
     func install() {
@@ -232,13 +242,13 @@ final class NativeTeamDelivery {
         }
     }
 
-    /// Both native services, in the order a drain pass consults them.
+    /// Every native service, in the order a drain pass consults them.
     private var nativeDeliveries: [any CodexAppServerDeliveryTrigger] {
-        [codexAppServerDeliveryService, claudePeerDeliveryService]
+        [codexAppServerDeliveryService, claudePeerDeliveryService, antigravityDeliveryService]
     }
 
     /// Retries delivery for every worktree with a presence record, through
-    /// both native services.
+    /// every native service.
     private func retryDelivery(records: [TeamPresenceRecord]) async {
         await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
             inbox: services.teamInbox,

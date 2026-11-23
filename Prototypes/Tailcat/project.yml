@@ -1,0 +1,83 @@
+name: TailcatPrototype
+options:
+  bundleIdPrefix: net.graftty.prototype
+packages:
+  Graftty:
+    path: ../..
+targetTemplates:
+  Tests:
+    type: bundle.unit-test
+    sources:
+      - Sources
+      - ../../Sources/GrafttyTailcat/TailcatTransport.swift
+      - ../../Tests/GrafttyTailcatTests
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+        OTHER_LDFLAGS: "$(inherited) -framework Security -framework CoreFoundation -lresolv"
+    dependencies:
+      - framework: ../../.deps/Tailcat.xcframework
+      - package: Graftty
+        product: GrafttyRemoteClient
+      - package: Graftty
+        product: GrafttyRemoteTestSupport
+    # GrafttyRemoteTestSupport exports the existing SSH probe dependencies.
+targets:
+  TailcatCheck:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - Device
+      - ../../Sources/GrafttyTailcat/TailcatTransport.swift
+      - Sources/TailcatDeviceCheck.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quotably.graftty.tailcatcheck
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Tailcat Check
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Tailcat checks whether two peers on this phone can exchange data directly.
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.10"
+        OTHER_LDFLAGS: "$(inherited) -framework Security -framework CoreFoundation -lresolv"
+    dependencies:
+      - framework: ../../.deps/Tailcat.xcframework
+        embed: false
+  TailcatTests:
+    templates: [Tests]
+    platform: iOS
+    deploymentTarget: "17.0"
+  TailcatTestsMac:
+    templates: [Tests]
+    platform: macOS
+    deploymentTarget: "14.0"
+    dependencies:
+      - package: Graftty
+        product: GrafttyHostAgent
+schemes:
+  TailcatCheck:
+    build:
+      targets:
+        TailcatCheck: all
+    archive:
+      config: Release
+  TailcatSimulator:
+    build:
+      targets:
+        TailcatTests: all
+    test:
+      targets: [TailcatTests]
+      parallelizable: false
+  TailcatMac:
+    build:
+      targets:
+        TailcatTestsMac: all
+    test:
+      targets: [TailcatTestsMac]
+      parallelizable: false

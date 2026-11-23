@@ -78,3 +78,10 @@ scripts here began in [Lakr233/libghostty-spm](https://github.com/Lakr233/libgho
 `Sources/GhosttyTerminal/Resources/Ghostty/shell-integration` is that
 project's MIT rewrite; `deps/ghostty/tests/check-licenses.sh` keeps Ghostty's
 GPL-licensed originals out.
+
+
+On Apple platforms, `scripts/deps prepare` also builds the pinned Tailcat
+XCFramework for paired connections. Install Go with automatic toolchain
+download enabled. Use `scripts/deps prepare tailcat --platforms macos,ios`
+to prepare just this dependency for Xcode. CI distributes it with the native
+dependency artifact. The source revision lives in `Prototypes/Tailcat/UPSTREAM_COMMIT`.

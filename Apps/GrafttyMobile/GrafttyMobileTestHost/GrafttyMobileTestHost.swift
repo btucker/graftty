@@ -21,7 +21,9 @@ struct GrafttyMobileTestHost: App {
     var body: some Scene {
         WindowGroup {
             #if GRAFTTY_BROWSER_CONTROL_FIXTURE
-            if let endpoint = Self.agentIntegrationEndpoint {
+            if ProcessInfo.processInfo.arguments.contains("--readability-fixture") {
+                TerminalReadabilityFixture()
+            } else if let endpoint = Self.agentIntegrationEndpoint {
                 AgentIntegrationFixture(endpoint: endpoint).ignoresSafeArea()
             } else if ProcessInfo.processInfo.arguments.contains("--ipad-workspace-fixture") {
                 IPadWorkspaceFixture()
@@ -53,7 +55,7 @@ struct GrafttyMobileTestHost: App {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--agent-integration-url"),
               arguments.indices.contains(index + 1) else {
-            if arguments.contains(where: ["--ipad-workspace-fixture", "--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture", "--transcript-map-fixture",
+            if arguments.contains(where: ["--readability-fixture", "--ipad-workspace-fixture", "--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture", "--transcript-map-fixture",
                 "--image-controls-fixture", "--browser-control-fixture", "--agent-menu-delay-fixture"].contains) { return nil }
             // A notification launches the executable through Springboard,
             // which does not retain XCUIApplication's launch arguments.
@@ -220,32 +222,65 @@ private struct WorktreeContextFixture: View {
 /// Uses the production terminal container and recognizers with deterministic
 /// output. No pairing or network timing is involved in these gesture probes.
 private struct ScrollbackFixture: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> ScrollbackFixtureController { .init() }
+    var colors = ""
+    func makeUIViewController(context: Context) -> ScrollbackFixtureController {
+        let controller = ScrollbackFixtureController()
+        controller.colors = colors
+        return controller
+    }
     func updateUIViewController(_ controller: ScrollbackFixtureController, context: Context) {}
 }
 
+/// Use the live rail host so the fixture exercises theme changes and message lookup.
+private final class TranscriptMapTerminal: ObservableObject, TerminalScrollback {
+    @Published var requestedRow = -1
+    let timeline: WorktreeTimeline
+    let snapshot: ScrollbackRows
+    lazy var model = ScrollbackMapModel(terminal: self, debounce: .zero)
+
+    init() {
+        var history = WorktreeHistory()
+        var rows = Array(repeating: "", count: 1000)
+        let start = Date.now.addingTimeInterval(-3600)
+        for (row, text) in [(230, "Earlier prompt"), (760, "Earlier in the group"), (800, "Later prompt")] {
+            rows[row] = text
+            history.record(.init(text: text, at: start.addingTimeInterval(Double(row))))
+        }
+        rows[500] = "Middle reply"
+        history.record(.init(id: "middle", text: rows[500], at: start.addingTimeInterval(500), runtime: "codex"))
+        timeline = WorktreeTimeline(history: history, brief: nil)
+        snapshot = ScrollbackRows(rows: rows, firstRow: 0, totalRows: rows.count)
+    }
+
+    func scrollbackRows(limit: Int) -> ScrollbackRows? { snapshot }
+    func firstRowText() -> String? { snapshot.rows.first }
+    func scroll(toRow row: Int) { requestedRow = row }
+}
+
 private struct TranscriptMapFixture: View {
-    @State private var requestedRow = -1
+    @StateObject private var terminal = TranscriptMapTerminal()
+    private let colors = ProcessInfo.processInfo.arguments.contains("--light-terminal")
+        ? "background = #f5f5f5\nforeground = #282a30" : "background = #282a30\nforeground = #f5f5f5"
 
     var body: some View {
-        ScrollbackFixture()
+        let theme = GhosttyThemeColors(parsingConfigText: colors)
+        ScrollbackFixture(colors: colors)
             .overlay(alignment: .topTrailing) {
-                ScrollbackMapOverlay(map: ScrollbackMap(totalRows: 1000, marks: [
-                    .init(row: 230, kind: .input, eventID: "first"),
-                    .init(row: 500, kind: .peer, eventID: "middle"),
-                    .init(row: 800, kind: .input, eventID: "last"),
-                ]), viewport: .init(offset: 960, length: 40, total: 1000), entries: [:]) {
-                    requestedRow = $0
-                }
-                .padding(.top, 110)
+                ScrollbackMapOverlayHost(model: terminal.model, timeline: terminal.timeline, terminalTheme: theme)
+                    .padding(.top, 110)
             }
             .overlay(alignment: .bottomLeading) {
-                Text("\(requestedRow)").accessibilityIdentifier("transcript-map.requested-row")
+                Text("\(terminal.requestedRow)")
+                    .foregroundStyle(theme.foreground)
+                    .accessibilityIdentifier("transcript-map.requested-row")
             }
+            .preferredColorScheme(theme.isDark ? .light : .dark)
+            .onAppear { terminal.model.update(viewport: .init(offset: 960, length: 40, total: 1000)) }
     }
 }
 
 private final class ScrollbackFixtureController: UIViewController {
+    var colors = ""
     let container = TerminalInputContainerView()
     let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
     let status = UILabel()
@@ -256,7 +291,7 @@ private final class ScrollbackFixtureController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14\nscrollback-limit = 10000000")
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14\nscrollback-limit = 10000000\n" + colors)
         container.terminalView.configuration = .init(backend: .inMemory(session))
         // Fullscreen panes install this recognizer even when the test does not
         // navigate back, so exercise its competition with vertical drags.
@@ -573,4 +608,79 @@ private final class RecentPaneFixtureSocket: WebSocketClient, @unchecked Sendabl
     func close() {}
 }
 
+#endif
+
+#if GRAFTTY_BROWSER_CONTROL_FIXTURE
+/// Disposable output and file I/O; keyboard, scrolling, chrome and Quick Look
+/// use the production SingleSessionView and terminal renderer.
+private final class ReadabilitySocket: WebSocketClient, @unchecked Sendable {
+    let stream: AsyncStream<WebSocketFrame>
+    let continuation: AsyncStream<WebSocketFrame>.Continuation
+    private let lock = NSLock()
+    private var revision: UInt64 = 0
+    var supportsWebControlTextFrames: Bool { true }
+    init() {
+        (stream, continuation) = AsyncStream.makeStream()
+    }
+    func send(_ frame: WebSocketFrame) async throws {}
+    func receive() async throws -> WebSocketFrame {
+        for await frame in stream { return frame }
+        throw CancellationError()
+    }
+    func close() { continuation.finish() }
+    func sendHello(clientID: DisplayClientID, kind: DisplayClientKind, role: DisplayClientRole,
+                   visible: Bool, cols: Int, rows: Int) async {
+        await ownerResize(clientID: clientID, epoch: 1, cols: cols, rows: rows)
+    }
+    func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+        let next = lock.withLock { revision += 1; return revision }
+        guard let grid = try? DisplayGrid(cols: UInt16(clamping: cols), rows: UInt16(clamping: rows)),
+              let snapshot = try? DisplayOwnershipSnapshot(sessionName: "readability", ownerClientID: clientID,
+                ownerKind: .ios, grid: grid, epoch: 1, revision: next, ownerIdentity: "ssh-device:integration-phone") else { return }
+        continuation.yield(.text(WebControlEnvelope.ownership(snapshot).encoded()))
+    }
+}
+
+@MainActor
+private struct TerminalReadabilityFixture: View {
+    @State private var fixture: AgentPreviewFixture
+    init() {
+        let socket = ReadabilitySocket()
+        let client = SessionClient(sessionName: "readability", webSocketFactory: { socket })
+        _fixture = State(initialValue: AgentPreviewFixture(client: client,
+            host: Host(label: "Disposable Mac", baseURL: URL(string: "https://fixture.invalid")!),
+            worktree: "/disposable/readability", retained: true, embedded: false, channel: PreviewChannelProbe()))
+    }
+    private var row: WorktreePanes {
+        WorktreePanes(path: fixture.worktree, displayName: "Readable output", repoDisplayName: "Trial",
+            displayBranch: "readability", state: .running, isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "readability", title: "Readable output", attentionText: nil, isBusy: false, attentionSource: nil),
+            agents: [.init(id: "readability", name: "Readable output", provider: "codex", status: "running", sessionName: "readability")])
+    }
+    var body: some View {
+        SingleSessionView(step: SessionStep(host: fixture.host, worktreePath: fixture.worktree,
+            sessionName: "readability", title: "Readable output"), navigationPath: .constant(NavigationPath()),
+            showsProjectRail: false, retainedPanes: fixture.pool, attentionWorktrees: [row],
+            initialClient: fixture.client, initialController: fixture.controller,
+            previewManagementTransport: fixture.management)
+        .environment(\.remoteConnectionCoordinator, fixture.coordinator)
+        .environment(\.biometricGate, fixture.gate)
+        .environment(\.scenePhase, .active)
+        .task {
+            fixture.gate.applicationWillEnterForeground()
+            await fixture.gate.authenticate()
+            fixture.client.start()
+            // Wait for the real keyboard to open before printing. Isolated
+            // synthetic host output avoids touching any user's shell session.
+            try? await Task.sleep(for: .seconds(5))
+            let args = ProcessInfo.processInfo.arguments
+            let requested = args.firstIndex(of: "--rows").map { Int(args[$0 + 1]) ?? 2 } ?? 2
+            let count = requested > 0 ? requested : Int(MobileTerminalRegistry.shared.container(for: "readability")?.terminalGridMetrics?.rows ?? 20)
+            let words = ["APRICOT", "BANANA", "COCONUT", "DRAGONFRUIT", "ELDERBERRY"]
+            let text = (0..<count).map { "\(words[$0 % words.count])\(String(format: "%02d", $0 + 1)) readable row" }.joined(separator: "\r\n")
+            fixture.client.session.receive(Data(("\u{1b}[3J\u{1b}[2J\u{1b}[H" + text).utf8))
+        }
+    }
+}
 #endif

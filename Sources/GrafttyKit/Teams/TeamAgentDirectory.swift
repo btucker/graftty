@@ -236,6 +236,10 @@ public enum TeamAgentReachability {
             socketPath = path
         case .codex(_, let path, _, _):
             socketPath = path
+        case .antigravity:
+            // A loopback port has no file to check; a refused send leaves
+            // the rows unread for retry.
+            return true
         }
         return ClaudePeerSessionRegistry.isSocket(atPath: socketPath)
     }
@@ -255,6 +259,8 @@ public enum TeamAgentReachability {
     ///   socket-addressed and pane-blind, so no pane gate applies.
     /// - `.codex` transport: the app-server socket must exist, and a
     ///   recorded pane session must be live.
+    /// - `.antigravity` transport: gated like a record with no transport,
+    ///   because hook delivery through the pane remains its fallback.
     /// - No transport: a recorded live pane session is required — the record
     ///   has no native endpoint of its own, so hook delivery through its
     ///   pane is the only route.
@@ -278,7 +284,7 @@ public enum TeamAgentReachability {
             guard isSocket(socketPath) else { return false }
             guard let pane = record.paneSessionName else { return true }
             return liveness.isLivePaneSession(pane)
-        case nil:
+        case .antigravity, nil:
             guard let pane = record.paneSessionName else { return false }
             return liveness.isLivePaneSession(pane)
         }

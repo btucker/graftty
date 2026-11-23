@@ -43,7 +43,7 @@ struct IOSTestShardRunnerTests {
         }
     }
 
-    @Test("recreates a simulator that disappears during destination resolution")
+    @Test("@spec TECH-6.9: When CI creates an iOS test simulator, the workflow shall choose the newest available runtime supporting its device type within the selected SDK's major and minor version ceiling.")
     func retriesMissingSimulatorOnce() throws {
         let result = try runFixture(firstExitCode: 70, removeSimulator: true)
 
@@ -253,7 +253,23 @@ struct IOSTestShardRunnerTests {
     #!/bin/bash
     set -euo pipefail
     case "${1:-} ${2:-}" in
+      "--sdk iphonesimulator")
+        [[ "${3:-}" == "--show-sdk-version" ]] || exit 2
+        echo "27.1"
+        ;;
       "simctl list")
+        if [[ "${3:-}" == "runtimes" ]]; then
+          cat <<'RUNTIMES'
+    {"runtimes":[
+      {"platform":"iOS","version":"27.2","identifier":"too-new","isAvailable":true,"supportedDeviceTypes":[{"name":"iPhone 17"}]},
+      {"platform":"iOS","version":"27.1.1","identifier":"compatible","isAvailable":true,"supportedDeviceTypes":[{"name":"iPhone 17"}]},
+      {"platform":"iOS","version":"27.1.2","identifier":"unavailable","isAvailable":false,"supportedDeviceTypes":[{"name":"iPhone 17"}]},
+      {"platform":"iOS","version":"27.1.3","identifier":"wrong-device","isAvailable":true,"supportedDeviceTypes":[{"name":"iPhone 16"}]},
+      {"platform":"iOS","version":"26.5","identifier":"older","isAvailable":true,"supportedDeviceTypes":[{"name":"iPhone 17"}]}
+    ]}
+    RUNTIMES
+          exit 0
+        fi
         current="$(cat "$FAKE_STATE/current")"
         if [[ -e "$FAKE_STATE/device-$current" ]]; then
           if [[ -e "$FAKE_STATE/unavailable-$current" ]]; then
@@ -269,6 +285,7 @@ struct IOSTestShardRunnerTests {
         fi
         ;;
       "simctl create")
+        [[ "${5:-}" == "compatible" ]] || exit 2
         count="$(( $(cat "$FAKE_STATE/create-count") + 1 ))"
         echo "$count" > "$FAKE_STATE/create-count"
         current="sim-$count"

@@ -150,6 +150,7 @@ struct PagedTerminalCoordinatorTests {
             incarnation: 1, id: 1, cols: 80, rows: 24, ready: Data([1]),
             hasPrimaryHistory: true, hasAlternateHistory: true
         )))
+        #expect(coordinator.historyRevision == 1)
         #expect(surface.installed == [1])
         #expect(requests.isEmpty)
         await coordinator.loadIfNeeded(prefetch: true)
@@ -163,6 +164,7 @@ struct PagedTerminalCoordinatorTests {
             data: Data([1]), complete: true
         )))
         await coordinator.loadIfNeeded(prefetch: true)
+        #expect(coordinator.historyRevision == 2)
         guard case .history(let second) = try #require(requests.last) else { return }
         #expect(second.screen == 1)
         #expect(second.ordinal == 0)
@@ -177,6 +179,7 @@ struct PagedTerminalCoordinatorTests {
         #expect(try await coordinator.handle(.checkpoint(first)) == DisplayGrid(cols: first.cols, rows: first.rows))
         #expect(try await coordinator.handle(.grid(cols: 41, rows: 23)) == DisplayGrid(cols: 41, rows: 23))
         #expect(try await coordinator.handle(.checkpoint(first)) == nil)
+        #expect(coordinator.historyRevision == 1)
         #expect(surface.installed == [1])
         coordinator.disconnect()
     }

@@ -24,7 +24,7 @@ import GrafttyRemoteClient
     fileprivate
     var targetsRelayedResource: Bool {
         switch self {
-        case .agentSkills, .placement, .agentCompletions, .hostPresentation, .listRepositories, .moveProject,
+        case .agentSkills, .placement, .agentCompletions, .tailcatEndpoint, .hostPresentation, .listRepositories, .moveProject,
              .listRemoteMacConnections, .connectRemoteMac:
             return false
         case .create(let repositoryID, _, _, _, _, _),
@@ -35,7 +35,7 @@ import GrafttyRemoteClient
         case .addAgent(let worktreeID, _, _), .agentConversation(let worktreeID, _, _), .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
              .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _), .worktreeIcon(let worktreeID, _),
-             .explainRequest(let worktreeID, _), .answerRequest(let worktreeID, _, _, _):
+             .explainRequest(let worktreeID, _), .answerRequest(let worktreeID, _, _, _), .terminalText(let worktreeID, _, _):
             return worktreeID.hasPrefix("relay-worktree-")
         }
     }
@@ -114,11 +114,6 @@ extension GrafttyApp {
                         !NSApp.isHidden
                         && terminalManager.view(for: slot)?
                             .window?.isVisible == true
-                        && appStateBinding.wrappedValue
-                            .selectedWorktreePath.flatMap {
-                                appStateBinding.wrappedValue
-                                    .worktree(forPath: $0)
-                            }?.splitTree.containsLeaf(slot) == true
                     guard let newID = PaneCommands.splitPane(
                         appState: appStateBinding,
                         terminalManager: terminalManager,
@@ -158,21 +153,12 @@ extension GrafttyApp {
                         )
                     }
                     let slot = PaneSlotID(id: paneID)
-                    let targetIsVisible =
-                        !NSApp.isHidden
-                        && terminalManager.view(for: slot)?
-                            .window?.isVisible == true
-                        && appStateBinding.wrappedValue
-                            .selectedWorktreePath.flatMap {
-                                appStateBinding.wrappedValue
-                                    .worktree(forPath: $0)
-                            }?.splitTree.containsLeaf(slot) == true
                     PaneCommands.closePane(
                         appState: appStateBinding,
                         terminalManager: terminalManager,
                         targetID: slot,
                         userInitiated: true,
-                        activateReplacement: targetIsVisible
+                        activateReplacement: terminalManager.view(for: slot)?.window?.isKeyWindow == true
                     )
                     return .ok
                 case .swap:
@@ -268,6 +254,7 @@ extension GrafttyApp {
     /// against `appState` and the shared worktree flows.
     private static func makeWorktreeManagementMutator(
         appState appStateBinding: Binding<AppState>,
+        workspaceWindows: WorkspaceWindows,
         terminalManager: TerminalManager,
         services: AppServices,
         worktreeManagement: WorktreeManagement,
@@ -407,6 +394,9 @@ extension GrafttyApp {
                 let router = await MainActor.run { SocketRequestRouter(appState: appStateBinding, terminalManager: terminalManager, services: services) }
                 return await AttentionAnswerDelivery.deliver(worktreeID: worktreeID, paneID: paneID, occurrence: occurrence,
                                                              text: text, platform: router)
+            case let .terminalText(worktreeID, paneID, lines):
+                let router = await MainActor.run { SocketRequestRouter(appState: appStateBinding, terminalManager: terminalManager, services: services) }
+                return await TerminalTextDelivery.read(worktreeID: worktreeID, paneID: paneID, lines: lines, platform: router)
             case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
                 return await MainActor.run {
                     GrafttyApp.persistingChanges(to: appStateBinding) {
@@ -416,6 +406,8 @@ extension GrafttyApp {
                         return .ok
                     }
                 }
+            case .tailcatEndpoint:
+                return await .tailcatEndpoint(services.tailcatHost.endpoint)
             case .hostPresentation:
                 let presentation = await MainActor.run {
                     RemoteHostPresentation(
@@ -507,11 +499,9 @@ extension GrafttyApp {
                         terminalManager: terminalManager,
                         startSurfacesInBackground: true
                     )
-                    let targetIsVisible =
-                        !NSApp.isHidden
-                        && NSApp.mainWindow?.isVisible == true
-                        && appStateBinding.wrappedValue
-                            .selectedWorktreePath == worktreeID
+                    let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID)
+                    let displayedWindow = worktree.flatMap { workspaceWindows.windowShowing($0.id)?.window }
+                    let targetIsVisible = !NSApp.isHidden && displayedWindow?.isVisible == true
                     if result == .started || result == .alreadyRunning {
                         let splitTrees = appStateBinding.wrappedValue
                             .runningSplitTreesByPath()
@@ -529,8 +519,7 @@ extension GrafttyApp {
                     }
                     if result == .started,
                        !targetIsVisible,
-                       let worktree = appStateBinding.wrappedValue
-                           .worktree(forPath: worktreeID) {
+                       let worktree {
                         for terminalID in worktree.splitTree.allLeaves {
                             terminalManager.setVisible(
                                 false,
@@ -622,6 +611,7 @@ extension GrafttyApp {
     static func makeHostAgentPool(
         hostKey: Curve25519.Signing.PrivateKey,
         appState appStateBinding: Binding<AppState>,
+        workspaceWindows: WorkspaceWindows,
         terminalManager: TerminalManager,
         services: AppServices,
         worktreeManagement: WorktreeManagement,
@@ -663,6 +653,7 @@ extension GrafttyApp {
         let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator =
             Self.makeWorktreeManagementMutator(
                 appState: appStateBinding,
+                workspaceWindows: workspaceWindows,
                 terminalManager: terminalManager,
                 services: services,
                 worktreeManagement: worktreeManagement,
@@ -688,6 +679,13 @@ extension GrafttyApp {
         let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { viewer in
             await chromeBroker.disconnect(viewerID: viewer)
         }
+        let agentChatService = services.agentChatService
+        let agentChatOpener: AgentChatChannelHandler.Opener = { deviceID, worktreePath, agentID in
+            await MainActor.run {
+                agentChatService.connection(worktreePath: worktreePath, agentID: agentID,
+                                            viewer: .device(deviceID.value))
+            }
+        }
 
         // Every device gets a fully configured connection agent. Shared
         // registries keep revocation and routing consistent across devices.
@@ -701,6 +699,7 @@ extension GrafttyApp {
              displayOwnershipStore = services.displayOwnershipStore,
              activeRemotePeers, panesStateSubscribe, panesStateV2Subscribe,
              paneControlMutator, worktreeManagementMutator, chromeTabMutator, chromeTabOnDisconnect,
+             agentChatOpener,
              zmxExe = zmxBinary, zmxDir] in
             let hostAgent = WebRTCHostAgent(
                 hostKey: hostKey,
@@ -766,6 +765,7 @@ extension GrafttyApp {
                 paneControlMutator: paneControlMutator,
                 worktreeManagementMutator: worktreeManagementMutator,
                 chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+                agentChatOpener: agentChatOpener,
                 displayOwnershipStore: displayOwnershipStore,
                 sshConnectionRegistry: sshConnectionRegistry
             )

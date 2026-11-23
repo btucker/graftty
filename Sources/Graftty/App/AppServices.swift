@@ -18,6 +18,7 @@ import WebRTC
 /// and the Settings paired-devices list.
 @MainActor
 final class AppServices {
+    let tailcatHost = TailcatMacHost()
     let parentMCPProcesses = DuplexSubprocessScope()
     lazy var parentMCPConnections: MCPConnectionSupervisor = {
         let peers = trustedPeerStore
@@ -52,6 +53,12 @@ final class AppServices {
     /// Process-wide display ownership state shared by web/iOS bridge
     /// connections and, once wired, native Mac panes.
     let displayOwnershipStore: SessionDisplayOwnershipStore
+    /// Chat for agent tabs hosted on this Mac, shared by the local window and paired viewers.
+    lazy var agentChatService = AgentChatService(
+        storage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
+        ownership: displayOwnershipStore,
+        state: { [weak self] in self?.appStateProvider?() ?? AppState() }
+    )
     let teamInbox: TeamInbox
     let remoteTeamRouter = RemoteTeamRouter()
     /// Published on every input to the sidebar and panes-state snapshots.
@@ -434,10 +441,12 @@ final class AppServices {
                 )
             }
         }
+        tailcatHost.start(pool: hostAgentPool, fingerprint: localHostFingerprint)
         NSLog("[Graftty] paired remote access listening on [::]:%d", port)
     }
 
     func stopRemoteMacAccessServices() {
+        tailcatHost.stop()
         remoteMacsModel.stopDiscovery()
         remoteAccessRouteRefreshTask?.cancel()
         remoteAccessRouteRefreshTask = nil

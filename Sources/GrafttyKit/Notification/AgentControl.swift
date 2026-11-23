@@ -35,7 +35,7 @@ public enum AgentControl {
 
     /// Paired-viewer operations always resolve the exact agent within the supplied worktree.
     public static func conversation(path: String, agentID: String, action: AgentConversationAction,
-                                    platform: any ControlPlatform) async -> WorktreeManagementResponse {
+                                    platform: any ControlPlatform, codexHome: URL = CodexHomeMirror.defaultSourceDirectory()) async -> WorktreeManagementResponse {
         guard platform.state.worktree(forPath: path)?.agents.contains(where: { $0.id == agentID }) == true else {
             return .error(code: "agent-unavailable", message: "This agent is no longer available in this worktree.", forceAllowed: false, shortStatus: nil)
         }
@@ -47,6 +47,17 @@ public enum AgentControl {
         }
         guard let agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agentID }) else {
             return .error(code: "agent-unavailable", message: "This agent is no longer available.", forceAllowed: false, shortStatus: nil)
+        }
+        if case .messages(let offset) = action {
+            guard agent.provider == .codex, let session = agent.providerSessionID,
+                  let page = await OffMainIO.run({ CodexScrollbackTranscript.messages(
+                    sessionID: session, worktree: path, codexHome: codexHome, from: offset) }),
+                  let current = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agentID }),
+                  current.assignmentID == agent.assignmentID, current.providerSessionID == session else {
+                return .error(code: "history-unavailable", message: "This session’s saved messages are unavailable.", forceAllowed: false, shortStatus: nil)
+            }
+            return .agentConversation(.init(agentID: agent.id, assignmentID: agent.assignmentID.uuidString,
+                result: nil, transcript: nil, failure: nil, canResume: false, messages: page))
         }
         let archives = platform.agentArchives
         do {
@@ -68,7 +79,14 @@ public enum AgentControl {
         func needsObservation() -> Bool {
             guard let worktree = platform.state.worktree(forPath: path),
                   let slot = worktree.paneSlot(forSessionName: session) else { return false }
-            return !worktree.agents.contains { $0.paneSlotID == slot && $0.status != .closed && ($0.providerSessionID != nil || providerSessionID == nil) }
+            guard let agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) else {
+                return true
+            }
+            guard agent.provider == provider, let providerSessionID else { return false }
+            // A resumed provider may only send a hook once its first turn
+            // starts, even though we already know its saved conversation ID.
+            return agent.providerSessionID == nil
+                || (agent.status == .starting && agent.resumingSessionID == providerSessionID)
         }
         guard needsObservation() else { return }
         let presence = platform.teamPresence
@@ -105,7 +123,9 @@ public enum AgentControl {
         if let session = paneSessionName, let slot = worktree.paneSlot(forSessionName: session),
            var agent = worktree.agents.first(where: { $0.paneSlotID == slot && $0.status != .closed }) {
             guard agent.provider == provider else { return "" }
-            agent.isPrimary = worktree.isPrimaryAgent(agent)
+            // A successor to an ended primary is guided as the owner, but keeps its recorded role.
+            let guidedAsPrimary = worktree.isPrimaryAgent(agent)
+            agent.isPrimary = worktree.isRecordedPrimaryAgent(agent)
             if isSessionStart || (providerSessionID?.isEmpty == false && providerSessionID != agent.providerSessionID) {
                 agent.recoverOngoingConversation()
             }
@@ -120,7 +140,9 @@ public enum AgentControl {
             if let prompt = agent.initialPrompt, !prompt.isEmpty {
                 sections.append("Saved initial assignment, for recovery only. If this is already in your launch context or completed, do not repeat it:\n" + prompt)
             }
-            sections.append(agent.sessionInstructions)
+            var guidance = agent
+            guidance.isPrimary = guidedAsPrimary
+            sections.append(guidance.sessionInstructions)
         }
         await reconcileOutbox(platform: platform)
         if let agentID {
@@ -527,7 +549,7 @@ public enum AgentControl {
         guard let currentRepo = platform.state.repo(forWorktreePath: path) else { throw AgentControlError.unknownAgent }
         // The stop that ended this agent ended its children too; its new session context lists their pending cleanup.
         guard hostRecovery || !hasOpenChildren(of: agent, in: currentRepo) else { throw AgentControlError.activeChildren }
-        agent.isPrimary = platform.state.worktree(forPath: path)?.isPrimaryAgent(agent)
+        agent.isPrimary = platform.state.worktree(forPath: path)?.isRecordedPrimaryAgent(agent)
         // A fresh provider invocation receives the new assignment through its
         // environment and hook context, without a synthetic user prompt.
         if agent.status != .closed {

@@ -17,6 +17,8 @@ struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
     let worktreeManagement: WorktreeManagement
+    let workspaceWindows: WorkspaceWindows
+    @State private var workspaceWindow: WorkspaceWindowSelection
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let claudeSessionRegistry: ClaudeSessionRegistry
@@ -36,7 +38,7 @@ struct MainWindow: View {
 
     @State private var showsWorktreeContext = false
     @State private var requestedRemoteAgent: String?
-    @State private var sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mac")
+    @State private var sidebarNavigation: SidebarNavigationState
 
     /// Column visibility state — must be a real `@State` rather than a
     /// `.constant(...)` so the toolbar toggle button actually toggles.
@@ -74,6 +76,8 @@ struct MainWindow: View {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         worktreeManagement: WorktreeManagement,
+        workspaceWindows: WorkspaceWindows,
+        sidebarAttention: SidebarNavigationState,
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
         claudeSessionRegistry: ClaudeSessionRegistry,
@@ -88,6 +92,10 @@ struct MainWindow: View {
         _appState = appState
         self.terminalManager = terminalManager
         self.worktreeManagement = worktreeManagement
+        self.workspaceWindows = workspaceWindows
+        _sidebarNavigation = State(initialValue: SidebarNavigationState(
+            prefix: "sidebar.mac", sharingAttentionWith: sidebarAttention
+        ))
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
         self.claudeSessionRegistry = claudeSessionRegistry
@@ -98,9 +106,12 @@ struct MainWindow: View {
         self.remoteMacsModel = remoteMacsModel
         self.appStateChanges = appStateChanges
         self.makeRemoteMacPairingDriver = makeRemoteMacPairingDriver
+        let workspaceWindow = WorkspaceWindowSelection()
+        _workspaceWindow = State(initialValue: workspaceWindow)
         _remoteViewer = StateObject(wrappedValue: RemoteWorktreeViewerController(
             model: remoteMacsModel,
             surfaces: terminalManager,
+            allowsAppFocus: { workspaceWindows.active === workspaceWindow },
             resolveWorktreeRoute: { try await remoteMacsModel.resolveWorktreeRoute($1, from: $0, excluding: $2) }
         ))
     }
@@ -120,9 +131,15 @@ struct MainWindow: View {
             RemoteWorkspaceContentView(viewer: remoteViewer, terminalManager: terminalManager,
                 worktree: snapshot, identity: RemoteMacIdentity(remote), focused: focusedRemoteTerminalID,
                 onFocus: { terminalID in
-                    attentionOpenGeneration &+= 1
-                    remoteViewer.focusTerminal(terminalID)
-                }, agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
+                    if let terminalID {
+                        attentionOpenGeneration &+= 1
+                        remoteViewer.focusTerminal(terminalID)
+                    } else if isActiveWorkspaceWindow {
+                        terminalManager.clearFocus()
+                    }
+                }, onPaneCommandTargetChange: { pane in
+                    workspaceWindow.remotePaneID = pane
+                }, agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
                     let response = try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .addAgent(worktreeID: snapshot.path, provider: provider, operationID: operationID))
                     switch response {
@@ -133,6 +150,9 @@ struct MainWindow: View {
                 }, conversationRequest: { id, action in
                     try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .agentConversation(worktreeID: snapshot.path, agentID: id, action: action))
+                }, chatConnection: { agentID in
+                    remoteMacsModel.agentChatConnection(identity: RemoteMacIdentity(remote),
+                        worktreePath: snapshot.path, agentID: agentID)
                 })
                 .id(RemoteWorktreeViewerController.WorktreeKey(identity: RemoteMacIdentity(remote), worktreePath: snapshot.path))
         }
@@ -155,6 +175,7 @@ struct MainWindow: View {
                 remoteBranchStore: remoteBranchStore,
                 remoteMacsModel: remoteMacsModel,
                 appStateChanges: appStateChanges,
+                selectedLocalWorktreePath: selectedLocalWorktreePath,
                 selectedRemoteIdentity: selectedRemoteIdentity,
                 selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                 selectedRemotePaneSessionName: selectedRemotePaneSessionName,
@@ -250,7 +271,7 @@ struct MainWindow: View {
                             // only called `setFocus` (the libghostty side)
                             // used to let focus snap back to the first leaf
                             // on the next return visit.
-                            if let wtPath = appState.selectedWorktreePath {
+                            if let wtPath = selectedLocalWorktreePath {
                                 appState.setFocusedTerminal(terminalID, forWorktreePath: wtPath)
                                 // STATE-2.4: viewing a pane clears notifications;
                                 // agent requests remain until provider progress.
@@ -281,7 +302,10 @@ struct MainWindow: View {
                         onActivateTerminal: { terminalID in
                             makePaneFirstResponder(terminalID, when: { terminalManager.focusedTerminalID == terminalID })
                         },
-                        agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext
+                        onClearFocus: {
+                            if isActiveWorkspaceWindow { terminalManager.clearFocus() }
+                        },
+                        agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext
                     )
                 } else {
                     ContentUnavailableView(
@@ -419,8 +443,11 @@ struct MainWindow: View {
         // toolbar items resolve through ColorScheme, not NSAppearance.
         .preferredColorScheme(terminalManager.theme.isDark ? .dark : .light)
         .trackWindowFrame(
-            initialFrame: initialWindowRect
-        ) { [$appState] frame in
+            initialFrame: initialWindowRect,
+            onAttach: attachWorkspaceWindow,
+            onDetach: detachWorkspaceWindow
+        ) { frame in
+            guard isActiveWorkspaceWindow else { return }
             let newFrame = WindowFrame(
                 x: frame.origin.x,
                 y: frame.origin.y,
@@ -436,22 +463,25 @@ struct MainWindow: View {
         .focusedSceneValue(\.worktreeNavAction, worktreeNavAction)
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
-            set: { appState.sidebarWidth = $0 }
+            set: { if isActiveWorkspaceWindow { appState.sidebarWidth = $0 } }
         ), when: true)
         .onChange(of: selectedVoicePaneID) { _, _ in
             voiceDictation.cancel()
         }
         .onChange(of: previewWindows.inlineTarget) { _, target in
-            guard let target,
+            guard isActiveWorkspaceWindow, let target,
                   let indices = appState.indicesOfWorktreeContaining(terminalID: target.pane),
                   appState.repos[indices.repo].worktrees[indices.worktree].path == target.worktreePath else { return }
             let tree = appState.repos[indices.repo].worktrees[indices.worktree].splitTree
             if let zoomed = tree.zoomed, zoomed != target.pane {
                 appState.repos[indices.repo].worktrees[indices.worktree].splitTree = tree.withZoom(nil)
             }
-            selectPane(target.worktreePath, target.pane)
+            attentionOpenGeneration &+= 1
+            guard selectPane(target.worktreePath, target.pane, acknowledging: true),
+                  let worktree = appState.worktree(forPath: target.worktreePath),
+                  let owner = workspaceWindows.windowShowing(worktree.id) else { return }
             makePaneFirstResponder(target.pane, when: {
-                selectedRemoteIdentity == nil && appState.selectedWorktreePath == target.worktreePath
+                workspaceWindows.active === owner && owner.worktreeID == worktree.id
                     && appState.worktree(forPath: target.worktreePath)?.focusedPaneSlotID == target.pane
             }, onFocused: {
                 terminalManager.view(for: target.pane)?.window?.makeKeyAndOrderFront(nil)
@@ -459,9 +489,26 @@ struct MainWindow: View {
         }
         .onChange(of: currentNavigationTarget, initial: true) { _, target in
             worktreeHistory.record(target)
+            if selectedRemoteWorktreePath == nil { workspaceWindow.remotePaneID = nil }
         }
-        .onChange(of: appState.selectedWorktreePath, initial: true) { oldPath, newPath in
-            guard let newPath else { return }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeMainNotification)) { event in
+            guard let window = event.object as? NSWindow, workspaceWindow.window === window else { return }
+            activateWorkspaceWindow()
+        }
+        .onChange(of: appState.selectedWorktreePath) { _, path in
+            guard isActiveWorkspaceWindow, path != selectedLocalWorktreePath else { return }
+            if let path {
+                guard let worktree = appState.worktree(forPath: path), showLocalWorktree(worktree) else { return }
+                setWorktreeSurfacesVisible(true, worktreePath: path)
+            } else {
+                showLocalWorktree(nil)
+            }
+        }
+        .onChange(of: selectedLocalWorktreePath, initial: true) { _, newPath in
+            guard let newPath else {
+                terminalManager.surfaceBudget.trim(using: appState.runningSplitTreesByPath())
+                return
+            }
             terminalManager.surfaceBudget.noteSelected(
                 worktreePath: newPath,
                 splitTreesByPath: appState.runningSplitTreesByPath()
@@ -471,16 +518,11 @@ struct MainWindow: View {
             remoteViewer.reconcile(worktreePanesByRemote: snapshots)
             retryPendingRemoteNotificationActivation()
         }
-        .onChange(
-            of: remoteMacsModel.notificationActivation,
-            initial: true
-        ) { _, event in
-            guard let event else { return }
-            activateRemoteNotification(event)
-            remoteMacsModel.consumeRemoteNotificationActivation()
+        .onChange(of: remoteMacsModel.notificationActivation) { _, _ in
+            activatePendingRemoteNotification()
         }
         .modifier(AgentNotificationActivationHandler(
-            activation: .shared, onActivate: activateLocalNotification))
+            activation: .shared, canActivate: isActiveWorkspaceWindow, onActivate: activateLocalNotification))
         .onDisappear {
             remoteRouteSelectionTask?.cancel()
             voiceDictation.cancel()
@@ -492,6 +534,61 @@ struct MainWindow: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
             applyAppVisibility(isVisible: true)
         }
+    }
+
+    private var isActiveWorkspaceWindow: Bool { workspaceWindows.active === workspaceWindow }
+
+    private func attachWorkspaceWindow(_ window: NSWindow) -> Bool {
+        let isFirst = workspaceWindows.attach(workspaceWindow, to: window)
+        let restoredWorktreeID = appState.selectedWorktreePath.flatMap { appState.worktree(forPath: $0)?.id }
+        // AppKit can attach the background view while SwiftUI is rendering.
+        DispatchQueue.main.async { [weak window] in
+            guard let window, workspaceWindow.window === window else { return }
+            if isFirst, workspaceWindow.worktreeID == nil {
+                let worktreeID = workspaceWindows.active == nil
+                    ? appState.selectedWorktreePath.flatMap { appState.worktree(forPath: $0)?.id }
+                    : restoredWorktreeID
+                workspaceWindows.select(worktreeID, in: workspaceWindow)
+            }
+            workspaceWindow.isReady = true
+            if window.isMainWindow { activateWorkspaceWindow() }
+        }
+        return isFirst
+    }
+
+    private func detachWorkspaceWindow(_ window: NSWindow) {
+        workspaceWindows.detach(workspaceWindow, from: window)
+        terminalManager.surfaceBudget.trim(using: appState.runningSplitTreesByPath())
+    }
+
+    private func activateWorkspaceWindow() {
+        guard workspaceWindow.isReady else { return }
+        workspaceWindows.makeActive(workspaceWindow)
+        appState.selectedWorktreePath = selectedLocalWorktreePath
+        if let pane = (workspaceWindow.window?.firstResponder as? SurfaceNSView)?.terminalID {
+            terminalManager.setFocus(pane)
+        } else {
+            terminalManager.clearFocus()
+        }
+        activatePendingRemoteNotification()
+    }
+
+    private func activatePendingRemoteNotification() {
+        guard isActiveWorkspaceWindow, let event = remoteMacsModel.notificationActivation else { return }
+        remoteMacsModel.consumeRemoteNotificationActivation()
+        activateRemoteNotification(event)
+    }
+
+    @discardableResult
+    private func showLocalWorktree(_ worktree: WorktreeEntry?) -> Bool {
+        let previousPath = selectedLocalWorktreePath
+        guard workspaceWindows.select(worktree?.id, in: workspaceWindow) else { return false }
+        if worktree != nil { remoteViewer.leaveForLocalSelection() }
+        if let previousPath, previousPath != worktree?.path {
+            setWorktreeSurfacesVisible(false, worktreePath: previousPath)
+        }
+        if isActiveWorkspaceWindow { appState.selectedWorktreePath = worktree?.path }
+        return true
     }
 
     /// The initial window rect to apply on first attach.
@@ -557,7 +654,7 @@ struct MainWindow: View {
     }
 
     private var selectedRepo: RepoEntry? {
-        guard let path = appState.selectedWorktreePath else { return nil }
+        guard let path = selectedLocalWorktreePath else { return nil }
         return appState.repo(forWorktreePath: path)
     }
 
@@ -565,15 +662,15 @@ struct MainWindow: View {
         if let identity = selectedRemoteIdentity {
             return selectedRemoteWorktreePath.map { .remote(identity, $0) }
         }
-        return appState.selectedWorktreePath.map { .local($0) }
+        return selectedLocalWorktreePath.map { .local($0) }
     }
 
     private var agentTabOpener: ((String) -> Void)? {
         if selectedRemoteIdentity != nil { return { requestedRemoteAgent = $0 } }
         guard let worktree = selectedWorktreeBinding else { return nil }
         return { id in
-            guard let slot = worktree.wrappedValue.showAgentTab(id) else { return }
-            if worktree.wrappedValue.hasCompletedContent(in: slot) { terminalManager.clearFocus() }
+            guard let slot = worktree.wrappedValue.showAgentTab(id), isActiveWorkspaceWindow else { return }
+            if worktree.wrappedValue.showsNonTerminalContent(in: slot) { terminalManager.clearFocus() }
             else { terminalManager.setFocus(slot) }
         }
     }
@@ -680,7 +777,7 @@ struct MainWindow: View {
 
     private var remotePairingRequestBinding: Binding<PendingRemotePairingRequest?> {
         Binding(
-            get: { hostPairingCoordinator.pendingRequest },
+            get: { isActiveWorkspaceWindow ? hostPairingCoordinator.pendingRequest : nil },
             set: { _ in }
         )
     }
@@ -697,9 +794,11 @@ struct MainWindow: View {
         alert.runModal()
     }
 
+    private var selectedLocalWorktreePath: String? { selectedWorktree?.path }
+
     private var selectedWorktree: WorktreeEntry? {
-        guard let path = appState.selectedWorktreePath else { return nil }
-        return appState.worktree(forPath: path)
+        guard let id = workspaceWindow.worktreeID else { return nil }
+        return appState.repos.lazy.flatMap(\.worktrees).first { $0.id == id }
     }
 
     private var selectedRemoteIdentity: RemoteMacIdentity? { remoteViewer.selectedRemoteIdentity }
@@ -753,7 +852,7 @@ struct MainWindow: View {
             onGoBack: { navigateWorktreeHistory(forward: false) },
             onGoForward: { navigateWorktreeHistory(forward: true) },
             onSelectHistory: selectHistoryTarget,
-            onRefreshPR: refreshPR,
+            onRefreshPR: { if let path = selectedLocalWorktreePath { refreshPR(worktreePath: path) } },
             project: selectedIdentityProject, projectIconData: selectedIdentityImageData,
             worktreeIdentity: selectedIdentity,
             previewWorktreePath: selectedRemoteIdentity.map { "remote-preview:\($0):\(selectedRemoteWorktreeSnapshot?.path ?? "")" } ?? selectedWorktree?.path,
@@ -836,17 +935,31 @@ struct MainWindow: View {
         return await handle.reveal(eventID: request.eventID, messages: request.messages)
     }
 
-    /// The selected worktree's agent pane, local or remote, and the timeline its scrollback map marks.
-    private var agentScrollbackMap: AgentScrollbackMap? {
-        guard let context = selectedContext, let session = context.agentPaneID else { return nil }
-        let terminalID: PaneSlotID?
-        if let remoteIdentity = selectedRemoteIdentity {
-            terminalID = remoteViewer.existingTerminalID(identity: remoteIdentity, worktreePath: context.worktree.path,
-                                                         sessionName: session)
-        } else {
-            terminalID = terminalManager.handle(forSessionName: session)?.terminalID
+    private var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] {
+        guard let context = selectedContext else { return [:] }
+        let sessions = context.scrollbackPaneIDs
+        guard !sessions.isEmpty else { return [:] }
+        let worktree = context.worktree.path
+        let timeline = WorktreeTimeline(context)
+        var maps: [PaneSlotID: AgentScrollbackMap] = [:]
+        for session in sessions {
+            if let remote = selectedRemoteIdentity {
+                if let slot = remoteViewer.existingTerminalID(identity: remote, worktreePath: worktree, sessionName: session) {
+                    let agent = context.worktree.agents?.first { $0.sessionName == session }
+                    maps[slot] = AgentScrollbackMap(timeline: timeline, recovery: .pairedCodex(agent))
+                }
+            } else if let slot = terminalManager.handle(forSessionName: session)?.terminalID {
+                let thread = selectedWorktree?.agents.first {
+                    $0.paneSlotID == slot && $0.provider == .codex && ($0.status == .running || $0.status == .waiting)
+                }?.providerSessionID
+                let recovery = thread.map { thread in
+                    let transcript = CodexScrollbackTranscript(sessionID: thread, worktree: worktree)
+                    return ScrollbackMapRecovery(id: thread) { transcript.read() }
+                }
+                maps[slot] = AgentScrollbackMap(timeline: timeline, recovery: recovery)
+            }
         }
-        return terminalID.map { AgentScrollbackMap(terminalID: $0, timeline: WorktreeTimeline(context)) }
+        return maps
     }
 
     private var selectedContext: SidebarWorktreeContext? {
@@ -897,7 +1010,7 @@ struct MainWindow: View {
     }
 
     private var selectedWorktreeBinding: Binding<WorktreeEntry>? {
-        guard let path = appState.selectedWorktreePath else { return nil }
+        guard let path = selectedLocalWorktreePath else { return nil }
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == path {
@@ -932,9 +1045,10 @@ struct MainWindow: View {
         return prStatusStore.infos[path]
     }
 
-    private func refreshPR() {
-        guard let wt = selectedWorktree, let repo = selectedRepo else { return }
-        prStatusStore.refresh(worktreePath: wt.path, repoPath: repo.path, branch: wt.branch)
+    private func refreshPR(worktreePath path: String) {
+        guard let worktree = appState.worktree(forPath: path),
+              let repo = appState.repo(forWorktreePath: path) else { return }
+        prStatusStore.refresh(worktreePath: path, repoPath: repo.path, branch: worktree.branch)
     }
 
     /// Selects a worktree *and* focuses a specific pane within it. Used by
@@ -1000,10 +1114,10 @@ struct MainWindow: View {
             let matches = worktree.splitTree.allLeaves.filter { terminalManager.displayTitles[$0] == title }
             if matches.count == 1 { selectedSlot = matches[0] }
         } else if worktree.splitTree.allLeaves.count == 1 { selectedSlot = worktree.splitTree.allLeaves.first }
-        if let selectedSlot { selectPane(worktree.path, selectedSlot, acknowledging: false) }
+        let opened = if let selectedSlot { selectPane(worktree.path, selectedSlot, acknowledging: false) }
         else { selectWorktree(worktree.path, acknowledging: false) }
-        guard appState.selectedWorktreePath == item.worktreeID,
-              let active = appState.worktree(forPath: item.worktreeID), active.state == .running,
+        guard opened, let active = appState.worktree(forPath: item.worktreeID),
+              workspaceWindows.windowShowing(active.id) != nil, active.state == .running,
               !active.splitTree.allLeaves.isEmpty else { return false }
         if let occurrence = item.occurrence, occurrence.source != .agentStop {
             let paneID = item.paneID == nil ? nil : selectedSlot.flatMap { active.paneSessions[$0] }.map { ZmxLauncher.sessionName(for: $0) }
@@ -1025,9 +1139,8 @@ struct MainWindow: View {
         makePaneFirstResponder(
             terminalID,
             when: {
-                appState.selectedWorktreePath == worktreePath
-                    && appState.worktree(forPath: worktreePath)?.firstPane
-                        == terminalID
+                guard let worktree = appState.worktree(forPath: worktreePath) else { return false }
+                return workspaceWindows.windowShowing(worktree.id) != nil && worktree.firstPane == terminalID
             }
         )
         return true
@@ -1063,22 +1176,23 @@ struct MainWindow: View {
     @discardableResult
     private func selectWorktree(_ path: String, acknowledging: Bool, inspectingCreation: Bool = true,
                                 openingTerminal: Bool = false) -> Bool {
+        guard workspaceWindow.window != nil,
+              let worktree = appState.worktree(forPath: path) else { return false }
         remoteRouteSelectionTask?.cancel()
         remoteViewer.cancelRouteRecovery()
         wakeFlow = nil
-        if inspectingCreation, let worktree = appState.worktree(forPath: path), worktree.showsCreationProgress {
-            if let previous = appState.selectedWorktreePath, previous != path {
-                setWorktreeSurfacesVisible(false, worktreePath: previous)
-            }
-            remoteViewer.leaveForLocalSelection()
-            appState.selectedWorktreePath = path
+        if inspectingCreation, worktree.showsCreationProgress {
+            showLocalWorktree(worktree)
             return true
         }
-        guard appState.worktree(forPath: path)?.state.isInFlight != true,
-              terminalManager.wakeWorktree(path) else { return false }
-        remoteViewer.leaveForLocalSelection()
-        let previousPath = appState.selectedWorktreePath
-        appState.selectedWorktreePath = path
+        guard !worktree.state.isInFlight, terminalManager.wakeWorktree(path) else { return false }
+        showLocalWorktree(worktree)
+
+        // STATE-2.4: viewing clears notifications at both scopes while
+        // preserving stopped-agent requests.
+        if acknowledging {
+            appState.mutateWorktrees(atPath: path) { $0.viewAttention() }
+        }
 
         // Resurrect stale entries whose directory is actually still on
         // disk. Same rule as the background reconciler's `GIT-3.7`, but
@@ -1141,15 +1255,6 @@ struct MainWindow: View {
             }
         }
 
-        // STATE-2.4: viewing clears notifications at both scopes while
-        // preserving stopped-agent requests.
-        if acknowledging {
-            appState.mutateWorktrees(atPath: path) { $0.viewAttention() }
-        }
-
-        if previousPath != path, let previousPath {
-            setWorktreeSurfacesVisible(false, worktreePath: previousPath)
-        }
         setWorktreeSurfacesVisible(true, worktreePath: path)
 
         // Route keyboard to the worktree's currently-focused pane (or the
@@ -1157,14 +1262,17 @@ struct MainWindow: View {
         // typing immediately after a sidebar click without having to also
         // click into the terminal.
         if let wt = appState.worktree(forPath: path),
-           let target = wt.presentationPane, wt.hasCompletedContent(in: target) {
-            terminalManager.clearFocus()
+           let target = wt.presentationPane, wt.showsNonTerminalContent(in: target) {
+            if let owner = workspaceWindows.windowShowing(wt.id), owner === workspaceWindows.active {
+                terminalManager.clearFocus()
+            }
         } else if let wt = appState.worktree(forPath: path), let target = wt.presentationPane {
             makePaneFirstResponder(
                 target,
                 when: {
-                    appState.selectedWorktreePath == path
-                        && appState.worktree(forPath: path)?.presentationPane == target
+                    guard let current = appState.worktree(forPath: path) else { return false }
+                    return workspaceWindows.windowShowing(worktree.id) != nil
+                        && current.presentationPane == target && !current.showsNonTerminalContent(in: target)
                 }
             )
         }
@@ -1177,7 +1285,7 @@ struct MainWindow: View {
         // this, a merged PR can stay red in the breadcrumb until the
         // backoff expires, and the user's only escape hatch is
         // right-click "Refresh now" on the PR button.
-        refreshPR()
+        refreshPR(worktreePath: path)
         return true
     }
 
@@ -1301,10 +1409,7 @@ struct MainWindow: View {
     /// Selecting anything remote hides the local worktree's surfaces and
     /// clears the local half of the sidebar selection.
     private func leaveLocalSelectionForRemote() {
-        if let localPath = appState.selectedWorktreePath {
-            setWorktreeSurfacesVisible(false, worktreePath: localPath)
-        }
-        appState.selectedWorktreePath = nil
+        showLocalWorktree(nil)
     }
 
     private func beginAddRemoteWorktree(
@@ -1322,7 +1427,7 @@ struct MainWindow: View {
         worktree: WorktreePanes
     ) {
         if worktree.state != .stale {
-            guard let host = NSApp.mainWindow else { return }
+            guard let host = workspaceWindow.window else { return }
             let config = SheetAlert.Configuration(
                 messageText: "Delete Worktree?",
                 informativeText:
@@ -1524,7 +1629,7 @@ struct MainWindow: View {
     private func applyAppVisibility(isVisible: Bool) {
         if remoteViewer.setAppVisible(isVisible) { return }
         guard let action = AppVisibilitySurfacePolicy.action(
-            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedWorktreePath: selectedLocalWorktreePath,
             appIsVisible: isVisible
         ) else { return }
         switch action {
@@ -1677,7 +1782,7 @@ struct MainWindow: View {
     }
 
     private func removeRepoWithConfirmation(_ repo: RepoEntry) {
-        guard let host = NSApp.mainWindow else { return }
+        guard let host = workspaceWindow.window else { return }
         let config = SheetAlert.Configuration(
             messageText: "Remove \"\(repo.displayName)\"?",
             informativeText: "This removes the repository from Graftty but does not delete any files from disk.",
@@ -1835,9 +1940,9 @@ struct MainWindow: View {
                 return
             }
             guard let idx2 = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
-            appState.repos[idx2].worktrees = discovered.map {
-                WorktreeEntry(path: $0.path, branch: $0.branch)
-            }
+            appState.repos[idx2].worktrees = WorktreeReconciler.reconcile(
+                existing: appState.repos[idx2].worktrees, discovered: discovered
+            ).merged
             remoteBranchStore.refresh(repoPath: repo.path)
         }
     }
@@ -1845,7 +1950,7 @@ struct MainWindow: View {
     private func addRepoFromPath(_ repoPath: String, selectWorktree: String?) {
         guard !appState.repos.contains(where: { $0.path == repoPath }) else {
             if let wt = selectWorktree {
-                appState.selectedWorktreePath = wt
+                self.selectWorktree(wt)
             }
             return
         }

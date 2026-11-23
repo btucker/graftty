@@ -285,12 +285,13 @@ jobs:
         # (with application-identifier entitlement) — CODE_SIGN_IDENTITY=-
         # in project.yml handles signing. Without a real signature the
         # iOS Keychain rejects every SecItemAdd with errSecMissingEntitlement.
+        # Select SDKs through the destination: a global -sdk iphonesimulator
+        # makes the embedded watch app link iOS package objects.
         run: |
           # shellcheck disable=SC2016 # Xcode expands $(inherited).
           xcodebuild \
             -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj \
             -scheme GrafttyMobile \
-            -sdk iphonesimulator \
             -configuration Debug \
             -skipPackagePluginValidation \
             -clonedSourcePackagesDirPath .spm \
@@ -314,7 +315,7 @@ jobs:
       - name: Create isolated iOS simulator
         timeout-minutes: 12
         run: |
-          SIMULATOR_UDID="$(xcrun simctl create "Graftty CI (${{ matrix.shard }})" "iPhone 17")"
+          SIMULATOR_UDID="$(python3 scripts/ci/create-ios-simulator.py "Graftty CI (${{ matrix.shard }})" "iPhone 17")"
           echo "SIMULATOR_UDID=$SIMULATOR_UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIMULATOR_UDID"
           xcrun simctl bootstatus "$SIMULATOR_UDID" -b

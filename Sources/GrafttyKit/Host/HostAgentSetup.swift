@@ -35,12 +35,6 @@ public actor HostAgentSetup {
         let cli = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
             .deletingLastPathComponent().appendingPathComponent("graftty").path
         let installer = installer ?? AgentPluginInstaller(grafttyCLIPath: cli)
-        let plan: AgentPluginSetupPlan
-        do { plan = try installer.prepare(destinationRoot: configuration.stateDirectory.appendingPathComponent("agent-plugins")) }
-        catch { throw HostRuntimeError.invalid("Graftty agent plugin resources are missing or unreadable: \(error). Reinstall the host package.") }
-        let selected = AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: plan.installSteps.filter {
-            provider == nil || $0.provider.rawValue == provider?.rawValue
-        })
         let resolvedExecutor: any CLIExecutor
         if let executor {
             resolvedExecutor = executor
@@ -56,12 +50,31 @@ public actor HostAgentSetup {
             resolvedExecutor = CLIRunner()
             #endif
         }
+        if provider == .antigravity {
+            do { try await installer.installAntigravity(executor: resolvedExecutor) }
+            catch {
+                throw HostRuntimeError.invalid("Install and authenticate the Antigravity CLI on the host, then retry. \(error)")
+            }
+            return
+        }
+        let plan: AgentPluginSetupPlan
+        do { plan = try installer.prepare(destinationRoot: configuration.stateDirectory.appendingPathComponent("agent-plugins")) }
+        catch { throw HostRuntimeError.invalid("Graftty agent plugin resources are missing or unreadable: \(error). Reinstall the host package.") }
+        let selected = AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: plan.installSteps.filter {
+            provider == nil || $0.provider == provider
+        })
         let report = await installer.installReplacingLegacy(selected, executor: resolvedExecutor)
         guard report.succeeded else {
             let failures = report.results.filter { !$0.succeeded }.map {
                 "\($0.step.provider.displayName): \($0.errorDescription ?? "plugin install failed")"
             }.joined(separator: "; ")
             throw HostRuntimeError.invalid("Install and authenticate the requested provider CLI, then run graftty-host setup --install-agent-plugins. \(failures)")
+        }
+        if provider == nil {
+            do { _ = try await installer.autoInstallAntigravity(executor: resolvedExecutor) }
+            catch {
+                throw HostRuntimeError.invalid("Install and authenticate the Antigravity CLI on the host, then retry. \(error)")
+            }
         }
     }
 }

@@ -246,7 +246,7 @@ struct PaneAdd: ParsableCommand {
     @Option(name: .long, help: "Optional command to run in the new pane once its shell is ready")
     var command: String?
 
-    @Option(name: .long, help: "Agent runtime to launch in the new pane: codex or claude")
+    @Option(name: .long, help: "Agent runtime to launch in the new pane: codex, claude, or antigravity")
     var agent: String?
 
     @Option(name: .long, help: "Initial prompt passed to --agent")

@@ -58,8 +58,8 @@ enum AgentPluginInstallOfferPresenter {
         )
         guard let resultWindow = await SheetAlert.awaitReadyHostWindow() else { return }
         let details = report.succeeded
-            ? report.summary + " Start new agent sessions to use the plugins."
-            : report.summary + " Review and retry the displayed commands in Agent Teams Settings."
+            ? report.summary
+            : report.summary + " Retry from Agent Teams Settings."
         await SheetAlert.presentAsync(
             .init(
                 messageText: report.succeeded

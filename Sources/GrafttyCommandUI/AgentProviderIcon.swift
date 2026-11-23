@@ -49,10 +49,19 @@ public struct AgentProviderIcon: View {
             if let image = Self.providerImage(provider) {
                 image.resizable().renderingMode(.template).scaledToFit()
             } else {
-                Image(systemName: "terminal").resizable().scaledToFit().padding(2)
+                Image(systemName: provider == "antigravity" ? "sparkle" : "terminal").resizable().scaledToFit().padding(2)
             }
         }
         .frame(width: size, height: size)
-        .accessibilityLabel(provider == "claude" ? "Claude" : provider == "codex" ? "Codex" : "Terminal")
+        .accessibilityLabel(Self.displayName(provider))
+    }
+
+    private static func displayName(_ provider: String?) -> String {
+        switch provider {
+        case "claude": "Claude"
+        case "codex": "Codex"
+        case "antigravity": "Antigravity"
+        default: "Terminal"
+        }
     }
 }

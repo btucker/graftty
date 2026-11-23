@@ -4,7 +4,19 @@ import GrafttyKit
 
 struct Agent: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Create agents and manage assignment completion",
-        subcommands: [AgentAdd.self, AgentList.self, AgentShow.self, AgentFinish.self, AgentClose.self, AgentResume.self, AgentObserveExit.self])
+        subcommands: [AgentAdd.self, AgentList.self, AgentShow.self, AgentFinish.self, AgentClose.self, AgentResume.self, AgentInstallAntigravity.self, AgentObserveExit.self])
+}
+
+struct AgentInstallAntigravity: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "install-antigravity",
+        abstract: "Install Graftty's hooks and skills in the local Antigravity CLI profile")
+
+    func run() async throws {
+        let cli = Bundle.main.executableURL?.standardizedFileURL
+            ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        try await AgentPluginInstaller(grafttyCLIPath: cli.path).installAntigravity()
+        print("Installed the Graftty plugin. Start a new Antigravity session to load it.")
+    }
 }
 
 struct AgentAdd: ParsableCommand {
@@ -18,11 +30,11 @@ struct AgentAdd: ParsableCommand {
         Agents launch in the background. Use --select-tab to open the new agent on the host.
         Only CLI-added additional agents in existing worktrees have bounded assignments.
         When one finishes, its parent receives a durable cleanup instruction.
-        Native Claude and Codex subagents remain available for work within a session.
+        Native provider subagents remain available for work within a session.
         """)
     @Argument(help: "Agent name; also the worktree name when creating a worktree") var name: String
     @Option(name: .long, help: "Existing worktree name or path") var worktree: String?
-    @Option(name: .long, help: "claude or codex; defaults to the host's preference") var provider: String?
+    @Option(name: .long, help: "codex, claude, or antigravity; defaults to the host's preference") var provider: String?
     @Option(name: .long, help: "Initial task") var prompt: String?
     @Flag(name: .long, help: "Read the initial task from stdin") var promptStdin = false
     @Flag(name: .long, help: "Select the new agent tab on the host after launch") var selectTab = false
@@ -32,7 +44,7 @@ struct AgentAdd: ParsableCommand {
     @Flag(name: .long, help: "Print structured agent records") var json = false
 
     func validate() throws {
-        if let provider, TeamHookRuntime(rawValue: provider) == nil { throw ValidationError("--provider must be claude or codex") }
+        if let provider, TeamHookRuntime(rawValue: provider) == nil { throw ValidationError("--provider must be one of: codex, claude, antigravity") }
         if prompt != nil && promptStdin { throw ValidationError("Use --prompt or --prompt-stdin, not both") }
         if worktree != nil && base != nil { throw ValidationError("--base applies only to a new worktree") }
         guard timeout > 0 else { throw ValidationError("--timeout must be positive") }

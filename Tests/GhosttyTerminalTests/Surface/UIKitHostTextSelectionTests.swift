@@ -23,7 +23,8 @@
 
                 #expect(!view.usesInlineTextSelection)
                 #expect(view.gestureRecognizerShouldBegin(longPress))
-                #expect(view.touchSelection.tapRecognizers.allSatisfy { !$0.isEnabled })
+                // A host keeps single taps; double and triple taps still select.
+                #expect(view.touchSelection.tapRecognizers.map(\.isEnabled) == [false, true, true])
                 #expect(view.touchSelection.scrollGesture?.maximumNumberOfTouches == 1)
                 #expect(view.gestureRecognizers?.filter { $0 === longPress }.count == 1)
                 #expect(view.gestureRecognizers?.filter { $0 is UILongPressGestureRecognizer }.count == originalLongPressCount)

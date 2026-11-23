@@ -31,6 +31,7 @@ public extension PagedTerminalRenderer {
 @Observable
 @MainActor
 public final class PagedTerminalCoordinator {
+    public private(set) var historyRevision: UInt64 = 0
     private var hasViewportHistoryDemand = false
     public enum RestoreError: Error, Equatable, Sendable { case timedOut }
     /// @spec TERM-12.55
@@ -150,6 +151,7 @@ public final class PagedTerminalCoordinator {
                                hasAlternateHistory: value.hasAlternateHistory)
             nextOrdinal = [0, 0]
             remaining = [value.hasPrimaryHistory, value.hasAlternateHistory]
+            historyRevision &+= 1
             hasCurrentSnapshot = true
             status = remaining.contains(true) ? .available : .complete
             return try DisplayGrid(cols: value.cols, rows: value.rows)
@@ -171,6 +173,7 @@ public final class PagedTerminalCoordinator {
             cancelPending()
             switch result {
             case .applied:
+                if !page.data.isEmpty { historyRevision &+= 1 }
                 nextOrdinal[Int(page.screen)] &+= 1
                 remaining[Int(page.screen)] = !page.complete
                 status = remaining.contains(true) ? .available : .complete

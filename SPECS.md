@@ -8,7 +8,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### LAYOUT-1.x — Window Structure
 
-**LAYOUT-1.1** The application shall display a single main window with a resizable sidebar on the left and a terminal content area on the right.
+**LAYOUT-1.1** While a main window is open, the application shall display a resizable sidebar on the left and a terminal content area on the right.
 
 **LAYOUT-1.2** The sidebar shall be resizable via a drag handle between the sidebar and the terminal content area.
 
@@ -35,6 +35,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-1.13** While agent tabs are visible, the application shall keep Back, Forward, the repository/worktree breadcrumb, and Context visible and clickable in the window header above the tabs.
 
 **LAYOUT-1.14** While a worktree preview is open, the header shall name that preview and allow its primary control to hide it without deleting its history.
+
+**LAYOUT-1.15** When the user opens another main window on macOS, the application shall open a separate window even when macOS prefers tabbing.
+
+**LAYOUT-1.16** While several main windows are open on macOS, the application shall keep each window's worktree selection independent and restore the saved selection only when opening the first main window.
+
+**LAYOUT-1.17** When the user selects a local worktree already displayed in another main window, the application shall bring that window forward and preserve the current worktree in each window.
+
+**LAYOUT-1.18** While multiple macOS windows are open, the application shall share sidebar attention history and dismissals while keeping each window's navigation independent.
 
 ### LAYOUT-2.x — Sidebar — Repository List
 
@@ -340,9 +348,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.186** When an agent tab is dragged before or after another tab in its group, the application shall persist the new order without changing selected sessions, keyboard focus, or terminal identities.
 
-**LAYOUT-2.187** While an agent is running without a failure or input request, its shared tab and sidebar status badge shall display an indeterminate progress indicator; waiting, completed, failed, and disconnected agents shall display their corresponding static status symbols.
+**LAYOUT-2.187** While an agent tab is visible, the application shall omit the running spinner and display static indicators for idle, waiting, completed, failed, or disconnected agents.
 
-**LAYOUT-2.188** While a live agent is listed in the sidebar or agent tabs, the application shall use its current terminal title and fall back to its assignment name only when the terminal title is blank.
+**LAYOUT-2.188** While a live agent is listed in the sidebar or agent tabs, the application shall use its current terminal title, omit the provider's animated prefix in tabs, and fall back to its assignment name when the displayed title is blank.
 
 **LAYOUT-2.189** When a removable linked worktree has a merged PR or MR, the sidebar shall replace its Git divergence counts with a remove button that invokes the existing worktree deletion flow.
 
@@ -350,7 +358,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.191** When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.
 
-**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a fully visible tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
+**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.
 
 **LAYOUT-2.193** While an agent has a live input request, the application shall use the same waiting state in its sidebar and tab, retain the question when its worktree opens, and clear that state when the request is dismissed or its provider resumes.
 
@@ -424,7 +432,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.228** When the pointer rests on a pinned tile on Mac, the application shall show the worktree's full name, its host when it has one, and the status line its row would show, including an agent's question.
 
-**LAYOUT-2.229** While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.
+**LAYOUT-2.229** While the application draws a header watermark, it shall size the tilted icon to nearly twice the height of the header band, cropping it at the band's top and bottom edges, and show it at uniform opacity.
 
 **LAYOUT-2.230** While a worktree row is shown, the application shall give its identity a 60 by 40 point slot that a wide drawing fills, start the row's text after that slot, and keep emoji and project icons at most 32 points.
 
@@ -441,6 +449,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.242** While pinned agents are shown as tiles on Mac or mobile, the application shall place them in one shared niche, darker than the sidebar and inset into it, and draw each tile as its icon with its name below, without a fill, band, or frame of its own, raising only the selected tile on a borderless pad concentric with the shelf, and naming a tile's host only when another tile shows the same caption.
 
 **LAYOUT-2.243** When a connected remote worktree advertises a drawing, the Mac application shall fetch its matching revision through the delivering host, cache the image, and show it in sidebar rows, pinned tiles, and the selected worktree header, while preserving user-chosen emoji and home checkout icons.
+
+**LAYOUT-2.244** While header text overlaps the header watermark, the application shall shade the watermark beneath that text, leaving the rest of the watermark and the header outside it unshaded.
+
+**LAYOUT-2.245** When agent tabs are wider than their row, the application shall shrink the widest tabs first to an equal width, no narrower than a minimum, truncating their titles in the middle, and scroll only the tabs that still do not fit.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1176,7 +1188,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.23** The Graftty Team provider skill shall name the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.
 
-**ATTN-1.24** When `graftty pane add` is invoked with `--agent <codex|claude>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.
+**ATTN-1.24** When `graftty pane add` is invoked with `--agent <codex|claude|antigravity>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.
 
 **ATTN-1.25** When `graftty pane add` runs a command or agent, the application shall hand it to the new pane as initial shell input that runs once the shell is ready, rather than typing it into the PTY after the split, and shall run nothing for an empty or whitespace-only command.
 
@@ -1693,6 +1705,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TECH-6.7** When the native sidebar test fixture creates a window, the fixture shall disable native window animations before displaying the window.
 
 **TECH-6.8** When an iOS CI shard runs in a results directory containing earlier bundles, the workflow shall use distinct result paths for the new invocation, execute every selected batch, and preserve the earlier evidence.
+
+**TECH-6.9** When CI creates an iOS test simulator, the workflow shall choose the newest available runtime supporting its device type within the selected SDK's major and minor version ceiling.
 
 ## ZMX — zmx Session Backing
 
@@ -2398,13 +2412,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.7** When the user selects a paired Mac, the application shall request `hostPresentation` over the authenticated worktree-management channel and pass a non-empty Ghostty config to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting a `TerminalPaneView`. A missing or empty config is non-fatal and falls back to `libghostty-spm` defaults. The response also carries the Mac's resolved keybindings so terminals mirror desktop presentation without Web Access.
 
-**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.
+**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its background to the screen edges, keep its terminal viewport below top chrome, keep floating controls within the safe area, and reserve the keyboard and its control bar when the keyboard is visible.
 
 **IOS-4.9** The application shall display a floating keyboard button at the bottom-trailing corner of the pane view with three states:
 
 **IOS-4.10** When the user selects a worktree from the picker (`IOS-4.1`), the application shall present a second screen rendering the worktree's pane split tree faithfully to the Mac sidebar's layout: each split respects its `direction` (horizontal/vertical) and `ratio`; each leaf is a tappable tile labelled with the pane's current title (or the session name when no title has been set yet). Tapping a tile pushes the fullscreen terminal for that session.
 
-**IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The authenticated terminal channel is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
+**IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session, using a single `TerminalPaneView` with the navigation bar hidden, the background reaching the screen edges, and the viewport below top chrome (`IOS-4.8`). The authenticated terminal channel is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
 
 **IOS-4.12** While the worktree-detail screen is rendering live pane previews (`IOS-4.10`), each `PaneTile` shall own its own `TerminalController` whose font-size is computed dynamically from the tile's geometry (`tileWidth / authoritativeCols × monospaceAspect`) so the authoritative grid renders at scale 1 within the tile. The font is updated via `setTerminalConfiguration().fontSize(_)` whenever the tile width or authoritative column count changes — including device rotation, since landscape gives each tile a different width. The preview shall not apply a runtime `scaleEffect` driven by libghostty's reported `cellWidthPoints`: that value is shared with the fullscreen view (`IOS-4.11`), which renders at a much larger font, so a feedback-loop safety-net would oscillate or progressively shrink the preview when the user navigates between the tile and fullscreen. Preview legibility is sacrificed for fit: previews communicate pane shape and live activity, not readable text. The fullscreen view (`IOS-4.11`) keeps the iOS-scaled font as it remains the primary read surface.
 
@@ -2482,9 +2496,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.55** When the phone shows a worktree with agents, the application shall list agent cards ordered by waiting for the user, working, idle, failed, then finished, each titled by its live terminal title and showing its question or result, followed by the worktree's shells and a one-line purpose from its brief.
 
-**IOS-4.56** While an iPhone agent terminal is visible, the application shall extend the terminal viewport to the screen's top and bottom edges behind a single floating row containing Back and the agent switcher on the left and the resource controls on the right, reserving only the keyboard and its control bar.
+**IOS-4.56** While an iPhone agent terminal is visible, the application shall extend its background to the screen edges, keep its terminal viewport below the floating row containing Back, the agent switcher and resource controls, and reserve the keyboard and its control bar when visible.
 
-**IOS-4.57** While an iPhone agent terminal extends behind the status bar and Dynamic Island, the application shall blend its top edge into the shared worktree identity smear, fade that overlay into the terminal below, and preserve the terminal's touch handling.
+**IOS-4.57** While an iPhone agent terminal is visible, the application shall blend the screen's top edge into the shared worktree identity smear, fade that overlay into the terminal below, and preserve the terminal's touch handling.
 
 **IOS-4.58** While an iPhone agent terminal shows resource controls, the application shall order Preview, Browser, and Context from left to right in one top-right capsule, use the right-sidebar glyph for Context, retain at least 44-point targets, and keep the group stable when no latest pane preview exists.
 
@@ -2550,7 +2564,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.10** When the iOS client becomes the display owner, the application shall explicitly synchronize the mounted terminal's physical viewport without waiting for keyboard input, preserving the owner's selected font size.
 
-**IOS-6.11** While the software keyboard is visible in a fullscreen mobile terminal, the application shall reserve the measured terminal control-bar height above the keyboard; while the keyboard is hidden, floating controls shall overlay the full usable viewport.
+**IOS-6.11** While a fullscreen mobile terminal is visible, the application shall keep its viewport below top chrome and extend it to the bottom screen edge or, when the keyboard is visible, to the measured terminal control bar above the keyboard.
 
 **IOS-6.12** While connected to a legacy (non-owner-aware) server, the application shall not resize the remote PTY until the user first engages with the session (keystroke, paste, or control key); a mere connection or layout tick shall leave the shared PTY size untouched so an already-attached client's column width is not stolen. On first engagement it shall send the current iOS viewport as the legacy window size.
 
@@ -2578,7 +2592,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.24** When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.
 
-**IOS-6.25** If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.
+**IOS-6.25** While a mobile terminal is displayed, the application shall keep fullscreen terminal viewports below top chrome through multiline output, wrapping, scrollback, and preview dismissal, and preserve embedded iPad viewport bounds.
 
 **IOS-6.26** When a user begins a scroll drag in an interactive mobile terminal, the application shall place the terminal pointer at the gesture location before sending wheel input so fullscreen applications receive scrolling in the touched region.
 
@@ -2714,33 +2728,31 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-11.x
 
-**IOS-11.1** While a focused terminal pane is interactive, the application shall handle libghostty's built-in long-press selection request through `TerminalInputContainerView` and present a menu at the touch point containing **Select**, **Select All**, and (when the clipboard contains text or an image at menu-build time) **Paste**, without installing a competing long-press recognizer on the container.
+**IOS-11.1** When the user presses and holds terminal text on mobile, the application shall select the word under the press, show a handle at each end of the selection, and present an edit menu containing Copy, Select All, and Paste when the clipboard holds text or an image, without synthesizing mouse input.
 
-**IOS-11.2** When the user taps **Select** in the long-press menu, the application shall word-select the cell under the press by synthesizing a left click followed by a held second press, so subsequent drags extend the selection across words and lines. Copy, Cancel, and Select All shall release the held button.
+**IOS-11.2** If the user presses and holds a blank region of a mobile terminal with no text nearby, then the application shall present Select All and Paste without creating a selection.
 
-**IOS-11.3** When the user taps **Select All** in the long-press menu, the application shall invoke libghostty's `select_all` binding action via `surface.performAction("select_all")` and shall enter selection mode for that pane with the visible viewport highlighted.
+**IOS-11.3** When the user chooses Select All from a mobile terminal menu, the application shall select all terminal text including scrollback and show its handles.
 
-**IOS-11.4** While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
+**IOS-11.4** While a mobile terminal has a text selection, the application shall scroll the terminal or checkpoint canvas for one-finger drags outside the selection handles and shall leave the selection unchanged.
 
-**IOS-11.5** When selection mode is active and the user lifts their finger after Select / Select All / extend, the application shall present a second `UIEditMenuInteraction` menu anchored near the selection rect containing **Copy** and **Cancel**.
+**IOS-11.5** When the user finishes dragging a selection handle on mobile, the application shall present the edit menu clear of the selection and its handles.
 
-**IOS-11.6** When the user taps **Copy**, the application shall extract the active selection via `surface.readSelection()`, write the result to `UIPasteboard.general.string`, clear libghostty's selection, and exit selection mode. If `readSelection()` returns nil or empty, the pasteboard shall not be modified.
+**IOS-11.6** When the user chooses Copy from a mobile terminal selection menu, the application shall write the selected text to the pasteboard and clear the selection; if nothing is selected, then the pasteboard shall not be modified.
 
-**IOS-11.7** When the user taps **Cancel**, taps outside the highlighted selection, or presses a key on the terminal control bar while in selection mode, the application shall clear libghostty's selection and exit selection mode without modifying the pasteboard.
+**IOS-11.7** When the user taps outside a mobile terminal selection or presses a terminal control-bar key, the application shall clear the selection without modifying the pasteboard.
 
 **IOS-11.8** When the user taps Paste in the long-press menu, the application shall upload a clipboard image when present, otherwise send non-empty clipboard text as bracketed paste; an empty clipboard shall be a silent no-op.
 
 **IOS-11.9** `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. Committed software Return normalization from `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
 
-**IOS-11.10** Selection mode shall be per-pane state owned by the focused pane's `TerminalSelectionController`. Selection in one pane shall not affect the selection state of any other pane.
+**IOS-11.10** When the user selects or clears text in one mobile terminal pane, the application shall leave the selection of every other pane unchanged.
 
 **IOS-11.11** While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`. Guaranteed by `.allowsHitTesting(false)` applied to the inner `TerminalPaneView` in `paneContent` — `TerminalInputContainerView`'s long-press gesture recogniser never receives touches. The `onPasteRequested` closure is also left `nil` at the `TerminalPaneView` call site.
 
 **IOS-11.12** When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and re-focus the eligible `UITerminalView` after UIKit's edit-menu dismissal completes, so the dismissal cannot subsequently resign the terminal and leave the user without keyboard control.
 
-**IOS-11.13** When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and offer Copy Link and route the complete URL through the originating pane browser when Open Link is chosen. Pressing ordinary text shall not offer link actions.
-
-**IOS-11.14** When a terminal selection drag ends or is cancelled at a viewport edge, the application shall stop selection autoscrolling while preserving the selection anchor for another drag.
+**IOS-11.13** When the user presses and holds a displayed HTTP or HTTPS URL on mobile, the application shall offer Open Link, which opens the complete URL on the device, then an action naming the host, which routes it through the originating pane browser, then Copy Link, ahead of its text-selection actions. Pressing ordinary text shall not offer link actions.
 
 **IOS-11.15** When a clipboard image is transferred, the application shall carry bounded image chunks separately from PTY bytes and require a complete, ordered upload before committing the paste.
 
@@ -2765,6 +2777,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-11.25** While a terminal application captures mouse input or a native selection is active, the application shall retain text-selection actions and omit long-press link actions whose OSC8 target cannot be verified without changing that input state.
 
 **IOS-11.26** When a retained terminal pane detaches its controls, the application shall discard browser callbacks and cached link actions while preserving its renderer and ownership.
+
+**IOS-11.27** When the user double-taps terminal text on mobile, the application shall select that word with handles, and when the user triple-taps, the application shall select that line.
 
 ### IOS-12.x
 
@@ -2978,6 +2992,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.28** While an iPad workspace is visible, the application shall keep agent tabs below the navigation bar, place pane resource controls alongside the tabs, and allow tab selection to change the focused terminal.
 
+**IPAD-2.29** While the compact Terminal sheet has a mounted shell, the application shall show its display name beside the switcher icon, expose the full name to accessibility, and mark only that session as selected in the picker, including after switching shells or reconciling a removed shell. Long names shall leave the new-shell and close controls usable.
+
 ### IPAD-3.x — Focused-Pane Toolbar
 
 **IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall expose a focused-pane toolbar containing Split Right, Split Down, Split Left, Split Up, Swap, and Close controls.
@@ -3061,6 +3077,60 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-9.9** The `TerminalInputContainerView` in the active iPad terminal responder chain shall publish app-level Ghostty shortcuts as priority `UIKeyCommand`s for system arbitration and discoverability, and shall install itself as `UITerminalView`'s hardware-input delegate so the actual first responder dispatches the same enabled command candidates before Ghostty consumes raw presses. It shall publish priority correction commands only for Return, quote, Escape, and Tab, handle Ctrl-letter corrections through the delegate without adding 26 discoverability commands, synchronously request a UIKit menu-system rebuild whenever effective command metadata changes, and prefer an app-level shortcut on an exact chord collision. Every other unmatched terminal hardware key shall remain owned by `UITerminalView`.
 
 **IPAD-9.10** Fixed Graftty pane and worktree chords shall be provenance-independent, host tab-action chords shall be additional when noncolliding, and both SwiftUI and responder projections shall use the same normalized input-and-modifier collision winners with precedence fixed worktree over fixed pane over host.
+
+## WATCH — Apple Watch companion
+
+### WATCH-1.x — Watch inbox and replies
+
+**WATCH-1.1** When Apple Watch receives an attention snapshot, the application shall preserve each question's host, worktree, context, choices, and exact reply target across encoding and decoding.
+
+**WATCH-1.2** If refreshing the watch inbox fails, then the application shall retain the last snapshot and show the failure instead of showing an empty inbox.
+
+**WATCH-1.3** When a watch reply is accepted by the host, the application shall mark that exact question as sent and prevent another submission while allowing a later question in the same worktree to be answered.
+
+**WATCH-1.4** While a watch reply awaits host acknowledgement, the application shall prevent duplicate submissions even when snapshots temporarily omit the question, and show Sent only after the host accepts the answer.
+
+**WATCH-1.5** If a watch card is obsolete, cannot accept a text answer, or has a blank reply, then the application shall refuse to submit it.
+
+**WATCH-1.6** If the host rejects a watch reply, then the application shall preserve the question and display the host's failure without marking the answer sent.
+
+**WATCH-1.7** When a newer watch inbox snapshot has arrived, the application shall ignore an older snapshot that finishes later.
+
+**WATCH-1.8** If an attention snapshot exceeds the watch transfer budget, then the application shall keep the newest cards within the budget and report the number of omitted requests.
+
+**WATCH-1.9** When a watch question is answered, the application shall use the same 60000-byte encoded request budget on both devices and report an oversized reply before sending it.
+
+### WATCH-2.x — iPhone relay
+
+**WATCH-2.1** When a paired iPhone projects a worktree's stopped question for Apple Watch, the application shall include its context and choices and preserve the host-validated occurrence and asking pane for replies.
+
+**WATCH-2.2** If a watch reply's host, question, occurrence, or pane no longer matches a fresh authenticated snapshot, then the iPhone shall refuse the reply before delivering it.
+
+**WATCH-2.3** While an attention request belongs to a harness permission prompt, the watch shall display the request without offering a text reply; resumed agents and routine recaps shall not appear as questions.
+
+**WATCH-2.4** If a paired host becomes unavailable, then the iPhone shall retain its last watch questions with an unavailable label, remove forgotten hosts' questions, and avoid repeating a worktree delivered by a live route.
+
+**WATCH-2.5** While the phone foreground or any enabled watch request needs a host connection, the application shall share its connection coordinator and keep access until the final consumer releases it.
+
+**WATCH-2.6** When watch access is disabled or a watch request expires, the application shall release that request's connection lease without closing connections still needed by the foreground or another request, and shall refuse disabled or cancelled requests.
+
+**WATCH-2.7** When a phone window reports a host whose pairing was removed, the phone shall exclude that host's cached questions and terminals from watch updates.
+
+**WATCH-2.8** When a worktree has an unread notice, the watch shall show the notice text without offering a reply.
+
+### WATCH-3.x — Terminal viewing
+
+**WATCH-3.1** When a paired client reads terminal output, the host shall resolve the pane within the requested running worktree and read at most 200 recent lines without sending input, resizing the terminal, or acknowledging attention.
+
+**WATCH-3.2** If terminal output exceeds the watch text budget, then the host shall retain the newest complete UTF-8 characters within 24000 bytes.
+
+**WATCH-3.3** When a watch terminal refresh succeeds, the application shall display the returned output for the selected pane and retain it with an error if a later refresh fails.
+
+**WATCH-3.4** While a watch terminal read is pending, the application shall prevent overlapping reads and ignore its result after the terminal view stops or the returned pane does not match.
+
+**WATCH-3.5** When the watch browses terminals, the iPhone shall include running panes even without a question, link attention cards to their asking pane, and refuse terminal reads whose host, worktree, or pane is no longer present.
+
+**WATCH-3.6** When terminal text is requested through a paired relay, the application shall translate both worktree and pane aliases to the owning host and refuse a pane from another worktree.
 
 ## TEAM — Agent Teams
 
@@ -3792,6 +3862,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.30** The application shall configure both peers to tolerate high-latency links: a candidate pair shall stop counting as receiving only after ten seconds without inbound traffic, become unwritable (ICE disconnected) only after ten seconds without check responses, and time out (ICE failed) only after thirty seconds without check responses.
 
+**REMOTE-11.31** When a user enables Tailcat on a device, the application shall persist the opt-in for paired remote connections and default to disabled on a new installation.
+
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
@@ -4009,6 +4081,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-20.17** When the direct SSH listener's bind host is a numeric IP address such as `::`, the application shall bind that address without name resolution, so the listener starts on a Linux host with no non-loopback IPv6 address.
 
 **REMOTE-20.18** When a saved direct SSH host connects, the application shall not read the local device ID, so an unreadable device-ID store does not fail a connection that never sends it.
+
+**REMOTE-20.19** When the host accepts an SSH byte stream without a TCP listener, the application shall authenticate the paired client and dispatch the existing Graftty subsystem channels.
+
+**REMOTE-20.20** If an SSH byte-stream connection presents an unpaired client key or an unpinned host key, then the application shall reject authentication before exposing Graftty subsystems.
+
+**REMOTE-20.21** While a paired client uses an SSH byte stream, the application shall enforce its channel capabilities and close its active connection when its pairing is revoked.
+
+**REMOTE-20.22** If SSH stream admission rejects an invalid input handle, then the application shall retain the caller's handles and accept a subsequent valid stream.
+
+**REMOTE-20.23** When the host closes an SSH stream server, the application shall close its active streams and accept fresh authenticated streams after restarting.
 
 ### REMOTE-21.x
 
@@ -4888,9 +4970,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.6** The application shall bound each `claude agents --json` and `ps` liveness-poll subprocess with a 5-second timeout, and if that timeout expires, then the application shall produce an empty Claude polling result so the next tick can poll again.
 
-**AGENT-2.7** While a running agent's pane has a liveness registry, the application shall spin only for observed busy turns and treat missing entries as idle; without a registry it shall preserve the working spinner for unknown activity.
+**AGENT-2.7** While a running agent has a liveness registry, the application shall treat observed busy turns as working and missing entries as idle. Without a registry, unknown activity shall count as working.
 
-**AGENT-2.8** While an agent's turn is busy, the application shall show no spinner on its sidebar row, because the agent's terminal title carries its own activity indicator, while agent tabs keep the spinner.
+**AGENT-2.8** While an agent is working, the application shall omit the running status spinner from its tab and sidebar row.
 
 **AGENT-2.9** When provider activity arrives through the durable file handoff, the application shall update the tracked pane's busy state using the original hook event and attention reason while leaving legacy progress without hook metadata unchanged.
 
@@ -5000,6 +5082,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.50** When a client answers a stopped agent's question, the host shall type the answer as one line without control characters into that agent's pane and submit it, and shall refuse when the question has changed or cleared, the answer is empty, the pane is gone or belongs to another agent or shell, or the pane is waiting at its harness's own prompt.
 
+**AGENT-3.51** While a linked worktree has no drawing, the application shall ask that worktree's agent at turn start to draw one on the wide canvas, leaving the home checkout without a request.
+
+**AGENT-3.52** While a linked worktree has no drawing, the application shall adopt the first valid drawing any agent in that worktree reports, while only the context owner may replace an existing drawing or change the rest of the retained context.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
@@ -5012,7 +5098,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch using zsh or bash shall run from shell startup after initialization and first-prompt environment hooks, independently of the Mac renderer. Other shells with integration readiness shall wait for the first shell-ready signal; remaining shells shall use bounded spawn-time injection. Each path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch using zsh or bash shall run from shell startup after initialization and first-prompt environment hooks, independently of the Mac renderer. Other shells with integration readiness shall wait for the first shell-ready signal; remaining shells shall use bounded spawn-time injection. Each path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude|antigravity` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
@@ -5404,6 +5490,54 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.165** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 in that shell's environment, replacing any inherited value, so Claude Code saves its session for later resume.
 
+**AGENT-6.166** When a user launches an Antigravity agent, the application shall start agy interactively with the exact initial task, and when reopening that conversation, it shall pass the saved conversation ID without resubmitting the task.
+
+**AGENT-6.167** When Antigravity sends a lifecycle hook, the application shall use its conversation ID, treat only the first model invocation as a turn start, and keep the worktree busy until Antigravity reports that its background work has finished.
+
+**AGENT-6.168** When Graftty returns context to Antigravity, the application shall use Antigravity's native hook output and allow Stop to complete without asking Antigravity to start another turn.
+
+**AGENT-6.169** If a resumed Antigravity conversation omits its session-start hook, then the application shall bind the saved conversation to its managed agent when the first turn begins.
+
+**AGENT-6.170** When Graftty automatically installs or refreshes the Antigravity plugin, the application shall query `agy plugin list --json`, install the bundled plugin with the current build version and materialized hooks and skills when missing or enabled, preserve an explicitly disabled plugin, skip silently when `agy` is not found, and report inventory or installation failures as retryable errors.
+
+**AGENT-6.171** When Graftty launches, the application shall automatically install or refresh the Antigravity plugin once per build checkpoint without requiring prior Codex or Claude plugin installation, preserve opt-outs, and leave the checkpoint unset when `agy` is missing or installation fails so future launches retry.
+
+**AGENT-6.172** When Graftty inspects provider plugin status, the application shall query each provider's native inventory and report installed, disabled, notInstalled, cliNotFound, or error independently per provider, and shall support installing a single provider without affecting other providers.
+
+**AGENT-6.173** When live provider plugin statuses are inspected in Agent Teams Settings, the application shall treat the integration as installed once at least one Codex or Claude provider is installed and no available Codex or Claude provider remains uninstalled or errored, and shall select only available providers for bulk installation.
+
+**AGENT-6.174** When inbox rows are deliverable to a reachable Antigravity agent whose presence records a local agent server, the application shall send all of those rows as one message to that agent's conversation through the server and update shared delivery state only after the server accepts the message; if the server credential is unavailable or the server rejects the message, then the rows shall remain unread for hook delivery or retry.
+
+**AGENT-6.175** When an Antigravity hook registers a session launched with a Graftty server credential, the application shall record the provider process's listening local port that accepts that credential for the session's conversation and shall store the credential in a file that only the user can read; if no listening port accepts the credential, then the application shall record no local agent server.
+
+**AGENT-6.176** When `agy` is launched from a Graftty terminal, the wrapper shall start the real `agy` outside the wrapper directory with the caller's arguments and a server credential that Graftty's hooks can read, minting a new credential for each launch unless the caller already supplied one.
+
+**AGENT-6.177** While rows remain unread for a worktree whose Antigravity presence records a local agent server, the application shall retry native delivery on every presence refresh, so rows that arrived before a hook recorded the server or whose send failed are delivered without waiting for another message.
+
+**AGENT-6.178** When an installation started from Agent Teams Settings completes, the application shall advance the Codex and Claude automatic-refresh build checkpoint only if that installation installed every enabled Codex and Claude plugin, and shall advance the Antigravity build checkpoint only if it installed the Antigravity plugin, so that a plugin it did not install is still refreshed on the next launch.
+
+**AGENT-6.179** When Antigravity starts a turn that no new user input began, such as a turn woken by a delivered team message, the application shall treat it as a turn start without recording the previous user prompt again.
+
+**AGENT-6.180** When the running agent advertises a new command list, the application shall replace the slash menu in that tab's Chat view with the advertised names, descriptions, and argument hints.
+
+**AGENT-6.181** When the user chooses a slash command in the graphical composer, the application shall insert its invocation into the editable draft and wait for the user to send it.
+
+**AGENT-6.182** When the user sends a slash command from an agent tab's Chat view on Mac or GrafttyMobile, the application shall deliver the draft's exact command text and arguments to that tab's bound session.
+
+**AGENT-6.183** When a user switches a supported running agent tab between Chat and Terminal on Mac or GrafttyMobile, the application shall keep the same tab, terminal session, provider process, assignment, and conversation in both directions.
+
+**AGENT-6.184** When a user switches views during a turn, the application shall continue displaying that turn in the selected view and show each submitted message exactly once.
+
+**AGENT-6.185** When a user switches views with a provider request pending, the application shall preserve the request for an explicit answer and remove its action from Chat once the provider resolves it.
+
+**AGENT-6.186** When a user switches views with unsent input, the application shall preserve each view's draft in its original input field without submitting it.
+
+**AGENT-6.187** When a paired viewer selects Chat or Terminal, the application shall change only that viewer's presentation and preserve the session's input ownership.
+
+**AGENT-6.188** When the user chooses a command from the command list of an agent tab's Chat view, the application shall insert its invocation into the editable draft, close the list, and wait for the user to send it.
+
+**AGENT-6.189** While a draft is expanded in an agent tab's Chat view, the application shall keep it expanded until the user collapses it or the whole draft is sent.
+
 ## CLI — CLI
 
 ### CLI-1.x
@@ -5554,15 +5688,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-34.x
 
-**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, purple marks and sender headings for incoming agent messages, accent marks and headings for local responses, marks merged when their displayed centers are closer than 3 points or their bars overlap with human input taking color priority followed by incoming messages, and a box showing the current viewport, and shall hide the card while no message is located.
+**CONTEXT-34** While an agent pane contains located messages, the application shall show a map of the entire scrollback with marks for human inputs, peer messages, and agent responses, merge marks closer than three points or whose bars overlap, and outline the visible rows. If no message is located, then the application shall hide the map.
 
 ### CONTEXT-35.x
 
-**CONTEXT-35** When the user hovers over the scrollback map card including its padding on Mac or with a pointer on mobile, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.
+**CONTEXT-35** When the user hovers over, touches, or drags along the scrollback map, the application shall preview the nearest visible mark using a message of the kind shown by that mark, with human input verbatim and a sparkle next to a generated peer gist. While the user drags, the application shall center the row under the pointer or finger. When the user clicks or taps a mark, the application shall scroll its row to the top of the terminal.
 
 ### CONTEXT-36.x
 
-**CONTEXT-36** While the pointer is not over the scrollback map and no drag is in progress, the application shall draw the card at 40 percent opacity, and shall draw it fully opaque while it is hovered, dragged, or touched, changing without animation when Reduce Motion is on.
+**CONTEXT-36** While the Mac scrollback map is visible, the application shall place it in a fixed gutter beside the terminal text spanning the available pane height. While either map is visible, the application shall distinguish human input with orange rounded marks, incoming agent messages with purple square-ended marks, and local agent responses with cyan square-ended marks at rest and during interaction. While the Mac map is idle, the application shall show these marks and a viewport outline without a card background. While a message is in the preview, the application shall outline its mark.
+
+**CONTEXT-36.1** While the iPhone scrollback rail or its message previews are visible, the application shall use the terminal's light or dark appearance for their backgrounds, text and message marks.
 
 ### CONTEXT-37.x
 
@@ -5610,7 +5746,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-49.x
 
-**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge. While the map is visible, the application shall retain a 44-point-wide touch target. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.
+**CONTEXT-49** While the mobile scrollback map is idle, the application shall show an eight-point strip flush with the pane's right edge. While the map is visible, the application shall keep a 44-point-wide touch target and limit the map height to 150 points. While the map is held, dragged, or hovered, the application shall expand it inward. When the interaction ends or is cancelled, the application shall collapse the card.
 
 ### CONTEXT-50.x
 
@@ -5638,7 +5774,35 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-57.x
 
-**CONTEXT-57** While the scrollback map is hovered or dragged on Mac or mobile, the application shall animate the card's downward expansion as space allows, enlarge and spread marks near the pointer or finger, keep the initial row under it as the card opens, and use the displayed geometry for navigation throughout the animation. When the interaction ends, the application shall animate the card back to its idle size. If Reduce Motion is on, then the application shall apply both transitions without animation.
+**CONTEXT-57** While the user hovers over, touches, or scrubs the scrollback map, the application shall magnify nearby marks inward and along the strip without overlapping other marks or changing their vertical centers, the map height, or the navigation scale. If Reduce Motion is on, then the application shall expand and collapse the mobile map without animation.
+
+**CONTEXT-57.1** While the user hovers over, holds, or scrubs the scrollback map, the application shall group close user messages in shared cards beside their marks and connect each group to its span with a gradient. If all cards cannot fit, then the application shall prioritize the focused message and nearby cards.
+
+**CONTEXT-57.2** While a scrollback map preview has a message timestamp, the application shall show its elapsed age in whole minutes, hours from one hour, or days from twenty-four hours, and show now for messages less than a minute old.
+
+**CONTEXT-57.3** When the pointer enters an idle Mac scrollback rail, the application shall use the window’s pointer tracking to reveal previews. While the pointer moves from the rail into its previews, the application shall keep the previews fixed until the pointer leaves the rail and preview area and shall pass input outside the message boxes through to the terminal.
+
+**CONTEXT-57.4** If the worktree’s retained report points to a missing pane and exactly one active agent remains, then the application shall use that agent’s pane for the scrollback map and history jumps on Mac and mobile.
+
+**CONTEXT-57.5** While a local Codex pane displays submitted prompts, the application shall mark matching prompts from its saved conversation even when captured agent replies already match, preserving captured marks and showing each prompt row once.
+
+**CONTEXT-57.6** While several agent panes are open in a worktree, the application shall offer a scrollback map in each live agent pane, independent of which agent submitted the latest report.
+
+**CONTEXT-57.7** When the user clicks or taps a scrollback message box, the application shall scroll to the first message associated with the box, including when its excerpt is hidden.
+
+**CONTEXT-57.8** When a paired Codex pane shows a submitted user prompt missing from the host timeline, the application shall mark its loaded terminal row and show its text, excluding the editable composer and generated notices.
+
+**CONTEXT-57.9** When a paired Codex pane on iPhone has scanned its loaded rows without finding a message and older history is available, the application shall offer a control to load an earlier page and replace it with the rail when it finds a message.
+
+**CONTEXT-57.10** When a quiet agent terminal becomes readable or installs same-sized history, the application shall locate its existing messages without waiting for another prompt.
+
+**CONTEXT-57.11** When a paired viewer opens earlier messages in a live Codex session, the host shall return that session’s saved visible messages in order across pages, including prompts that have left terminal scrollback.
+
+**CONTEXT-57.12** While the user hovers over, touches, or scrubs the scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.
+
+**CONTEXT-57.13** While a scrollback map preview card is shown, the application shall draw it on a nearly opaque backing lighter than a dark terminal, so terminal text behind the card does not show through.
+
+**CONTEXT-57.14** When the previewed scrollback message changes, the application shall slide preview cards to their new positions and fade cards that no longer fit out where they stand, keeping unmeasured cards hidden, instead of moving or replacing them instantly. While Reduce Motion is on, the application shall change them without motion.
 
 ### CONTEXT-58.x
 
@@ -5752,11 +5916,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-85** While Context history displays messages on Mac or mobile, the application shall use a readable purple rail marker and sender identity for incoming agent messages, retain secondary markers for local agent responses and orange for human input, and keep message text neutral.
 
+### CONTEXT-86.x
+
+**CONTEXT-86** If a worktree's primary agent has failed or closed, then the application shall accept retained context from the earliest running agent the user launched there, never from a CLI-added additional agent.
+
 ## MEM — MEM
 
 ### MEM-1.x
 
-**MEM-1.1** While more than 4 worktrees have live surfaces, including surfaces created in the background by web or CLI worktree creation, the application shall evict the least-recently-selected worktree's surfaces; a background-created worktree that has never been selected shall enter as least recent.
+**MEM-1.1** While more than 4 worktrees have live surfaces, the application shall evict the least-recently-selected worktree outside the open windows. A background-created worktree that has never been selected enters as least recent.
 
 **MEM-1.2** When a worktree's surfaces are evicted via the LRU budget, the application shall preserve its zmx sessions, pane-to-session mapping, titles, PWDs, and rehydration state so re-selection re-attaches transparently.
 
@@ -5773,6 +5941,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **MEM-1.8** When a previously-evicted pane is re-attached via the rehydration path, the application shall pre-size the new libghostty surface to the captured pixel dimensions before starting its host-managed backend, so the first post-layout resize event is a no-op when the layout container has not changed.
 
 **MEM-1.9** When a previously-evicted pane is destroyed (rather than re-attached), the application shall drop its captured grid size from the cache.
+
+**MEM-1.10** While a worktree is displayed in any open macOS window, the application shall keep its terminal surfaces even when the number of open worktrees exceeds the surface budget.
 
 ## PERF — PERF
 
@@ -6213,6 +6383,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.11** When the last SSH data-channel owner is released from a Swift task, the application shall destroy its native channel proxy outside the cooperative executor and release the inbox and relay.
 
 **SSH-1.12** When native WebRTC teardown begins, the application shall run it once outside Swift tasks, release detached resources before resuming its waiters, and finish cleanup even if a waiter is cancelled.
+
+**SSH-1.13** When the Tailcat prototype connects a paired SSH client to a pinned host, the application shall preserve terminal byte order and contents.
+
+**SSH-1.14** If the Tailcat prototype receives a mismatched SSH host key or an unpaired client key, then the application shall reject the SSH connection.
+
+**SSH-1.15** When a pending Tailcat accept is cancelled, the application shall interrupt the accept and retain the listener for a subsequent authenticated connection.
+
+**SSH-1.16** When a Tailcat peer closes, the application shall unblock pending SSH terminal receives and permit a fresh connection.
+
+**SSH-1.17** If descriptor duplication fails during Tailcat SSH setup, then the application shall release successful duplicates and report an error before NIO bootstrap.
+
+**SSH-1.18** When a Tailcat SSH connection closes its NIO channel, the application shall close the remote SSH transport without requiring explicit Tailcat peer closure.
+
+**SSH-1.19** When Tailcat carries a paired SSH session, the application shall dispatch the production host's control, team, and terminal channels without a TCP listener.
+
+**SSH-1.20** If a Tailcat client lacks the pinned host key or a paired client key, then the application shall reject the SSH session before exposing Graftty channels.
+
+**SSH-1.21** While a paired client connects through Tailcat, the application shall enforce channel capabilities and disconnect the client when its pairing is revoked.
+
+**SSH-1.22** When a Tailcat host restarts with its saved identity and relay region, the application shall reconnect with the previously paired address and SSH keys.
+
+**SSH-1.23** When a user runs the standalone iPhone Tailcat check, the application shall verify an echo between two on-device peers and report the route and elapsed echo time.
 
 ## TEST — TEST
 

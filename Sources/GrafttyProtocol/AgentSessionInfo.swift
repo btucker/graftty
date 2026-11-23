@@ -25,13 +25,17 @@ public struct AgentSessionInfo: Codable, Sendable, Hashable, Identifiable {
     /// Graftty launched this agent, as opposed to observing a provider the
     /// user started in an existing shell. Absent from older hosts.
     public var launched: Bool?
+    /// The host can show this tab's conversation in Chat. Absent from hosts
+    /// that do not serve Chat.
+    public var chatAvailable: Bool?
 
     public init(id: String, name: String, provider: String, status: String, sessionName: String?,
                 assignmentID: String? = nil, completionID: String? = nil, result: String? = nil, previousResults: [String]? = nil,
                 failure: String? = nil, processObservation: AgentProcessObservation? = nil,
                 outcome: String? = nil, resultCount: Int? = nil, resultsAreSummaries: Bool? = nil, retainedSessionName: String? = nil, retainedSlotID: String? = nil,
-                canResume: Bool? = nil, transcriptRevision: String? = nil, launched: Bool? = nil) {
-        self.launched = launched
+                canResume: Bool? = nil, transcriptRevision: String? = nil, launched: Bool? = nil,
+                chatAvailable: Bool? = nil) {
+        self.launched = launched; self.chatAvailable = chatAvailable
         self.retainedSessionName = retainedSessionName; self.retainedSlotID = retainedSlotID
         self.canResume = canResume; self.transcriptRevision = transcriptRevision
         self.failure = failure; self.processObservation = processObservation; self.outcome = outcome

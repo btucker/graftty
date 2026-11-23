@@ -24,6 +24,7 @@
     "PR",
     "IOS",
     "IPAD",
+    "WATCH",
     "TEAM",
     "INSTR",
     "EDITOR",
@@ -64,7 +65,8 @@
     "CHROME": "Dedicated Chrome tabs",
     "URL": "Worktree URL Handler",
     "IMAGE": "Native Image Preview",
-    "PREVIEW": "Native File Preview"
+    "PREVIEW": "Native File Preview",
+    "WATCH": "Apple Watch companion"
   },
   "subsections": {
     "CHROME.1": "Host profiles and ownership",
@@ -198,6 +200,9 @@
     "TEAM.10": "Codex Wrapper App-Server Routing",
     "TEAM.11": "Idle Delivery",
     "TEAM.14": "Messaging between Macs",
-    "TEAM.15": "Native agent completion"
+    "TEAM.15": "Native agent completion",
+    "WATCH.1": "Watch inbox and replies",
+    "WATCH.2": "iPhone relay",
+    "WATCH.3": "Terminal viewing"
   }
 }
