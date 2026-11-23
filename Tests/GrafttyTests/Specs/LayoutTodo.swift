@@ -9,7 +9,7 @@ import Testing
 @Suite("LAYOUT — pending specs")
 struct LayoutTodo {
     @Test("""
-@spec LAYOUT-1.1: The application shall display a single main window with a resizable sidebar on the left and a terminal content area on the right.
+@spec LAYOUT-1.1: While a main window is open, the application shall display a resizable sidebar on the left and a terminal content area on the right.
 """, .disabled("not yet implemented"))
     func layout_1_1() async throws { }
 

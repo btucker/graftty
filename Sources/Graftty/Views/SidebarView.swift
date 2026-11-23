@@ -41,6 +41,7 @@ struct SidebarView: View {
     let remoteBranchStore: RemoteBranchStore
     @ObservedObject var remoteMacsModel: RemoteMacsModel
     let appStateChanges: AppStateChanges
+    let selectedLocalWorktreePath: String?
     let selectedRemoteIdentity: RemoteMacIdentity?
     let selectedRemoteWorktreePath: String?
     let selectedRemotePaneSessionName: String?
@@ -206,7 +207,7 @@ struct SidebarView: View {
         // Store the merged id, so the selection outlives whichever host set it.
         let merged = makeMerged(local: local)
         let selected = merged.selectedProjectID(for: navigation.selectedProjectID)
-        let fallback = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } })
+        let fallback = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == selectedLocalWorktreePath } })
             .map { merged.mergedID(forMember: localProjectID($0)) } ?? merged.projects.first?.id
         let shared = Set(merged.projects.filter(\.isOnSeveralHosts).compactMap(\.representative.originKey))
         if iconStore.multiHostOriginKeys != shared { iconStore.multiHostOriginKeys = shared }
@@ -248,7 +249,7 @@ struct SidebarView: View {
     }
     private func selectProject(_ project: SidebarProject) {
         onNavigationIntent()
-        rememberSelection(appState.selectedWorktreePath)
+        rememberSelection(selectedLocalWorktreePath)
         rememberRemoteSelection()
         let merged = mergedSidebar
         navigation.showProject(project.id); navigationError = nil
@@ -538,7 +539,7 @@ struct SidebarView: View {
         .onChange(of: navigation.selectedProjectID) { _, _ in reportController.close() }
         .onChange(of: navigation.query) { _, _ in reportController.close() }
         .onDisappear { reportController.close() }
-        .onChange(of: appState.selectedWorktreePath) { old, new in
+        .onChange(of: selectedLocalWorktreePath) { old, new in
             rememberSelection(old)
             // STATE-2.13: leaving a worktree means its finished turn was seen.
             if let old, old != new { _ = appState.mutateWorktrees(atPath: old) { $0.leaveAttention() } }
@@ -841,7 +842,7 @@ struct SidebarView: View {
     }
 
     private func localPinnedTile(_ worktree: WorktreeEntry, repo: RepoEntry, row: MergedWorktreeRow, word: String, badge: String?) -> some View {
-        let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
+        let isActive = selectedLocalWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: row.relativeName)
         let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isCached: false)
         let state = PinnedTileState.resolve(context: context, isCached: false)
@@ -1114,7 +1115,7 @@ struct SidebarView: View {
         hostLabel: String? = nil,
         scrollID: String? = nil
     ) -> some View {
-        let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
+        let isActive = selectedLocalWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: displayName)
         let status = SidebarRowStatus.resolve(context: context, worktree: context.worktree, isCached: false)
         let projectID = localProjectID(repo)
