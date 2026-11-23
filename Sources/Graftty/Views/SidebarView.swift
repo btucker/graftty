@@ -23,14 +23,6 @@ private struct SleepingWorktreeIndicator: View {
 /// @spec LAYOUT-2.62: When the project rail setting changes, the application shall place Add Repository beside Manage Remote Hosts in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 
 /// @spec LAYOUT-2.64: When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
-/// An agent chosen from a sidebar row's logo stack (LAYOUT-2.254).
-struct SidebarAgentSelection {
-    /// Nil for a worktree on this Mac.
-    let remoteMac: RemoteMac?
-    let worktreePath: String
-    let agentID: String
-}
-
 struct SidebarView: View {
     @Binding var appState: AppState
     /// Used to read pane titles. Title change invalidation is deliberately
@@ -1384,4 +1376,12 @@ struct MergedRowInsets: ViewModifier {
             content.listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)).listRowSeparator(.hidden)
         }
     }
+}
+
+/// An agent chosen from a sidebar row's logo stack (LAYOUT-2.254).
+struct SidebarAgentSelection {
+    /// Nil for a worktree on this Mac.
+    let remoteMac: RemoteMac?
+    let worktreePath: String
+    let agentID: String
 }
