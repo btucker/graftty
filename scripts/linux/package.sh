@@ -21,7 +21,7 @@ else
     flock 9
     build_command=(scripts/swiftpm --graftty-swiftpm-lock-held)
 fi
-"${build_command[@]}" build --jobs "$build_jobs" -c release --product graftty-host
+"${build_command[@]}" build --jobs "$build_jobs" -c release --product graftty-runner
 "${build_command[@]}" build --jobs "$build_jobs" -c release --product graftty-cli
 binary_dir=$("${build_command[@]}" build --jobs "$build_jobs" -c release --show-bin-path)
 stage=$(mktemp -d)
@@ -29,7 +29,7 @@ trap 'rm -rf -- "$stage"' EXIT
 name="graftty-linux-$version-$arch"
 bundle="$stage/$name"
 mkdir -p "$bundle/bin" "$bundle/lib" "$bundle/libexec" "$bundle/share"
-install -m 755 "$binary_dir/graftty-host" "$bundle/libexec/graftty-host"
+install -m 755 "$binary_dir/graftty-runner" "$bundle/libexec/graftty-runner"
 install -m 755 "$binary_dir/graftty-cli" "$bundle/libexec/graftty-cli"
 for resource in "$binary_dir"/*.resources "$binary_dir"/*.bundle; do
     [[ ! -d $resource ]] || cp -a "$resource" "$bundle/libexec/"
@@ -42,11 +42,12 @@ if [[ ${CI:-} != true ]]; then
 fi
 # Host agent hooks resolve a sibling CLI; route through its runtime launcher.
 ln -s ../bin/graftty "$bundle/libexec/graftty"
-for command in graftty graftty-host; do
+# graftty-host keeps scripts and enrollments from older installs working.
+for command in graftty graftty-runner graftty-host; do
     install -m 755 "$repo/scripts/linux/launcher.sh" "$bundle/bin/$command"
 done
 "$repo/scripts/linux/build-zmx.sh" "$arch" "$bundle/bin/zmx"
-python3 "$repo/scripts/linux/bundle-libraries.py" "$bundle/lib" "$bundle/libexec/graftty-host" "$bundle/libexec/graftty-cli"
+python3 "$repo/scripts/linux/bundle-libraries.py" "$bundle/lib" "$bundle/libexec/graftty-runner" "$bundle/libexec/graftty-cli"
 cp -a "$repo/Sources/GrafttyKit/GhosttyResources/ghostty" "$bundle/share/ghostty"
 cp -a "$repo/Sources/GrafttyKit/GhosttyResources/terminfo" "$bundle/share/terminfo"
 printf '%s\n' "$version" > "$bundle/VERSION"
@@ -54,6 +55,7 @@ cp "$repo/scripts/zmx/UPSTREAM_COMMIT" "$bundle/share/ZMX_UPSTREAM_COMMIT"
 install -m 755 "$repo/scripts/linux/install.sh" "$bundle/install.sh"
 cp "$repo/LICENSE" "$bundle/LICENSE"
 # Run the packaged launchers before publishing an archive.
+"$bundle/bin/graftty-runner" --help >/dev/null
 "$bundle/bin/graftty-host" --help >/dev/null
 "$bundle/bin/graftty" --help >/dev/null
 "$bundle/bin/zmx" version

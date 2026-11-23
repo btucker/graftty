@@ -25,7 +25,7 @@ start() {
     return 1
 }
 start
-docker exec "$name" graftty-host status --json | grep -q '"running":true'
+docker exec "$name" graftty-runner status --json | grep -q '"running":true'
 [[ $(docker exec "$name" id -u) == 10001 ]]
 [[ $(docker exec "$name" cat /proc/1/comm) == tini ]]
 docker exec "$name" graftty --help >/dev/null
@@ -42,7 +42,7 @@ with socket.create_connection((host, int(port)), timeout=5) as connection:
 PY
 project=/home/runner/projects/fixture
 docker exec "$name" bash -c 'git init -q -b main fixture && git -C fixture -c user.name=Smoke -c user.email=smoke@example.invalid commit -q --allow-empty -m fixture'
-docker exec "$name" graftty-host project add "$project" --json >/dev/null
+docker exec "$name" graftty-runner project add "$project" --json >/dev/null
 docker exec "$name" graftty pane add "$project"
 docker exec "$name" graftty pane send "$project:1" 'command -v graftty; command -v zmx'
 docker exec "$name" graftty pane send "$project:1" 'export GRAFTTY_PROBE=container_ok'
@@ -64,5 +64,5 @@ start
 identity_after=$(docker exec "$name" sha256sum /home/runner/.local/share/graftty/Remote/host-identity.json)
 [[ $identity_before == "$identity_after" ]]
 docker exec "$name" git -C "$project" rev-parse --verify HEAD >/dev/null
-docker exec "$name" graftty-host status --json | grep -q '"repositoryCount":1'
+docker exec "$name" graftty-runner status --json | grep -q '"repositoryCount":1'
 echo 'Runner passed non-root startup, listeners, terminal I/O, graceful stop, and persistent-volume replacement.'

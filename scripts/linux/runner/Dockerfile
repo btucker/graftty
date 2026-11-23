@@ -1,7 +1,7 @@
 FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.title="graftty-runner" \
-      org.opencontainers.image.description="Graftty Linux headless host and persistent terminal runtime" \
+      org.opencontainers.image.description="Graftty remote runner and persistent terminal runtime" \
       org.opencontainers.image.source="https://github.com/btucker/graftty" \
       org.opencontainers.image.licenses="MIT"
 
@@ -27,8 +27,8 @@ USER runner
 WORKDIR /home/runner/projects
 EXPOSE 8800 8801
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
-    CMD graftty-host status --json | grep -q '"running":true'
+    CMD graftty-runner status --json | grep -q '"running":true'
 
-# zmx daemons fork; tini reaps them and forwards termination to the host.
-ENTRYPOINT ["/usr/bin/tini", "--", "/opt/graftty/bin/graftty-host"]
+# zmx daemons fork; tini reaps them and forwards termination to the runner.
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/graftty/bin/graftty-runner"]
 CMD ["serve", "--bind-address", "0.0.0.0", "--enable-pairing"]

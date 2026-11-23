@@ -41,7 +41,7 @@ struct LinuxHostPackagingTests {
         return path
     }
 
-    @Test("@spec DIST-4.1: When a Linux host archive is built, the release scripts shall include the host, CLI, pinned zmx, resources, shared runtime libraries, and a root installer for its architecture.",
+    @Test("@spec DIST-4.1: When a Linux runner archive is built, the release scripts shall include the runner, a graftty-host compatibility launcher, the CLI, pinned zmx, resources, shared runtime libraries, and a root installer for its architecture.",
           .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_LINUX_ARCHIVE"] != nil, "Requires a built Linux archive"))
     func archiveContainsPortableRuntime() throws {
         let archive = try #require(ProcessInfo.processInfo.environment["GRAFTTY_LINUX_ARCHIVE"])
@@ -56,7 +56,7 @@ struct LinuxHostPackagingTests {
         #expect(process.terminationStatus == 0)
         let entries = String(decoding: bytes, as: UTF8.self).split(separator: "\n").map(String.init)
         #expect(entries.contains("./install.sh"))
-        for suffix in ["/install.sh", "/bin/graftty", "/bin/graftty-host", "/bin/zmx", "/libexec/graftty-host", "/libexec/graftty-cli", "/libexec/graftty", "/lib/libswiftCore.so", "/share/terminfo/78/xterm-ghostty"] {
+        for suffix in ["/install.sh", "/bin/graftty", "/bin/graftty-runner", "/bin/graftty-host", "/bin/zmx", "/libexec/graftty-runner", "/libexec/graftty-cli", "/libexec/graftty", "/lib/libswiftCore.so", "/share/terminfo/78/xterm-ghostty"] {
             #expect(entries.contains { $0.hasSuffix(suffix) }, "Archive missing \(suffix)")
         }
     }

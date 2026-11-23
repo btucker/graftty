@@ -113,7 +113,7 @@ with open(cache / 'build.lock', 'a') as lock:
         pass
     else:
         build = cache / 'build/release'
-        for name in ('graftty-host', 'graftty-cli'):
+        for name in ('graftty-runner', 'graftty-cli'):
             (build / name).write_text('#!/bin/sh\\n# other worktree\\nexit 0\\n')
         (build / 'Graftty_GrafttyKit.resources/marker').write_text('other worktree')
 sys.exit(subprocess.call([{native_install!r}] + sys.argv[1:]))
@@ -126,8 +126,25 @@ sys.exit(subprocess.call([{native_install!r}] + sys.argv[1:]))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         archive = self.repo / "dist/graftty-linux-test-x86_64.tar.gz"
         with tarfile.open(archive) as bundle:
-            for name in ("libexec/graftty-host", "libexec/graftty-cli", "libexec/Graftty_GrafttyKit.resources/marker"):
+            for name in ("libexec/graftty-runner", "libexec/graftty-cli", "libexec/Graftty_GrafttyKit.resources/marker"):
                 self.assertIn(b"expected worktree", bundle.extractfile("./" + name).read(), name)
+
+    def test_legacy_launcher_runs_the_runner(self):
+        result = subprocess.run(["bash", str(self.repo / "scripts/linux/package.sh"), "test"],
+                                env=self.env, text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        unpacked = self.repo / "unpacked"
+        with tarfile.open(self.repo / "dist/graftty-linux-test-x86_64.tar.gz") as bundle:
+            bundle.extractall(unpacked, filter="tar")
+        root = unpacked
+        self.assertFalse((root / "libexec/graftty-host").exists())
+        runner = root / "libexec/graftty-runner"
+        runner.write_text('#!/bin/sh\necho "runner $*"\n')
+        runner.chmod(0o755)
+        for launcher in ("graftty-runner", "graftty-host"):
+            ran = subprocess.run([str(root / "bin" / launcher), "--help"], text=True, capture_output=True, timeout=10)
+            self.assertEqual(ran.returncode, 0, ran.stderr)
+            self.assertEqual(ran.stdout.strip(), "runner --help", launcher)
 
     def test_relative_shared_cache_is_rejected(self):
         self.env["GRAFTTY_SWIFTPM_SHARED_DIR"] = "relative-cache"
