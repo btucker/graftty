@@ -7,18 +7,10 @@ import GrafttyProtocol
 /// name (LAYOUT-2.225), so a tile never carries more than one cue.
 public struct PinnedTileFace: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public static let height: CGFloat = 64
     /// Concentric with the shelf, like a selected item in a glass toolbar.
     static let cornerRadius: CGFloat = PinnedTileShelf.cornerRadius - PinnedTileShelf.inset
-    /// The working dot, a quiet blue that reads as in progress, not as an alarm;
-    /// deeper in light mode so it still reads on a pale niche.
-    static func working(isDark: Bool) -> Color {
-        isDark ? Color(.sRGB, red: 0.48, green: 0.66, blue: 1, opacity: 1) : Color(.sRGB, red: 0, green: 0.45, blue: 0.95, opacity: 1)
-    }
-    /// The attention dot: plain orange in both modes (the attention text colour darkens in light mode for legibility).
-    static let attention = Color(.sRGB, red: 1, green: 0.58, blue: 0.05, opacity: 1)
 
     let identity: WorktreeIconIdentity
     let project: SidebarProject
@@ -85,23 +77,8 @@ public struct PinnedTileFace: View {
         .contentShape(shape)
     }
 
-    @ViewBuilder private var pip: some View {
-        let working = Self.working(isDark: isDark)
-        switch state.pip {
-        case .filled?:
-            Circle().fill(Self.attention).frame(width: 7, height: 7)
-        case .pulse? where reduceMotion:
-            Circle().fill(working).frame(width: 7, height: 7)
-        case .pulse?:
-            // A slow pulse needs no more than 30 frames a second, and agents work for hours.
-            TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
-                let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
-                Circle().fill(working).frame(width: 7, height: 7)
-                    .opacity(0.35 + 0.65 * abs(cos(phase * .pi)))
-            }
-        case nil:
-            EmptyView()
-        }
+    private var pip: some View {
+        AgentStatusDot(dot: state.pip.map { $0 == .filled ? .asking : .working })
     }
 }
 
