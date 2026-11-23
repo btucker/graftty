@@ -510,6 +510,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-5.3** The application's one-time startup path (`ghostty_init` and the `ghostty_app_t` construction inside `TerminalManager.initialize()`, the `SocketServer.start()`, `reconcileOnLaunch()`, the stats/PR poller `start()` calls, the `restoreRunningWorktrees()` pass, and the `NSApplication.willTerminateNotification` observer registration) shall run exactly once per app-process lifetime, regardless of how many times the root `WindowGroup` scene is instantiated. The SwiftUI reopen flow (`applicationShouldHandleReopen` → `applicationOpenUntitledFile:`) and any future multi-window entry points (`File → New Window`) re-invoke the `WindowGroup` content closure and therefore fire `.onAppear` again; the implementation seam is a `@State` boolean on `GrafttyApp` whose storage persists across scene re-creations. Without this guard, `TerminalManager.initialize()`'s `ghosttyApp == nil` precondition traps the process on the second invocation.
 
+**LAYOUT-5.4** When Graftty starts on macOS without Full Disk Access, the application shall check Full Disk Access off the main actor and present a window-attached sheet prompting the user to grant it in System Settings (`x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles`), firing at most once per process, skipping when Full Disk Access is granted or indeterminate, and remaining permanently suppressible via a "Don't Ask Again" choice persisted in UserDefaults.
+
 ## STATE — Worktree Entry States
 
 ### STATE-1.x — State Definitions

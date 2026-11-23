@@ -6,6 +6,7 @@ enum SettingsKeys {
     static let worktreeAutoSleep = WorktreeSleepPreferences.enabledKey
     static let worktreeAutoSleepMinutes = WorktreeSleepPreferences.minutesKey
     static let keepMacAwake              = "keepMacAwake"
+    static let suppressFullDiskAccessPrompt = "suppressFullDiskAccessPrompt"
     static let agentPluginInstallOfferRevision = "agentPluginInstallOfferRevision"
     static let agentPluginInstalledRevision = "agentPluginInstalledRevision"
     static let agentPluginInstalledBuildVersion = "agentPluginInstalledBuildVersion"
