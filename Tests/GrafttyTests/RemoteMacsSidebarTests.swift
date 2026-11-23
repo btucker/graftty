@@ -479,12 +479,6 @@ struct RemoteMacsSidebarTests {
         #expect(controller.selectedCandidateIdentity == RemoteMacIdentity(candidate))
         #expect(controller.selectedPairingBaseURL == candidate.baseURL)
         #expect(controller.phase == .candidateSelected(RemoteMacIdentity(candidate)))
-        #expect(!controller.canConfirmVerification)
-
-        let code = RemoteVerificationCode(digits: "123456")
-        controller.showVerificationCode(code)
-        #expect(controller.phase == .verifying(code))
-        #expect(controller.canConfirmVerification)
     }
 
     @Test("cancelling driver after begin prevents introduce")

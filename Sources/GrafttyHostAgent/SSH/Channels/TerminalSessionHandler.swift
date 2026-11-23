@@ -49,7 +49,7 @@ import NIOSSH
 /// directions.
 ///
 /// Concurrency: `@unchecked Sendable` because all mutable state
-/// (`envSessionName`, `ptyAccepted`, `stream`, `inboundForwardingTask`,
+/// (`envSessionName`, `attachment`, `inboundForwardingTask`,
 /// `coordinator`, `stdErrDecoder`, `stdErrPoisoned`,
 /// `ptyGrid`, `ptyWriteContinuation`) is accessed exclusively on the
 /// channel's event loop. NIO guarantees `channelRead`, `userInboundEventTriggered`, and
@@ -69,25 +69,52 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private var usesBinaryPaging = false
     private var historyForwardingTask: Task<Void, Never>?
     private var historyForwardingContinuation: AsyncStream<Data>.Continuation?
-    private var historyPending = false
-    private var checkpointPending = false
-    private var checkpointDeferred = false
+    /// The one paging request the stream has yet to answer. A history page
+    /// and a checkpoint are never outstanding together.
+    private enum PagingReply {
+        case none
+        /// A checkpoint asked for meanwhile is requested once the page arrives.
+        case history(thenCheckpoint: Bool)
+        case checkpoint
+    }
+    private var awaitedPaging = PagingReply.none
     private let ownershipStore: SessionDisplayOwnershipStore
     private let ownershipBroadcaster: DisplayOwnershipBroadcaster
     private let deviceID: RemoteDeviceID
     private let defaultKind: DisplayClientKind
     private var envSessionName: String?
-    private var ptyAccepted = false
     /// Captured from `pty-req`'s cols/rows (REMOTE-9.4) — fed through
     /// `coordinator.handlePTYSize` once immediately after attach so
     /// session-wide ownership observers see the client's real terminal
     /// size as soon as possible, rather than waiting on
     /// `ZmxAttachEngine`'s 250ms size-poll cadence.
     private var ptyGrid: DisplayGrid?
-    private var stream: (any TerminalIO)?
+    /// The channel's one attachment, from first request to teardown.
+    private enum Attachment {
+        /// Gathering `env` and `pty-req` options; `shell` has not arrived.
+        case collecting
+        /// `shell` was accepted and the stream factory is resolving.
+        case attaching
+        /// Terminal bytes flow to and from this stream.
+        case attached(any TerminalIO)
+        /// The channel went inactive. Terminal.
+        case closed
+    }
+    private var attachment = Attachment.collecting
+    private var stream: (any TerminalIO)? {
+        if case .attached(let stream) = attachment { return stream }
+        return nil
+    }
+    private var isCollecting: Bool {
+        if case .collecting = attachment { return true }
+        return false
+    }
+    private var isShuttingDown: Bool {
+        if case .closed = attachment { return true }
+        return false
+    }
     private var coordinator: TerminalAttachCoordinator?
     private var inboundForwardingTask: Task<Void, Never>?
-    private var isShuttingDown = false
     /// REMOTE-9 protocol-version gate — see the type doc comment. Guarded
     /// by `helloLock` (rather than relying on event-loop exclusivity like
     /// the rest of this handler's state) because `sendText` reads it from
@@ -202,14 +229,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 let terminal = context.channel
                 bulk.closeFuture.whenComplete { _ in terminal.close(promise: nil) }
             }
-            if envEvent.name == TerminalOutputCredit.environmentName, stream == nil,
+            if envEvent.name == TerminalOutputCredit.environmentName, isCollecting,
                let window = TerminalOutputCredit.parseWindow(envEvent.value) {
                 outputCredit = TerminalOutputCreditGate(windowBytes: window)
             }
             if envEvent.name == "GRAFTTY_SESSION" {
                 envSessionName = envEvent.value
             }
-            if envEvent.name == PagedTerminalBinary.environmentName, stream == nil, pagedFactory != nil {
+            if envEvent.name == PagedTerminalBinary.environmentName, isCollecting, pagedFactory != nil {
                 usesBinaryPaging = envEvent.value == PagedTerminalBinary.encodingName
             }
             // Acknowledge the env request if a reply was requested.
@@ -224,7 +251,6 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             // completes to seed an early size signal; the client
             // re-sends window-change after shell completes for any
             // subsequent resize.
-            ptyAccepted = true
             // REMOTE-9 grid-cap coherence: clamp to
             // WebControlEnvelope.maxGridDimension (not just UInt16's
             // range) — an unclamped grid here would seed `ptyGrid`,
@@ -243,6 +269,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             }
 
         case let shellEvent as SSHChannelRequestEvent.ShellRequest:
+            guard isCollecting else {
+                // SSH-1.24: a channel attaches once. A second attach would
+                // replace the stream and coordinator without releasing them.
+                if shellEvent.wantReply {
+                    context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
+                }
+                return
+            }
             guard let name = envSessionName else {
                 // No GRAFTTY_SESSION env — we have nothing to attach to.
                 if shellEvent.wantReply {
@@ -251,6 +285,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 context.close(promise: nil)
                 return
             }
+            attachment = .attaching
             attach(context: context, sessionName: name, wantReply: shellEvent.wantReply)
 
         case let winEvent as SSHChannelRequestEvent.WindowChangeRequest:
@@ -307,7 +342,6 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         historyForwardingTask = nil
         historyChannel?.close(promise: nil)
         historyChannel = nil
-        isShuttingDown = true
         outputCredit?.close()
         inboundForwardingTask?.cancel()
         ptyWriteContinuation?.finish()
@@ -315,7 +349,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         ptyWriterTask?.cancel()
         ptyWriterTask = nil
         let snapshot = stream
-        stream = nil
+        attachment = .closed
         // REMOTE-9.1: detach synchronously so the ownership store and any
         // other session subscribers learn this client is gone before the
         // channel finishes tearing down. `detach()` is idempotent and
@@ -350,12 +384,12 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                         Task { await stream.close() }
                         return
                     }
-                    if self.isShuttingDown {
+                    guard case .attaching = self.attachment else {
                         // Channel closed while factory was awaiting — clean up.
                         Task { await stream.close() }
                         return
                     }
-                    self.stream = stream
+                    self.attachment = .attached(stream)
                     self.startPTYWriter(stream: stream)
                     self.installCoordinator(
                         sessionName: sessionName,
@@ -421,7 +455,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
 
     /// Builds the `TerminalAttachCoordinator` for this attach and wires
     /// its seams. Called once, from the `loop.execute` block in `attach`
-    /// that installs `self.stream` — so `self.coordinator` is available
+    /// that marks the attachment `.attached` — so `self.coordinator` is available
     /// before any inbound bytes/control frames can be dispatched.
     private func installCoordinator(
         sessionName: String,
@@ -621,16 +655,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                         // Subsystem negotiation already proves carrier support.
                         // READY must not wait for an ownership hello.
                         let historyOutput = try await loop.submit { [weak self] in
-                            switch event {
-                            case .checkpoint: self?.checkpointPending = false
-                            case .page, .unavailable:
-                                self?.historyPending = false
-                                if self?.checkpointDeferred == true {
-                                    self?.checkpointDeferred = false
-                                    self?.handlePagingRequest(.checkpoint, channel: channel)
-                                }
-                            default: break
-                            }
+                            self?.pagingReplyArrived(event, channel: channel)
                             return self?.historyForwardingContinuation
                         }.get()
                         // Only history pages move across transports. Checkpoints,
@@ -661,19 +686,28 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         }
     }
 
+    private func pagingReplyArrived(_ event: PagedTerminalEvent, channel: Channel) {
+        switch (event, awaitedPaging) {
+        case (.checkpoint, .checkpoint):
+            awaitedPaging = .none
+        case (.page, .history(let thenCheckpoint)), (.unavailable, .history(let thenCheckpoint)):
+            awaitedPaging = .none
+            if thenCheckpoint { handlePagingRequest(.checkpoint, channel: channel) }
+        default:
+            break
+        }
+    }
+
     private func handlePagingRequest(_ request: PagedTerminalRequest, channel: Channel) {
         guard let paged = stream as? any PagedTerminalStream else { return }
-        switch request {
-        case .history:
-            guard !historyPending, !checkpointPending else { return }
-            historyPending = true
-        case .checkpoint:
-            guard !checkpointPending else { return }
-            if historyPending {
-                checkpointDeferred = true
-                return
-            }
-            checkpointPending = true
+        switch (awaitedPaging, request) {
+        case (.none, .history): awaitedPaging = .history(thenCheckpoint: false)
+        case (.none, .checkpoint): awaitedPaging = .checkpoint
+        case (.history, .checkpoint):
+            awaitedPaging = .history(thenCheckpoint: true)
+            return
+        case (.history, .history), (.checkpoint, _):
+            return
         }
         Task {
             do {

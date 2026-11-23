@@ -45,7 +45,7 @@ struct WorktreeBlock: View {
             }
             worktreeRow
             statusLine
-            ForEach((worktree.agents ?? []).filter { $0.status == "failed" && $0.sessionName == nil }) { agent in
+            ForEach((worktree.agents ?? []).filter { $0.recordedStatus == .failed && $0.sessionName == nil }) { agent in
                 Label("\(agent.name) · Failed", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
             }

@@ -34,7 +34,7 @@ public struct SidebarWorktreeContext: Equatable {
     /// A retained report can outlive its pane, such as after closing a reviewer tab.
     public var transcriptPaneID: String? {
         if let agentPaneID { return agentPaneID }
-        let active = agentPanes(withStatus: ["running", "waiting"])
+        let active = agentPanes(withStatus: [.running, .waiting])
         return active.count == 1 ? active.first : nil
     }
 
@@ -42,16 +42,16 @@ public struct SidebarWorktreeContext: Equatable {
     /// The Mac gutter narrows its terminal, so a pane keeps its rail from launch until
     /// cleanup rather than resizing a live provider when it reports in or finishes.
     public var scrollbackPaneIDs: Set<String> {
-        var panes = agentPanes(withStatus: ["starting", "running", "waiting", "awaiting-cleanup"])
+        var panes = agentPanes(withStatus: [.starting, .running, .waiting, .awaitingCleanup])
         if let agentPaneID { panes.insert(agentPaneID) }
         return panes
     }
 
-    private func agentPanes(withStatus statuses: Set<String>) -> Set<String> {
+    private func agentPanes(withStatus statuses: Set<AgentAssignmentStatus>) -> Set<String> {
         guard worktree.state == .running, let agents = worktree.agents, let layout = worktree.layout else { return [] }
         let panes = Set(layout.leaves.map(\.sessionName))
         return Set(agents.compactMap { agent -> String? in
-            guard statuses.contains(agent.status), agent.processObservation != .exited,
+            guard statuses.contains(agent.recordedStatus), agent.processObservation != .exited,
                   let session = agent.sessionName, panes.contains(session) else { return nil }
             return session
         })
@@ -86,10 +86,8 @@ public struct SidebarWorktreeContext: Equatable {
         target.prBadge = worktree.prBadge
         let route = SidebarProjection.attentionPaneRoute(for: target, in: worktree)
         self.agentPaneID = route
-        let progress = worktree.sidebar?.agentProgressTimes ?? [:]
-        let resumedAt = stop?.providerSessionKey.flatMap { progress[$0] }
-            ?? (stop?.providerSessionKey == nil ? progress.values.max() : nil)
-        let resumed = stop.map { (resumedAt ?? -.infinity) >= $0.timestamp } ?? false
+        let progress = worktree.sidebar?.agentProgressTimes
+        let resumed = stop?.hasResumed(in: progress) ?? false
         // A live stopped turn takes precedence over lagging pane liveness.
         // Provider progress is the authoritative signal that it resumed.
         let hasCurrentStop = stop != nil && worktree.sidebar?.unseenAgentStop?.occurrence == target.occurrence
@@ -101,11 +99,7 @@ public struct SidebarWorktreeContext: Equatable {
         self.hasUnseenStop = worktree.sidebar?.unseenAgentStop != nil && !busy && !(hasCurrentStop && isViewed(target))
         self.pending = live.filter { candidate in
             if candidate.agentStop?.notice != nil { return true }
-            let candidateResumed = candidate.agentStop.map { request in
-                let time = request.providerSessionKey.flatMap { progress[$0] }
-                    ?? (request.providerSessionKey == nil ? progress.values.max() : nil)
-                return (time ?? -.infinity) >= request.timestamp
-            } ?? false
+            let candidateResumed = candidate.agentStop?.hasResumed(in: progress) ?? false
             let superseded = candidate.agentStop.map { request in
                 request.timestamp < (stop?.timestamp ?? -.infinity)
                     && (request.providerSessionKey == stop?.providerSessionKey || request.providerSessionKey == nil || stop?.providerSessionKey == nil)

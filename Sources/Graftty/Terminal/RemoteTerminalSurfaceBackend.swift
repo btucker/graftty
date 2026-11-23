@@ -57,8 +57,14 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     }
     private var pendingInput: [Data] = []
     private var pendingInputBytes = 0
-    private var takeoverRequested = false
-    private var takeoverBaseEpoch: UInt64?
+    /// Whether this client has asked to become the display owner.
+    private enum Takeover {
+        case idle
+        /// Asked while the ownership epoch was `baseEpoch`; `nil` if no
+        /// snapshot had arrived. A later epoch answers the request.
+        case requested(baseEpoch: UInt64?)
+    }
+    private var takeover = Takeover.idle
     private var didReportUnexpectedClose = false
     private var surfaceAccess: MacPagedSurface?
     private var attachmentGrid: DisplayGrid?
@@ -190,11 +196,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
             return
         }
         queuePendingInputLocked(data)
-        if !takeoverRequested {
-            takeoverRequested = true
-            takeoverBaseEpoch = ownershipSnapshot?.epoch
-            request = currentGridLocked()
-        }
+        if beginTakeoverLocked() { request = currentGridLocked() }
         lock.unlock()
         if let request {
             enqueueTakeControl(cols: request.cols, rows: request.rows)
@@ -244,8 +246,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         sendTail = nil
         pendingInput.removeAll()
         pendingInputBytes = 0
-        takeoverRequested = false
-        takeoverBaseEpoch = nil
+        takeover = .idle
         ownershipSnapshot = nil
         lock.unlock()
 
@@ -502,8 +503,14 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private func clearPendingInputLocked() {
         pendingInput.removeAll()
         pendingInputBytes = 0
-        takeoverRequested = false
-        takeoverBaseEpoch = nil
+        takeover = .idle
+    }
+
+    /// Returns false when a request is already outstanding.
+    private func beginTakeoverLocked() -> Bool {
+        guard case .idle = takeover else { return false }
+        takeover = .requested(baseEpoch: ownershipSnapshot?.epoch)
+        return true
     }
 
     private func enqueueTakeControl(cols: UInt16, rows: UInt16) {
@@ -563,7 +570,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
             }
             pending = pendingInput
             clearPendingInputLocked()
-        } else if let baseEpoch = takeoverBaseEpoch, snapshot.epoch > baseEpoch {
+        } else if case .requested(let baseEpoch?) = takeover, snapshot.epoch > baseEpoch {
             clearPendingInputLocked()
         }
         refresh = requestRefresh
@@ -658,14 +665,9 @@ extension RemoteTerminalSurfaceBackend: SurfaceHandleZmxBackend {
             return false
         }
         let grid = currentGridLocked()
-        if !takeoverRequested {
-            takeoverRequested = true
-            takeoverBaseEpoch = ownershipSnapshot?.epoch
-            lock.unlock()
-            enqueueTakeControl(cols: grid.cols, rows: grid.rows)
-        } else {
-            lock.unlock()
-        }
+        let requested = beginTakeoverLocked()
+        lock.unlock()
+        if requested { enqueueTakeControl(cols: grid.cols, rows: grid.rows) }
         return true
     }
 }

@@ -16,6 +16,19 @@ struct AgentSessionInfoTests {
         #expect(AgentAssignmentStatus(agent: restored, needsInput: true) == .exited)
         #expect(AgentAssignmentStatus(status: "interrupted") == .interrupted)
     }
+    @Test func recordedStatusIsTypedAndIgnoresProcessObservation() {
+        func agent(_ status: String, completion: String? = nil) -> AgentSessionInfo {
+            .init(id: "agent", name: "Review", provider: "codex", status: status, sessionName: nil,
+                  completionID: completion, processObservation: .exited)
+        }
+        #expect(agent("awaiting-cleanup").recordedStatus == .awaitingCleanup)
+        #expect(agent("running").recordedStatus == .running)
+        #expect(AgentAssignmentStatus(agent: agent("running"), needsInput: false) == .exited)
+        #expect(agent("status-from-a-newer-host").recordedStatus == .unknown)
+        #expect(agent("closed").isCompleted)
+        #expect(agent("running", completion: "done").isCompleted)
+        #expect(!agent("running").isCompleted)
+    }
     @Test("@spec LAYOUT-2.165: When publishing agent metadata, the application shall retain every session in the legacy pane inventory so older clients can still reach inactive tabs and drawer terminals.")
     func additiveMetadataRetainsLegacyInventory() throws {
         let row = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "repo", displayBranch: "main",

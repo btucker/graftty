@@ -57,6 +57,45 @@ struct PaneControlRecoveryTests {
         }
     }
 
+    @Test("a client accepts sends only between its one open and its close")
+    func lifecycleRefusesOutOfOrderCalls() async throws {
+        let host = GatedPaneControlHost()
+        let link = try await InMemorySSHLink.make(serverChild: { try host.install($0) })
+        let driver = PaneControlChannelClient(
+            parentChannel: link.client, parentHandler: link.clientHandler,
+            responseDeadline: ManualReplyDeadline().deadline
+        )
+        func expectChannelClosed(_ body: () async throws -> Void) async throws {
+            do {
+                try await body()
+                Issue.record("expected channelClosed")
+            } catch {
+                guard case PaneControlChannelClient.ClientError.channelClosed = error else { throw error }
+            }
+        }
+        func expectOpenRefused() async throws {
+            do {
+                try await driver.open()
+                Issue.record("expected openFailed")
+            } catch {
+                guard case PaneControlChannelClient.ClientError.openFailed = error else { throw error }
+            }
+        }
+        try await withCancellationCleanup(driver: driver, link: link) {
+            try await expectChannelClosed { _ = try await driver.send(.equalize(target: "before-open")) }
+            try await driver.open()
+            try await expectOpenRefused()
+            let exchange = Task { try await driver.send(.equalize(target: "open")) }
+            try await host.waitForRequests(1)
+            await host.reply(to: 0, with: .ok)
+            #expect(try await exchange.value == .ok)
+            driver.close()
+            try await expectOpenRefused()
+            try await expectChannelClosed { _ = try await driver.send(.equalize(target: "after-close")) }
+            #expect(host.channelCount == 1)
+        }
+    }
+
     @Test("an explicit close after timeout prevents recovery")
     func closePreventsRecovery() async throws {
         let host = GatedPaneControlHost()

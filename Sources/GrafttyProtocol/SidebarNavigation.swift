@@ -281,6 +281,16 @@ public struct SidebarAgentStop: Codable, Sendable, Hashable {
         let count = Int(min(seconds / duration, Double(Int.max / 2)))
         return "\(count) \(unit)\(count == 1 ? "" : "s") ago"
     }
+    /// The latest provider progress attributable to the agent that stopped. A stop recorded
+    /// without a session key cannot name its agent, so any agent's progress counts.
+    public func resumedAt(in progress: [String: Double]?) -> Double? {
+        guard let providerSessionKey else { return progress?.values.max() }
+        return progress?[providerSessionKey]
+    }
+    /// Whether provider progress at or after this stop shows the agent is working again.
+    public func hasResumed(in progress: [String: Double]?) -> Bool {
+        resumedAt(in: progress).map { $0 >= timestamp } ?? false
+    }
 }
 
 public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
@@ -543,10 +553,7 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
                 return availableProjectIDs.contains(entry.item.projectID) ? nil : entry
             }
             if let stop = entry.item.agentStop {
-                let progress = worktree.sidebar?.agentProgressTimes ?? [:]
-                let resumedAt = stop.providerSessionKey.flatMap { progress[$0] }
-                    ?? (stop.providerSessionKey == nil ? progress.values.max() : nil)
-                if let resumedAt, resumedAt >= stop.timestamp { return nil }
+                if stop.hasResumed(in: worktree.sidebar?.agentProgressTimes) { return nil }
             }
             var updated = entry
             updated.item.worktreeID = worktree.path

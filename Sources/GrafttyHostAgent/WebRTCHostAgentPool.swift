@@ -183,7 +183,7 @@ public actor WebRTCHostAgentPool {
 
     private static func isDiscardable(_ state: WebRTCHostAgent.State) -> Bool {
         switch state {
-        case .idle, .closed, .failed: true
+        case .idle, .closed: true
         case .answering, .connected: false
         }
     }

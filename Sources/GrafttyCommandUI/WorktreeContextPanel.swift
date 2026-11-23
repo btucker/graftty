@@ -171,6 +171,14 @@ public struct WorktreeContextPanel: View {
         }
     }
 
+    static func completedStatusLabel(_ agent: AgentSessionInfo) -> String {
+        switch agent.recordedStatus {
+        case .closed: "Closed"
+        case .awaitingCleanup: "Awaiting cleanup"
+        default: agent.status.capitalized
+        }
+    }
+
     @ViewBuilder private var completedAgents: some View {
         if let agents = context.worktree.agents?.filter({ ($0.resultCount ?? 0) > 0 || $0.result != nil || !($0.previousResults ?? []).isEmpty }), !agents.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
@@ -181,14 +189,14 @@ public struct WorktreeContextPanel: View {
                             AgentProviderIcon(provider: agent.provider)
                             Text(agent.name).fontWeight(.medium)
                             Spacer()
-                            Text(agent.status == "closed" ? "Closed" : agent.status == "awaiting-cleanup" ? "Awaiting cleanup" : agent.status.capitalized).foregroundStyle(secondary)
+                            Text(Self.completedStatusLabel(agent)).foregroundStyle(secondary)
                         }
                         if agent.resultsAreSummaries == true {
                             Text("Result previews · \(agent.resultCount ?? 0) retained assignments").foregroundStyle(secondary)
                         }
                         if let showAgent { Button("Open agent tab") { showAgent(agent.id) } }
                         if let result = agent.result { Text(result).textSelection(.enabled) }
-                        if let readTranscript, agent.status == "closed" {
+                        if let readTranscript, agent.recordedStatus == .closed {
                             Button("Read transcript") {
                                 Task { archivedTranscript = await readTranscript(agent.id) ?? "No transcript was available when this session closed." }
                             }
