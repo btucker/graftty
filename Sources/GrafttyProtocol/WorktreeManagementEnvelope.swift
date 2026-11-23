@@ -165,6 +165,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     case agentConversation(worktreeID: String, agentID: String, action: AgentConversationAction)
     case addAgent(worktreeID: String, provider: String?, operationID: UUID)
     case openResource(worktreeID: String, request: RemoteOpenRequest)
+    case tailcatEndpoint
     case hostPresentation
     case listRepositories
     case listRemoteMacConnections
@@ -283,6 +284,8 @@ extension WorktreeManagementRequest: Codable {
             try c.encode(worktreeID, forKey: .worktreeID)
             try c.encodeIfPresent(paneID, forKey: .paneID)
             try c.encode(occurrence, forKey: .occurrence)
+        case .tailcatEndpoint:
+            try c.encode("tailcat_endpoint", forKey: .type)
         case .hostPresentation:
             try c.encode("host_presentation", forKey: .type)
         case .listRepositories:
@@ -367,6 +370,8 @@ extension WorktreeManagementRequest: Codable {
                                   paneID: try c.decode(String.self, forKey: .paneID),
                                   occurrence: try c.decode(SidebarAttentionOccurrence.self, forKey: .occurrence),
                                   text: try c.decode(String.self, forKey: .text))
+        case "tailcat_endpoint":
+            self = .tailcatEndpoint
         case "host_presentation":
             self = .hostPresentation
         case "list_repositories":
@@ -428,6 +433,7 @@ public enum WorktreeManagementResponse: Sendable, Equatable {
     case agentCompletions([AgentCompletionCandidate])
     case agentConversation(AgentConversationDetail)
     case openResource(RemoteOpenResponse)
+    case tailcatEndpoint(TailcatEndpoint?)
     case hostPresentation(RemoteHostPresentation)
     case repositories([RemoteRepositoryInfo])
     case remoteMacConnections([RemoteMacConnectionSummary])
@@ -442,7 +448,7 @@ extension WorktreeManagementResponse: Codable {
     private enum CodingKeys: String, CodingKey {
         case agentCompletions
         case openResource, placement, agentSkills, agentID, action, conversation
-        case type, presentation, repositories, remoteMacConnections,
+        case type, endpoint, presentation, repositories, remoteMacConnections,
              worktreeID, paneID, dismissed, code, message, forceAllowed,
              shortStatus, imageData, text
     }
@@ -468,6 +474,9 @@ extension WorktreeManagementResponse: Codable {
         case .openResource(let response):
             try c.encode("open_resource", forKey: .type)
             try c.encode(response, forKey: .openResource)
+        case .tailcatEndpoint(let endpoint):
+            try c.encode("tailcat_endpoint", forKey: .type)
+            try c.encodeIfPresent(endpoint, forKey: .endpoint)
         case .hostPresentation(let presentation):
             try c.encode("host_presentation", forKey: .type)
             try c.encode(presentation, forKey: .presentation)
@@ -510,6 +519,8 @@ extension WorktreeManagementResponse: Codable {
             self = .agentCompletions(try c.decode([AgentCompletionCandidate].self, forKey: .agentCompletions))
         case "open_resource":
             self = .openResource(try c.decode(RemoteOpenResponse.self, forKey: .openResource))
+        case "tailcat_endpoint":
+            self = .tailcatEndpoint(try c.decodeIfPresent(TailcatEndpoint.self, forKey: .endpoint))
         case "host_presentation":
             self = .hostPresentation(
                 try c.decode(

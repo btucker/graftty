@@ -687,6 +687,132 @@ struct DirectSSHLoopbackTests {
     }
     #endif
 
+    @Test("@spec REMOTE-20.19: When the host accepts an SSH byte stream without a TCP listener, the application shall authenticate the paired client and dispatch the existing Graftty subsystem channels.", .timeLimit(.minutes(1)))
+    func acceptsHostStreams() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let server = f.server()
+        let pipes = SSHHostTestPipes(); defer { pipes.close() }
+        let client = try f.client()
+        do {
+            try await server.accept(input: pipes.toHost.fileHandleForReading, output: pipes.toClient.fileHandleForWriting)
+            pipes.closeHostHandles()
+            try await client.connect(input: pipes.toClient.fileHandleForReading, output: pipes.toHost.fileHandleForWriting)
+            pipes.closeClientHandles()
+            let control = try await client.makePaneControlClient()
+            try await control.open()
+            #expect(try await control.send(.equalize(target: "stream-probe")) == .ok)
+            control.close()
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-20.20: If an SSH byte-stream connection presents an unpaired client key or an unpinned host key, then the application shall reject authentication before exposing Graftty subsystems.", .timeLimit(.minutes(1)), arguments: [true, false])
+    func hostStreamsRejectUntrustedKeys(paired: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        if paired { try f.store.add(f.peer(key: f.clientKey)) }
+        let server = f.server()
+        let pipes = SSHHostTestPipes(); defer { pipes.close() }
+        let fingerprint = paired ? try RemoteIdentityFingerprint(rawBytes: Data(repeating: 7, count: 32)) : try f.fingerprint
+        let client = try f.client(fingerprint: fingerprint)
+        do {
+            try await server.accept(input: pipes.toHost.fileHandleForReading, output: pipes.toClient.fileHandleForWriting)
+            pipes.closeHostHandles()
+            do {
+                try await client.connect(input: pipes.toClient.fileHandleForReading, output: pipes.toHost.fileHandleForWriting)
+                Issue.record("An untrusted SSH identity was accepted")
+            } catch PinnedHostKeyError.hostKeyMismatch(_, _) where paired {
+            } catch DirectSSHHostConnection.ConnectionError.authenticationRejected where !paired {
+            } catch { Issue.record("Expected an SSH identity rejection, received \(type(of: error))") }
+            #expect(await client.state.isTerminal)
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-20.21: While a paired client uses an SSH byte stream, the application shall enforce its channel capabilities and close its active connection when its pairing is revoked.", .timeLimit(.minutes(1)))
+    func hostStreamsRetainCapabilitiesAndRevocation() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey, managementAllowed: false))
+        let server = f.server()
+        let pipes = SSHHostTestPipes(); defer { pipes.close() }
+        let client = try f.client()
+        do {
+            try await server.accept(input: pipes.toHost.fileHandleForReading, output: pipes.toClient.fileHandleForWriting)
+            pipes.closeHostHandles()
+            try await client.connect(input: pipes.toClient.fileHandleForReading, output: pipes.toHost.fileHandleForWriting)
+            pipes.closeClientHandles()
+            let management = try await client.makeWorktreeManagementClient()
+            await #expect(throws: (any Error).self) { try await management.open() }
+            management.close()
+            let control = try await client.makePaneControlClient()
+            try await control.open()
+            #expect(try await control.send(.equalize(target: "still-authorized")) == .ok)
+            control.close()
+            for _ in 0..<100 where await f.registry.count != 1 { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(await f.registry.count == 1)
+            try f.store.remove(id: .init(value: "client"))
+            await f.registry.revoke(deviceID: .init(value: "client"))
+            for _ in 0..<100 where !((await client.state).isTerminal) { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(await client.state.isTerminal)
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-20.22: If SSH stream admission rejects an invalid input handle, then the application shall retain the caller's handles and accept a subsequent valid stream.", .timeLimit(.minutes(1)))
+    func failedHostStreamPreservesCallerHandles() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let file = f.directory.appendingPathComponent("not-a-stream")
+        try Data("original".utf8).write(to: file)
+        let input = try FileHandle(forReadingFrom: file)
+        defer { try? input.close() }
+        let server = f.server()
+        let pipes = SSHHostTestPipes(); defer { pipes.close() }
+        let client = try f.client()
+        do {
+            await #expect(throws: (any Error).self) {
+                try await server.accept(input: input, output: pipes.toClient.fileHandleForWriting)
+            }
+            #expect(try input.readToEnd() == Data("original".utf8))
+            try await server.accept(input: pipes.toHost.fileHandleForReading, output: pipes.toClient.fileHandleForWriting)
+            pipes.closeHostHandles()
+            try await client.connect(input: pipes.toClient.fileHandleForReading, output: pipes.toHost.fileHandleForWriting)
+            pipes.closeClientHandles()
+            #expect(await client.state == .connected)
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-20.23: When the host closes an SSH stream server, the application shall close its active streams and accept fresh authenticated streams after restarting.", .timeLimit(.minutes(1)))
+    func hostStreamCloseAndRestart() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let server = f.server()
+        for _ in 0..<2 {
+            let pipes = SSHHostTestPipes(); defer { pipes.close() }
+            let client = try f.client()
+            do {
+                try await server.accept(input: pipes.toHost.fileHandleForReading, output: pipes.toClient.fileHandleForWriting)
+                pipes.closeHostHandles()
+                try await client.connect(input: pipes.toClient.fileHandleForReading, output: pipes.toHost.fileHandleForWriting)
+                pipes.closeClientHandles()
+                // Opening the TCP listener must preserve the stream's event loop and admission pool.
+                _ = try await server.start(host: "127.0.0.1", port: 0)
+                let control = try await client.makePaneControlClient()
+                try await control.open()
+                #expect(try await control.send(.equalize(target: "stream-lifecycle")) == .ok)
+                control.close()
+                await server.close()
+                let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+                while !(await client.state).isTerminal && ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                #expect(await client.state.isTerminal)
+            } catch { await client.close(); await server.close(); throw error }
+            await client.close()
+        }
+    }
+
     @Test("@spec REMOTE-20.17: When the direct SSH listener's bind host is a numeric IP address such as `::`, the application shall bind that address without name resolution, so the listener starts on a Linux host with no non-loopback IPv6 address.", .timeLimit(.minutes(1)))
     func numericWildcardBindSkipsNameResolution() async throws {
         let f = Fixture(); defer { f.cleanup() }
@@ -843,6 +969,20 @@ struct DirectSSHLoopbackTests {
         } catch { await first.close(); await other.close(); await server.close(); throw error }
         await first.close(); await other.close(); await server.close()
     }
+}
+
+private struct SSHHostTestPipes {
+    let toHost = Pipe()
+    let toClient = Pipe()
+    func closeHostHandles() {
+        try? toHost.fileHandleForReading.close()
+        try? toClient.fileHandleForWriting.close()
+    }
+    func closeClientHandles() {
+        try? toClient.fileHandleForReading.close()
+        try? toHost.fileHandleForWriting.close()
+    }
+    func close() { closeHostHandles(); closeClientHandles() }
 }
 
 private final class DirectEchoTerminalStream: GrafttyKit.TerminalByteStream, Sendable {

@@ -315,7 +315,7 @@ jobs:
       - name: Create isolated iOS simulator
         timeout-minutes: 12
         run: |
-          SIMULATOR_UDID="$(xcrun simctl create "Graftty CI (${{ matrix.shard }})" "iPhone 17")"
+          SIMULATOR_UDID="$(python3 scripts/ci/create-ios-simulator.py "Graftty CI (${{ matrix.shard }})" "iPhone 17")"
           echo "SIMULATOR_UDID=$SIMULATOR_UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIMULATOR_UDID"
           xcrun simctl bootstatus "$SIMULATOR_UDID" -b

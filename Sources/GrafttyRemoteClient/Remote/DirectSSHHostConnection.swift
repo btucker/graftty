@@ -222,7 +222,7 @@ public actor DirectSSHHostConnection {
     }
     /// The event loop serving the SSH transport, once TCP is connected.
     var transportEventLoopForTesting: (any EventLoop)? { channel?.eventLoop }
-    private func connectedTransport() throws -> (Channel, DirectSSHHandlerBox) {
+    func connectedTransport() throws -> (Channel, DirectSSHHandlerBox) {
         guard state == .connected, let channel, channel.isActive, let handlerBox else { throw ConnectionError.notConnected }
         return (channel, handlerBox)
     }
@@ -249,7 +249,7 @@ private final class DirectSSHAuthenticationHandler: ChannelInboundHandler, Senda
         waiter.finish(.failure(error)); context.close(promise: nil)
     }
 }
-private final class DirectSSHHandlerBox: @unchecked Sendable {
+final class DirectSSHHandlerBox: @unchecked Sendable {
     let handler: NIOSSHHandler
     init(_ handler: NIOSSHHandler) { self.handler = handler }
 }

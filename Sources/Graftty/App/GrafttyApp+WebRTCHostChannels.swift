@@ -24,7 +24,7 @@ import GrafttyRemoteClient
     fileprivate
     var targetsRelayedResource: Bool {
         switch self {
-        case .agentSkills, .placement, .agentCompletions, .hostPresentation, .listRepositories, .moveProject,
+        case .agentSkills, .placement, .agentCompletions, .tailcatEndpoint, .hostPresentation, .listRepositories, .moveProject,
              .listRemoteMacConnections, .connectRemoteMac:
             return false
         case .create(let repositoryID, _, _, _, _, _),
@@ -419,6 +419,8 @@ extension GrafttyApp {
                         return .ok
                     }
                 }
+            case .tailcatEndpoint:
+                return await .tailcatEndpoint(services.tailcatHost.endpoint)
             case .hostPresentation:
                 let presentation = await MainActor.run {
                     RemoteHostPresentation(
