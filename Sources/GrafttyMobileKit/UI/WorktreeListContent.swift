@@ -854,6 +854,13 @@ public struct WorktreeListContent: View {
         reportWorktreeID = nil
     }
 
+    /// Opening an agent from the logo stack follows the same route as opening its report.
+    static func agentItem(_ logo: AgentLogo, in worktree: WorktreePanes) -> SidebarActivityItem {
+        SidebarActivityItem(id: "agent:\(logo.id)", projectID: SidebarProjection.projectID(worktree), worktreeID: worktree.path,
+            paneID: logo.session, projectName: worktree.repoDisplayName, worktreeName: worktree.displayName,
+            title: logo.title, occurrence: nil, isBusy: logo.status.dot == .working)
+    }
+
     private func openReportTarget(_ item: SidebarActivityItem, worktrees: [WorktreePanes],
                                   takesControl: Bool = false) async -> Bool {
         let token = navigation.beginOpening(item)
@@ -1217,7 +1224,10 @@ public struct WorktreeListContent: View {
                 : nil,
             onReport: { showReport(wt) },
             onRemove: { pendingDelete = PendingDelete(worktree: wt, action: .delete) },
-            onDismissRequest: { dismissRequest(wt) }
+            onDismissRequest: { dismissRequest(wt) },
+            onSelectAgent: { logo in
+                Task { _ = await openReportTarget(Self.agentItem(logo, in: wt), worktrees: feed.state.rows) }
+            }
         )
         .modifier(reportPopover(wt))
         .modifier(deleteConfirmation(wt))

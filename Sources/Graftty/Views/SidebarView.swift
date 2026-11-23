@@ -47,6 +47,8 @@ struct SidebarView: View {
     let selectedRemotePaneSessionName: String?
     let onSelect: (String) -> Void
     var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
+    /// Selects a worktree with one of its agents on stage, from the agent logo stack.
+    var onSelectAgent: (String, String) -> Void = { _, _ in }
     var onNavigationIntent: () -> Void = {}
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
@@ -1149,7 +1151,9 @@ struct SidebarView: View {
             onDrop: { drop, placement in
                 handleRowDrop(drop, target: worktree.path, targetHost: owner.deviceID, after: placement == .after)
             },
-            scrollID: scrollID
+            scrollID: scrollID,
+            logos: AgentLogo.logos(in: context, isCached: false),
+            onSelectAgent: { onSelectAgent(worktree.path, $0) }
         ) {
             WorktreeRowIdentitySlot(entry: worktree, displayName: displayName, isMainCheckout: worktree.path == repo.path, theme: theme,
                 prBadge: prBadge, status: status, project: project, projectIconData: iconStore.iconData(for: repo),

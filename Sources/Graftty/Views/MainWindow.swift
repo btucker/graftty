@@ -180,6 +180,7 @@ struct MainWindow: View {
                 selectedRemotePaneSessionName: selectedRemotePaneSessionName,
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
+                onSelectAgent: { path, agentID in selectAgent(agentID, inWorktree: path) },
                 onNavigationIntent: { attentionOpenGeneration &+= 1; routeSelector.cancel(); remoteViewer.cancelRouteRecovery() },
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -1166,6 +1167,17 @@ struct MainWindow: View {
             }
         )
         return true
+    }
+
+    /// The sidebar's logo stack opens a worktree with that agent on stage.
+    private func selectAgent(_ agentID: String, inWorktree path: String) {
+        selectWorktree(path)
+        guard appState.selectedWorktreePath == path else { return }
+        var slot: PaneSlotID?
+        appState.mutateWorktrees(atPath: path) { slot = $0.showAgentTab(agentID) }
+        guard let slot else { return }
+        if appState.worktree(forPath: path)?.hasCompletedContent(in: slot) == true { terminalManager.clearFocus() }
+        else { selectPane(path, slot) }
     }
 
     private func selectWorktree(_ path: String) {

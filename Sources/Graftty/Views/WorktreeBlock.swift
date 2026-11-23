@@ -47,6 +47,9 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
     /// The row's view identity. LAYOUT-2.233: in the merged list it names the
     /// host too, because two hosts can have worktrees at the same path.
     var scrollID: String? = nil
+    /// The worktree's agents, drawn as a logo stack under the identity (LAYOUT-2.253).
+    var logos: [AgentLogo] = []
+    var onSelectAgent: (String) -> Void = { _ in }
     @ViewBuilder var identity: () -> Identity
     @ViewBuilder let heading: () -> Heading
     @ViewBuilder let status: () -> Status
@@ -58,6 +61,8 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
                 // Fills the identity column, so an emoji's own, smaller menu stays innermost.
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .rightClickMenu(anchored: menu)
+        } belowIdentity: {
+            AgentLogoStack(logos: logos, background: theme.background, onSelect: onSelectAgent)
         } content: {
             Button(action: onSelect) { heading() }
                 .buttonStyle(.plain)
