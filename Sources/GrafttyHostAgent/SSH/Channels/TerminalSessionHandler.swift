@@ -69,9 +69,15 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private var usesBinaryPaging = false
     private var historyForwardingTask: Task<Void, Never>?
     private var historyForwardingContinuation: AsyncStream<Data>.Continuation?
-    private var historyPending = false
-    private var checkpointPending = false
-    private var checkpointDeferred = false
+    /// The one paging request the stream has yet to answer. A history page
+    /// and a checkpoint are never outstanding together.
+    private enum PagingReply {
+        case none
+        /// A checkpoint asked for meanwhile is requested once the page arrives.
+        case history(thenCheckpoint: Bool)
+        case checkpoint
+    }
+    private var awaitedPaging = PagingReply.none
     private let ownershipStore: SessionDisplayOwnershipStore
     private let ownershipBroadcaster: DisplayOwnershipBroadcaster
     private let deviceID: RemoteDeviceID
@@ -649,16 +655,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                         // Subsystem negotiation already proves carrier support.
                         // READY must not wait for an ownership hello.
                         let historyOutput = try await loop.submit { [weak self] in
-                            switch event {
-                            case .checkpoint: self?.checkpointPending = false
-                            case .page, .unavailable:
-                                self?.historyPending = false
-                                if self?.checkpointDeferred == true {
-                                    self?.checkpointDeferred = false
-                                    self?.handlePagingRequest(.checkpoint, channel: channel)
-                                }
-                            default: break
-                            }
+                            self?.pagingReplyArrived(event, channel: channel)
                             return self?.historyForwardingContinuation
                         }.get()
                         // Only history pages move across transports. Checkpoints,
@@ -689,19 +686,28 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         }
     }
 
+    private func pagingReplyArrived(_ event: PagedTerminalEvent, channel: Channel) {
+        switch (event, awaitedPaging) {
+        case (.checkpoint, .checkpoint):
+            awaitedPaging = .none
+        case (.page, .history(let thenCheckpoint)), (.unavailable, .history(let thenCheckpoint)):
+            awaitedPaging = .none
+            if thenCheckpoint { handlePagingRequest(.checkpoint, channel: channel) }
+        default:
+            break
+        }
+    }
+
     private func handlePagingRequest(_ request: PagedTerminalRequest, channel: Channel) {
         guard let paged = stream as? any PagedTerminalStream else { return }
-        switch request {
-        case .history:
-            guard !historyPending, !checkpointPending else { return }
-            historyPending = true
-        case .checkpoint:
-            guard !checkpointPending else { return }
-            if historyPending {
-                checkpointDeferred = true
-                return
-            }
-            checkpointPending = true
+        switch (awaitedPaging, request) {
+        case (.none, .history): awaitedPaging = .history(thenCheckpoint: false)
+        case (.none, .checkpoint): awaitedPaging = .checkpoint
+        case (.history, .checkpoint):
+            awaitedPaging = .history(thenCheckpoint: true)
+            return
+        case (.history, .history), (.checkpoint, _):
+            return
         }
         Task {
             do {

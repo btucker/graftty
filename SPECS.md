@@ -3564,6 +3564,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.18** While the host device-ID store is unreadable, Bonjour discovery shall keep publishing other Macs and shall treat a service advertising this Mac's host-key fingerprint as itself, without generating a device ID.
 
+**REMOTE-1.19** When the user changes the pairing target while a verification code is showing, the application shall cancel that pairing and remove the code, so the next primary action starts a new pairing instead of confirming one that no longer exists.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
@@ -3840,7 +3842,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.19** While the host connection pool is at its maximum live connections, the host shall reject an offer from a further device with retryable busy status and leave existing connections untouched.
 
-**REMOTE-11.20** When a pooled connection is idle, closed, or failed, the host shall discard its agent so that device can reconnect without replacement proof.
+**REMOTE-11.20** When a pooled connection is idle or closed, the host shall discard its agent so that device can reconnect without replacement proof.
 
 **REMOTE-11.21** When the host closes its connection pool, the host shall close every pooled connection and clear the pool.
 

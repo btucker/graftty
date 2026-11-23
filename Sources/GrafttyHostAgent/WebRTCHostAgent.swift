@@ -26,7 +26,6 @@ public actor WebRTCHostAgent {
         case idle
         case answering
         case connected
-        case failed(reason: String)
         case closed
     }
 
@@ -620,8 +619,6 @@ public actor WebRTCHostAgent {
             }
             replacementInProgress = true
             await close()
-        case .failed:
-            throw HostError.busy
         }
 
         beginConnectionLifecycle(clientDeviceID: clientDeviceID)
