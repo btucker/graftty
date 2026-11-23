@@ -67,6 +67,7 @@ struct BreadcrumbBar: View {
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(theme.foreground.opacity(0.55))
                 }
+                .worktreeHeaderWashText()
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -81,8 +82,10 @@ struct BreadcrumbBar: View {
             if let prInfo {
                 PRButton(info: prInfo, theme: theme, onRefresh: onRefreshPR, compact: true)
                     .fixedSize()
+                    .worktreeHeaderWashText()
             }
             HeaderPortChipsView(chips: portChips, theme: theme, onOpen: onOpenPort)
+                .worktreeHeaderWashText()
             Spacer(minLength: 4)
             if onToggleContext != nil || previewWorktreePath != nil {
                 HStack(spacing: 2) {

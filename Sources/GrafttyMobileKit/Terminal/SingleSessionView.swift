@@ -192,6 +192,7 @@ struct SingleSessionView: View {
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
     @State private var isTrayShiftSelected = false
+    @State private var showsSavedMessages = false
     @State private var scrollbackMapModel: ScrollbackMapModel?
     /// The floating top-right controls' height, so the scrollback map sits below them.
     @State private var floatingControlsHeight: CGFloat = 44
@@ -484,18 +485,28 @@ struct SingleSessionView: View {
         isEmbeddedPane ? nil : paneWorktreeContext
     }
 
+    private var paneWorktree: WorktreePanes? {
+        func matches(_ row: WorktreePanes) -> Bool {
+            if let path = step.worktreePath { return row.path == path }
+            return row.layout?.leaves.contains(where: { $0.sessionName == step.sessionName }) == true
+        }
+        return attentionWorktrees.first(where: matches) ?? terminalSheetWorktree.flatMap { matches($0) ? $0 : nil }
+    }
+
     private var paneWorktreeContext: SidebarWorktreeContext? {
-        guard let row = attentionWorktrees.first(where: {
-            if let path = step.worktreePath { return $0.path == path }
-            return $0.layout?.leaves.contains(where: { $0.sessionName == step.sessionName }) == true
-        }) else { return nil }
+        guard let row = paneWorktree else { return nil }
         return sidebarNavigation?.worktreeContext(row) ?? SidebarWorktreeContext(worktree: row)
     }
 
-    /// The timeline the scrollback map marks, while this focused pane is its worktree's agent pane.
+    /// The focused agent pane locates timeline messages in its own scrollback.
     private var agentScrollbackTimeline: WorktreeTimeline? {
-        guard isPaneFocused, let context = paneWorktreeContext, context.agentPaneID == step.sessionName else { return nil }
+        guard isPaneFocused, let context = paneWorktreeContext, context.scrollbackPaneIDs.contains(step.sessionName) else { return nil }
         return WorktreeTimeline(context)
+    }
+
+    private var loadEarlierCodexPage: (() -> Void)? {
+        guard sessionAgent?.provider == "codex", let paging = client?.paging, paging.status == .available else { return nil }
+        return { Task { await paging.loadIfNeeded(prefetch: true) } }
     }
 
     private var compactWorkspace: WorktreePanes? {
@@ -503,7 +514,7 @@ struct SingleSessionView: View {
         return CompactTerminalPresentation.agentWorkspace(path: step.worktreePath, rows: attentionWorktrees, fallback: terminalSheetWorktree)
     }
     private var sessionAgent: AgentSessionInfo? {
-        (attentionWorktrees.first { $0.path == step.worktreePath } ?? terminalSheetWorktree)?.agents?.first {
+        paneWorktree?.agents?.first {
             $0.presentationSessionName == step.sessionName
         }
     }
@@ -749,8 +760,20 @@ struct SingleSessionView: View {
                 if let model = scrollbackMapModel, let timeline = agentScrollbackTimeline {
                     // CONTEXT-37: below the floating controls, which hold Worktree context.
                     let controlsHeight = step.worktreePath != nil && coordinator != nil ? floatingControlsHeight : 0
-                    ScrollbackMapOverlayHost(model: model, timeline: timeline,
-                                             isVisible: scenePhase == .active && connection == .live && !showsChat)
+                    ScrollbackMapOverlayHost(model: model, timeline: timeline, terminalTheme: terminalTheme,
+                                             isVisible: scenePhase == .active && connection == .live && !showsChat,
+                                             recovery: .pairedCodex(sessionAgent),
+                                             loadEarlier: loadEarlierCodexPage,
+                                             showSavedMessages: sessionAgent?.provider == "codex" && coordinator != nil
+                                                 ? { showsSavedMessages = true } : nil)
+                        .onChange(of: client?.paging?.historyRevision) { model.terminalHistoryDidChange() }
+                        .sheet(isPresented: $showsSavedMessages) {
+                            if let agent = sessionAgent, let path = paneWorktree?.path {
+                                MobileSavedMessagesView(host: step.host, path: path, agent: agent,
+                                                        loadTerminalPage: loadEarlierCodexPage)
+                                    .id(agent.assignmentID ?? agent.id)
+                            }
+                        }
                         .padding(.top, max(ScrollbackMapLayout.topInset(belowControlsAt: 12, controlsHeight: controlsHeight),
                                           inputRequestHeight > 0 ? topOverlayInset : 0))
                 }

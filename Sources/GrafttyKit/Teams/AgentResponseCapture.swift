@@ -127,16 +127,20 @@ public struct AgentResponseCapture {
               let date = recordDate(record) else { return nil }
         let payload = record["payload"] as? [String: Any]
         let sourceID = record["uuid"] as? String ?? payload?["call_id"] as? String ?? "row:\(offset)"
+        guard let id = Self.inputID(runtime: runtime, sessionID: sessionID, sourceID: sourceID) else { return nil }
+        return .init(id: id, text: part.text, at: date, runtime: runtime.rawValue, parts: [part])
+    }
+
+    static func inputID(runtime: TeamHookRuntime, sessionID: String, sourceID: String) -> UUID? {
         let digest = SHA256.hash(data: Data("input\0\(runtime.rawValue)\0\(sessionID)\0\(sourceID)".utf8))
             .prefix(16).map { String(format: "%02x", $0) }.joined()
         let groups = [0..<8, 8..<12, 12..<16, 16..<20, 20..<32].map { range in
             String(digest[digest.index(digest.startIndex, offsetBy: range.lowerBound)..<digest.index(digest.startIndex, offsetBy: range.upperBound)])
         }
-        guard let id = UUID(uuidString: groups.joined(separator: "-")) else { return nil }
-        return .init(id: id, text: part.text, at: date, runtime: runtime.rawValue, parts: [part])
+        return UUID(uuidString: groups.joined(separator: "-"))
     }
 
-    private static func recordDate(_ record: [String: Any]) -> Date? {
+    static func recordDate(_ record: [String: Any]) -> Date? {
         guard let timestamp = record["timestamp"] as? String else { return nil }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -160,7 +164,7 @@ public struct AgentResponseCapture {
         return response(from: record, runtime: runtime, sessionID: sessionID, offset: offset)
     }
 
-    private static func response(from record: [String: Any], runtime: TeamHookRuntime, sessionID: String,
+    static func response(from record: [String: Any], runtime: TeamHookRuntime, sessionID: String,
                                  offset: UInt64) -> WorktreeHistory.AgentResponse? {
         guard record["isSidechain"] as? Bool != true else { return nil }
         let message: [String: Any]

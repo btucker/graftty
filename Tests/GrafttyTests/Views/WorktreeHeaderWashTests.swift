@@ -14,6 +14,7 @@ struct WorktreeHeaderWashTests {
     private struct Fixture: View {
         let wash: WorktreeHeaderWash?
         let showsTabs: Bool
+        var textLeadings: [CGFloat] = []
         var body: some View {
             MainWindowDetailLayout(headerWash: wash) {
                 Color.clear.frame(height: 40)
@@ -23,6 +24,12 @@ struct WorktreeHeaderWashTests {
                     if showsTabs {
                         Color.clear.frame(height: WorktreeHeaderWash.tabRowHeight)
                             .background { WorktreeHeaderWashTests.background.worktreeHeaderWash() }
+                            .overlay(alignment: .topLeading) {
+                                ForEach(textLeadings, id: \.self) { leading in
+                                    Color.clear.frame(width: 60, height: 16).worktreeHeaderWashText()
+                                        .padding(.leading, leading).padding(.top, 10)
+                                }
+                            }
                             .preference(key: WorkspaceTabRowHeightKey.self, value: WorktreeHeaderWash.tabRowHeight)
                     }
                     WorktreeHeaderWashTests.background
@@ -34,8 +41,9 @@ struct WorktreeHeaderWashTests {
 
     private struct Pixel { let r, g, b: Double }
 
-    private func render(_ wash: WorktreeHeaderWash?, showsTabs: Bool = true) throws -> (CGImage, (Int, Int) -> Pixel) {
-        let renderer = ImageRenderer(content: Fixture(wash: wash, showsTabs: showsTabs))
+    private func render(_ wash: WorktreeHeaderWash?, showsTabs: Bool = true,
+                        textLeadings: [CGFloat] = []) throws -> (CGImage, (Int, Int) -> Pixel) {
+        let renderer = ImageRenderer(content: Fixture(wash: wash, showsTabs: showsTabs, textLeadings: textLeadings))
         renderer.scale = 1
         let image = try #require(renderer.cgImage)
         let rep = NSBitmapImageRep(cgImage: image)
@@ -45,7 +53,7 @@ struct WorktreeHeaderWashTests {
         })
     }
 
-    @Test("@spec LAYOUT-2.192: While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a fully visible tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.")
+    @Test("@spec LAYOUT-2.192: While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it toward the right, clear of the header's trailing controls, behind the window header and the top row of agent tabs, leaving emoji-less worktrees unchanged.")
     func washCoversHeaderAndTopTabsOnly() throws {
         let (_, plain) = try render(nil)
         let (_, washed) = try render(WorktreeHeaderWash(emoji: "🔥", background: Self.background, isDark: true))
@@ -107,7 +115,7 @@ struct WorktreeHeaderWashTests {
             iconData: png, background: Self.background, isDark: true) == nil)
     }
 
-    @Test("@spec LAYOUT-2.229: While the application draws a header watermark, it shall fit the entire tilted icon inside the header band and show it at uniform opacity.")
+    @Test("@spec LAYOUT-2.229: While the application draws a header watermark, it shall size the tilted icon to nearly twice the height of the header band, cropping it at the band's top and bottom edges, and show it at uniform opacity.")
     func watermarkFitsInsideTheBandAtUniformOpacity() throws {
         let project = SidebarProject(id: "repo", repositoryID: "/repo", name: "Graftty", accentHex: "22cc44")
         let image = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
@@ -119,15 +127,43 @@ struct WorktreeHeaderWashTests {
             .representation(using: .png, properties: [:]))
         let wash = try #require(WorktreeHeaderWash(identity: .project, project: project, iconData: png,
             background: Self.background, isDark: true))
+        // The 76-point band (breadcrumb plus tab row) holds a 144-point
+        // tilted icon, cropped at the band's top and bottom edges.
         let (_, pixel) = try render(wash)
-        for point in [(702, 38), (718, 21), (733, 38), (718, 55)] {
-            #expect(pixel(point.0, point.1).r > 0.95, "Faded or clipped watermark at \(point)")
+        for point in [(664, 38), (664, 2), (664, 74), (606, 38), (722, 38)] {
+            #expect(pixel(point.0, point.1).r > 0.95, "Faded or undersized watermark at \(point)")
         }
-        #expect(pixel(718, 80).r < 0.15)
-        #expect(pixel(718, 4).r < 0.9)
+        // The overflow is clipped at the band; terminal content stays clear.
+        #expect(pixel(664, 80).r < 0.15)
 
         let (_, withoutTabs) = try render(wash, showsTabs: false)
-        #expect(withoutTabs(735, 20).r > 0.95)
-        #expect(withoutTabs(720, 38).r < 0.9)
+        #expect(withoutTabs(705, 20).r > 0.95)
+        #expect(withoutTabs(705, 2).r > 0.95)
+        #expect(withoutTabs(705, 46).r < 0.15)
+    }
+
+    @Test("@spec LAYOUT-2.244: While header text overlaps the header watermark, the application shall shade the watermark beneath that text, leaving the rest of the watermark and the header outside it unshaded.")
+    func headerTextShadesTheWatermarkBeneathIt() throws {
+        let project = SidebarProject(id: "repo", repositoryID: "/repo", name: "Graftty", accentHex: "22cc44")
+        let image = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            return true
+        }
+        let png = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
+            .representation(using: .png, properties: [:]))
+        let wash = try #require(WorktreeHeaderWash(identity: .project, project: project, iconData: png,
+            background: Self.background, isDark: true))
+        let (_, plain) = try render(wash)
+        // One label crosses the watermark (x 620...680, y 50...66); one sits over plain header.
+        let (_, shaded) = try render(wash, textLeadings: [620, 300])
+
+        #expect(plain(650, 58).r > 0.95)
+        #expect(shaded(650, 58).r < 0.6, "Watermark under overlapping text is not shaded: \(shaded(650, 58))")
+        // The rest of the watermark keeps full strength.
+        #expect(shaded(664, 20).r > 0.95)
+        // Text clear of the watermark adds no shading to the header.
+        let p = plain(330, 58), s = shaded(330, 58)
+        #expect(abs(p.r - s.r) < 0.02 && abs(p.g - s.g) < 0.02 && abs(p.b - s.b) < 0.02)
     }
 }

@@ -9,12 +9,11 @@ public struct AgentStatusBadge: View {
     private let isBusy: Bool?
     private let placement: Placement
 
-    /// AGENT-2.8: sidebar rows defer to the agent's own title spinner.
-    public enum Placement: Sendable { case tab, sidebarRow }
+    public enum Placement: Sendable { case tab, sidebarRow, overviewCard }
 
     /// `isBusy` is the pane's turn activity from provider hooks. A running
     /// assignment whose turn has stopped is idle, not spinning (AGENT-2.7).
-    /// Nil means activity is unknown and keeps the running spinner.
+    /// Nil means activity is unknown and counts as working.
     public init(status: String, needsInput: Bool = false, failure: String? = nil, disconnected: Bool = false,
                 processObservation: AgentProcessObservation? = nil, isBusy: Bool? = nil, placement: Placement = .tab) {
         self.status = AgentAssignmentStatus(status: status, needsInput: needsInput, processObservation: processObservation)
@@ -31,7 +30,7 @@ public struct AgentStatusBadge: View {
 
     /// Whether this placement draws the working spinner.
     public static func showsSpinner(status: AgentAssignmentStatus, failure: String?, isBusy: Bool?, placement: Placement) -> Bool {
-        placement == .tab && spins(status: status, failure: failure, isBusy: isBusy)
+        placement == .overviewCard && spins(status: status, failure: failure, isBusy: isBusy)
     }
 
     private var label: String {

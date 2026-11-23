@@ -101,6 +101,7 @@ struct MobileAgentStatusBadge: View {
     let needsInput: Bool
     /// The pane's turn activity; nil when unknown (AGENT-2.7).
     var isBusy: Bool? = nil
+    var placement: AgentStatusBadge.Placement = .tab
     @Environment(\.retainedMobilePanes) private var retainedPanes
 
     private var disconnected: Bool {
@@ -111,7 +112,8 @@ struct MobileAgentStatusBadge: View {
 
     var body: some View {
         AgentStatusBadge(status: agent.status, needsInput: needsInput, failure: agent.failure,
-                         disconnected: disconnected, processObservation: agent.processObservation, isBusy: isBusy)
+                         disconnected: disconnected, processObservation: agent.processObservation,
+                         isBusy: isBusy, placement: placement)
     }
 }
 #endif

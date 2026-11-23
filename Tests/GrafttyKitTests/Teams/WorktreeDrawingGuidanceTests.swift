@@ -147,3 +147,31 @@ struct WorktreeDrawingThemeGuidanceTests {
         #expect(!text.contains("active Ghostty theme"))
     }
 }
+
+@Suite("@spec AGENT-3.51: While a linked worktree has no drawing, the application shall ask that worktree's agent at turn start to draw one on the wide canvas, leaving the home checkout without a request.")
+struct FirstDrawingRequestTests {
+    private func repos(own: WorktreeDrawing?) -> [RepoEntry] {
+        var linked = WorktreeEntry(path: "/repo/new", branch: "new")
+        linked.drawing = own
+        return [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [WorktreeEntry(path: "/repo", branch: "main"), linked])]
+    }
+
+    @Test func linkedWorktreeWithoutADrawingIsAskedForOne() {
+        #expect(WorktreeDrawing.turnStartRequest(forWorktreePath: "/repo/new", in: repos(own: nil)) == .first)
+    }
+
+    @Test func homeCheckoutAndDrawnWorktreesAreNotAsked() {
+        #expect(WorktreeDrawing.turnStartRequest(forWorktreePath: "/repo", in: repos(own: nil)) == nil)
+        let wide = WorktreeDrawing(svg: "<svg viewBox='0 0 96 64'></svg>", hue: 25)
+        #expect(WorktreeDrawing.turnStartRequest(forWorktreePath: "/repo/new", in: repos(own: wide)) == nil)
+        let square = WorktreeDrawing(svg: "<svg viewBox='0 0 64 64'></svg>", hue: 25)
+        #expect(WorktreeDrawing.turnStartRequest(forWorktreePath: "/repo/new", in: repos(own: square)) == .widen)
+    }
+
+    @Test func turnStartAsksForAFirstDrawing() throws {
+        let text = try TeamHookRenderer.userPromptSubmit(drawingRedraw: .first)
+        #expect(text.contains("has no `icon` yet"))
+        #expect(text.contains("0 0 96 64"))
+        #expect(text.contains("iconDescription"))
+    }
+}

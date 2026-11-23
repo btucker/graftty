@@ -95,6 +95,71 @@ public struct ScrollbackMap: Sendable, Equatable {
         return ScrollbackMap(totalRows: totalRows ?? firstRow + rows.count, marks: marks)
     }
 
+    /// Codex echoes submitted prompts after a chevron. Replies can quote the same words
+    /// later, so match the beginning of a prompt independently of the reply timeline.
+    public static func codexInputMarks(_ messages: [Message], in snapshot: ScrollbackRows) -> [Mark] {
+        let inputs = messages.filter { $0.kind == .input }
+        guard !inputs.isEmpty else { return [] }
+        let rows = snapshot.rows
+        let prompts = rows.indices.compactMap { index -> (Int, [UInt8], [UInt8])? in
+            let line = rows[index].drop(while: \.isWhitespace)
+            guard let glyph = line.first, ["›", "❯", ">"].contains(glyph),
+                  line.dropFirst().first?.isWhitespace == true else { return nil }
+            let first = canonicalize(String(line.dropFirst()))
+            guard !first.isEmpty else { return nil }
+            var prefix = String(first.prefix(needleLength))
+            var next = index + 1
+            while prefix.count < needleLength, next < rows.count {
+                let continuation = canonicalize(rows[next])
+                guard !continuation.isEmpty else { break }
+                prefix += continuation.prefix(needleLength - prefix.count)
+                next += 1
+            }
+            return (snapshot.firstRow + index, Array(first.utf8), Array(prefix.utf8))
+        }
+        var limit = prompts.endIndex
+        var marks: [Mark] = []
+        for message in inputs.reversed() {
+            guard let needle = needle(for: message.text),
+                  let index = prompts[..<limit].lastIndex(where: { _, first, prefix in
+                      needle.count < distinctiveLength ? first == needle : prefix.starts(with: needle)
+                  }) else { continue }
+            marks.append(Mark(row: prompts[index].0, kind: .input, eventID: message.eventID))
+            limit = index
+        }
+        return marks.reversed()
+    }
+
+    /// On a paired viewer the provider's saved conversation lives on another device.
+    /// Read only left-margin Codex submissions followed by a turn or another prompt.
+    /// The editable composer ends at its footer and does not meet that condition.
+    public static func renderedCodexInputs(in snapshot: ScrollbackRows) -> [(row: Int, text: String)] {
+        let rows = snapshot.rows
+        func startsTurn(_ row: String) -> Bool {
+            ["• ", "◦ ", "─ ", "› "].contains(where: row.hasPrefix)
+        }
+        var inputs: [(row: Int, text: String)] = []
+        for index in rows.indices where rows[index].hasPrefix("› ") {
+            var text = String(rows[index].dropFirst(2))
+            var next = index + 1
+            while next < rows.count, !startsTurn(rows[next]), !rows[next].allSatisfy(\.isWhitespace) {
+                // Codex indents its own wraps. Reflowing the host grid on a narrower
+                // phone can also split a word at column zero on the next physical row.
+                let row = rows[next]
+                if text.count < 2000 {
+                    text += row.hasPrefix("  ") ? " " + row.drop(while: \.isWhitespace) : row
+                }
+                next += 1
+            }
+            while next < rows.count, rows[next].allSatisfy(\.isWhitespace) { next += 1 }
+            guard next < rows.count, startsTurn(rows[next]) else { continue }
+            let parts = WorktreePromptContent.parts(in: text, runtime: "codex")
+            guard parts.count == 1, let part = parts.first, part.source == .user else { continue }
+            inputs.append((snapshot.firstRow + index, String(part.text.prefix(2000))))
+        }
+        return inputs
+    }
+
     static func needle(for text: String) -> [UInt8]? {
         let line = text.split(whereSeparator: \.isNewline).lazy.map { canonicalize(String($0)) }.first { !$0.isEmpty }
         guard let line else { return nil }
