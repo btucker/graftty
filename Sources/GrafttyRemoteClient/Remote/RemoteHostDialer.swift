@@ -5,6 +5,9 @@ import CryptoKit
 #endif
 import Foundation
 import GrafttyProtocol
+#if canImport(GrafttyTailcat) && canImport(WebRTC)
+import GrafttyTailcat
+#endif
 
 /// The signed SDP exchange shared by the Mac-to-Mac registry and the mobile
 /// coordinator. Attempt tracking, eviction and failure policy stay with each
@@ -51,10 +54,23 @@ public enum RemoteHostDialer {
         clientDeviceID: RemoteDeviceID,
         replacingExistingConnection: Bool,
         allowsWake: Bool,
+        preferTailcat: Bool = TailcatPreference.isEnabled(),
         connectedAt now: () -> Date,
         isolation: isolated (any Actor)? = #isolation,
         checkpoint: () throws -> Void = {}
     ) async throws -> PinnedHost {
+        #if canImport(GrafttyTailcat) && canImport(WebRTC)
+        let tailcat = preferTailcat ? link as? RemoteHostConnection : nil
+        if let tailcat, let endpoint = try TailcatCredentials.endpoint(for: pinnedHost.fingerprint) {
+            let connected = try await tailcat.connectTailcat(endpoint)
+            try checkpoint()
+            if connected {
+                var refreshed = pinnedHost
+                refreshed.lastConnectedAt = now()
+                return refreshed
+            }
+        }
+        #endif
         let offerSDP = try await link.createOfferSDP()
         try checkpoint()
         let exchange = try await signaling.authenticatedExchange(
@@ -70,6 +86,17 @@ public enum RemoteHostDialer {
         try checkpoint()
         try await link.applyAnswerSDP(exchange.answer.sdp)
         try checkpoint()
+        #if canImport(GrafttyTailcat) && canImport(WebRTC)
+        if tailcat != nil {
+            // Older hosts reject the optional query. The authenticated link
+            // stays usable and the next dial can discover a newly enabled host.
+            let response = try? await link.sendWorktreeManagement(.tailcatEndpoint)
+            try checkpoint()
+            if case .tailcatEndpoint(let endpoint) = response {
+                try? TailcatCredentials.saveEndpoint(endpoint, for: pinnedHost.fingerprint)
+            }
+        }
+        #endif
         var refreshed = pinnedHost
         refreshed.routes = exchange.answer.routes
         refreshed.lastSuccessfulRoute = exchange.route

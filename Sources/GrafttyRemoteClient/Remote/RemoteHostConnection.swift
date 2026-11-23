@@ -6,6 +6,7 @@ import CryptoKit
 #endif
 import Foundation
 import GrafttyProtocol
+import GrafttyTailcat
 import GrafttyTunnel
 import Network
 import NIOCore
@@ -103,6 +104,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private let clientKey: Curve25519.Signing.PrivateKey
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var sshTransport: SSHNIOTransport?
+    private var tailcatPeer: TailcatPeer?
+    private var tailcatPipe: TailcatPipe?
+    private var directSSH: DirectSSHHostConnection?
+    private var directChannel: Channel?
+    private var primaryChannel: Channel? { directChannel ?? sshTransport?.channel }
     private var bulkTransport: SSHNIOTransport?
     private var bulkHandlerBox: SSHHandlerBox?
     private var bulkTransportID: UUID?
@@ -162,6 +168,45 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// race this avoids.
     public func setOnStateChange(_ handler: (@Sendable (State) -> Void)?) {
         onStateChange = handler
+    }
+
+    /// A route failure before SSH can fall back to signaling. Once SSH starts,
+    /// propagate every error so another transport cannot bypass rejection.
+    func connectTailcat(_ endpoint: TailcatEndpoint) async throws -> Bool {
+        let peer = try TailcatPeer.client(address: endpoint.address)
+        let pipe: TailcatPipe
+        do { pipe = try await peer.dial(port: endpoint.port) }
+        catch {
+            await peer.close()
+            try Task.checkCancellation()
+            guard state == .idle else { throw CancellationError() }
+            return false
+        }
+        let direct = DirectSSHHostConnection(clientKey: clientKey, expectedHostFingerprint: expectedHostFingerprint)
+        do {
+            try Task.checkCancellation()
+            guard state == .idle else { throw CancellationError() }
+            try await direct.connect(input: pipe.file, output: pipe.file)
+            try pipe.file.close()
+            let (channel, box) = try await direct.connectedTransport()
+            try Task.checkCancellation()
+            guard state == .idle else { throw CancellationError() }
+            tailcatPeer = peer
+            tailcatPipe = pipe
+            directSSH = direct
+            directChannel = channel
+            sshHandlerBox = SSHHandlerBox(box.handler)
+            setState(.connected)
+            channel.closeFuture.whenComplete { [weak self] _ in
+                Task { await self?.handleDataChannelClosed() }
+            }
+            return true
+        } catch {
+            await direct.close()
+            await pipe.close()
+            await peer.close()
+            throw error
+        }
     }
 
     /// Build the local peer connection and create the data channel.
@@ -362,14 +407,14 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     public func openTerminalSession(sessionName: String, preferPaged: Bool = false, background: Bool = false, initialGrid: DisplayGrid? = nil) async throws -> TerminalSessionClient {
         if background { await bulkSetupTask?.value }
         guard
-            let transport = background ? (bulkTransport ?? sshTransport) : sshTransport,
+            let channel = background ? (bulkTransport?.channel ?? primaryChannel) : primaryChannel,
             let box = background ? (bulkHandlerBox ?? sshHandlerBox) : sshHandlerBox
         else {
             throw ConnectionError.notConnected
         }
         if preferPaged {
             let paged = TerminalSessionClient(
-                parentChannel: transport.channel, parentHandler: box.handler, sessionName: sessionName
+                parentChannel: channel, parentHandler: box.handler, sessionName: sessionName
             )
             do {
                 try await paged.connect(paged: true, initialGrid: initialGrid)
@@ -383,7 +428,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             }
         }
         let client = TerminalSessionClient(
-            parentChannel: transport.channel,
+            parentChannel: channel,
             parentHandler: box.handler,
             sessionName: sessionName
         )
@@ -404,13 +449,13 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     ) async throws -> PanesStateChannelClient {
         await waitBrieflyForBulkTransport()
         guard
-            let transport = bulkHandlerBox != nil ? bulkTransport : sshTransport,
+            let channel = bulkHandlerBox != nil ? bulkTransport?.channel : primaryChannel,
             let box = bulkHandlerBox ?? sshHandlerBox
         else {
             throw ConnectionError.notConnected
         }
         return PanesStateChannelClient(
-            parentChannel: transport.channel,
+            parentChannel: channel,
             parentHandler: box.handler,
             subsystemName: originAware
                 ? SSHChannelTypeNames.panesStateV2
@@ -423,13 +468,13 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
     public func makeChromeTabClient() throws -> ChromeTabChannelClient {
         guard
-            let transport = sshTransport,
+            let channel = primaryChannel,
             let box = sshHandlerBox
         else {
             throw ConnectionError.notConnected
         }
         return ChromeTabChannelClient(
-            parentChannel: transport.channel,
+            parentChannel: channel,
             parentHandler: box.handler
         )
     }
@@ -440,13 +485,13 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// `ConnectionError.notConnected` if the SSH handshake has not completed.
     public func makePaneControlClient() throws -> PaneControlChannelClient {
         guard
-            let transport = sshTransport,
+            let channel = primaryChannel,
             let box = sshHandlerBox
         else {
             throw ConnectionError.notConnected
         }
         return PaneControlChannelClient(
-            parentChannel: transport.channel,
+            parentChannel: channel,
             parentHandler: box.handler
         )
     }
@@ -461,46 +506,46 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     public func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
         // Cached desktop listeners follow the primary connection's lifetime;
         // the optional bulk carrier can be replaced independently.
-        guard state == .connected, let transport = sshTransport, let box = sshHandlerBox else {
+        guard state == .connected, let channel = primaryChannel, let box = sshHandlerBox else {
             throw ConnectionError.notConnected
         }
         return try await LocalPortForward.start(
-            transport: SSHSocketTransport(parent: transport.channel, handler: box.handler), host: host, port: port)
+            transport: SSHSocketTransport(parent: channel, handler: box.handler), host: host, port: port)
     }
 
     private func socketTransport() async throws -> SSHSocketTransport {
         await waitBrieflyForBulkTransport()
         guard state == .connected,
-              let transport = bulkHandlerBox != nil ? bulkTransport : sshTransport,
+              let channel = bulkHandlerBox != nil ? bulkTransport?.channel : primaryChannel,
               let box = bulkHandlerBox ?? sshHandlerBox else { throw ConnectionError.notConnected }
-        return SSHSocketTransport(parent: transport.channel, handler: box.handler)
+        return SSHSocketTransport(parent: channel, handler: box.handler)
     }
 
     public func makeWorktreeManagementClient() throws
         -> WorktreeManagementChannelClient {
         guard
-            let transport = sshTransport,
+            let channel = primaryChannel,
             let box = sshHandlerBox
         else {
             throw ConnectionError.notConnected
         }
         return WorktreeManagementChannelClient(
-            parentChannel: transport.channel,
+            parentChannel: channel,
             parentHandler: box.handler
         )
     }
 
     public func makeMCPControlClient(handler: @escaping TeamRPCSession.Handler,
                                      onClose: @escaping @Sendable () async -> Void = {}) throws -> TeamChannelClient {
-        guard let transport = sshTransport, let box = sshHandlerBox else { throw ConnectionError.notConnected }
-        return TeamChannelClient(parentChannel: transport.channel, parentHandler: box.handler,
+        guard let channel = primaryChannel, let box = sshHandlerBox else { throw ConnectionError.notConnected }
+        return TeamChannelClient(parentChannel: channel, parentHandler: box.handler,
             subsystemName: SSHChannelTypeNames.mcpControl, handler: handler, onClose: onClose)
     }
 
     public func makeGitControlClient(handler: @escaping TeamRPCSession.Handler,
                                      onClose: @escaping @Sendable () async -> Void = {}) throws -> TeamChannelClient {
-        guard let transport = sshTransport, let box = sshHandlerBox else { throw ConnectionError.notConnected }
-        return TeamChannelClient(parentChannel: transport.channel, parentHandler: box.handler,
+        guard let channel = primaryChannel, let box = sshHandlerBox else { throw ConnectionError.notConnected }
+        return TeamChannelClient(parentChannel: channel, parentHandler: box.handler,
             subsystemName: SSHChannelTypeNames.gitControl, handler: handler, onClose: onClose)
     }
 
@@ -508,11 +553,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         handler: @escaping TeamRPCSession.Handler,
         onClose: @escaping @Sendable () async -> Void = {}
     ) throws -> TeamChannelClient {
-        guard let transport = sshTransport, let box = sshHandlerBox else {
+        guard let channel = primaryChannel, let box = sshHandlerBox else {
             throw ConnectionError.notConnected
         }
         return TeamChannelClient(
-            parentChannel: transport.channel,
+            parentChannel: channel,
             parentHandler: box.handler,
             handler: handler,
             onClose: onClose
@@ -559,6 +604,13 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         bulkSetupTask = nil
         let bulk = bulkTransport
         let transport = sshTransport
+        let direct = directSSH
+        let pipe = tailcatPipe
+        let peer = tailcatPeer
+        directSSH = nil
+        directChannel = nil
+        tailcatPipe = nil
+        tailcatPeer = nil
         let dc = dataChannel
         let pc = peerConnection
         bulkTransport = nil
@@ -589,6 +641,9 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         }
         // Drain SSH before native shutdown, using one task for every caller.
         teardownTask = Task {
+            await direct?.close()
+            await pipe?.close()
+            await peer?.close()
             if let bulk { await bulk.close() }
             if let transport { await transport.close() }
             await nativeShutdown.run()

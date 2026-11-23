@@ -1696,6 +1696,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TECH-6.8** When an iOS CI shard runs in a results directory containing earlier bundles, the workflow shall use distinct result paths for the new invocation, execute every selected batch, and preserve the earlier evidence.
 
+**TECH-6.9** When CI creates an iOS test simulator, the workflow shall choose the newest available runtime supporting its device type within the selected SDK's major and minor version ceiling.
+
 ## ZMX — zmx Session Backing
 
 ### ZMX-1.x — Bundling
@@ -3848,6 +3850,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.30** The application shall configure both peers to tolerate high-latency links: a candidate pair shall stop counting as receiving only after ten seconds without inbound traffic, become unwritable (ICE disconnected) only after ten seconds without check responses, and time out (ICE failed) only after thirty seconds without check responses.
 
+**REMOTE-11.31** When a user enables Tailcat on a device, the application shall persist the opt-in for paired remote connections and default to disabled on a new installation.
+
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
@@ -4065,6 +4069,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-20.17** When the direct SSH listener's bind host is a numeric IP address such as `::`, the application shall bind that address without name resolution, so the listener starts on a Linux host with no non-loopback IPv6 address.
 
 **REMOTE-20.18** When a saved direct SSH host connects, the application shall not read the local device ID, so an unreadable device-ID store does not fail a connection that never sends it.
+
+**REMOTE-20.19** When the host accepts an SSH byte stream without a TCP listener, the application shall authenticate the paired client and dispatch the existing Graftty subsystem channels.
+
+**REMOTE-20.20** If an SSH byte-stream connection presents an unpaired client key or an unpinned host key, then the application shall reject authentication before exposing Graftty subsystems.
+
+**REMOTE-20.21** While a paired client uses an SSH byte stream, the application shall enforce its channel capabilities and close its active connection when its pairing is revoked.
+
+**REMOTE-20.22** If SSH stream admission rejects an invalid input handle, then the application shall retain the caller's handles and accept a subsequent valid stream.
+
+**REMOTE-20.23** When the host closes an SSH stream server, the application shall close its active streams and accept fresh authenticated streams after restarting.
 
 ### REMOTE-21.x
 
@@ -6333,6 +6347,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.11** When the last SSH data-channel owner is released from a Swift task, the application shall destroy its native channel proxy outside the cooperative executor and release the inbox and relay.
 
 **SSH-1.12** When native WebRTC teardown begins, the application shall run it once outside Swift tasks, release detached resources before resuming its waiters, and finish cleanup even if a waiter is cancelled.
+
+**SSH-1.13** When the Tailcat prototype connects a paired SSH client to a pinned host, the application shall preserve terminal byte order and contents.
+
+**SSH-1.14** If the Tailcat prototype receives a mismatched SSH host key or an unpaired client key, then the application shall reject the SSH connection.
+
+**SSH-1.15** When a pending Tailcat accept is cancelled, the application shall interrupt the accept and retain the listener for a subsequent authenticated connection.
+
+**SSH-1.16** When a Tailcat peer closes, the application shall unblock pending SSH terminal receives and permit a fresh connection.
+
+**SSH-1.17** If descriptor duplication fails during Tailcat SSH setup, then the application shall release successful duplicates and report an error before NIO bootstrap.
+
+**SSH-1.18** When a Tailcat SSH connection closes its NIO channel, the application shall close the remote SSH transport without requiring explicit Tailcat peer closure.
+
+**SSH-1.19** When Tailcat carries a paired SSH session, the application shall dispatch the production host's control, team, and terminal channels without a TCP listener.
+
+**SSH-1.20** If a Tailcat client lacks the pinned host key or a paired client key, then the application shall reject the SSH session before exposing Graftty channels.
+
+**SSH-1.21** While a paired client connects through Tailcat, the application shall enforce channel capabilities and disconnect the client when its pairing is revoked.
+
+**SSH-1.22** When a Tailcat host restarts with its saved identity and relay region, the application shall reconnect with the previously paired address and SSH keys.
+
+**SSH-1.23** When a user runs the standalone iPhone Tailcat check, the application shall verify an echo between two on-device peers and report the route and elapsed echo time.
 
 ## TEST — TEST
 

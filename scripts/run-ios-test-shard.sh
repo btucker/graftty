@@ -51,7 +51,7 @@ destination_resolution_failed() {
 
 create_and_boot_simulator() {
   SIMULATOR_UDID="$(
-    xcrun simctl create "Graftty CI ($SHARD_NAME) retry" "$SIMULATOR_DEVICE_TYPE"
+    python3 "$SCRIPT_DIR/ci/create-ios-simulator.py" "Graftty CI ($SHARD_NAME) retry" "$SIMULATOR_DEVICE_TYPE"
   )" || return $?
   SIMULATOR_UDIDS+=("$SIMULATOR_UDID")
   export SIMULATOR_UDID

@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+"$REPO/scripts/deps" prepare tailcat --platforms macos,ios
+xcodegen generate --spec "$REPO/Prototypes/Tailcat/project.yml"

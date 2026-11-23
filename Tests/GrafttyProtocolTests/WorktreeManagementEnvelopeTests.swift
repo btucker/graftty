@@ -29,6 +29,7 @@ struct WorktreeManagementEnvelopeTests {
         )
         let requests: [WorktreeManagementRequest] = [
             .hostPresentation,
+            .tailcatEndpoint,
             .listRepositories,
             .listRemoteMacConnections,
             .connectRemoteMac(
@@ -97,6 +98,8 @@ struct WorktreeManagementEnvelopeTests {
             ]
         )
         let responses: [WorktreeManagementResponse] = [
+            .tailcatEndpoint(nil),
+            .tailcatEndpoint(.init(address: "fixture", port: 8801)),
             .hostPresentation(
                 RemoteHostPresentation(
                     ghosttyConfig: "font-size = 14",

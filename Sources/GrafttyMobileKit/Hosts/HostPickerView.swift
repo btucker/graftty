@@ -6,6 +6,7 @@ import GrafttyWatchKit
 
 public struct HostPickerView: View {
     private typealias Connections = DownstreamHostConnections<UUID>
+    @AppStorage(TailcatPreference.key) private var usesTailcat = false
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage(WatchCompanionSettings.enabledKey) private var watchEnabled = false
     @Bindable var store: HostStore
@@ -42,6 +43,13 @@ public struct HostPickerView: View {
 
     public var body: some View {
         List {
+            Section {
+                Toggle("Use Tailcat (beta)", isOn: $usesTailcat)
+            } header: {
+                Text("Paired connections")
+            } footer: {
+                Text("Enable Tailcat on the Mac too. Connect once to share the route for future connections.")
+            }
             Section("Paired Macs") {
                 if store.hasLoaded && store.hosts.isEmpty {
                     Text("No paired Macs yet.").foregroundStyle(.secondary)

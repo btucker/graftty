@@ -8,7 +8,7 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: scripts/deps <command> [arguments]
 
-  prepare [ghostty|zmx|all] [--platforms macos[,ios]] [--rebuild] [--record FILE]
+  prepare [ghostty|zmx|tailcat|all] [--platforms macos[,ios]] [--rebuild] [--record FILE]
                           Build (or reuse) and link artifacts into .deps/.
   checkout ghostty DIR    Clone the pinned upstream into DIR and apply the
                           patch series as commits (git am -3).
@@ -396,11 +396,34 @@ write_record() {
   log "wrote build record $file"
 }
 
+prepare_tailcat() {
+  local platforms="$1" rebuild="$2" key pin base stage artifact
+  pin="$(cat "$REPO/Prototypes/Tailcat/UPSTREAM_COMMIT")"
+  key="$( { echo "$pin"; cat "$REPO/scripts/build-tailcat-framework"; xcodebuild -version; } | sha256 | cut -d ' ' -f 1)"
+  if [[ "$rebuild" == 0 && -d "$LINK_DIR/Tailcat.xcframework" ]] && linked_satisfies "$LINK_DIR/tailcat.key" "$key" "$platforms"; then return; fi
+  base="$CACHE/tailcat/$key"
+  artifact="$base/$platforms"
+  if [[ "$platforms" == macos && -d "$base/ios,macos" && "$rebuild" == 0 ]]; then artifact="$base/ios,macos"; fi
+  if [[ ! -d "$artifact" || "$rebuild" == 1 ]]; then
+    mkdir -p "$base"
+    stage="$(mktemp -d "$base/.stage.XXXXXX")"
+    if ! "$REPO/scripts/build-tailcat-framework" "$stage" "$pin" "$platforms"; then
+      rm -rf "$stage"
+      die "Tailcat build failed"
+    fi
+    rm -rf "$artifact"
+    mv "$stage/Tailcat.xcframework" "$artifact"
+    rm -rf "$stage"
+  fi
+  link_artifact "$artifact" "$LINK_DIR/Tailcat.xcframework"
+  echo "$key ${artifact##*/}" > "$LINK_DIR/tailcat.key"
+}
+
 prepare() {
   local which=all platforms=macos rebuild=0 record=
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      ghostty|zmx|all) which="$1"; shift ;;
+      ghostty|zmx|tailcat|all) which="$1"; shift ;;
       --platforms) platforms="$2"; shift 2 ;;
       --rebuild) rebuild=1; shift ;;
       --record) record="$2"; shift 2 ;;
@@ -408,8 +431,9 @@ prepare() {
     esac
   done
   platforms="$(normalize_platforms "$platforms")"
-  [[ "$which" == zmx ]] || prepare_ghostty "$platforms" "$rebuild"
-  [[ "$which" == ghostty ]] || prepare_zmx "$rebuild"
+  if [[ "$which" == all || "$which" == ghostty ]]; then prepare_ghostty "$platforms" "$rebuild"; fi
+  if [[ "$which" == all || "$which" == zmx ]]; then prepare_zmx "$rebuild"; fi
+  if [[ "$(uname -s)" == Darwin && ( "$which" == all || "$which" == tailcat ) ]]; then prepare_tailcat "$platforms" "$rebuild"; fi
   if [[ -n "$record" ]]; then write_record "$record"; fi
 }
 

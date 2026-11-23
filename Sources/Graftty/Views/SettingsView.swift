@@ -15,6 +15,7 @@ struct SettingsView: View {
         case cli
     }
 
+    @AppStorage(TailcatPreference.key) private var usesTailcat = false
     @AppStorage(SettingsKeys.worktreeAutoSleep) private var worktreeAutoSleep = false
     @AppStorage(SettingsKeys.worktreeAutoSleepMinutes) private var worktreeAutoSleepMinutes = 15
     @AppStorage(SettingsKeys.editorKind) private var editorKind: String = ""
@@ -53,6 +54,10 @@ struct SettingsView: View {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
             Divider().padding(.vertical, 4)
+
+            Toggle("Use Tailcat for paired connections (beta)", isOn: $usesTailcat)
+            Text("Enable Tailcat on both devices. Connect once to share the route. Future connections use Tailcat.")
+                .font(.caption).foregroundStyle(.secondary)
 
             Toggle("Show project rail", isOn: $showsProjectRail)
             Text("Turn off to group all projects and worktrees in one sidebar.")
