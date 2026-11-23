@@ -18,7 +18,7 @@
 - Requests apply to Mac and GrafttyMobile. The web client is out of scope.
 - Requirements are `@spec` annotations in tests. Never edit `SPECS.md` by hand; run `scripts/generate-specs.py`. No literal quotes in `@spec` titles.
 - Build and test with `scripts/swiftpm`. Mobile code under `#if canImport(UIKit)` is not compiled by it: compile it with the simulator build in `Apps/GrafttyMobile/README.md`, and run `cd Apps/GrafttyMobile && xcodegen generate` after adding a mobile test file.
-- New spec ids continue each prefix's numbering: `LAYOUT-2.246` onward and `IOS-13.21` onward (confirm the next free id with `grep -o "LAYOUT-2\.[0-9]*" SPECS.md | sort -t. -k2 -n | tail -1` before using one).
+- New spec ids continue each prefix's numbering: `LAYOUT-2.247` onward and `IOS-13.21` onward (confirm the next free id with `grep -o "LAYOUT-2\.[0-9]*" SPECS.md | sort -t. -k2 -n | tail -1` before using one).
 
 ## Review Focus
 
@@ -67,10 +67,10 @@ public func showsGallery(agentCount: Int) -> Bool    // galleryVisible ?? (agent
 ```
 
 - [ ] **Step 1: Failing tests** (Swift Testing, one `@Test` each, titles are the `@spec` text):
-  - `LAYOUT-2.246`: staging an off-stage session moves it into the focused group and selects it; the group's previous session stays in `gallerySessions` and `isOnStage` is false for it.
-  - `LAYOUT-2.247`: staging a session already on stage in another group only changes `focusedSession`; group membership is unchanged.
-  - `LAYOUT-2.248`: `removePane` on one of two groups keeps both sessions in `gallerySessions`, leaves the surviving group's `selected` unchanged, and returns false when one group remains.
-  - `LAYOUT-2.249`: `gallerySessions` keeps its order across `stage`, `split` and `removePane`; `moveTile` changes it without changing any group's `selected` (replaces LAYOUT-2.186, whose test is deleted).
+  - `LAYOUT-2.247`: staging an off-stage session moves it into the focused group and selects it; the group's previous session stays in `gallerySessions` and `isOnStage` is false for it.
+  - `LAYOUT-2.248`: staging a session already on stage in another group only changes `focusedSession`; group membership is unchanged.
+  - `LAYOUT-2.249`: `removePane` on one of two groups keeps both sessions in `gallerySessions`, leaves the surviving group's `selected` unchanged, and returns false when one group remains.
+  - `LAYOUT-2.250`: `gallerySessions` keeps its order across `stage`, `split` and `removePane`; `moveTile` changes it without changing any group's `selected` (replaces LAYOUT-2.186, whose test is deleted).
   - Decoding JSON produced by the current encoder (no `galleryOrder`, no `galleryVisible`) succeeds and yields `gallerySessions == canvasSessions`.
   - After `remove(selected)` on a group with two sessions, the other becomes `selected` (pins Review Focus 2).
 - [ ] **Step 2:** `scripts/swiftpm test --filter WorkspaceLayoutTests` fails to compile.
@@ -99,7 +99,7 @@ public struct AgentGalleryEmptyTile: View { public init(foreground: Color) }   /
 public struct TerminalTextThumbnail: View { public init(rows: [String], columns: Int, foreground: Color) }
 ```
 
-- [ ] **Step 1: Failing tests** (`LAYOUT-2.250`, mirroring LAYOUT-2.225 per agent): asking → `.asking` even when busy; busy and not asking → `.working`; completed → no dot, `isFinished`; cached → no dot, `isAsleep`; caption order question > result > status label.
+- [ ] **Step 1: Failing tests** (`LAYOUT-2.251`, mirroring LAYOUT-2.225 per agent): asking → `.asking` even when busy; busy and not asking → `.working`; completed → no dot, `isFinished`; cached → no dot, `isAsleep`; caption order question > result > status label.
 - [ ] **Step 2–4:** fail, implement, pass. The tile is `HStack(spacing: 0) { VStack { thumbnail; caption } ; rail.frame(width: 16) }`, dimmed to 0.55 opacity when finished or asleep, with a 2-point foreground outline when `isOnStage`. `AgentStatusDot` moves the pip drawing out of `PinnedTileFace` so both use one implementation. `TerminalTextThumbnail` draws in a `Canvas` with a monospaced font sized to `width / columns / 0.6`, bottom-aligned.
 - [ ] **Step 5:** commit.
 
@@ -126,7 +126,7 @@ public struct TerminalTextThumbnail: View { public init(rows: [String], columns:
 
 - [ ] **Step 1: Failing tests:**
   - `LAYOUT-2.190` reworded for tiles: `stageAgent` gives the terminal keyboard focus, including when already on stage.
-  - `LAYOUT-2.251`: with one agent the gallery is hidden and the terminal has the content's full width; adding a second agent shows it without changing `focusedSession` (AGENT-6.128 still holds).
+  - `LAYOUT-2.252`: with one agent the gallery is hidden and the terminal has the content's full width; adding a second agent shows it without changing `focusedSession` (AGENT-6.128 still holds).
   - `CONTEXT-55` reworded: with gallery and Context both open the terminal loses one column's width (assert widths 0 and 360 cases as today, plus gallery-only).
   - `LAYOUT-2.196` reworded: a question from an off-stage agent shows at the top of the focused stage pane, named for the asker.
   - Next/previous agent commands cycle `gallerySessions`, staging each.
@@ -163,7 +163,7 @@ public struct AgentLogoStack: View { public init(logos: [AgentLogo], background:
 // SidebarWorktreeRowLayout gains a third builder: `belowIdentity`, centred under the 60-point slot.
 ```
 
-- [ ] **Step 1: Failing tests** (`LAYOUT-2.252`): fewer than two logos → nothing shown; seven logos → five and overflow 2; asking above working above idle; finished logos dimmed (status `isFinished`).
+- [ ] **Step 1: Failing tests** (`LAYOUT-2.253`): fewer than two logos → nothing shown; seven logos → five and overflow 2; asking above working above idle; finished logos dimmed (status `isFinished`).
 - [ ] **Step 2–4:** implement. 18-point logos overlapping by 5; halo is a 2-point ring plus soft glow in the dot colours, pulsing for working unless Reduce Motion. On Mac, hovering expands the stack (overlay, may cover the text column) and `.help(title)` on each logo; clicking calls `onSelect`, wired to `MainWindow.selectPane` after `stageAgent`. On mobile, tap expands and tap on a logo calls `onSelectPane`. Selecting a worktree row stages the first asking agent, if any (Mac: in `MainWindow`'s selection path).
 - [ ] **Step 5:** commit.
 

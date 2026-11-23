@@ -137,7 +137,7 @@ struct WorkspaceContentViewTests {
             worktree: entry, onFocusTerminal: { entry.wrappedValue.focusedPaneSlotID = $0 }, onNewTerminal: {}, onCloseTerminal: { _ in })
     }
 
-    @Test("@spec LAYOUT-2.251: While a worktree has one agent, the application shall keep the gallery collapsed so the terminal keeps its full width, and when a second agent starts, the application shall open the gallery without changing what is on stage.")
+    @Test("@spec LAYOUT-2.252: While a worktree has one agent, the application shall keep the gallery collapsed so the terminal keeps its full width, and when a second agent starts, the application shall open the gallery without changing what is on stage.")
     func galleryOpensFromTheSecondAgent() {
         var (entry, first, second) = twoAgentEntry()
         let binding = Binding(get: { entry }, set: { entry = $0 })
@@ -148,7 +148,7 @@ struct WorkspaceContentViewTests {
         #expect(entry.workspaceLayout?.isOnStage(first) == true)
     }
 
-    @Test("@spec LAYOUT-2.252: While the gallery and Context are both open on desktop, the application shall show them in one right-hand column, the gallery above Context, so the terminal gives up one column's width.")
+    @Test("@spec LAYOUT-2.253: While the gallery and Context are both open on desktop, the application shall show them in one right-hand column, the gallery above Context, so the terminal gives up one column's width.")
     func galleryAndContextShareOneColumn() {
         #expect(WorkspaceGalleryColumn.width(showsGallery: false, showsContext: false) == nil)
         #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: false) == WorkspaceGalleryColumn.galleryWidth)

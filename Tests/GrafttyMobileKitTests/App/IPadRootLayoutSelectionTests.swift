@@ -566,11 +566,11 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.16: While a worktree is selected on iPad, the application shall highlight its whole sidebar group and retain the existing agent tab selection when an agent row is tapped.
+@spec IPAD-1.16: While a worktree is selected on iPad, the application shall highlight its whole sidebar group and keep the agent on stage unchanged when the worktree row is tapped again.
 """)
     func ipad_1_16_activeWorktreeHighlightAndFocusedPaneEmphasis() {
         // Construct WorktreeListContent with selection state set; the
-        // visual rendering is wired in WorktreeBlock/SidebarPaneTitleRow.
+        // visual rendering is wired in WorktreeBlock.
         // Smoke-check the parameter pass-through here so a future
         // signature drift surfaces in this test rather than visually.
         let view = WorktreeListContent(

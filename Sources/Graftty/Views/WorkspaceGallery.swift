@@ -4,7 +4,7 @@ import GrafttyProtocol
 import GrafttyCommandUI
 
 /// The right-hand column beside a workspace, shared by the gallery and Context
-/// so that the terminal only ever gives up one column's width (LAYOUT-2.252).
+/// so that the terminal only ever gives up one column's width (LAYOUT-2.253).
 enum WorkspaceGalleryColumn {
     static let galleryWidth: CGFloat = 220
     static let contextWidth: CGFloat = 360

@@ -30,7 +30,7 @@ struct WorktreeBlock: View {
     var onRemove: (() -> Void)? = nil
     /// Hides the row's current request on this device (LAYOUT-2.216).
     var onDismissRequest: () -> Void = {}
-    /// Opens one of the worktree's agents from its logo stack (LAYOUT-2.253).
+    /// Opens one of the worktree's agents from its logo stack (LAYOUT-2.254).
     var onSelectAgent: ((AgentLogo) -> Void)? = nil
 
     var body: some View {

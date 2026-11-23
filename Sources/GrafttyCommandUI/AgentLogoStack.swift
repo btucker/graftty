@@ -32,7 +32,7 @@ public struct AgentLogo: Identifiable, Equatable, Sendable {
     }
 }
 
-/// @spec LAYOUT-2.253
+/// @spec LAYOUT-2.254
 /// While a worktree has two or more agents, the application shall show one provider logo per agent beneath its sidebar icon, at most five followed by a count, ring a logo in orange while its agent asks for user input and in pulsing blue while it works, dim finished agents, and draw a ringed logo above its neighbours with the asking one on top.
 public enum AgentLogoStackModel {
     public static func visible(_ logos: [AgentLogo], limit: Int = 5) -> (shown: [AgentLogo], overflow: Int) {

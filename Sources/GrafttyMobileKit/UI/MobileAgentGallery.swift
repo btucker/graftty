@@ -112,7 +112,7 @@ struct MobileAgentGalleryGrid: View {
     let columns: Int
     let tileSize: CGSize
     let theme: GhosttyThemeColors
-    /// At most this many tiles show a live terminal at once (IOS-13.23).
+    /// At most this many tiles show a live terminal at once (IOS-13.33).
     var liveLimit = 4
     let onSelect: (String) -> Void
     let onJump: (String, Int) -> Void
@@ -222,7 +222,7 @@ struct MobileAgentGalleryColumn: View {
 }
 
 /// The phone's gallery: every agent, two by two or two stacked, filling the
-/// screen (IOS-13.22). Typing happens only on the stage, so tiles are watch-only.
+/// screen (IOS-13.32). Typing happens only on the stage, so tiles are watch-only.
 struct MobileAgentGalleryScreen: View {
     let host: Host
     let worktree: WorktreePanes

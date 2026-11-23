@@ -14,7 +14,7 @@ struct WorkspaceLayoutTests {
         return (layout, first, second)
     }
 
-    @Test("@spec LAYOUT-2.246: When the user puts an off-stage agent on stage, the application shall show it in the focused stage pane and keep the agent it replaces in the gallery off stage.")
+    @Test("@spec LAYOUT-2.247: When the user puts an off-stage agent on stage, the application shall show it in the focused stage pane and keep the agent it replaces in the gallery off stage.")
     func stagingReplacesFocusedPane() throws {
         var (layout, first, _) = try twoPaneLayout()
         layout.addAgent("c"); layout.select("a")
@@ -27,7 +27,7 @@ struct WorkspaceLayoutTests {
         #expect(Set(layout.gallerySessions) == ["a", "b", "c", "other"])
     }
 
-    @Test("@spec LAYOUT-2.247: When the user puts an agent on stage that is already on stage in another pane, the application shall focus that pane and shall not show the agent twice.")
+    @Test("@spec LAYOUT-2.248: When the user puts an agent on stage that is already on stage in another pane, the application shall focus that pane and shall not show the agent twice.")
     func stagingAnOnStageAgentFocusesIt() throws {
         var (layout, _, second) = try twoPaneLayout()
         let groups = layout.groups
@@ -37,7 +37,7 @@ struct WorkspaceLayoutTests {
         #expect(layout.focusedGroupID == second)
     }
 
-    @Test("@spec LAYOUT-2.248: When the user removes a pane from a split stage, the application shall keep its agents in the gallery off stage, leave the remaining panes unchanged, and refuse to remove the last pane.")
+    @Test("@spec LAYOUT-2.249: When the user removes a pane from a split stage, the application shall keep its agents in the gallery off stage, leave the remaining panes unchanged, and refuse to remove the last pane.")
     func removingAPaneKeepsItsAgents() throws {
         var (layout, first, second) = try twoPaneLayout()
         layout.select("other")
@@ -53,7 +53,7 @@ struct WorkspaceLayoutTests {
         #expect(layout.groups.count == 1)
     }
 
-    @Test("@spec LAYOUT-2.249: When the user drags a gallery tile before or after another, the application shall persist the new tile order, keep it across stage changes, and leave what is on stage and keyboard focus unchanged.")
+    @Test("@spec LAYOUT-2.250: When the user drags a gallery tile before or after another, the application shall persist the new tile order, keep it across stage changes, and leave what is on stage and keyboard focus unchanged.")
     func tileOrderIsIndependentOfStage() throws {
         var (layout, _, _) = try twoPaneLayout()
         layout.addAgent("c"); layout.select("a")

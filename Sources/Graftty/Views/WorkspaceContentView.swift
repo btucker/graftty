@@ -53,7 +53,7 @@ struct WorkspaceContentView: View {
     static let leadingContentInset: CGFloat = 6
     var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
-    /// Context, shown beneath the gallery in one right-hand column (LAYOUT-2.252).
+    /// Context, shown beneath the gallery in one right-hand column (LAYOUT-2.253).
     var contextPanel: AnyView? = nil
     @Environment(\.agentWorkspaceRequest) private var request
     @Environment(\.agentChatService) private var chatService

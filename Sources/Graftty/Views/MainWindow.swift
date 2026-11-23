@@ -320,7 +320,7 @@ struct MainWindow: View {
                     )
                 }
             } inspector: {
-                // A local workspace shows Context beneath its gallery instead (LAYOUT-2.252).
+                // A local workspace shows Context beneath its gallery instead (LAYOUT-2.253).
                 if !showsWorkspaceColumn { contextInspector }
             }
             .ignoresSafeArea(.container, edges: .top)

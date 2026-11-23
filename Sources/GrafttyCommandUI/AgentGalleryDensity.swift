@@ -1,6 +1,6 @@
 import CoreGraphics
 
-/// @spec IOS-13.22
+/// @spec IOS-13.32
 /// While the phone gallery is open, the application shall fill the screen with tiles two by two or two stacked, move between those two sizes when the user pinches, go no further in either direction, and remember the size it was left at.
 public enum AgentGalleryDensity: Int, Sendable, CaseIterable {
     /// Two tiles stacked, each the full width.
@@ -24,7 +24,7 @@ public enum AgentGalleryDensity: Int, Sendable, CaseIterable {
     }
 }
 
-/// @spec IOS-13.23
+/// @spec IOS-13.33
 /// While the phone gallery shows more agents than it can keep live, the application shall show live terminals only for visible tiles up to its limit, in tile order, and show the rest by caption and status alone.
 public enum AgentGalleryPreviewBudget {
     public static func live(sessions: [String], visible: Set<String>, limit: Int = 4) -> [String] {

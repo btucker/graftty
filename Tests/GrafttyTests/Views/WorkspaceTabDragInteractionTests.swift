@@ -9,7 +9,7 @@ import GrafttyCommandUI
 
 @MainActor
 struct WorkspaceTabDragInteractionTests {
-    @Test("@spec LAYOUT-2.197: When the user drags an agent tab on Mac, the application shall start a native in-app tab drag after the drag threshold, preserve contextual menus, and select a tab on click without selecting it on drag.")
+    @Test("@spec LAYOUT-2.197: When the user drags an agent's gallery tile on Mac, the application shall start a native in-app drag after the drag threshold, preserve contextual menus, and put the agent on stage on click without doing so on drag.")
     func agentTabsUseNativeClickAndDragSources() async throws {
         _ = NSApplication.shared
         let a = PaneSlotID(), b = PaneSlotID()

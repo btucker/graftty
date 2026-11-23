@@ -13,7 +13,7 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         }
     }
 
-    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name and, on iPadOS 26, its PR, Git divergence, and summary as the subtitle, on its emoji wash, offer its agents from the title menu, keep the summary and tabs directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
+    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name and, on iPadOS 26, its PR, Git divergence, and summary as the subtitle, on its emoji wash, offer its agents from the title menu, keep the summary and the agent gallery directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
     func testWorkspaceLeadsWithIdentityAndOneControlGroup() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
         let app = XCUIApplication()
@@ -23,15 +23,15 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         let navigation = app.navigationBars["Workspace"]
         XCTAssertTrue(navigation.waitForExistence(timeout: 10), app.debugDescription)
         // The navigation bar is identified by its title, the worktree's name.
-        let alpha = app.buttons["workspace.tab.alpha"]
+        let alpha = app.buttons["workspace.gallery.tile.alpha"]
         XCTAssertTrue(alpha.waitForExistence(timeout: 5))
-        XCTAssertLessThan(navigation.frame.maxY, alpha.frame.minY + 1, "Tabs are not below the titled navigation bar")
+        XCTAssertLessThan(navigation.frame.maxY, alpha.frame.minY + 1, "The gallery is not below the titled navigation bar")
         if #available(iOS 26.0, *) {
             let subtitle = navigation.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Rethink panes and tabs")).firstMatch
             XCTAssertTrue(subtitle.exists, "The summary is not the navigation subtitle")
         }
-        XCTAssertLessThan(alpha.frame.minY - navigation.frame.maxY, 30,
-            "Empty space pushes the header down: tabs \(alpha.frame) under navigation \(navigation.frame)")
+        XCTAssertLessThan(alpha.frame.minY - navigation.frame.maxY, 80,
+            "Empty space pushes the gallery down: tile \(alpha.frame) under navigation \(navigation.frame)")
         XCTAssertTrue(navigation.buttons["worktree.context.open"].exists, "Worktree context is not in the toolbar group")
         XCTAssertTrue(navigation.buttons["workspace.more"].exists, "Split actions are not in the toolbar's More menu")
         XCTAssertFalse(navigation.buttons["Split Right"].exists, "Split actions still sit directly in the toolbar")
@@ -67,25 +67,24 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         XCTAssertFalse(forward.isEnabled, "Forward is enabled with no later worktree")
     }
 
-    /// @spec LAYOUT-2.196: While an agent has a live input request, the application shall show the request directly under the tabs of the asking agent's pane, or of the focused pane when the request belongs to no pane, rather than above every pane's tabs.
-    func testInputRequestSitsUnderTheAskingPanesTabs() throws {
+    /// @spec LAYOUT-2.196: While an agent has a live input request, the application shall show the request once, at the top of the focused stage pane, whichever agent asks, so the user can answer it without switching agents.
+    func testInputRequestSitsAtTheTopOfTheStage() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
         let app = XCUIApplication()
         app.launchArguments = ["--ipad-workspace-fixture", "--input-request"]
         app.launch()
         defer { app.terminate() }
-        let beta = app.buttons["workspace.tab.beta"]
-        let alpha = app.buttons["workspace.tab.alpha"]
-        XCTAssertTrue(beta.waitForExistence(timeout: 10) && alpha.exists, app.debugDescription)
+        let beta = app.buttons["workspace.gallery.tile.beta"]
+        XCTAssertTrue(beta.waitForExistence(timeout: 10), app.debugDescription)
         let request = app.buttons["Pick a color?"]
         XCTAssertTrue(request.waitForExistence(timeout: 5), "The input request is not shown")
         XCTAssertEqual(app.buttons.matching(identifier: "Pick a color?").count, 1, "The request shows more than once")
-        XCTAssertGreaterThanOrEqual(request.frame.minY, beta.frame.maxY - 1, "The request is above the asking pane's tabs")
-        XCTAssertLessThan(request.frame.minY - beta.frame.maxY, 40, "The request is not directly under the tabs")
+        XCTAssertLessThan(request.frame.maxX, beta.frame.minX + 1, "The request is not on the stage")
         let navigation = app.navigationBars["Workspace"]
-        XCTAssertGreaterThan(request.frame.minY, navigation.frame.maxY + 30, "The request is above the tab row")
+        XCTAssertGreaterThanOrEqual(request.frame.minY, navigation.frame.maxY - 1, "The request is under navigation chrome")
+        XCTAssertLessThan(request.frame.minY - navigation.frame.maxY, 60, "The request is not at the top of the stage")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "iPad input request under tabs"
+        screenshot.name = "iPad input request at the top of the stage"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
@@ -96,23 +95,20 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         XCTAssertEqual(app.frame.width > app.frame.height, orientation.isLandscape)
-        let alpha = app.buttons["workspace.tab.alpha"]
-        let beta = app.buttons["workspace.tab.beta"]
+        let alpha = app.buttons["workspace.gallery.tile.alpha"]
+        let beta = app.buttons["workspace.gallery.tile.beta"]
         XCTAssertTrue(alpha.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(beta.exists)
         let navigation = app.navigationBars["Workspace"]
         XCTAssertTrue(navigation.waitForExistence(timeout: 5))
         XCTAssertGreaterThanOrEqual(beta.frame.minY, navigation.frame.maxY - 1,
-            "Tabs are underneath navigation chrome: \(beta.frame), \(navigation.frame)")
+            "Tiles are underneath navigation chrome: \(beta.frame), \(navigation.frame)")
         beta.tap()
         XCTAssertEqual(app.staticTexts["workspace.focus"].label, "beta")
         alpha.tap()
         XCTAssertEqual(app.staticTexts["workspace.focus"].label, "alpha")
-        let header = app.otherElements["workspace.pane.header"]
-        XCTAssertTrue(header.exists)
-        XCTAssertTrue(header.frame.contains(alpha.frame), "Tabs are outside the pane header")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "iPad workspace chrome and tappable tabs"
+        screenshot.name = "iPad workspace chrome and tappable gallery tiles"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
@@ -200,7 +196,7 @@ final class RecentPaneInteractionTests: XCTestCase {
         screenshot("Ordinary Back returns to worktrees")
     }
 
-    /// @spec IPAD-2.27: While a compact agent workspace is shown, the application shall open its shells from Terminal in the agent-selection dropdown instead of reserving a button in the top-right controls or a bottom bar.
+    /// @spec IPAD-2.27: While a compact agent workspace is shown, the application shall open its shells from Terminal in the agent gallery's top row instead of reserving a button in the top-right controls or a bottom bar.
     func testAgentWorkspaceTerminalLivesInAgentMenu() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--recent-panes-fixture", "--agent-workspace"]
@@ -210,13 +206,13 @@ final class RecentPaneInteractionTests: XCTestCase {
         XCTAssertTrue(alpha.waitForExistence(timeout: 10))
         alpha.tap()
         let switcher = app.buttons["workspace.agent.switcher"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 10), "the agent dropdown is missing")
+        XCTAssertTrue(switcher.waitForExistence(timeout: 10), "the agent name that opens the gallery is missing")
         XCTAssertFalse(app.buttons["Terminal"].exists, "Terminal must not reserve a header or bottom-bar button")
         switcher.tap()
         let terminal = app.buttons["Terminal"]
-        XCTAssertTrue(terminal.waitForExistence(timeout: 10), "Terminal is missing from the agent dropdown")
+        XCTAssertTrue(terminal.waitForExistence(timeout: 10), "Terminal is missing from the agent gallery")
         let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = "Terminal in agent dropdown"
+        attachment.name = "Terminal in the agent gallery"
         attachment.lifetime = .keepAlways
         add(attachment)
         terminal.tap()

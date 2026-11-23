@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The small status dot shared by pinned tiles and gallery tiles (LAYOUT-2.225, LAYOUT-2.250).
+/// The small status dot shared by pinned tiles and gallery tiles (LAYOUT-2.225, LAYOUT-2.251).
 public struct AgentStatusDot: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

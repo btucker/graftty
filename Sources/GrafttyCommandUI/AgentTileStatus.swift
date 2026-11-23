@@ -8,7 +8,7 @@ public enum AgentTileDot: Sendable, Equatable {
     case working
 }
 
-/// @spec LAYOUT-2.250
+/// @spec LAYOUT-2.251
 /// While an agent is shown as a gallery tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works, dim it once it has finished or while its host sleeps, and caption it with its question, else its result, else its status.
 public struct AgentTileStatus: Sendable, Equatable {
     public let dot: AgentTileDot?

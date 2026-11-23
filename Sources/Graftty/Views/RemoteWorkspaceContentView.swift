@@ -14,7 +14,7 @@ struct RemoteWorkspaceContentView: View {
     let onPaneCommandTargetChange: (PaneSlotID?) -> Void
     var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
-    /// Context, shown beneath the gallery in one right-hand column (LAYOUT-2.252).
+    /// Context, shown beneath the gallery in one right-hand column (LAYOUT-2.253).
     var contextPanel: AnyView? = nil
     var requestedAgent: String? = nil
     var consumeAgentRequest: () -> Void = {}

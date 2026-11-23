@@ -334,8 +334,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.177** While a terminal attachment is loading or unavailable, the application shall keep its tab header mounted so users can select another session.
 
-**LAYOUT-2.178** While a worktree displays agent tabs, the application shall list only those tabs in its sidebar in canvas group and tab order, exclude terminal drawer sessions, and retain completed tabs until dismissed.
-
 **LAYOUT-2.179** When the user opens an empty terminal drawer, the application shall request its first terminal automatically; reopening a populated drawer shall reuse its selected terminal.
 
 **LAYOUT-2.180** When the user clicks empty space in the terminal drawer bar, the application shall toggle the drawer, while clicks on its individual controls shall perform only their own actions.
@@ -346,15 +344,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.185** When a user adjusts a native horizontal divider through accessibility, the application shall resize by twenty points and commit the adjustment.
 
-**LAYOUT-2.186** When an agent tab is dragged before or after another tab in its group, the application shall persist the new order without changing selected sessions, keyboard focus, or terminal identities.
-
 **LAYOUT-2.187** While an agent tab is visible, the application shall omit the running spinner and display static indicators for idle, waiting, completed, failed, or disconnected agents.
 
-**LAYOUT-2.188** While a live agent is listed in the sidebar or agent tabs, the application shall use its current terminal title, omit the provider's animated prefix in tabs, and fall back to its assignment name when the displayed title is blank.
+**LAYOUT-2.188** While a live agent is named on a gallery tile, a stage pane, or a sidebar logo, the application shall use its current terminal title, omit the provider's animated prefix, and fall back to its assignment name when the displayed title is blank.
 
 **LAYOUT-2.189** When a removable linked worktree has a merged PR or MR, the sidebar shall replace its Git divergence counts with a remove button that invokes the existing worktree deletion flow.
 
-**LAYOUT-2.190** When the user selects a live agent or terminal-drawer tab, the application shall give that terminal keyboard focus, including when the tab is already selected.
+**LAYOUT-2.190** When the user puts a live agent on stage or selects a terminal-drawer tab, the application shall give that terminal keyboard focus, including when it is already shown.
 
 **LAYOUT-2.191** When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.
 
@@ -366,9 +362,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.195** While a workspace shows agent tabs, the application shall draw each tab row flush with its pane's leading edge and inset only leading-edge pane content from the sidebar divider.
 
-**LAYOUT-2.196** While an agent has a live input request, the application shall show the request directly under the tabs of the asking agent's pane, or of the focused pane when the request belongs to no pane, rather than above every pane's tabs.
+**LAYOUT-2.196** While an agent has a live input request, the application shall show the request once, at the top of the focused stage pane, whichever agent asks, so the user can answer it without switching agents.
 
-**LAYOUT-2.197** When the user drags an agent tab on Mac, the application shall start a native in-app tab drag after the drag threshold, preserve contextual menus, and select a tab on click without selecting it on drag.
+**LAYOUT-2.197** When the user drags an agent's gallery tile on Mac, the application shall start a native in-app drag after the drag threshold, preserve contextual menus, and put the agent on stage on click without doing so on drag.
 
 **LAYOUT-2.198** When the user expands the terminal drawer, the application shall give its selected terminal keyboard focus, including a first terminal created by that action.
 
@@ -452,9 +448,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.244** While header text overlaps the header watermark, the application shall shade the watermark beneath that text, leaving the rest of the watermark and the header outside it unshaded.
 
-**LAYOUT-2.245** When agent tabs are wider than their row, the application shall shrink the widest tabs first to an equal width, no narrower than a minimum, truncating their titles in the middle, and scroll only the tabs that still do not fit.
-
 **LAYOUT-2.246** While a Mac report popover is open, the application shall keep sidebar rows in the positions they had when the first report opened, including when the user moves to another report and when the Mac has no local repository, and shall release them when the last report closes.
+
+**LAYOUT-2.247** When the user puts an off-stage agent on stage, the application shall show it in the focused stage pane and keep the agent it replaces in the gallery off stage.
+
+**LAYOUT-2.248** When the user puts an agent on stage that is already on stage in another pane, the application shall focus that pane and shall not show the agent twice.
+
+**LAYOUT-2.249** When the user removes a pane from a split stage, the application shall keep its agents in the gallery off stage, leave the remaining panes unchanged, and refuse to remove the last pane.
+
+**LAYOUT-2.250** When the user drags a gallery tile before or after another, the application shall persist the new tile order, keep it across stage changes, and leave what is on stage and keyboard focus unchanged.
+
+**LAYOUT-2.251** While an agent is shown as a gallery tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works, dim it once it has finished or while its host sleeps, and caption it with its question, else its result, else its status.
+
+**LAYOUT-2.252** While a worktree has one agent, the application shall keep the gallery collapsed so the terminal keeps its full width, and when a second agent starts, the application shall open the gallery without changing what is on stage.
+
+**LAYOUT-2.253** While the gallery and Context are both open on desktop, the application shall show them in one right-hand column, the gallery above Context, so the terminal gives up one column's width.
+
+**LAYOUT-2.254** While a worktree has two or more agents, the application shall show one provider logo per agent beneath its sidebar icon, at most five followed by a count, ring a logo in orange while its agent asks for user input and in pulsing blue while it works, dim finished agents, and draw a ringed logo above its neighbours with the asking one on top.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -2864,6 +2874,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.30** While a mobile worktree delete confirmation is open, the application shall keep its row in its section and position through live activity updates.
 
+**IOS-13.31** While the phone shows one agent on stage and another agent in the worktree asks for user input that the stage's question bar does not already show, the application shall show a chip naming the asking agent, and tapping it shall put that agent on stage.
+
+**IOS-13.32** While the phone gallery is open, the application shall fill the screen with tiles two by two or two stacked, move between those two sizes when the user pinches, go no further in either direction, and remember the size it was left at.
+
+**IOS-13.33** While the phone gallery shows more agents than it can keep live, the application shall show live terminals only for visible tiles up to its limit, in tile order, and show the rest by caption and status alone.
+
 ## IPAD — iPad Layout
 
 ### IPAD-1.x — Root Layout and Sidebar
@@ -2894,7 +2910,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.15** While the iPad sidebar displays a worktree, the application shall keep its heading on one line without repeating a differing branch or a retained report beneath it.
 
-**IPAD-1.16** While a worktree is selected on iPad, the application shall highlight its whole sidebar group and retain the existing agent tab selection when an agent row is tapped.
+**IPAD-1.16** While a worktree is selected on iPad, the application shall highlight its whole sidebar group and keep the agent on stage unchanged when the worktree row is tapped again.
 
 **IPAD-1.17** When an authenticated panes-state snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
 
@@ -2924,7 +2940,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.30** When IPadAppState is constructed with an injected UserDefaults suite, the application shall read and write the nested sidebar navigation state through that same suite rather than the standard defaults.
 
-**IPAD-1.31** While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name and, on iPadOS 26, its PR, Git divergence, and summary as the subtitle, on its emoji wash, offer its agents from the title menu, keep the summary and tabs directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
+**IPAD-1.31** While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name and, on iPadOS 26, its PR, Git divergence, and summary as the subtitle, on its emoji wash, offer its agents from the title menu, keep the summary and the agent gallery directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
 
 **IPAD-1.32** While an iPad workspace is visible, the application shall show worktree history Back and Forward buttons to the left of the worktree name, enabled only when a visited worktree is available in that direction.
 
@@ -2990,7 +3006,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.26** While a compact agent workspace shows the software keyboard, the application shall keep the terminal above the keyboard and place its key accessory bar directly against the keyboard.
 
-**IPAD-2.27** While a compact agent workspace is shown, the application shall open its shells from Terminal in the agent-selection dropdown instead of reserving a button in the top-right controls or a bottom bar.
+**IPAD-2.27** While a compact agent workspace is shown, the application shall open its shells from Terminal in the agent gallery's top row instead of reserving a button in the top-right controls or a bottom bar.
 
 **IPAD-2.28** While an iPad workspace is visible, the application shall keep agent tabs below the navigation bar, place pane resource controls alongside the tabs, and allow tab selection to change the focused terminal.
 
@@ -5809,6 +5825,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CONTEXT-57.13** While a scrollback map preview card is shown, the application shall draw it on a nearly opaque backing lighter than a dark terminal, so terminal text behind the card does not show through.
 
 **CONTEXT-57.14** When the previewed scrollback message changes, the application shall slide preview cards to their new positions and fade cards that no longer fit out where they stand, keeping unmeasured cards hidden, instead of moving or replacing them instantly. While Reduce Motion is on, the application shall change them without motion.
+
+**CONTEXT-57.15** While an agent is shown as a gallery tile, the application shall show its scrollback map on the tile's right edge, let its preview cards extend beyond the tile, and when a mark or card is activated, put that agent on stage scrolled to that message.
 
 ### CONTEXT-58.x
 

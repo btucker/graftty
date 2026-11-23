@@ -8,7 +8,7 @@ struct AgentTileStatusTests {
                         question: question, result: result, statusLabel: "Running")
     }
 
-    @Test("@spec LAYOUT-2.250: While an agent is shown as a gallery tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works, dim it once it has finished or while its host sleeps, and caption it with its question, else its result, else its status.")
+    @Test("@spec LAYOUT-2.251: While an agent is shown as a gallery tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works, dim it once it has finished or while its host sleeps, and caption it with its question, else its result, else its status.")
     func tileStatus() {
         #expect(status(needsInput: true, isBusy: true, question: "Retry?").dot == .asking)
         #expect(status(needsInput: true, isBusy: true, question: "Retry?").caption == "Retry?")

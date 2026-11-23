@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyCommandUI
 
 struct AgentGalleryDensityTests {
-    @Test("@spec IOS-13.22: While the phone gallery is open, the application shall fill the screen with tiles two by two or two stacked, move between those two sizes when the user pinches, go no further in either direction, and remember the size it was left at.")
+    @Test("@spec IOS-13.32: While the phone gallery is open, the application shall fill the screen with tiles two by two or two stacked, move between those two sizes when the user pinches, go no further in either direction, and remember the size it was left at.")
     func pinchMovesBetweenTwoSizes() {
         #expect(AgentGalleryDensity.four.after(pinchScale: 1.4) == .two)
         #expect(AgentGalleryDensity.two.after(pinchScale: 1.4) == .two)
@@ -16,7 +16,7 @@ struct AgentGalleryDensityTests {
         #expect(AgentGalleryDensity(rawValue: AgentGalleryDensity.two.rawValue) == .two)
     }
 
-    @Test("@spec IOS-13.23: While the phone gallery shows more agents than it can keep live, the application shall show live terminals only for visible tiles up to its limit, in tile order, and show the rest by caption and status alone.")
+    @Test("@spec IOS-13.33: While the phone gallery shows more agents than it can keep live, the application shall show live terminals only for visible tiles up to its limit, in tile order, and show the rest by caption and status alone.")
     func liveBudget() {
         let sessions = ["a", "b", "c", "d", "e", "f"]
         #expect(AgentGalleryPreviewBudget.live(sessions: sessions, visible: ["b", "c", "d", "e", "f"], limit: 4) == ["b", "c", "d", "e"])

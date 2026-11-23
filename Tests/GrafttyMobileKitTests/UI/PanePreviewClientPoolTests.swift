@@ -241,7 +241,7 @@ struct MobileWorkspaceStoreTests {
         store.update(hostID: host, worktree: worktree) { _ = $0.moveTab("b", relativeTo: "a", after: false) }
         let restored = MobileWorkspaceStore(defaults: defaults)
         let workspace = restored.layout(hostID: host, worktree: worktree)
-        #expect(worktree.sidebarAgentLeaves(in: workspace).map(\.sessionName) == ["b", "a"])
+        #expect(workspace.groups.first?.sessions == ["b", "a"])
         #expect(restored.layout(hostID: UUID(), worktree: worktree).groups.first?.sessions == ["a", "b"])
     }
 
