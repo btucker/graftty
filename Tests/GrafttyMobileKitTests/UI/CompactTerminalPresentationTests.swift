@@ -68,6 +68,60 @@ struct CompactTerminalPresentationTests {
         #expect(presentation.selectedSession == "replacement")
     }
 
+    @Test("@spec IPAD-2.29: While the compact Terminal sheet has a mounted shell, the application shall show its display name beside the switcher icon, expose the full name to accessibility, and mark only that session as selected in the picker, including after switching shells or reconciling a removed shell. Long names shall leave the new-shell and close controls usable.")
+    func mountedTerminalTracksSessionIdentityAcrossInventoryChanges() async {
+        let presentation = CompactTerminalPresentation()
+        var launches = 0
+        let twoShells = worktree(shells: ["packaging", "signing"], titles: [
+            "packaging": "Packaging shell", "signing": "Signing shell",
+        ])
+        func mounted(in row: WorktreePanes) -> (sessionName: String, displayTitle: String)? {
+            presentation.mountedTerminal(in: CompactTerminalPresentation.terminals(in: row))
+        }
+
+        await presentation.open(in: twoShells) { launches += 1; return "new" }
+        #expect(mounted(in: twoShells)?.sessionName == "packaging")
+        #expect(mounted(in: twoShells)?.displayTitle == "Packaging shell")
+        presentation.select("signing")
+        #expect(mounted(in: twoShells)?.sessionName == "signing")
+        #expect(mounted(in: twoShells)?.displayTitle == "Signing shell")
+
+        let sameTitles = worktree(shells: ["packaging", "signing"], titles: [
+            "packaging": "Release shell", "signing": "Release shell",
+        ])
+        presentation.reconcile(in: sameTitles)
+        #expect(mounted(in: sameTitles)?.sessionName == "signing")
+        #expect(mounted(in: sameTitles)?.displayTitle == "Release shell")
+
+        let survivor = worktree(shells: ["packaging"], titles: ["packaging": ""])
+        #expect(mounted(in: survivor) == nil)
+        presentation.reconcile(in: survivor)
+        #expect(mounted(in: survivor)?.sessionName == "packaging")
+        #expect(mounted(in: survivor)?.displayTitle == "shell")
+        presentation.select("signing")
+        #expect(mounted(in: survivor)?.sessionName == "packaging")
+        let empty = worktree(shells: [])
+        presentation.reconcile(in: empty)
+        #expect(mounted(in: empty) == nil)
+        #expect(launches == 0)
+    }
+
+    @Test("Failed shell creation reconciles inventory received during the request.")
+    func failedCreationSelectsSurvivingShell() async {
+        struct CreationFailed: Error {}
+        let presentation = CompactTerminalPresentation()
+        presentation.reconcile(in: worktree(shells: ["packaging", "signing"]))
+        let survivor = worktree(shells: ["signing"])
+
+        await presentation.newTerminal {
+            presentation.reconcile(in: survivor)
+            throw CreationFailed()
+        }
+
+        #expect(presentation.error != nil)
+        #expect(presentation.mountedTerminal(in: CompactTerminalPresentation.terminals(in: survivor))?.sessionName == "signing")
+    }
+
     @Test("Delayed legacy inventory does not launch twice, and absent created shells expire.")
     func inventoryAcknowledgmentIsBounded() async {
         let presentation = CompactTerminalPresentation()
@@ -81,6 +135,8 @@ struct CompactTerminalPresentationTests {
         #expect(presentation.selectedSession == "legacy-shell")
         #expect(presentation.pendingUntil == nil)
         await presentation.newTerminal { "already-exited" }
+        #expect(presentation.mountedTerminal(in: [])?.sessionName == "already-exited")
+        #expect(presentation.mountedTerminal(in: [])?.displayTitle == "shell")
         presentation.reconcile(in: worktree(shells: ["replacement"]))
         presentation.expirePendingCreation(now: Date().addingTimeInterval(6))
         #expect(presentation.selectedSession == "replacement")
@@ -118,11 +174,11 @@ struct CompactTerminalPresentationTests {
         #expect(CompactTerminalPresentation.agentWorkspace(path: "/other", rows: [shellOnly], fallback: nil) == nil)
     }
 
-    private func worktree(shells: [String]) -> WorktreePanes {
+    private func worktree(shells: [String], titles: [String: String] = [:]) -> WorktreePanes {
         let sessions = ["agent"] + shells
         let layout = sessions.dropFirst().reduce(PaneLayoutNode.leaf(sessionName: "agent", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil)) { tree, session in
             .split(direction: .horizontal, ratio: 0.5, left: tree,
-                right: .leaf(sessionName: session, title: session, attentionText: nil, isBusy: false, attentionSource: nil))
+                right: .leaf(sessionName: session, title: titles[session] ?? session, attentionText: nil, isBusy: false, attentionSource: nil))
         }
         return WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "repo", displayBranch: "main", state: .running,
             isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
