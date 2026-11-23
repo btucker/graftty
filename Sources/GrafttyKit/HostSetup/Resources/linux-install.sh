@@ -75,8 +75,11 @@ fi
 service_backup=$(mktemp)
 had_service=0
 if [[ -f $active_file ]]; then cp "$active_file" "$service_backup"; had_service=1; fi
+legacy_backup=$(mktemp)
 legacy_removed=0
 legacy_enabled=0
+legacy_active=0
+dropins_moved=0
 
 previous_release=""
 release_installed=0
@@ -103,11 +106,15 @@ cleanup() {
             rm -rf -- "$release"
             mv -- "$previous_release" "$release"
         fi
-        if ((legacy_removed)); then
+        # A converted legacy install had no runner unit; remove it even when
+        # interrupted before the legacy unit was retired.
+        if ((legacy)); then
             systemctl --user disable graftty-runner.service >/dev/null 2>&1 || true
             rm -f -- "$service_file"
         fi
+        if ((dropins_moved)); then mv -- "$service_file.d" "$legacy_file.d"; fi
         if ((had_service)); then cp "$service_backup" "$active_file"; else rm -f -- "$active_file"; fi
+        if ((legacy_removed)); then cp "$legacy_backup" "$legacy_file"; fi
         for index in "${!commands[@]}"; do
             link="$HOME/.local/bin/${commands[$index]}"
             if [[ -n ${old_links[$index]} ]]; then ln -sfn "${old_links[$index]}" "$link"
@@ -118,9 +125,10 @@ cleanup() {
         if ((was_running)); then
             systemctl --user start "$active_unit" || echo 'Could not restore the previous runner service' >&2
         fi
+        if ((legacy_active)); then systemctl --user start graftty-host.service || true; fi
     fi
     [[ -z ${staging:-} ]] || rm -rf -- "$staging"
-    rm -f -- "$service_backup"
+    rm -f -- "$service_backup" "$legacy_backup"
     rm -f -- "$service_backup.next"
 }
 trap cleanup EXIT
@@ -219,12 +227,24 @@ UMask=0077
 WantedBy=default.target
 EOF
 fi
-if ((legacy)); then
-    # Best effort without systemd (--no-start): the unit file still moves.
-    if systemctl --user is-enabled --quiet graftty-host.service 2>/dev/null; then legacy_enabled=1; fi
+if [[ -f $legacy_file ]]; then
+    # Retire the legacy unit: either converted above, or written beside the
+    # runner unit by an installer from before the rename. Systemd calls are
+    # best effort so --no-start still moves the unit file.
+    cp "$legacy_file" "$legacy_backup"
     legacy_removed=1
+    if systemctl --user is-enabled --quiet graftty-host.service 2>/dev/null; then legacy_enabled=1; fi
+    if ((!legacy && start_service)) && systemctl --user is-active --quiet graftty-host.service 2>/dev/null; then
+        legacy_active=1
+        systemctl --user stop graftty-host.service
+    fi
     systemctl --user disable graftty-host.service >/dev/null 2>&1 || true
     rm -f -- "$legacy_file"
+    # Drop-ins carry user options; they follow a converted unit.
+    if ((legacy)) && [[ -d $legacy_file.d && ! -e $service_file.d ]]; then
+        mv -- "$legacy_file.d" "$service_file.d"
+        dropins_moved=1
+    fi
 fi
 if ((start_service)); then
     if ((!maintenance)); then "$release/bin/graftty-runner" setup --json >/dev/null; fi

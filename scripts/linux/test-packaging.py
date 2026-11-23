@@ -845,6 +845,63 @@ exit 0
         self.assertTrue((self.home / ".config/systemd/user/graftty-runner.service").exists())
         self.assertIn("--user disable graftty-host.service", log.read_text())
 
+    def test_migration_moves_legacy_dropins(self):
+        legacy, log, state = self.legacy_install()
+        dropins = self.home / ".config/systemd/user/graftty-host.service.d"
+        dropins.mkdir()
+        (dropins / "override.conf").write_text("[Service]\nEnvironment=KEEP=me\n")
+        self.install("--maintenance")
+        moved = self.home / ".config/systemd/user/graftty-runner.service.d/override.conf"
+        self.assertEqual(moved.read_text(), "[Service]\nEnvironment=KEEP=me\n")
+        self.assertFalse(dropins.exists())
+
+    def test_failed_migration_restores_legacy_dropins(self):
+        legacy, log, state = self.legacy_install()
+        dropins = self.home / ".config/systemd/user/graftty-host.service.d"
+        dropins.mkdir()
+        (dropins / "override.conf").write_text("[Service]\nEnvironment=KEEP=me\n")
+        (self.archive / "bin/graftty-runner").write_text("""#!/bin/sh
+if [ "$1" = status ]; then echo '{"running":false,"sshPort":8801}'; fi
+exit 0
+""")
+        self.env["GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS"] = "1"
+        self.install("--maintenance", success=False)
+        self.assertEqual((dropins / "override.conf").read_text(), "[Service]\nEnvironment=KEEP=me\n")
+        self.assertFalse((self.home / ".config/systemd/user/graftty-runner.service.d").exists())
+
+    def both_units(self):
+        """A renamed install that an older installer also wrote a legacy unit beside."""
+        legacy, log, state = self.legacy_install()
+        runner = self.home / ".config/systemd/user/graftty-runner.service"
+        runner.write_text("[Service]\nExecStart=/old/graftty-runner serve\nKillMode=process\n")
+        (state / "graftty-runner.service.enabled").touch()
+        (state / "graftty-runner.service.active").touch()
+        return legacy, runner, log, state
+
+    def test_install_removes_a_legacy_unit_beside_the_runner(self):
+        legacy, runner, log, state = self.both_units()
+        self.install()
+        self.assertFalse(legacy.exists())
+        operations = log.read_text().splitlines()
+        self.assertIn("--user stop graftty-host.service", operations)
+        self.assertIn("--user disable graftty-host.service", operations)
+        self.assertFalse((state / "graftty-host.service.enabled").exists())
+        self.assertTrue((state / "graftty-runner.service.enabled").exists())
+
+    def test_failed_install_restores_both_units(self):
+        legacy, runner, log, state = self.both_units()
+        legacy_before, runner_before = legacy.read_text(), runner.read_text()
+        (self.archive / "bin/graftty-runner").write_text("""#!/bin/sh
+if [ "$1" = status ]; then echo '{"running":false,"sshPort":8801}'; fi
+exit 0
+""")
+        self.env["GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS"] = "1"
+        self.install(success=False)
+        self.assertEqual(legacy.read_text(), legacy_before)
+        self.assertEqual(runner.read_text(), runner_before)
+        self.assertTrue((state / "graftty-host.service.enabled").exists())
+        self.assertTrue((state / "graftty-runner.service.enabled").exists())
+
     def test_legacy_command_link_is_kept(self):
         self.install("--no-start")
         release = self.home / ".local/share/graftty/releases/0.1.0-test"
