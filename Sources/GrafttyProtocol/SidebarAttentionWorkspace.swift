@@ -131,10 +131,7 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
                 continue
             }
             if let stop = item.agentStop {
-                let progress = worktree.sidebar?.agentProgressTimes ?? [:]
-                let resumedAt = stop.providerSessionKey.flatMap { progress[$0] }
-                    ?? (stop.providerSessionKey == nil ? progress.values.max() : nil)
-                if let resumedAt, resumedAt >= stop.timestamp {
+                if let resumedAt = stop.resumedAt(in: worktree.sidebar?.agentProgressTimes), resumedAt >= stop.timestamp {
                     items[index].isBusy = true
                     items[index].runningSince = Date(timeIntervalSinceReferenceDate: resumedAt)
                 } else if liveByID[item.id]?.needsAttention == true {

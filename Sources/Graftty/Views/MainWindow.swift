@@ -53,10 +53,8 @@ struct MainWindow: View {
     @State private var pendingHostMaintenance: LinuxHostMaintenanceRequest?
     @State private var linuxHostSetupClient: LinuxHostTrustRequest?
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
-    @State private var wakeFlow: WakeFlow?
     @State private var worktreeHistory = WorktreeNavigationHistory()
     @State private var attentionOpenGeneration: UInt64 = 0
-    @State private var remoteRouteSelectionTask: Task<Void, Never>?
     @State private var retryingAgentLaunch = false
     @StateObject private var voiceDictation = VoiceDictationController()
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
@@ -181,10 +179,10 @@ struct MainWindow: View {
                 selectedRemotePaneSessionName: selectedRemotePaneSessionName,
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
-                onNavigationIntent: { attentionOpenGeneration &+= 1; remoteRouteSelectionTask?.cancel(); remoteViewer.cancelRouteRecovery() },
+                onNavigationIntent: { attentionOpenGeneration &+= 1; routeSelector.cancel(); remoteViewer.cancelRouteRecovery() },
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
-                onWakeRemoteWorktree: wakeAndOpen,
+                onWakeRemoteWorktree: selectRemoteWorktree,
                 onAddRemoteWorktree: { beginAddRemoteWorktree($0, repository: $1) },
                 onAddRemoteWorktreeWithHost: { mac, repository, context, name, branch, agent in
                     pendingAddRemoteWorktree = RemoteAddWorktreeRequest(remoteMac: mac, repository: repository,
@@ -225,9 +223,9 @@ struct MainWindow: View {
                 chromeBackground: terminalManager.theme.background) {
                 breadcrumbBar
             } content: {
-                if let wakeFlow {
+                if let wakeFlow = routeSelector.wakeFlow {
                     WakingWorktreeView(flow: wakeFlow, theme: terminalManager.theme, onTryAgain: {
-                        wakeAndOpen(wakeFlow.remoteMac, worktreePath: wakeFlow.worktreePath)
+                        selectRemoteWorktree(wakeFlow.remoteMac, worktreePath: wakeFlow.worktreePath)
                     })
                 } else if let selectedRemoteMac {
                     if let row = selectedRemoteWorktreeSnapshot, row.showsCreationProgress,
@@ -264,6 +262,10 @@ struct MainWindow: View {
                         worktree: worktree,
                         onFocusTerminal: { terminalID in
                             attentionOpenGeneration &+= 1
+                            // A remote pane selection shows no connecting
+                            // screen, so this terminal can be focused while
+                            // one resolves; the focus supersedes it.
+                            routeSelector.cancelPaneSelection()
                             // Persist the focus change on the model BEFORE
                             // routing to libghostty: `TERM-2.3`'s focus-
                             // restore after a worktree switch reads
@@ -524,7 +526,7 @@ struct MainWindow: View {
         .modifier(AgentNotificationActivationHandler(
             activation: .shared, canActivate: isActiveWorkspaceWindow, onActivate: activateLocalNotification))
         .onDisappear {
-            remoteRouteSelectionTask?.cancel()
+            routeSelector.cancel()
             voiceDictation.cancel()
             remoteViewer.destroyAllRemoteSurfaces()
         }
@@ -801,6 +803,9 @@ struct MainWindow: View {
         return appState.repos.lazy.flatMap(\.worktrees).first { $0.id == id }
     }
 
+    /// The remote selection whose route is still resolving, and its
+    /// connecting screen.
+    private var routeSelector: RemoteRouteSelector { remoteViewer.routeSelector }
     private var selectedRemoteIdentity: RemoteMacIdentity? { remoteViewer.selectedRemoteIdentity }
     private var selectedHostLabel: String? {
         if let selectedRemoteMac {
@@ -1057,6 +1062,7 @@ struct MainWindow: View {
     private func openAttentionTarget(_ item: SidebarActivityItem) async -> Bool {
         attentionOpenGeneration &+= 1
         let generation = attentionOpenGeneration
+        routeSelector.cancel()
         let routeIntent = remoteViewer.beginRouteSelection()
         defer { remoteViewer.endRouteSelection(routeIntent) }
         if let route = remoteMacsModel.relayRouter.resolveWorktree(item.worktreeID),
@@ -1178,9 +1184,8 @@ struct MainWindow: View {
                                 openingTerminal: Bool = false) -> Bool {
         guard workspaceWindow.window != nil,
               let worktree = appState.worktree(forPath: path) else { return false }
-        remoteRouteSelectionTask?.cancel()
+        routeSelector.cancel()
         remoteViewer.cancelRouteRecovery()
-        wakeFlow = nil
         if inspectingCreation, worktree.showsCreationProgress {
             showLocalWorktree(worktree)
             return true
@@ -1335,9 +1340,8 @@ struct MainWindow: View {
     }
 
     private func selectRemoteMac(_ remoteMac: RemoteMac) {
-        remoteRouteSelectionTask?.cancel()
+        routeSelector.cancel()
         remoteViewer.cancelRouteRecovery()
-        wakeFlow = nil
         attentionOpenGeneration &+= 1
         leaveLocalSelectionForRemote()
         remoteViewer.selectRemoteMac(remoteMac)
@@ -1356,44 +1360,14 @@ struct MainWindow: View {
         }
     }
 
+    /// Opens a remote worktree. A sleeping host takes a moment to wake and
+    /// may not be on this network, so the wait and any failure show on screen.
     private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String) {
         attentionOpenGeneration &+= 1
-        selectRemoteWorktree(remoteMac, worktreePath: worktreePath, acknowledging: true)
-    }
-
-    /// Opens a worktree on a sleeping host. It waits on screen, since waking
-    /// takes a moment and can fail when the host isn't on this network.
-    private func wakeAndOpen(_ remoteMac: RemoteMac, worktreePath: String) {
-        selectRemoteWorktree(remoteMac, worktreePath: worktreePath)
-    }
-
-    private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool) {
-        wakeFlow = nil
-        guard remoteViewer.canSelectRemoteWorktree(remoteMac, worktreePath: worktreePath) else { return }
-        remoteRouteSelectionTask?.cancel()
-        let intent = remoteViewer.beginRouteSelection()
-        let generation = attentionOpenGeneration
-        guard let source = sourceWorktree(remoteMac, path: worktreePath) else {
-            remoteViewer.endRouteSelection(intent)
-            applyRemoteWorktreeSelection(remoteMac, path: worktreePath, acknowledging: acknowledging)
-            return
-        }
-        let flow = WakeFlow(remoteMac: remoteMac, worktreePath: worktreePath, phase: .waking)
-        wakeFlow = flow
-        remoteRouteSelectionTask = Task { @MainActor in
-            defer { remoteViewer.endRouteSelection(intent) }
-            do {
-                let resolved = try await remoteMacsModel.resolveWorktreeRoute(source, from: remoteMac)
-                guard !Task.isCancelled, attentionOpenGeneration == generation else { return }
-                wakeFlow = nil
-                applyRemoteWorktreeSelection(resolved.mac, path: resolved.worktree.path, acknowledging: acknowledging)
-            } catch is CancellationError { return }
-            catch {
-                guard attentionOpenGeneration == generation else { return }
-                wakeFlow = WakeFlow(remoteMac: remoteMac, worktreePath: worktreePath, phase: .failed,
-                                    failureMessage: error.localizedDescription)
-            }
-        }
+        routeSelector.select(
+            .init(remoteMac: remoteMac, worktreePath: worktreePath, target: .worktree),
+            source: sourceWorktree(remoteMac, path: worktreePath),
+            willApply: leaveLocalSelectionForRemote)
     }
 
     private func sourceWorktree(_ mac: RemoteMac, path: String) -> WorktreePanes? {
@@ -1487,29 +1461,13 @@ struct MainWindow: View {
 
     private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String) {
         attentionOpenGeneration &+= 1
-        let generation = attentionOpenGeneration
-        remoteRouteSelectionTask?.cancel()
-        let intent = remoteViewer.beginRouteSelection()
-        guard let source = sourceWorktree(remoteMac, path: worktreePath) else { remoteViewer.endRouteSelection(intent); return }
-        remoteRouteSelectionTask = Task { @MainActor in
-            defer { remoteViewer.endRouteSelection(intent) }
-            do {
-                let resolved = try await remoteMacsModel.resolveWorktreeRoute(source, from: remoteMac)
-                guard !Task.isCancelled, generation == attentionOpenGeneration else { return }
-                guard let pane = WorktreeRouteIdentity.paneSession(sessionName, from: source, to: resolved.worktree) else {
-                    throw RemoteMacsModel.ProjectControlError.unavailable
-                }
-                selectRemotePane(resolved.mac, worktreePath: resolved.worktree.path, sessionName: pane, acknowledging: true)
-            } catch is CancellationError { return }
-            catch {
-                guard generation == attentionOpenGeneration else { return }
-                RemoteWorktreeViewerController.presentAlert(error.localizedDescription)
-            }
-        }
+        routeSelector.select(
+            .init(remoteMac: remoteMac, worktreePath: worktreePath, target: .pane(sessionName: sessionName)),
+            source: sourceWorktree(remoteMac, path: worktreePath),
+            willApply: leaveLocalSelectionForRemote)
     }
 
     private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String, acknowledging: Bool) {
-        wakeFlow = nil
         leaveLocalSelectionForRemote()
         remoteViewer.selectRemotePane(
             remoteMac,

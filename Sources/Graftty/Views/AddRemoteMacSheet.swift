@@ -79,8 +79,6 @@ struct AddRemoteMacFormController: Equatable {
         case idle
         case candidateSelected(RemoteMacIdentity)
         case manualURLReady(URL)
-        case verifying(RemoteVerificationCode)
-        case failed(String)
     }
 
     enum ManualURLError: Error, Equatable {
@@ -122,11 +120,6 @@ struct AddRemoteMacFormController: Equatable {
         return try DirectSSHEndpoint(host: host.isEmpty ? (selectedPairingBaseURL?.host ?? "") : host, port: port)
     }
 
-    var canConfirmVerification: Bool {
-        if case .verifying = phase { return true }
-        return false
-    }
-
     mutating func selectCandidate(_ candidate: GrafttyBonjourCandidate) {
         let identity = RemoteMacIdentity(candidate)
         selectedCandidateIdentity = identity
@@ -147,10 +140,6 @@ struct AddRemoteMacFormController: Equatable {
                 phase = .idle
             }
         }
-    }
-
-    mutating func showVerificationCode(_ code: RemoteVerificationCode) {
-        phase = .verifying(code)
     }
 
     static func validateManualURL(_ value: String) -> Result<URL, ManualURLError> {
@@ -188,16 +177,25 @@ struct AddRemoteMacFormController: Equatable {
 
 struct AddRemoteMacSheet: View {
     @ObservedObject var model: RemoteMacsModel
-    let makePairingDriver: () throws -> AddRemoteMacPairingDriving
     let onCancel: () -> Void
-    let onPaired: () -> Void
 
-    @State private var controller = AddRemoteMacFormController()
-    @State private var errorMessage: String?
-    @State private var isPairingInFlight = false
-    @State private var pairingDriver: AddRemoteMacPairingDriving?
-    @State private var pairingTask: Task<Void, Never>?
+    @StateObject private var flow: AddRemoteMacPairingFlow
     @FocusState private var manualURLFieldFocused: Bool
+
+    init(
+        model: RemoteMacsModel,
+        makePairingDriver: @escaping () throws -> AddRemoteMacPairingDriving,
+        onCancel: @escaping () -> Void,
+        onPaired: @escaping () -> Void
+    ) {
+        self.model = model
+        self.onCancel = onCancel
+        _flow = StateObject(wrappedValue: AddRemoteMacPairingFlow(
+            makeDriver: makePairingDriver,
+            record: { try model.recordPairingResult(.paired($0), transport: $1, directEndpoint: $2) },
+            onPaired: onPaired
+        ))
+    }
 
     private var lifecycle: AddRemoteMacSheetLifecycle {
         AddRemoteMacSheetLifecycle(
@@ -245,43 +243,37 @@ struct AddRemoteMacSheet: View {
                     Text("URL:")
                         .foregroundStyle(.secondary)
                     TextField("http://studio.local:9443", text: Binding(
-                        get: { controller.manualURLString },
-                        set: {
-                            if pairingDriver != nil {
-                                cancelActivePairing()
-                            }
-                            // Editing the target clears a stale pairing error
-                            // so the field's own live validation shows through.
-                            errorMessage = nil
-                            controller.updateManualURL($0)
-                        }
+                        get: { flow.form.manualURLString },
+                        // Editing the target ends any pairing and clears a
+                        // stale pairing error, so live validation shows through.
+                        set: { flow.updateManualURL($0) }
                     ))
                     .textFieldStyle(.roundedBorder)
                     .focused($manualURLFieldFocused)
                 }
             }
 
-            Picker("Connection", selection: $controller.transport) {
+            Picker("Connection", selection: $flow.form.transport) {
                 Text("WebRTC").tag(RemoteHostTransport.webRTC)
                 Text("Direct SSH").tag(RemoteHostTransport.directSSH)
             }
             .pickerStyle(.segmented)
-            .disabled(isPairingInFlight || controller.canConfirmVerification)
+            .disabled(flow.locksConnection)
 
-            if controller.transport == .directSSH {
+            if flow.form.transport == .directSSH {
                 HStack {
-                    TextField("Graftty host", text: $controller.directHostString)
-                    TextField("8801", text: $controller.directPortString)
+                    TextField("Graftty host", text: $flow.form.directHostString)
+                    TextField("8801", text: $flow.form.directPortString)
                         .frame(width: 70)
                 }
                 .textFieldStyle(.roundedBorder)
-                .disabled(isPairingInFlight || controller.canConfirmVerification)
+                .disabled(flow.locksConnection)
                 Text("Connect to the Graftty SSH service. Default port 8801. The pairing URL above is used to verify the host first.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if let verificationCode {
+            if let verificationCode = flow.verificationCode {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Verification Code")
                         .font(.caption)
@@ -304,16 +296,15 @@ struct AddRemoteMacSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) {
-                    cancelActivePairing()
+                    flow.cancel()
                     onCancel()
                 }
                 .keyboardShortcut(.cancelAction)
 
                 Button {
-                    pairingTask?.cancel()
-                    pairingTask = Task { await handlePrimaryAction() }
+                    flow.runPrimaryAction()
                 } label: {
-                    if isPairingInFlight {
+                    if flow.isInFlight {
                         ProgressView()
                             .controlSize(.small)
                     } else {
@@ -321,7 +312,7 @@ struct AddRemoteMacSheet: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!canAttemptPairing || isPairingInFlight)
+                .disabled(!flow.canRunPrimaryAction)
             }
         }
         .padding(20)
@@ -331,31 +322,23 @@ struct AddRemoteMacSheet: View {
             manualURLFieldFocused = true
         }
         .onDisappear {
-            cancelActivePairing()
+            flow.cancel()
             lifecycle.disappear()
         }
     }
 
-    private var verificationCode: RemoteVerificationCode? {
-        if case .verifying(let code) = controller.phase {
-            return code
-        }
-        return nil
-    }
-
     private var currentErrorMessage: String? {
-        if let errorMessage {
-            return errorMessage
-        }
-        if controller.transport == .directSSH, (try? controller.directEndpoint()) == nil,
-           controller.selectedPairingBaseURL != nil {
+        if let message = flow.failureMessage { return message }
+        let form = flow.form
+        if form.transport == .directSSH, (try? form.directEndpoint()) == nil,
+           form.selectedPairingBaseURL != nil {
             return "Enter a Graftty host and a port from 1 to 65535."
         }
         // A selected discovered candidate takes precedence over the manual
         // URL field, so stray/invalid text there is ignored — don't surface a
         // validation error while the Pair button will actually use the candidate.
-        guard controller.selectedCandidateIdentity == nil else { return nil }
-        let trimmed = controller.manualURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard form.selectedCandidateIdentity == nil else { return nil }
+        let trimmed = form.manualURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if case .failure(let error) = AddRemoteMacFormController.validateManualURL(trimmed) {
             return error.message
@@ -363,168 +346,19 @@ struct AddRemoteMacSheet: View {
         return nil
     }
 
-    private var canAttemptPairing: Bool {
-        if controller.transport == .directSSH, (try? controller.directEndpoint()) == nil { return false }
-        return switch controller.phase {
-        case .candidateSelected, .manualURLReady, .verifying:
-            true
-        case .idle, .failed:
-            false
-        }
-    }
-
     private var primaryActionTitle: String {
-        controller.canConfirmVerification ? "Confirm" : "Pair"
+        flow.isAwaitingConfirmation ? "Confirm" : "Pair"
     }
 
     private var primaryActionIcon: String {
-        controller.canConfirmVerification ? "checkmark" : "link"
-    }
-
-    @MainActor
-    private func handlePrimaryAction() async {
-        errorMessage = nil
-        switch controller.phase {
-        case .candidateSelected, .manualURLReady:
-            guard let baseURL = controller.selectedPairingBaseURL else {
-                errorMessage = "Select a remote Mac or enter its LAN URL."
-                return
-            }
-            await beginPairing(baseURL: baseURL)
-        case .verifying:
-            await confirmPairing()
-        case .idle, .failed:
-            return
-        }
-    }
-
-    @MainActor
-    private func beginPairing(baseURL: URL) async {
-        isPairingInFlight = true
-        defer { isPairingInFlight = false }
-
-        let driver: AddRemoteMacPairingDriving
-        do {
-            driver = try makePairingDriver()
-        } catch {
-            showPairingFailure(error)
-            return
-        }
-        pairingDriver = driver
-        do {
-            let code = try await driver.beginPairing(baseURL: baseURL)
-            try Task.checkCancellation()
-            controller.showVerificationCode(code)
-        } catch is CancellationError {
-            driver.cancelPairing()
-            if pairingDriver === driver {
-                pairingDriver = nil
-            }
-        } catch {
-            guard pairingDriver === driver else { return }
-            if Task.isCancelled
-                || (error as? LocalPairingClient.Error) == .cancelled {
-                driver.cancelPairing()
-                pairingDriver = nil
-                return
-            }
-            pairingDriver = nil
-            showPairingFailure(error)
-        }
-    }
-
-    @MainActor
-    private func confirmPairing() async {
-        guard let driver = pairingDriver else {
-            errorMessage = "Start pairing before confirming."
-            return
-        }
-
-        isPairingInFlight = true
-        defer { isPairingInFlight = false }
-
-        do {
-            let pinnedHost = try await driver.confirmPairing()
-            let endpoint = controller.transport == .directSSH ? try controller.directEndpoint() : nil
-            try model.recordPairingResult(.paired(pinnedHost), transport: controller.transport, directEndpoint: endpoint)
-            pairingDriver = nil
-            try Task.checkCancellation()
-            onPaired()
-        } catch is CancellationError {
-            driver.cancelPairing()
-        } catch {
-            guard pairingDriver === driver else { return }
-            if Task.isCancelled
-                || (error as? LocalPairingClient.Error) == .cancelled {
-                driver.cancelPairing()
-                pairingDriver = nil
-                return
-            }
-            // `awaitOutcomeAndConfirm` has driven the session to a terminal
-            // state (denied / expired / cancelled, or confirmed-but-save-
-            // failed), so the driver is spent — re-tapping Confirm would
-            // throw `wrongState`. Drop it and fall to `.failed` so the
-            // primary button disables until the user re-selects a target.
-            pairingDriver = nil
-            showPairingFailure(error)
-        }
-    }
-
-    /// Disables the primary action until the user re-selects a target.
-    @MainActor
-    private func showPairingFailure(_ error: Error) {
-        let message = pairingErrorMessage(error)
-        controller.phase = .failed(message)
-        errorMessage = message
-    }
-
-    @MainActor
-    private func cancelActivePairing() {
-        pairingTask?.cancel()
-        pairingTask = nil
-        pairingDriver?.cancelPairing()
-        pairingDriver = nil
-        isPairingInFlight = false
-    }
-
-    private func pairingErrorMessage(_ error: Error) -> String {
-        switch error {
-        case LocalPairingClient.Error.denied:
-            "Pairing was denied on the remote Mac."
-        case LocalPairingClient.Error.expired:
-            "Pairing expired. Start again."
-        case LocalPairingClient.Error.cancelled:
-            "Pairing was cancelled."
-        case LocalPairingClient.Error.malformedPairingURL:
-            "The remote Mac URL is not a valid pairing endpoint."
-        case LocalPairingClient.Error.decode:
-            "The remote Mac returned an unreadable pairing response."
-        case let LocalPairingClient.Error.serverError(response):
-            response.error
-        case let LocalPairingClient.Error.httpStatus(status):
-            "The remote Mac returned HTTP \(status)."
-        case let LocalPairingClient.Error.transport(message):
-            "Could not reach the remote Mac: \(message)"
-        case ClientPairingSession.Error.fingerprintMismatch:
-            "The host key did not match the advertised identity."
-        case ClientPairingSession.Error.expired:
-            "Pairing expired. Start again."
-        case let ClientPairingSession.Error.unsupportedPayloadVersion(version):
-            "Unsupported pairing version \(version)."
-        case let ClientPairingSession.Error.pinnedHostStoreFailed(message):
-            "Could not save the remote Mac: \(message)"
-        default:
-            "Pairing failed: \(error)"
-        }
+        flow.isAwaitingConfirmation ? "checkmark" : "link"
     }
 
     private func candidateButton(_ candidate: GrafttyBonjourCandidate) -> some View {
         let identity = RemoteMacIdentity(candidate)
-        let isSelected = controller.selectedCandidateIdentity == identity
+        let isSelected = flow.form.selectedCandidateIdentity == identity
         return Button {
-            errorMessage = nil
-            cancelActivePairing()
-            controller.selectCandidate(candidate)
+            flow.selectCandidate(candidate)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "laptopcomputer")

@@ -599,11 +599,13 @@ struct GrafttyApp: App {
         // Wrappers always go on PATH.
         Self.installAgentHookAssets()
 
-        // Refresh previously installed plugins after app updates. First-time
-        // installation still requires the launch offer's explicit consent.
+        // Refresh previously installed plugins after app updates, then present
+        // launch-time setup sheets sequentially so independent prompts never
+        // collide on the main window (AGENT-6.15 / LAYOUT-5.4).
         Task { @MainActor in
             await AgentPluginAutomaticUpdate.shared.runAtLaunch()
-            AgentPluginInstallOfferPresenter.presentWhenWindowIsReady()
+            await AgentPluginInstallOfferPresenter.presentWhenWindowIsReady()
+            await FullDiskAccessPromptPresenter.presentWhenWindowIsReady()
         }
 
         // One-shot cleanup of the retired graftty-channel MCP integration

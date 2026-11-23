@@ -3,6 +3,23 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test func stopResumesOnlyOnProgressFromItsOwnSession() {
+        let stoppedAt = Date(timeIntervalSinceReferenceDate: 100)
+        let keyed = SidebarAgentStop(agentName: "Codex", stoppedAt: stoppedAt, providerSessionKey: "codex:one")
+        #expect(keyed.resumedAt(in: ["codex:one": 100, "codex:other": 500]) == 100)
+        #expect(keyed.hasResumed(in: ["codex:one": 100]))
+        #expect(!keyed.hasResumed(in: ["codex:one": 99]))
+        #expect(!keyed.hasResumed(in: ["codex:other": 500]))
+        #expect(!keyed.hasResumed(in: nil))
+
+        // A stop from before session keys existed accepts progress from any agent.
+        let legacy = SidebarAgentStop(agentName: "Codex", stoppedAt: stoppedAt)
+        #expect(legacy.resumedAt(in: ["a": 50, "b": 150]) == 150)
+        #expect(legacy.hasResumed(in: ["a": 50, "b": 150]))
+        #expect(!legacy.hasResumed(in: ["a": 50]))
+        #expect(!legacy.hasResumed(in: [:]))
+    }
+
     @Test("@spec IOS-4.37: When a mobile Attention card is opened, the application shall open the originating pane using its stable slot ID, use a unique title match for legacy stopped cards, and fall back to the worktree picker if the target is missing or ambiguous without changing acknowledgement scope.")
     func stoppedAttentionResolvesOriginatingPane() throws {
         func row(_ stop: SidebarAgentStop, duplicateTitle: Bool = false, single: Bool = false) -> WorktreePanes {

@@ -81,7 +81,7 @@ struct WebRTCHostAgentPoolTests {
         await pool.closeAll()
     }
 
-    @Test("@spec REMOTE-11.20: When a pooled connection is idle, closed, or failed, the host shall discard its agent so that device can reconnect without replacement proof.", arguments: [WebRTCHostAgent.State.idle, .closed, .failed(reason: "ICE failed")])
+    @Test("@spec REMOTE-11.20: When a pooled connection is idle or closed, the host shall discard its agent so that device can reconnect without replacement proof.", arguments: [WebRTCHostAgent.State.idle, .closed])
     func discardedLifecycleCanReconnect(state: WebRTCHostAgent.State) async throws {
         let previous = makeAgent()
         let replacement = makeAgent()

@@ -81,7 +81,7 @@ final class MobileWorkspaceStore {
 
     static func previousAgent(_ previous: String?, in worktree: WorktreePanes) -> String? {
         let live = Set(worktree.layout?.leaves.map(\.sessionName) ?? [])
-        let agents = worktree.agents?.filter { $0.status != "closed" }.compactMap(\.sessionName).filter(live.contains) ?? []
+        let agents = worktree.agents?.filter { $0.recordedStatus != .closed }.compactMap(\.sessionName).filter(live.contains) ?? []
         return previous.flatMap { agents.contains($0) ? $0 : nil } ?? agents.first
     }
 

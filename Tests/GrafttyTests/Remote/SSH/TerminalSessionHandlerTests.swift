@@ -333,6 +333,41 @@ final class TerminalSessionHandlerTests: XCTestCase {
         _ = try? await channel.finish()
     }
 
+    /// @spec SSH-1.24: If an SSH client repeats a shell request on a terminal channel that is attaching or attached, then the host shall refuse the repeat and keep the one existing attachment.
+    func testRepeatedShellRequestIsRefusedWithoutSecondAttach() async throws {
+        for repeatWhileAttaching in [false, true] {
+            let gate = BlockingSendGate()
+            let received = NIOLockedValueBox<[String]>([])
+            let stream = ClosableStream()
+            let capture = OutboundEventCapture()
+            let handler = Self.makeHandler(streamFactory: { name, _ in
+                received.withLockedValue { $0.append(name) }
+                if repeatWhileAttaching { await gate.wait() }
+                return stream
+            })
+            let channel = try await Self.channel(capture, handler)
+
+            try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+            try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+            try await sendShellRequest(channel)
+            if repeatWhileAttaching {
+                await gate.waitUntilArrived()
+            } else {
+                try await waitUntil { capture.successCount >= 3 }
+            }
+            try await sendShellRequest(channel)
+            try await waitUntil { capture.failureCount >= 1 }
+            await gate.release()
+            try await waitUntil { capture.successCount >= 3 }
+
+            XCTAssertEqual(received.withLockedValue { $0 }, ["alpha"], "repeatWhileAttaching=\(repeatWhileAttaching)")
+            XCTAssertEqual(capture.failureCount, 1)
+            XCTAssertTrue(channel.isActive)
+            XCTAssertFalse(stream.didClose)
+            _ = try? await channel.finish()
+        }
+    }
+
     func testShellWithoutEnvSessionNameRejected() async throws {
         let factory = RecordingStreamFactory(returning: .success(EchoStream()))
         let handler = Self.makeHandler(streamFactory: factory.callable)
@@ -1508,6 +1543,12 @@ private final class OutboundEventCapture: ChannelOutboundHandler, @unchecked Sen
     private var _sawExitStatus0 = false
     private var _sawExitStatus1 = false
     private var _successCount = 0
+    private var _failureCount = 0
+
+    /// Count of `ChannelFailureEvent`s the handler has emitted.
+    var failureCount: Int {
+        lock.withLock { _failureCount }
+    }
 
     var sawExitStatus0: Bool {
         lock.withLock { _sawExitStatus0 }
@@ -1538,6 +1579,9 @@ private final class OutboundEventCapture: ChannelOutboundHandler, @unchecked Sen
         }
         if event is ChannelSuccessEvent {
             lock.withLock { _successCount += 1 }
+        }
+        if event is ChannelFailureEvent {
+            lock.withLock { _failureCount += 1 }
         }
         context.triggerUserOutboundEvent(event, promise: promise)
     }

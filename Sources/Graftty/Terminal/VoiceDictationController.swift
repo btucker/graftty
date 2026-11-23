@@ -63,7 +63,7 @@ struct VoiceDictationTarget {
 /// Owns one opt-in microphone session and pins all input to its original pane.
 @MainActor
 final class VoiceDictationController: ObservableObject {
-    @Published private(set) var isListening = false
+    var isListening: Bool { run != nil }
     /// Hides by itself after `errorLifetime`, or at the next click (KEY-4.11, KEY-4.12).
     @Published var errorMessage: String? {
         didSet { scheduleErrorDismissal() }
@@ -71,16 +71,42 @@ final class VoiceDictationController: ObservableObject {
     private let errorLifetime: Duration
     private var errorDismissal: Task<Void, Never>?
     private var clickMonitor: Any?
-    private var session = VoiceDictationSession()
-    private var recognizer: (any VoiceSpeechRecognizing)?
     private let makeRecognizer: @MainActor () -> any VoiceSpeechRecognizing
-    private var target: VoiceDictationTarget?
-    private var generation = UUID()
-    private var stopping = false
-    private var ready = false
-    private var keyMonitor: Any?
-    private var inactiveObserver: NSObjectProtocol?
-    private var startTask: Task<Void, Never>?
+
+    /// One dictation, from the toggle that starts it until it is cancelled.
+    private struct Run {
+        enum Stage {
+            /// The recognizer has not yet reported that it is listening.
+            case starting
+            case ready(Interruption)
+            /// The user toggled off; the recognizer is delivering its last
+            /// result. `nil` when that happened before the recognizer was ready.
+            case stopping(Interruption?)
+        }
+        /// What ends a ready dictation early: a key press or the app going inactive.
+        struct Interruption {
+            let keyMonitor: Any?
+            let inactiveObserver: NSObjectProtocol
+        }
+        let id = UUID()
+        let recognizer: any VoiceSpeechRecognizing
+        let target: VoiceDictationTarget
+        var session = VoiceDictationSession()
+        var startTask: Task<Void, Never>?
+        var stage = Stage.starting
+
+        /// Whether recognition results and interrupting keys are accepted.
+        var isReady: Bool {
+            switch stage {
+            case .starting, .stopping(nil): false
+            case .ready, .stopping: true
+            }
+        }
+    }
+    /// `nil` while idle. Only starting and ending a dictation publish.
+    private var run: Run? {
+        willSet { if (newValue == nil) != (run == nil) { objectWillChange.send() } }
+    }
 
     init(makeRecognizer: @escaping @MainActor () -> any VoiceSpeechRecognizing = { VoiceSpeechRecognizer() },
          errorLifetime: Duration = .seconds(6)) {
@@ -113,20 +139,24 @@ final class VoiceDictationController: ObservableObject {
     }
 
     func toggle(target: SurfaceHandle?) {
-        if !isListening, let view = target?.view as? SurfaceNSView {
+        if run == nil, let view = target?.view as? SurfaceNSView {
             view.window?.makeFirstResponder(view)
         }
         toggle(inputTarget: target.map(VoiceDictationTarget.init(handle:)))
     }
 
     func toggle(inputTarget: VoiceDictationTarget?) {
-        if isListening {
-            guard !stopping else { return }
-            stopping = true
-            session.stopSubmitting()
-            let current = generation
-            recognizer?.finish { [weak self] in
-                guard let self, self.generation == current else { return }
+        if let current = run {
+            let interruption: Run.Interruption?
+            switch current.stage {
+            case .starting: interruption = nil
+            case .ready(let installed): interruption = installed
+            case .stopping: return
+            }
+            run?.stage = .stopping(interruption)
+            run?.session.stopSubmitting()
+            current.recognizer.finish { [weak self] in
+                guard let self, self.run?.id == current.id else { return }
                 self.cancel()
             }
             return
@@ -136,66 +166,63 @@ final class VoiceDictationController: ObservableObject {
             errorMessage = "Select a writable terminal and finish any text composition before starting dictation."
             return
         }
-        target = inputTarget
-        session = VoiceDictationSession()
-        generation = UUID()
-        let current = generation
-        stopping = false
-        ready = false
-        isListening = true
         let driver = makeRecognizer()
-        recognizer = driver
-        startTask = Task { [weak self] in
+        let started = Run(recognizer: driver, target: inputTarget)
+        let current = started.id
+        run = started
+        run?.startTask = Task { [weak self] in
             do {
                 try await driver.start(onResult: { [weak self] id, text, final in
-                    guard let self, self.generation == current, self.ready else { return }
+                    guard let self, let run = self.run, run.id == current, run.isReady else { return }
                     self.receive(id: id, text: text, final: final)
                 }, onError: { [weak self] message in
-                    guard let self, self.generation == current else { return }
+                    guard let self, self.run?.id == current else { return }
                     self.cancel()
                     self.errorMessage = message
                 }, onReady: { [weak self] in
-                    guard let self, self.generation == current, !Task.isCancelled,
-                          self.target?.isAvailable() == true else { throw CancellationError() }
-                    self.ready = true
-                    self.installInterruptionHandlers()
+                    guard let self, let run = self.run, run.id == current, !Task.isCancelled,
+                          run.target.isAvailable() else { throw CancellationError() }
+                    let interruption = self.installInterruptionHandlers(for: run.target)
+                    if case .starting = run.stage { self.run?.stage = .ready(interruption) }
+                    else { self.run?.stage = .stopping(interruption) }
                 })
             } catch {
-                guard let self, self.generation == current else { return }
+                guard let self, self.run?.id == current else { return }
                 self.cancel()
                 if !(error is CancellationError) { self.errorMessage = error.localizedDescription }
             }
         }
     }
 
-    private func installInterruptionHandlers() {
-        target?.setInterruption { [weak self] in self?.cancel() }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+    private func installInterruptionHandlers(for target: VoiceDictationTarget) -> Run.Interruption {
+        target.setInterruption { [weak self] in self?.cancel() }
+        let keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let consume = MainActor.assumeIsolated { self?.handleKeyDown(event.keyCode) ?? false }
             return consume ? nil : event
         }
-        inactiveObserver = NotificationCenter.default.addObserver(
+        let inactiveObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.cancel() }
         }
+        return .init(keyMonitor: keyMonitor, inactiveObserver: inactiveObserver)
     }
 
     /// Consume Escape through its release; other physical keys cancel and pass on.
     func handleKeyDown(_ keyCode: UInt16) -> Bool {
-        guard isListening, ready else { return false }
+        guard let run, run.isReady else { return false }
         let consume = keyCode == 53
-        if consume { target?.suppressKeyRelease(keyCode) }
+        if consume { run.target.suppressKeyRelease(keyCode) }
         cancel()
         return consume
     }
 
     private func receive(id: UUID, text: String, final: Bool) {
-        guard isListening, let target, target.isAvailable() else {
+        guard let target = run?.target, target.isAvailable() else {
             cancel()
             return
         }
-        switch session.receive(id: id, text: text, final: final) {
+        switch run?.session.receive(id: id, text: text, final: final) ?? .none {
         case .none: break
         case .preview(let text): target.preview(text)
         case .write(let text):
@@ -214,21 +241,18 @@ final class VoiceDictationController: ObservableObject {
     }
 
     func cancel() {
-        generation = UUID()
-        session.cancel()
-        recognizer?.cancel()
-        recognizer = nil
-        startTask?.cancel()
-        startTask = nil
-        target?.preview("")
-        target?.setInterruption(nil)
-        target = nil
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        keyMonitor = nil
-        if let inactiveObserver { NotificationCenter.default.removeObserver(inactiveObserver) }
-        inactiveObserver = nil
-        isListening = false
-        stopping = false
-        ready = false
+        guard let ended = run else { return }
+        run = nil
+        ended.recognizer.cancel()
+        ended.startTask?.cancel()
+        ended.target.preview("")
+        ended.target.setInterruption(nil)
+        switch ended.stage {
+        case .ready(let interruption), .stopping(let interruption?):
+            if let keyMonitor = interruption.keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            NotificationCenter.default.removeObserver(interruption.inactiveObserver)
+        case .starting, .stopping(nil):
+            break
+        }
     }
 }

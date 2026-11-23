@@ -27,8 +27,9 @@ final class ChromeTabViewerModel {
     var error: String?
     var initialLaunchError: String?
     var keyboardPresented = false
-    private(set) var isConnected = false
-    private(set) var frameInputEnabled = false
+    var isConnected: Bool { connectedClient != nil }
+    /// Whether taps and scrolls may target the frame on screen.
+    var frameInputEnabled: Bool { shownFrame != nil }
     private(set) var frameSize = CGSize(width: ChromeTabFrame.viewportWidth, height: ChromeTabFrame.viewportHeight)
     private(set) var desiredViewport: ChromeTabViewportSize?
     private var resizeTask: Task<Void, Never>?
@@ -36,12 +37,26 @@ final class ChromeTabViewerModel {
     private var pendingCount = 0
     private var inputCount = 0
     var busy: Bool { inputCount > 0 }
-    private var client: ChromeTabClient?
+    /// The channel to the host's Chrome during the current `generation`.
+    private enum Connection {
+        case disconnected
+        /// The channel exists but has not finished opening.
+        case opening(ChromeTabClient)
+        case connected(ChromeTabClient)
+    }
+    private var connection = Connection.disconnected
+    private var connectedClient: ChromeTabClient? {
+        if case .connected(let client) = connection { client } else { nil }
+    }
     private var generation = UUID()
     private var requestOrdinal = 0
     private var lastAppliedOrdinal = 0
-    private var frameSequence: UInt64?
-    private var frameTabID: String?
+    /// The decoded frame on screen. `nil` while no frame is trustworthy.
+    private struct ShownFrame: Equatable {
+        let sequence: UInt64
+        let tabID: String
+    }
+    private var shownFrame: ShownFrame?
     private var reconnectTabID: String?
 
     func toggleKeyboard() { keyboardPresented.toggle() }
@@ -91,21 +106,21 @@ final class ChromeTabViewerModel {
             let driver = try await makeDriver()
             guard !Task.isCancelled, generation == epoch else { driver.close(); return }
             let connectionClient = ChromeTabClient(driver: driver)
-            client = connectionClient
+            connection = .opening(connectionClient)
             do { try await connectionClient.open() }
             catch {
                 driver.close()
                 if generation == epoch, !Task.isCancelled {
                     self.error = "This host does not support dedicated Chrome tabs. Update the Mac app to use the prototype."
-                    client = nil
+                    connection = .disconnected
                 }
                 return
             }
             guard !Task.isCancelled, generation == epoch else { driver.close(); return }
-            isConnected = true
+            connection = .connected(connectionClient)
             defer {
                 driver.close()
-                if generation == epoch { client = nil; isConnected = false; invalidateFrame() }
+                if generation == epoch { connection = .disconnected; invalidateFrame() }
             }
             let listed = await send(.list, target: target)
             guard listed, !Task.isCancelled, generation == epoch else { return }
@@ -130,7 +145,7 @@ final class ChromeTabViewerModel {
 
     @discardableResult
     func send(_ action: ChromeTabAction, target: String, polling: Bool = false) async -> Bool {
-        guard let client, isConnected, !Task.isCancelled else {
+        guard let client = connectedClient, !Task.isCancelled else {
             if !polling, !Task.isCancelled { error = "Chrome is connecting. Try again." }
             return false
         }
@@ -177,15 +192,14 @@ final class ChromeTabViewerModel {
         } catch {
             if generation == epoch {
                 self.error = "Chrome connection ended. Close and reopen to reconnect."
-                invalidateFrame(); isConnected = false; client.cancel(); self.client = nil
+                invalidateFrame(); client.cancel(); connection = .disconnected
             }
             return false
         }
     }
 
     private func invalidateFrame() {
-        frameInputEnabled = false
-        frameSequence = nil; frameTabID = nil
+        shownFrame = nil
         #if canImport(UIKit)
         image = nil
         #endif
@@ -206,15 +220,15 @@ final class ChromeTabViewerModel {
                   height == ChromeTabFrame.viewportHeight else { invalidateFrame(); return }
         }
         #if canImport(UIKit)
-        if frame.sequence != frameSequence || frame.tabID != frameTabID || frameSize != dimensions.cgSize {
+        let next = ShownFrame(sequence: frame.sequence, tabID: frame.tabID)
+        if shownFrame != next || frameSize != dimensions.cgSize {
             guard let decoded = UIImage(data: frame.jpeg),
                   decoded.size.width == CGFloat(width), decoded.size.height == CGFloat(height) else { invalidateFrame(); return }
             image = decoded
         }
         #endif
         frameSize = dimensions.cgSize
-        frameSequence = frame.sequence; frameTabID = frame.tabID
-        frameInputEnabled = true
+        shownFrame = ShownFrame(sequence: frame.sequence, tabID: frame.tabID)
     }
 
     func suspend() {
@@ -228,7 +242,11 @@ final class ChromeTabViewerModel {
     func close() {
         reconnectTabID = nil
         generation = UUID(); resizeTask?.cancel(); resizeTask = nil
-        client?.cancel(); client = nil; isConnected = false; pendingSelectionOrdinal = nil
+        switch connection {
+        case .opening(let client), .connected(let client): client.cancel()
+        case .disconnected: break
+        }
+        connection = .disconnected; pendingSelectionOrdinal = nil
         invalidateFrame(); state = .init(); pendingCount = 0; inputCount = 0
         error = nil; initialLaunchError = nil; keyboardPresented = false
         frameSize = CGSize(width: ChromeTabFrame.viewportWidth, height: ChromeTabFrame.viewportHeight)

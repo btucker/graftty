@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
@@ -208,6 +209,15 @@ final class RemoteWorktreeViewerController: ObservableObject {
     private var routeRecoveryTask: Task<Void, Never>?
     private var pendingRouteSelection: UUID?
     private var failedTerminalRouteHosts: Set<RemoteMacIdentity> = []
+
+    /// Explicit selections whose route is still resolving. Its changes
+    /// publish through this controller, which draws its connecting screen.
+    private(set) lazy var routeSelector: RemoteRouteSelector = {
+        let selector = RemoteRouteSelector(viewer: self, presentError: presentError)
+        routeSelectorChanges = selector.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        return selector
+    }()
+    private var routeSelectorChanges: AnyCancellable?
 
     func beginRouteSelection() -> UUID {
         let token = UUID()
@@ -466,8 +476,10 @@ final class RemoteWorktreeViewerController: ObservableObject {
         reconcileRemoteSelection(worktreePanesByRemote: worktreePanesByRemote)
     }
 
-    /// A click (or other explicit focus) on a projected remote pane.
+    /// A click (or other explicit focus) on a projected remote pane. It
+    /// supersedes a pane selection whose route is still resolving.
     func focusTerminal(_ terminalID: PaneSlotID) {
+        routeSelector.cancelPaneSelection()
         let wasRecovering = routeRecoveryTask != nil
         cancelRouteRecovery()
         defer { if wasRecovering { scheduleRouteRecovery() } }

@@ -454,6 +454,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.245** When agent tabs are wider than their row, the application shall shrink the widest tabs first to an equal width, no narrower than a minimum, truncating their titles in the middle, and scroll only the tabs that still do not fit.
 
+**LAYOUT-2.246** While a Mac report popover is open, the application shall keep sidebar rows in the positions they had when the first report opened, including when the user moves to another report and when the Mac has no local repository, and shall release them when the last report closes.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -509,6 +511,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-5.2** When the user activates the app from the Dock (click, `Cmd+Tab`, or Spotlight) while no windows are visible, the application shall display the main window again, populated from the already-in-memory `AppState` (repositories, worktrees, selection, and split trees) and with the `WindowFrameTracker` frame-restoration of `PERSIST-3.4` applied to the recreated `NSWindow`. Existing running terminal panes are re-rendered from the persisted `TerminalManager`'s surface map without recreating their underlying libghostty surfaces or zmx sessions.
 
 **LAYOUT-5.3** The application's one-time startup path (`ghostty_init` and the `ghostty_app_t` construction inside `TerminalManager.initialize()`, the `SocketServer.start()`, `reconcileOnLaunch()`, the stats/PR poller `start()` calls, the `restoreRunningWorktrees()` pass, and the `NSApplication.willTerminateNotification` observer registration) shall run exactly once per app-process lifetime, regardless of how many times the root `WindowGroup` scene is instantiated. The SwiftUI reopen flow (`applicationShouldHandleReopen` → `applicationOpenUntitledFile:`) and any future multi-window entry points (`File → New Window`) re-invoke the `WindowGroup` content closure and therefore fire `.onAppear` again; the implementation seam is a `@State` boolean on `GrafttyApp` whose storage persists across scene re-creations. Without this guard, `TerminalManager.initialize()`'s `ghosttyApp == nil` precondition traps the process on the second invocation.
+
+**LAYOUT-5.4** When Graftty starts on macOS without Full Disk Access, the application shall check Full Disk Access off the main actor and present a window-attached sheet prompting the user to grant it in System Settings (`x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles`), firing at most once per process, skipping when Full Disk Access is granted or indeterminate, and remaining permanently suppressible via a "Don't Ask Again" choice persisted in UserDefaults.
 
 ## STATE — Worktree Entry States
 
@@ -3566,6 +3570,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.18** While the host device-ID store is unreadable, Bonjour discovery shall keep publishing other Macs and shall treat a service advertising this Mac's host-key fingerprint as itself, without generating a device ID.
 
+**REMOTE-1.19** When the user changes the pairing target while a verification code is showing, the application shall cancel that pairing and remove the code, so the next primary action starts a new pairing instead of confirming one that no longer exists.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
@@ -3842,7 +3848,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.19** While the host connection pool is at its maximum live connections, the host shall reject an offer from a further device with retryable busy status and leave existing connections untouched.
 
-**REMOTE-11.20** When a pooled connection is idle, closed, or failed, the host shall discard its agent so that device can reconnect without replacement proof.
+**REMOTE-11.20** When a pooled connection is idle or closed, the host shall discard its agent so that device can reconnect without replacement proof.
 
 **REMOTE-11.21** When the host closes its connection pool, the host shall close every pooled connection and clear the pool.
 
@@ -4025,6 +4031,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.64** When mobile saves a recent pane, the application shall retain its destination owner alongside the delivery host so reopening can resolve a different direct or relayed path.
 
 **REMOTE-13.65** While the mobile host list is open, the application shall render each relay host as an indented row beneath its paired intermediary Mac and preserve a separate reconnect action for each route.
+
+**REMOTE-13.66** While an explicitly selected remote worktree resolves its route, the application shall show a connecting screen, and shall remove that screen when the route resolves, when resolving fails for a pane, or when any other navigation supersedes the selection.
 
 ### REMOTE-14.x — Shared project navigation
 
@@ -6415,6 +6423,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.22** When a Tailcat host restarts with its saved identity and relay region, the application shall reconnect with the previously paired address and SSH keys.
 
 **SSH-1.23** When a user runs the standalone iPhone Tailcat check, the application shall verify an echo between two on-device peers and report the route and elapsed echo time.
+
+**SSH-1.24** If an SSH client repeats a shell request on a terminal channel that is attaching or attached, then the host shall refuse the repeat and keep the one existing attachment.
 
 ## TEST — TEST
 
