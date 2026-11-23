@@ -97,6 +97,7 @@ struct SingleSessionView: View {
     private let isTerminalSheet: Bool
     @State private var terminalSheet = CompactTerminalPresentation()
     @State private var terminalSheetWorktree: WorktreePanes?
+    @State private var showsAgentGallery = false
     @State private var agentLaunchSelection = CompactAgentLaunchSelection()
     /// IPAD-2.26: contained routes keep the home-indicator inset, so their
     /// keyboard padding subtracts the gap between the window bottom and the
@@ -936,10 +937,8 @@ struct SingleSessionView: View {
                 TerminalFloatingControlGroup(compactGlyphs: true) {
                     HStack(spacing: 0) {
                         backButton
-                        CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession,
-                            onNewAgent: { selectCreatedAgent($0, generation: generation) },
-                            onOpenTerminal: { openCompactTerminal(in: workspace) },
-                            attentionContext: worktreeContext, hostID: step.host.id, host: step.host, theme: terminalTheme)
+                        CompactAgentBar(worktree: workspace, session: step.sessionName,
+                            onOpenGallery: { showsAgentGallery = true }, host: step.host, theme: terminalTheme)
                     }
                 }
                 Spacer(minLength: 0)
@@ -958,6 +957,39 @@ struct SingleSessionView: View {
                 remoteOpenControls.fixedSize()
             }
             WorkspaceInputRequest(context: worktreeContext, selectedSession: step.sessionName, onSelect: selectWorkspaceSession)
+            if let chip = CompactAgentBar.askingChip(worktree: workspace,
+                context: worktreeContext ?? SidebarWorktreeContext(worktree: workspace), session: step.sessionName) {
+                Button { selectWorkspaceSession(chip.session) } label: {
+                    HStack(spacing: 6) {
+                        AgentStatusDot(dot: .asking)
+                        Text("\(chip.title) asks").lineLimit(1)
+                    }
+                    .font(.footnote.weight(.medium))
+                    .padding(.horizontal, 12).frame(minHeight: 36)
+                    .background(.regularMaterial, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("workspace.agent.askingChip")
+            }
+        }
+        .fullScreenCover(isPresented: $showsAgentGallery) {
+            MobileAgentGalleryScreen(host: step.host, worktree: workspace,
+                context: worktreeContext ?? SidebarWorktreeContext(worktree: workspace),
+                stagedSession: step.sessionName, theme: terminalTheme,
+                onSelect: { session in
+                    showsAgentGallery = false
+                    selectWorkspaceSession(session)
+                },
+                onNewAgent: { session in
+                    showsAgentGallery = false
+                    selectCreatedAgent(session, generation: generation)
+                },
+                onOpenTerminal: {
+                    showsAgentGallery = false
+                    openCompactTerminal(in: workspace)
+                },
+                onClose: { showsAgentGallery = false })
         }
         .padding(.horizontal, 12).padding(.top, 12)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { compactHeaderHeight = $0 }

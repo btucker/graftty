@@ -3,75 +3,46 @@ import SwiftUI
 import GrafttyProtocol
 import GrafttyCommandUI
 
-/// A floating agent switcher. Its menu also owns New agent so creation state
-/// and failure alerts outlive the native menu's dismissal.
+/// The agent's name at the top of the phone's stage. Tapping it opens the
+/// gallery, which lists every agent in the worktree (IOS-13.22).
 struct CompactAgentBar: View {
     let worktree: WorktreePanes
     let session: String
-    let onSelect: (String) -> Void
-    var onNewAgent: ((String) -> Void)? = nil
-    var onOpenTerminal: (() -> Void)? = nil
-    var attentionContext: SidebarWorktreeContext? = nil
-    var hostID: UUID? = nil
+    let onOpenGallery: () -> Void
     var host: Host? = nil
     var theme: GhosttyThemeColors = .fallback
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.openWorktreeContext) private var openContext
 
     /// @spec IOS-13.17: While a terminal is open, the application shall name its worktree and host under the agent's name, because nothing else on that screen says where it is.
     static func location(worktree: WorktreePanes, hostLabel: String?) -> String {
         ([worktree.displayName, worktree.origin?.deviceLabel ?? hostLabel].compactMap { $0 }).joined(separator: " · ")
     }
 
-    private var agents: [AgentSessionInfo] { worktree.agents?.filter { $0.presentationSessionName != nil } ?? [] }
-    private var selectedAgent: AgentSessionInfo? { agents.first { $0.presentationSessionName == session } }
+    /// @spec IOS-13.21: While the phone shows one agent on stage and another agent in the worktree asks for user input that the stage's question bar does not already show, the application shall show a chip naming the asking agent, and tapping it shall put that agent on stage.
+    static func askingChip(worktree: WorktreePanes, context: SidebarWorktreeContext, session: String) -> (session: String, title: String)? {
+        for agent in worktree.agents ?? [] {
+            guard let target = agent.presentationSessionName, target != session, !agent.isCompleted,
+                  context.needsInput(session: target),
+                  !(context.question != nil && context.questionPaneID == target) else { continue }
+            return (target, worktree.workspaceSessionTitle(target))
+        }
+        return nil
+    }
+
+    private var selectedAgent: AgentSessionInfo? { worktree.agents?.first { $0.presentationSessionName == session } }
 
     var body: some View {
-        Group {
-            if let host {
-                MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onNewAgent ?? onSelect,
-                    menuContent: AnyView(agentsMenu), label: AnyView(switcherLabel))
-            } else {
-                Menu { agentsMenu } label: { switcherLabel }
-            }
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(theme.foreground)
-        .environment(\.colorScheme, theme.isDark ? .dark : .light)
-        .accessibilityIdentifier("workspace.agent.switcher")
+        Button(action: onOpenGallery) { label }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.foreground)
+            .environment(\.colorScheme, theme.isDark ? .dark : .light)
+            .accessibilityIdentifier("workspace.agent.switcher")
     }
 
-    private var agentsMenu: some View {
-        Section(worktree.displayName) {
-            ForEach(agents) { agent in
-                if let target = agent.presentationSessionName {
-                    Button { onSelect(target) } label: {
-                        Label {
-                            Text("\(worktree.workspaceSessionTitle(target)) · \(AgentAssignmentStatus(agent: agent, needsInput: context.needsInput(session: target)).label)")
-                                .foregroundStyle(agent.isCompleted ? .secondary : .primary)
-                        } icon: {
-                            Image(systemName: AgentAssignmentStatus(agent: agent,
-                                needsInput: context.needsInput(session: target)).systemImage)
-                        }
-                    }
-                }
-            }
-            if let onOpenTerminal {
-                Divider()
-                Button("Terminal", systemImage: "apple.terminal", action: onOpenTerminal)
-                    .accessibilityIdentifier("workspace.terminal.open")
-            }
-            if let openContext {
-                Button("About this worktree", systemImage: "info.circle") { openContext() }
-                    .accessibilityIdentifier("workspace.about.open")
-            }
-        }
-    }
-
-    private var switcherLabel: some View {
+    private var label: some View {
         HStack(spacing: 6) {
             // IOS-13.19: no status beside the open agent; the terminal shows
-            // whether it's working, and the menu keeps each agent's status.
+            // whether it's working, and the gallery shows each agent's status.
             if selectedAgent == nil {
                 Image(systemName: "terminal")
             }
@@ -84,15 +55,15 @@ struct CompactAgentBar: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
             }
-            Image(systemName: "chevron.down").font(.caption2)
+            Image(systemName: "square.grid.2x2").font(.caption2)
         }
         .font(.callout)
         .padding(.leading, 4).padding(.trailing, 12)
         .frame(minWidth: 44, minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityLabel("Agents, \(selectedAgent == nil ? worktree.displayName : worktree.workspaceSessionTitle(session)), \(Self.location(worktree: worktree, hostLabel: host?.label))")
+        .accessibilityHint("Shows every agent in this worktree")
     }
-    private var context: SidebarWorktreeContext { attentionContext ?? SidebarWorktreeContext(worktree: worktree) }
 }
 
 struct MobileAgentStatusBadge: View {

@@ -33,6 +33,47 @@ struct MultiPaneDetailView: View {
     @State private var keyboardFrame = KeyboardFrameObservation()
 
     var body: some View {
+        HStack(spacing: 0) {
+            stage
+                .overlay(alignment: .topTrailing) {
+                    if !showsGallery && !currentWorkspace.groups.isEmpty && !worktree.showsCreationProgress {
+                        Button { mutate { $0.galleryVisible = true } } label: {
+                            Label(galleryAgents.isEmpty || galleryAgents.count == 1 ? "Agents" : "Agents · \(galleryAgents.count)",
+                                  systemImage: galleryAgents.count <= 1 ? "plus" : "rectangle.stack")
+                                .font(.footnote.weight(.medium))
+                                .padding(.horizontal, 12).frame(minHeight: 36)
+                                .background(.regularMaterial, in: Capsule())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(theme.foreground)
+                        .padding(.top, 6).padding(.trailing, 44)
+                        .accessibilityIdentifier("workspace.gallery.open")
+                    }
+                }
+            if showsGallery && !worktree.showsCreationProgress {
+                MobileAgentGalleryColumn(host: host, worktree: worktree, context: context, agents: galleryAgents,
+                    onStage: Set(currentWorkspace.gallerySessions.filter(currentWorkspace.isOnStage)), theme: theme,
+                    onSelect: stageSession,
+                    onJump: { session, row in stageSession(session) ; _ = row },
+                    onNewAgent: onSelectPane,
+                    onMove: { source, target, after in mutate { _ = $0.moveTile(source, relativeTo: target, after: after) } },
+                    onCollapse: { mutate { $0.galleryVisible = false } })
+                    .zIndex(1)
+            }
+        }
+    }
+
+    private var galleryAgents: [MobileGalleryAgent] {
+        MobileGalleryAgent.agents(in: worktree, context: context, order: currentWorkspace.gallerySessions)
+            .filter { currentWorkspace.sessions.contains($0.id) }
+    }
+    private var showsGallery: Bool { currentWorkspace.showsGallery(agentCount: galleryAgents.count) }
+
+    private func stageSession(_ session: String) {
+        mutate { $0.stage(session) }
+        onSelectPane(session)
+    }
+
+    private var stage: some View {
         GeometryReader { geometry in
             if worktree.showsCreationProgress {
                 MobileCreationDetailView(host: host, worktree: worktree, theme: theme)
@@ -103,7 +144,7 @@ struct MultiPaneDetailView: View {
                 GeometryReader { geometry in
                     VStack(spacing: 0) {
                         if let agent = worktree.agents?.first(where: { $0.presentationSessionName == sessionName && $0.isCompleted }) {
-                            if let group = currentWorkspace.group(containing: sessionName) { tabHeader(group) }
+                            if let group = currentWorkspace.group(containing: sessionName) { stagePaneHeader(group) }
                             MobileAgentConversationView(host: host, worktreePath: worktree.path, agent: agent)
                                 .onTapGesture { onSelectPane(sessionName) }
                                 .overlay(alignment: .top) {
@@ -128,7 +169,10 @@ struct MultiPaneDetailView: View {
                             },
                             onBackToWorktrees: onBackToWorktrees,
                             retainedPanes: retainedPanes,
-                            paneHeader: currentWorkspace.group(containing: sessionName).map { AnyView(tabHeader($0)) },
+                            paneHeader: currentWorkspace.group(containing: sessionName).flatMap { group in
+                                currentWorkspace.groups.count > 1 || worktree.chatAgent(session: group.selected) != nil
+                                    ? AnyView(stagePaneHeader(group)) : nil
+                            },
                             paneBanner: currentWorkspace.group(containing: sessionName)?.id == inputRequestGroupID
                                 ? AnyView(inputRequestBanner) : nil,
                             showsChat: showsChat(sessionName),
@@ -168,16 +212,15 @@ struct MultiPaneDetailView: View {
         }
     }
 
-    /// LAYOUT-2.196: an agent's input request sits under its pane's tabs:
-    /// the asking agent's group, else the focused one.
+    /// LAYOUT-2.196: a live question shows at the top of the focused stage
+    /// pane, whichever agent asks, so it can be answered without switching.
     private var inputRequestGroupID: UUID? {
         guard context.question != nil else { return nil }
-        let session = context.questionPaneID ?? focusedPaneId
-        return session.flatMap { currentWorkspace.group(containing: $0)?.id } ?? currentWorkspace.groups.first?.id
+        return focusedPaneId.flatMap { currentWorkspace.group(containing: $0)?.id } ?? currentWorkspace.focusedGroupID
     }
 
     private var inputRequestBanner: some View {
-        WorkspaceInputRequest(context: context, selectedSession: focusedPaneId, onSelect: selectSession)
+        WorkspaceInputRequest(context: context, selectedSession: focusedPaneId, onSelect: stageSession)
     }
 
     private var currentWorkspace: WorkspaceLayout<String> { workspaceStore.layout(hostID: host.id, worktree: worktree) }
@@ -214,76 +257,38 @@ struct MultiPaneDetailView: View {
         onSelectPane(session)
     }
 
-    private func tabHeader(_ group: WorkspaceLayout<String>.Group) -> some View {
-        HStack(spacing: 0) {
-            tabs(group)
-            if worktree.chatAgent(session: group.selected) != nil {
-                AgentChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
-                                                    set: { setShowsChat($0, for: group.selected) }))
-            }
-        }
-    }
-
-    private func tabs(_ group: WorkspaceLayout<String>.Group) -> some View {
-        AgentTabStrip(spacing: 4) {
-                ForEach(group.sessions, id: \.self) { session in
-                    Button { selectSession(session) } label: {
-                        HStack(spacing: 6) {
-                            if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
-                                MobileAgentStatusBadge(agent: agent, hostID: host.id,
-                                    needsInput: context.needsInput(session: session),
-                                    isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
-                            } else {
-                                Image(systemName: "terminal")
-                            }
-                            Text(sessionTitle(session)).lineLimit(1).truncationMode(.middle)
-                                .fontWeight(group.selected == session ? .medium : .regular)
-                        }.worktreeHeaderWashText().padding(.horizontal, 10).frame(minHeight: 44)
-                            .foregroundStyle(theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
-                            .overlay(alignment: .bottom) {
-                                Rectangle().fill(group.selected == session ? theme.foreground.opacity(0.55) : .clear)
-                                    .frame(height: 2)
-                            }
-                    }.buttonStyle(.plain)
-                        .accessibilityIdentifier("workspace.tab.\(session)")
-                        .draggable(WorkspaceTabDrag(session))
-                        .modifier(WorkspaceTabDropTarget { source, after in
-                            let sameGroup = currentWorkspace.group(containing: source)?.id == group.id
-                            var moved = false
-                            mutate { moved = $0.moveTab(source, relativeTo: session, after: after) }
-                            if moved && !sameGroup { selectSession(source) }
-                        })
-                        .contextMenu {
-                            Menu("Split into pane") {
-                                ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
-                                    Button(edge.rawValue.capitalized) { mutate { $0.split(session, beside: group.id, edge: edge) }; onSelectPane(session) }
-                                        .disabled(group.sessions.count < 2)
-                                }
-                            }
-                            ForEach(currentWorkspace.groups.filter { $0.id != group.id }) { target in
-                                Button("Move to \(sessionTitle(target.selected)) tab group") {
-                                    mutate { $0.move(session, to: target.id) }; onSelectPane(session)
-                                }
-                                Button("Merge into \(sessionTitle(target.selected)) tab group") {
-                                    mutate { $0.merge(group.id, into: target.id) }; onSelectPane(session)
-                                }
-                            }
-                            if worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
-                                Button("Close tab") {
-                                    mutate { $0.remove(session) }
-                                    if let next = currentWorkspace.focusedSession { selectSession(next) }
-                                }
-                            }
-                            if worktree.agents?.contains(where: { $0.presentationSessionName == session }) != true {
-                                Button("Move to terminal drawer") { mutate { $0.moveToDrawer(session) }; selectSession(session) }
-                            }
-                        }
+    /// A stage pane's slim header: in a split stage it names the pane and lets
+    /// it leave the stage without closing its agent; an agent that offers Chat
+    /// shows its Chat / Terminal switch here.
+    @ViewBuilder private func stagePaneHeader(_ group: WorkspaceLayout<String>.Group) -> some View {
+        let split = currentWorkspace.groups.count > 1
+        let offersChat = worktree.chatAgent(session: group.selected) != nil
+        if split || offersChat {
+            HStack(spacing: 6) {
+                if split {
+                    AgentStatusDot(dot: galleryAgents.first { $0.id == group.selected }?.status.dot)
+                    Text(sessionTitle(group.selected)).lineLimit(1).truncationMode(.middle)
                 }
-        }.font(.subheadline).foregroundStyle(theme.foreground)
-            .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
-                guard let session = sessions.first?.session, currentWorkspace.sessions.contains(session) else { return false }
-                mutate { $0.move(session, to: group.id) }; onSelectPane(session); return true
+                Spacer(minLength: 0)
+                if offersChat {
+                    AgentChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
+                                                        set: { setShowsChat($0, for: group.selected) }))
+                }
+                if split {
+                    Button {
+                        mutate { _ = $0.removePane(group.id) }
+                        if let next = currentWorkspace.focusedSession { onSelectPane(next) }
+                    } label: { Image(systemName: "xmark").frame(width: 44, height: 36) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove from stage")
+                }
             }
+            .font(.footnote)
+            .foregroundStyle(theme.foreground.opacity(focusedPaneId == group.selected ? 0.9 : 0.6))
+            .padding(.leading, 12).frame(minHeight: 36)
+            .background(theme.background)
+            .overlay(alignment: .bottom) { theme.foreground.opacity(0.08).frame(height: 1) }
+        }
     }
     private var terminalDrawerHeader: some View {
         HStack {
@@ -307,9 +312,6 @@ struct MultiPaneDetailView: View {
                             }.draggable(WorkspaceTabDrag(session))
                                 .contextMenu {
                                     ForEach(currentWorkspace.groups) { group in
-                                        Button("Move to \(sessionTitle(group.selected)) tabs") {
-                                            mutate { $0.move(session, to: group.id) }; selectSession(session)
-                                        }
                                         Menu("Split beside \(sessionTitle(group.selected))") {
                                             ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
                                                 Button(edge.rawValue.capitalized) {

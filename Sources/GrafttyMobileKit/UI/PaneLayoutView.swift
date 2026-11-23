@@ -92,10 +92,6 @@ private struct PaneTile: View {
     let preferredInterfaceStyle: UIUserInterfaceStyle
     let onTap: () -> Void
 
-    @State private var controller: TerminalController?
-    @State private var controllerSourceConfig: String?
-    @State private var lastAppliedFontSize: Float?
-
     var body: some View {
         Button(action: onTap) {
             RoundedRectangle(cornerRadius: 10)
@@ -106,7 +102,19 @@ private struct PaneTile: View {
                 )
                 .overlay {
                     if let client {
-                        livePreview(client: client)
+                        ZStack(alignment: .bottomLeading) {
+                            MobileTerminalPreview(client: client, baseConfig: baseConfig,
+                                                  preferredInterfaceStyle: preferredInterfaceStyle)
+                            Text(title)
+                                .font(.caption2)
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.ultraThinMaterial)
+                        }
                     } else {
                         Text(title)
                             .font(.headline)
@@ -120,26 +128,29 @@ private struct PaneTile: View {
         }
         .buttonStyle(.plain)
     }
+}
 
-    @ViewBuilder
-    private func livePreview(client: SessionClient) -> some View {
+/// A watch-only terminal miniature: a preview-role client drawn by its own
+/// controller, sized so the host's grid fits the width (IOS-4.12). It never
+/// resizes the terminal or takes display ownership.
+struct MobileTerminalPreview: View {
+    let client: SessionClient
+    let baseConfig: String?
+    let preferredInterfaceStyle: UIUserInterfaceStyle
+    /// Hands back the container, whose scrollback feeds a gallery tile's rail.
+    var onContainer: ((TerminalInputContainerView) -> Void)? = nil
+
+    @State private var controller: TerminalController?
+    @State private var controllerSourceConfig: String?
+    @State private var lastAppliedFontSize: Float?
+
+    var body: some View {
         GeometryReader { geo in
             let width = geo.size.width.rounded(.toNearestOrAwayFromZero)
-            ZStack(alignment: .bottomLeading) {
-                paneContent(client: client)
-                Text(title)
-                    .font(.caption2)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.ultraThinMaterial)
-            }
-            .task(id: SizingKey(width: width, cols: client.authoritativeGrid?.cols, baseConfig: baseConfig)) {
-                resizeController(tileWidth: width, authoritativeCols: client.snapshotCanvasGrid == nil ? client.authoritativeGrid?.cols : nil)
-            }
+            paneContent
+                .task(id: SizingKey(width: width, cols: client.authoritativeGrid?.cols, baseConfig: baseConfig)) {
+                    resizeController(tileWidth: width, authoritativeCols: client.snapshotCanvasGrid == nil ? client.authoritativeGrid?.cols : nil)
+                }
         }
     }
 
@@ -149,7 +160,7 @@ private struct PaneTile: View {
     /// The explicit frame and clipping contain the Metal layer while its
     /// intrinsic size catches up with the tile.
     @ViewBuilder
-    private func paneContent(client: SessionClient) -> some View {
+    private var paneContent: some View {
         if let controller, controllerSourceConfig == baseConfig {
             TerminalPaneView(
                 session: client.session,
@@ -158,7 +169,8 @@ private struct PaneTile: View {
                 showsAdditionalHistory: true,
                 renderPace: client.renderPace,
                 onUserInteraction: { [weak client] in client?.wakeRenderer() },
-                preferredInterfaceStyle: preferredInterfaceStyle
+                preferredInterfaceStyle: preferredInterfaceStyle,
+                captureContainer: onContainer
             )
                 .allowsHitTesting(false)
                 .overlay(Color.black.opacity(0.08))
