@@ -50,6 +50,9 @@ struct WorkspaceGallery<NewAgent: View, TileMenu: View>: View {
                     .help("Hide agents")
             }
             .padding(.horizontal, 10).frame(height: 28)
+            // Tiles scroll unclipped so rail cards can spill out; they pass under the header.
+            .background { theme.background.overlay(theme.foreground.opacity(0.03)) }
+            .zIndex(1)
             ScrollView(.vertical) {
                 VStack(spacing: 10) {
                     ForEach(tiles) { tile in
@@ -71,6 +74,8 @@ struct WorkspaceGallery<NewAgent: View, TileMenu: View>: View {
                             }
                         }
                         .frame(height: Self.tileHeight)
+                        // The tile body is a native click and drag source with no press of its own for VoiceOver.
+                        .accessibilityAction { onStage(tile.id) }
                         .modifier(WorkspaceTabDropTarget(vertical: true) { source, after in onMove(source, tile.id, after) })
                     }
                     newAgent()

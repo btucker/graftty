@@ -69,8 +69,14 @@ struct MultiPaneDetailView: View {
     private var showsGallery: Bool { currentWorkspace.showsGallery(agentCount: galleryAgents.count) }
 
     private func stageSession(_ session: String) {
-        mutate { $0.stage(session) }
+        mutate { $0.stage(session); returnHiddenShells(&$0) }
         onSelectPane(session)
+    }
+
+    /// A shell has no tile, so one a stage change hides goes back to the drawer (LAYOUT-2.255).
+    private func returnHiddenShells(_ layout: inout WorkspaceLayout<String>) {
+        let agents = Set(worktree.agents?.compactMap(\.presentationSessionName) ?? [])
+        layout.returnHiddenShellsToDrawer(isAgent: agents.contains)
     }
 
     private var stage: some View {
@@ -188,7 +194,7 @@ struct MultiPaneDetailView: View {
                         if let edge = WorkspaceLayout<String>.dropEdge(x: location.x, y: location.y,
                             width: geometry.size.width, height: geometry.size.height) {
                             mutate { $0.split(session, beside: group.id, edge: edge) }
-                        } else { mutate { $0.move(session, to: group.id) } }
+                        } else { mutate { $0.move(session, to: group.id); returnHiddenShells(&$0) } }
                         onSelectPane(session)
                         return true
                     }
@@ -276,7 +282,7 @@ struct MultiPaneDetailView: View {
                 }
                 if split {
                     Button {
-                        mutate { _ = $0.removePane(group.id) }
+                        mutate { _ = $0.removePane(group.id); returnHiddenShells(&$0) }
                         if let next = currentWorkspace.focusedSession { onSelectPane(next) }
                     } label: { Image(systemName: "xmark").frame(width: 44, height: 36) }
                         .buttonStyle(.plain)

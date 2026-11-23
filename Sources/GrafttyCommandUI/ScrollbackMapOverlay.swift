@@ -458,6 +458,11 @@ public struct ScrollbackMapOverlay: View {
                 #endif
             }
             .offset(y: frame.top)
+            #if os(macOS)
+            // The offset moves the cards but not the area they report, which the
+            // pointer uses to keep them open on its way from the rail.
+            .transformPreference(ScrollbackPreviewArea.self) { $0 = $0?.offsetBy(dx: 0, dy: frame.top) }
+            #endif
         }
     }
 

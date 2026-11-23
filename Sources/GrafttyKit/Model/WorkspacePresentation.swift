@@ -55,6 +55,8 @@ public extension WorktreeEntry {
         ensureWorkspaceLayout()
         if workspaceLayout?.sessions.contains(slot) != true { workspaceLayout?.addAgent(slot) }
         workspaceLayout?.stage(slot)
+        let agentSlots = Set(agents.compactMap(\.presentationSlotID))
+        workspaceLayout?.returnHiddenShellsToDrawer(isAgent: agentSlots.contains)
         return slot
     }
 

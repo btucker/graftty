@@ -23,6 +23,14 @@ private struct SleepingWorktreeIndicator: View {
 /// @spec LAYOUT-2.62: When the project rail setting changes, the application shall place Add Repository beside Manage Remote Hosts in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 
 /// @spec LAYOUT-2.64: When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
+/// An agent chosen from a sidebar row's logo stack (LAYOUT-2.254).
+struct SidebarAgentSelection {
+    /// Nil for a worktree on this Mac.
+    let remoteMac: RemoteMac?
+    let worktreePath: String
+    let agentID: String
+}
+
 struct SidebarView: View {
     @Binding var appState: AppState
     /// Used to read pane titles. Title change invalidation is deliberately
@@ -48,7 +56,7 @@ struct SidebarView: View {
     let onSelect: (String) -> Void
     var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
     /// Selects a worktree with one of its agents on stage, from the agent logo stack.
-    var onSelectAgent: (String, String) -> Void = { _, _ in }
+    var onSelectAgent: (SidebarAgentSelection) -> Void = { _ in }
     var onNavigationIntent: () -> Void = {}
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
@@ -378,6 +386,7 @@ struct SidebarView: View {
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
+                          onSelectRemoteAgent: { onSelectAgent(.init(remoteMac: $0, worktreePath: $1, agentID: $2)) },
                           onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
                           onSetupLinuxHost: onSetupLinuxHost,
@@ -1153,7 +1162,7 @@ struct SidebarView: View {
             },
             scrollID: scrollID,
             logos: AgentLogo.logos(in: context, isCached: false),
-            onSelectAgent: { onSelectAgent(worktree.path, $0) }
+            onSelectAgent: { onSelectAgent(.init(remoteMac: nil, worktreePath: worktree.path, agentID: $0)) }
         ) {
             WorktreeRowIdentitySlot(entry: worktree, displayName: displayName, isMainCheckout: worktree.path == repo.path, theme: theme,
                 prBadge: prBadge, status: status, project: project, projectIconData: iconStore.iconData(for: repo),

@@ -138,6 +138,13 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         return true
     }
 
+    /// A shell has no tile, so one a stage change leaves hidden in a pane goes
+    /// back to the terminal drawer, where it is listed (LAYOUT-2.255).
+    public mutating func returnHiddenShellsToDrawer(isAgent: (Session) -> Bool) {
+        let hidden = groups.flatMap { group in group.sessions.filter { $0 != group.selected && !isAgent($0) } }
+        for shell in hidden { moveToDrawer(shell) }
+    }
+
     @discardableResult
     public mutating func moveTile(_ session: Session, relativeTo target: Session, after: Bool) -> Bool {
         var order = gallerySessions
@@ -152,6 +159,9 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public mutating func addAgent(_ session: Session) {
         guard !sessions.contains(session) else { select(session); return }
         storedGalleryOrder = gallerySessions + [session]
+        // A second agent opens the gallery by itself, whatever the user chose
+        // while there was only one (LAYOUT-2.252).
+        if groups.flatMap(\.sessions).count == 1 { galleryVisible = nil }
         if let index = lastAgent.flatMap({ group(containing: $0)?.id }).flatMap({ id in groups.firstIndex { $0.id == id } })
             ?? groups.indices.first {
             groups[index].sessions.append(session)

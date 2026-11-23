@@ -40,4 +40,44 @@ struct AgentLogoStackTests {
         #expect(logos.map(\.title) == ["Fix the rail", "Review"])
         #expect(logos.map(\.status.dot) == [.working, nil])
     }
+
+    private func twoAgentWorktree(leadBusy: Bool, reviewBusy: Bool, sidebar: SidebarWorktreeMetadata?,
+                                  extraAgents: [AgentSessionInfo] = []) -> WorktreePanes {
+        let layout: PaneLayoutNode = .split(direction: .horizontal, ratio: 0.5,
+            left: .leaf(sessionName: "s1", title: "Lead", attentionText: nil, isBusy: leadBusy, attentionSource: nil),
+            right: .leaf(sessionName: "s2", title: "Review", attentionText: nil, isBusy: reviewBusy, attentionSource: nil))
+        return WorktreePanes(path: "/repo/wt", displayName: "wt", repoDisplayName: "app", displayBranch: "wt",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+            sidebar: sidebar,
+            agents: [AgentSessionInfo(id: "lead", name: "Lead", provider: "claude", status: "running", sessionName: "s1"),
+                     AgentSessionInfo(id: "review", name: "Review", provider: "codex", status: "running", sessionName: "s2")]
+                + extraAgents)
+    }
+
+    @Test func anotherAgentsUnreadStopLeavesAWorkingLogoRinged() {
+        let stop = SidebarAgentStop(agentName: "Lead", stoppedAt: Date(timeIntervalSinceReferenceDate: 100),
+            recap: .init(title: "Done", completed: "Rail", next: "Review", need: nil), paneSlotID: "slot-1")
+        let worktree = twoAgentWorktree(leadBusy: true, reviewBusy: true,
+            sidebar: .init(id: "stable", projectID: "p", paneIDs: ["s1": "slot-1", "s2": "slot-2"], unseenAgentStop: stop))
+        let context = SidebarWorktreeContext(worktree: worktree)
+        #expect(context.hasUnseenStop)
+        // The stopped agent's own liveness may lag its stop; the other agent is still working.
+        #expect(AgentLogo.logos(in: context, isCached: false).map(\.status.dot) == [nil, .working])
+    }
+
+    @Test func openingALogoRoutesToItsPane() {
+        let done = AgentSessionInfo(id: "done", name: "Done", provider: "codex", status: "closed",
+                                    sessionName: nil, retainedSessionName: "s3")
+        // A host that publishes pane ids routes a pane by them, not by its session name.
+        for sidebar: SidebarWorktreeMetadata? in [.init(id: "stable", projectID: "p", paneIDs: ["s1": "slot-1", "s2": "slot-2"]), nil] {
+            let worktree = twoAgentWorktree(leadBusy: false, reviewBusy: false, sidebar: sidebar, extraAgents: [done])
+            let logos = AgentLogo.logos(in: SidebarWorktreeContext(worktree: worktree), isCached: false)
+            for logo in logos where logo.id != "done" {
+                #expect(SidebarProjection.attentionPaneRoute(for: logo.activityItem(in: worktree), in: worktree) == logo.session)
+            }
+            // A finished agent has no live pane, so its logo opens the worktree instead of a missing pane.
+            let finished = logos.first { $0.id == "done" }
+            #expect(finished?.activityItem(in: worktree).paneID == nil)
+        }
+    }
 }

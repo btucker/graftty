@@ -23,12 +23,27 @@ public struct AgentLogo: Identifiable, Equatable, Sendable {
             guard let session = agent.presentationSessionName else { return nil }
             let leaf = leaves.first { $0.sessionName == session }
             let needsInput = context.needsInput(session: session)
+            // An unread stop outranks the stopped agent's own lagging liveness, not another agent's work.
+            let stoppedHere = context.hasUnseenStop && (context.agentPaneID == nil || context.agentPaneID == session)
             return AgentLogo(id: agent.id, session: session, provider: agent.provider,
                 title: SidebarAgentTitle.display(terminalTitle: leaf?.title ?? "", agentName: agent.name, tabProvider: agent.provider),
-                status: AgentTileStatus(needsInput: needsInput, isBusy: leaf?.isBusy == true && !context.hasUnseenStop,
+                status: AgentTileStatus(needsInput: needsInput, isBusy: leaf?.isBusy == true && !stoppedHere,
                     isCompleted: agent.isCompleted, isCached: isCached, question: context.question(session: session),
                     result: agent.result, statusLabel: AgentAssignmentStatus(agent: agent, needsInput: needsInput).label))
         }
+    }
+
+    /// The navigation target that opens this agent's worktree on its pane. Its
+    /// id has a pane item's form, because a host that publishes pane ids routes
+    /// a pane by that id. A finished agent has no live pane, so its target is
+    /// the worktree.
+    public func activityItem(in worktree: WorktreePanes) -> SidebarActivityItem {
+        let projectID = SidebarProjection.projectID(worktree)
+        let stable = worktree.sidebar?.id ?? "\(projectID):\(worktree.path)"
+        let isLive = worktree.layout?.leaves.contains { $0.sessionName == session } == true
+        return SidebarActivityItem(id: "\(stable):\(worktree.sidebar?.paneIDs?[session] ?? session)", projectID: projectID,
+            worktreeID: worktree.path, paneID: isLive ? session : nil, projectName: worktree.repoDisplayName,
+            worktreeName: worktree.displayName, title: title, occurrence: nil, isBusy: status.dot == .working)
     }
 }
 

@@ -16,6 +16,14 @@ struct AgentGalleryDensityTests {
         #expect(AgentGalleryDensity(rawValue: AgentGalleryDensity.two.rawValue) == .two)
     }
 
+    @Test func tilesNeverGetANegativeSizeBeforeLayout() {
+        // The phone gallery subtracts its padding from a GeometryReader that can first report zero.
+        for density in AgentGalleryDensity.allCases {
+            let size = density.tileSize(in: CGSize(width: -24, height: -12), spacing: 10)
+            #expect(size.width >= 0 && size.height >= 0)
+        }
+    }
+
     @Test("@spec IOS-13.33: While the phone gallery shows more agents than it can keep live, the application shall show live terminals only for visible tiles up to its limit, in tile order, and show the rest by caption and status alone.")
     func liveBudget() {
         let sessions = ["a", "b", "c", "d", "e", "f"]

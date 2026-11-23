@@ -247,10 +247,7 @@ struct WorkspaceContentView: View {
                         .controlSize(.small)
                 }
                 if layout.groups.count > 1 {
-                    Button {
-                        mutate { _ = $0.removePane(group.id) }
-                        if let next = layout.focusedSession { focus(next) }
-                    } label: { Image(systemName: "xmark") }
+                    Button { removeStagePane(group.id) } label: { Image(systemName: "xmark") }
                         .buttonStyle(.plain).help("Remove from stage")
                         .accessibilityLabel("Remove from stage")
                 }
@@ -299,7 +296,7 @@ struct WorkspaceContentView: View {
                     else { edge = nil }
                     mutate { next in
                         if let edge { next.split(session, beside: group.id, edge: edge) }
-                        else { next.move(session, to: group.id) }
+                        else { next.move(session, to: group.id); returnHiddenShells(&next) }
                     }
                     focus(session)
                     return true
@@ -315,15 +312,10 @@ struct WorkspaceContentView: View {
             Button("Put on stage") { stageAgent(slot) }
             Button("Show beside the stage") { mutate { $0.split(slot, beside: target, edge: .right) }; focus(slot, activate: true) }
         } else if let group = layout.group(containing: slot), layout.groups.count > 1 {
-            Button("Remove from stage") {
-                mutate { _ = $0.removePane(group.id) }
-                if let next = layout.focusedSession { focus(next) }
-            }
+            Button("Remove from stage") { removeStagePane(group.id) }
         }
-        if agent(slot) == nil {
-            Button("Move to terminal drawer") { mutate { $0.moveToDrawer(slot) }; focus(slot) }
-            Button("Close terminal", role: .destructive) { onCloseTerminal(slot) }
-        } else if let agent = agent(slot), agent.status == .closed {
+        // Tiles are agents only; shells stay in the drawer (LAYOUT-2.255).
+        if let agent = agent(slot), agent.status == .closed {
             Button("Dismiss") {
                 mutate { $0.remove(slot) }
                 if let next = layout.focusedSession { focus(next) }
@@ -456,8 +448,16 @@ struct WorkspaceContentView: View {
     /// directly; a synthetic press would enter AppKit's drag tracking loop.
     func stageAgent(_ slot: PaneSlotID) {
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
-        mutate { $0.stage(slot) }
+        mutate { $0.stage(slot); returnHiddenShells(&$0) }
         focus(slot, activate: true)
+    }
+    private func removeStagePane(_ id: UUID) {
+        mutate { _ = $0.removePane(id); returnHiddenShells(&$0) }
+        if let next = layout.focusedSession { focus(next) }
+    }
+    /// A shell has no tile, so one a stage change hides goes back to the drawer (LAYOUT-2.255).
+    private func returnHiddenShells(_ layout: inout WorkspaceLayout<PaneSlotID>) {
+        layout.returnHiddenShellsToDrawer { agent($0) != nil }
     }
     func selectTerminalTab(_ slot: PaneSlotID) { focus(slot, activate: true) }
     private func focus(_ slot: PaneSlotID) { focus(slot, activate: false) }
@@ -481,18 +481,6 @@ struct WorkspaceContentView: View {
         if initial && !hadLayout, let focused = worktree.focusedPaneSlotID { mutate { $0.select(focused) } }
         if let slot = worktree.presentationPane, worktree.showsNonTerminalContent(in: slot) { clearFocus() }
         chatModels.prune(keeping: Set(worktree.agents.compactMap(\.presentationSlotID)))
-    }
-    private func receive(_ providers: [NSItemProvider], action: @escaping @MainActor (PaneSlotID) -> Void) -> Bool {
-        guard let provider = providers.first else { return false }
-        _ = provider.loadTransferable(type: WorkspaceTabDrag.self) { result in
-            guard case .success(let payload) = result, let id = UUID(uuidString: payload.session) else { return }
-            Task { @MainActor in
-                let slot = PaneSlotID(id: id)
-                guard layout.sessions.contains(slot) else { return }
-                action(slot)
-            }
-        }
-        return true
     }
 }
 

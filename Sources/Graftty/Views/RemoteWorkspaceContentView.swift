@@ -163,7 +163,13 @@ struct RemoteWorkspaceContentView: View {
 
     private func stage(_ session: String) {
         workspace?.stage(session)
+        returnHiddenShells()
         select(session)
+    }
+
+    /// A shell has no tile, so one a stage change hides goes back to the drawer (LAYOUT-2.255).
+    private func returnHiddenShells() {
+        workspace?.returnHiddenShellsToDrawer { agent($0) != nil }
     }
 
     @ViewBuilder private func tileMenu(_ session: String) -> some View {
@@ -183,6 +189,7 @@ struct RemoteWorkspaceContentView: View {
 
     private func removePane(_ id: UUID) {
         _ = workspace?.removePane(id)
+        returnHiddenShells()
         if let next = layout.focusedSession { select(next) }
     }
 
@@ -262,7 +269,7 @@ struct RemoteWorkspaceContentView: View {
         guard let requestedAgent, let agent = worktree.agents?.first(where: { $0.id == requestedAgent }),
               let session = agent.presentationSessionName else { return }
         if !layout.sessions.contains(session) { workspace?.addAgent(session) }
-        select(session)
+        stage(session)
         consumeAgentRequest()
     }
 
@@ -382,7 +389,7 @@ struct RemoteWorkspaceContentView: View {
                 if let edge = WorkspaceLayout<String>.dropEdge(x: location.x, y: location.y,
                     width: geometry.size.width, height: geometry.size.height) {
                     workspace?.split(session, beside: group.id, edge: edge)
-                } else { workspace?.move(session, to: group.id) }
+                } else { workspace?.move(session, to: group.id); returnHiddenShells() }
                 select(session)
                 return true
             }

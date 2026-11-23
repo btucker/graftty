@@ -180,7 +180,7 @@ struct MainWindow: View {
                 selectedRemotePaneSessionName: selectedRemotePaneSessionName,
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
-                onSelectAgent: { path, agentID in selectAgent(agentID, inWorktree: path) },
+                onSelectAgent: selectAgent,
                 onNavigationIntent: { attentionOpenGeneration &+= 1; routeSelector.cancel(); remoteViewer.cancelRouteRecovery() },
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -1170,13 +1170,20 @@ struct MainWindow: View {
     }
 
     /// The sidebar's logo stack opens a worktree with that agent on stage.
-    private func selectAgent(_ agentID: String, inWorktree path: String) {
+    private func selectAgent(_ selection: SidebarAgentSelection) {
+        let agentID = selection.agentID, path = selection.worktreePath
+        if let remoteMac = selection.remoteMac {
+            selectRemoteWorktree(remoteMac, worktreePath: path)
+            requestedRemoteAgent = agentID
+            return
+        }
         selectWorktree(path)
         guard appState.selectedWorktreePath == path else { return }
         var slot: PaneSlotID?
         appState.mutateWorktrees(atPath: path) { slot = $0.showAgentTab(agentID) }
         guard let slot else { return }
-        if appState.worktree(forPath: path)?.hasCompletedContent(in: slot) == true { terminalManager.clearFocus() }
+        // Chat, like completed content, replaces the terminal, which must not take the keyboard.
+        if appState.worktree(forPath: path)?.showsNonTerminalContent(in: slot) == true { terminalManager.clearFocus() }
         else { selectPane(path, slot) }
     }
 

@@ -94,6 +94,18 @@ struct WorkspaceLayoutTests {
         #expect(!layout.gallerySessions.contains("a"))
     }
 
+    @Test func aSecondAgentReopensAGalleryTheUserHid() {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("lead")
+        layout.galleryVisible = true
+        layout.galleryVisible = false
+        layout.addAgent("review")
+        #expect(layout.showsGallery(agentCount: 2))
+        layout.galleryVisible = false
+        layout.addAgent("tests")
+        #expect(!layout.showsGallery(agentCount: 3), "Only the second agent reopens it")
+    }
+
     @Test func galleryShowsByItselfFromTheSecondAgent() {
         var layout = WorkspaceLayout<String>()
         #expect(!layout.showsGallery(agentCount: 1))
@@ -102,6 +114,37 @@ struct WorkspaceLayoutTests {
         #expect(!layout.showsGallery(agentCount: 3))
         layout.galleryVisible = true
         #expect(layout.showsGallery(agentCount: 1))
+    }
+
+    @Test("@spec LAYOUT-2.255: When a stage change would hide a shell, such as removing its pane from a split stage or putting an agent on stage in its place, the application shall return the shell to the terminal drawer, because a shell has no gallery tile.")
+    func hiddenShellsReturnToTheDrawer() throws {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("a"); layout.addAgent("b"); layout.select("a")
+        let agents = try #require(layout.groups.first?.id)
+        layout.addTerminal("shell")
+        layout.split("shell", beside: agents, edge: .right)
+        let shellPane = try #require(layout.group(containing: "shell")?.id)
+        let isAgent: (String) -> Bool = { $0 != "shell" }
+
+        var removed = layout
+        removed.removePane(shellPane)
+        removed.returnHiddenShellsToDrawer(isAgent: isAgent)
+        #expect(removed.terminals == ["shell"])
+        #expect(removed.group(containing: "shell") == nil)
+        #expect(removed.groups.map(\.selected) == ["a"])
+
+        var staged = layout
+        staged.select("shell")
+        staged.stage("b")
+        staged.returnHiddenShellsToDrawer(isAgent: isAgent)
+        #expect(staged.isOnStage("b") && staged.isOnStage("a"))
+        #expect(staged.terminals == ["shell"])
+        #expect(staged.group(containing: "shell") == nil)
+
+        // Agents off stage stay in their panes; only shells move.
+        var untouched = layout
+        untouched.returnHiddenShellsToDrawer(isAgent: isAgent)
+        #expect(untouched == layout)
     }
 
     @Test func tabDropTransfersAcrossGroupsAndRejectsStaleTargets() throws {

@@ -20,7 +20,8 @@ public enum AgentGalleryDensity: Int, Sendable, CaseIterable {
     /// Two rows always fill the height; only the column count changes.
     public func tileSize(in size: CGSize, spacing: CGFloat) -> CGSize {
         let columns = CGFloat(columns)
-        return CGSize(width: (size.width - spacing * (columns - 1)) / columns, height: (size.height - spacing) / 2)
+        // A GeometryReader can first report zero, before its padding is subtracted.
+        return CGSize(width: max(0, (size.width - spacing * (columns - 1)) / columns), height: max(0, (size.height - spacing) / 2))
     }
 }
 

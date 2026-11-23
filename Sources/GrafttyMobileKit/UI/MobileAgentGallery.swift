@@ -79,7 +79,9 @@ struct MobileGalleryTile: View {
     let timeline: WorktreeTimeline?
     let theme: GhosttyThemeColors
     let onJump: (Int) -> Void
-    @State private var container: TerminalInputContainerView?
+    /// The preview's map, which holds its terminal weakly; the tile keeps no
+    /// reference to the container itself.
+    @State private var mapModel: ScrollbackMapModel?
 
     var body: some View {
         AgentGalleryTile(title: agent.title, status: agent.status, isOnStage: isOnStage,
@@ -87,14 +89,18 @@ struct MobileGalleryTile: View {
             if let client {
                 MobileTerminalPreview(client: client, baseConfig: previews.baseConfig,
                                       preferredInterfaceStyle: previews.preferredStyle,
-                                      onContainer: { captured in if container !== captured { container = captured } })
+                                      onContainer: { captured in
+                                          // Called from makeUIView: state changes wait for the update to finish.
+                                          let model = captured.scrollbackMapModel
+                                          DispatchQueue.main.async { if mapModel !== model { mapModel = model } }
+                                      })
             } else {
                 Text(agent.status.caption).font(.caption2).foregroundStyle(theme.foreground.opacity(0.6))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(8)
             }
         } rail: {
-            if client != nil, let container, let timeline {
-                ScrollbackMapOverlayHost(model: container.scrollbackMapModel, timeline: timeline,
+            if client != nil, let mapModel, let timeline {
+                ScrollbackMapOverlayHost(model: mapModel, timeline: timeline,
                                          previewOverhang: 200, previewWidth: 240, onJump: onJump)
             }
         }
@@ -207,6 +213,9 @@ struct MobileAgentGalleryColumn: View {
                     .accessibilityLabel("Hide agents")
             }
             .padding(.leading, 12)
+            // Tiles scroll unclipped so rail cards can spill out; they pass under the header.
+            .background { theme.background.overlay(theme.foreground.opacity(0.03)) }
+            .zIndex(1)
             ScrollView(.vertical) {
                 MobileAgentGalleryGrid(host: host, worktree: worktree, context: context, agents: agents, onStage: onStage,
                     columns: 1, tileSize: CGSize(width: Self.width - 20, height: 150), theme: theme,
@@ -260,6 +269,9 @@ struct MobileAgentGalleryScreen: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 8)
+            // Tiles scroll unclipped so rail cards can spill out; they pass under the header.
+            .background(theme.background)
+            .zIndex(1)
             GeometryReader { geometry in
                 let size = density.tileSize(in: CGSize(width: geometry.size.width - 24, height: geometry.size.height - 12),
                                             spacing: 10)

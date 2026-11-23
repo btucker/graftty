@@ -750,7 +750,6 @@ struct ScrollbackMapMobileCollapseTests {
 }
 
 @MainActor
-@Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
 struct ScrollbackMapTileRailTests {
     @Test("@spec CONTEXT-57.15: While an agent is shown as a gallery tile, the application shall show its scrollback map on the tile's right edge, let its preview cards extend beyond the tile, and when a mark or card is activated, put that agent on stage scrolled to that message.")
     func tileRailJumpsThroughTheGallery() {
@@ -783,9 +782,64 @@ struct ScrollbackMapTileRailTests {
         try? await Task.sleep(for: .milliseconds(50))
         #expect(terminal.reads == reads)
     }
+
+    /// A tile rail is shorter than its cards, which extend past it; the pointer
+    /// must still reach those cards and activate them.
+    @Test func tileRailCardsBeyondTheRailStayReachable() async throws {
+        _ = NSApplication.shared
+        let terminal = MapTerminalFixture()
+        var history = WorktreeHistory()
+        var rows = Array(repeating: "", count: 400)
+        for index in 0..<5 {
+            let prompt = "This is distinct message number \(index) in the group"
+            rows[100 + index * 4] = "> " + prompt
+            history.record(.init(text: prompt, at: start.addingTimeInterval(Double(index))))
+        }
+        let transcript = FakeScrollback(rows: rows)
+        let model = ScrollbackMapModel(terminal: transcript, debounce: .zero)
+        let rail = ScrollbackMapOverlayHost(model: model, timeline: .init(history: history, brief: nil),
+                                            previewOverhang: 200, previewWidth: 420)
+        let host = NSHostingView(rootView: MapTerminalRepresentable(view: terminal)
+            .padding(.trailing, ScrollbackMapLayout.macGutterWidth)
+            .overlay(alignment: .topTrailing) {
+                rail.frame(width: ScrollbackMapLayout.macGutterWidth, height: 120).padding(.top, 240)
+            })
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 440, height: 600),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        await waitUntil { model.map?.marks.count == 5 }
+        host.layoutSubtreeIfNeeded()
+        func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+        let pointer = try #require(descendants(host).compactMap { $0 as? ScrollbackMapPointerView }.first)
+        func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: pointer.convert(point, to: nil), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+        }
+        pointer.mouseMoved(with: try event(.mouseMoved, at: CGPoint(x: 7, y: pointer.bounds.midY)))
+        await waitUntil { pointer.previewArea != nil }
+        try await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        let area = try #require(pointer.previewArea)
+        let cardPoint = CGPoint(x: area.minX + 24, y: area.midY)
+        pointer.mouseMoved(with: try event(.mouseMoved, at: cardPoint))
+        let cardHit = host.hitTest(pointer.convert(cardPoint, to: host.superview))
+        #expect(cardHit is ScrollbackPreviewButtonInput.InputView,
+                "The pointer's preview area must be where the cards are drawn; it found \(cardHit.map { "\(type(of: $0))" } ?? "nil")")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try event(type, at: cardPoint))
+        }
+        await waitUntil { !transcript.scrolled.isEmpty }
+        #expect(!transcript.scrolled.isEmpty, "Clicking a card beyond the rail jumps to its message")
+        #expect(terminal.clicks == 0)
+    }
 }
 
 @MainActor
+@Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
 struct ScrollbackMapRebuildTests {
     @Test("@spec CONTEXT-57.10: When a quiet agent terminal becomes readable or installs same-sized history, the application shall locate its existing messages without waiting for another prompt.")
     func quietTerminalBecomesReadable() async throws {

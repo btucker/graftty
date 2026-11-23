@@ -62,7 +62,9 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .rightClickMenu(anchored: menu)
         } belowIdentity: {
+            // Each logo owns its click; the block's selection target would only select the worktree (LAYOUT-2.256).
             AgentLogoStack(logos: logos, background: theme.background, onSelect: onSelectAgent)
+                .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.agentLogos: $0] }
         } content: {
             Button(action: onSelect) { heading() }
                 .buttonStyle(.plain)
