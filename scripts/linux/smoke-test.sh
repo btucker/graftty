@@ -47,7 +47,7 @@ mkdir /tmp/fixture
 git -C /tmp/fixture init -q -b main
 git -C /tmp/fixture -c user.name=Smoke -c user.email=smoke@example.invalid commit -q --allow-empty -m fixture
 graftty-runner project add /tmp/fixture --json --runtime-directory /tmp/graftty-socket
-grep -q '^KillMode=process$' "$HOME/.config/systemd/user/graftty-host.service"
+grep -q '^KillMode=process$' "$HOME/.config/systemd/user/graftty-runner.service"
 host_pid=""
 trap 'if [[ -n $host_pid ]]; then kill "$host_pid" 2>/dev/null || true; wait "$host_pid" 2>/dev/null || true; fi' EXIT
 start_host() {

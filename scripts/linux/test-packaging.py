@@ -358,7 +358,7 @@ class InstallerTests(unittest.TestCase):
         self.archive.mkdir()
         for name in ("bin", "lib", "libexec", "share"):
             (self.archive / name).mkdir()
-        for name in ("graftty", "graftty-host", "zmx"):
+        for name in ("graftty", "graftty-runner", "graftty-host", "zmx"):
             target = self.archive / "bin" / name
             target.write_text("""#!/bin/sh
 if [ "$1" = status ]; then echo '{"running":true,"sshPort":8801}'; fi
@@ -391,7 +391,7 @@ exit 0
 
     def test_custom_ports_and_repeat_upgrade(self):
         self.install("--no-start", "--bind-address", "0.0.0.0", "--ssh-port", "9001", "--http-port", "9000")
-        service = self.home / ".config/systemd/user/graftty-host.service"
+        service = self.home / ".config/systemd/user/graftty-runner.service"
         text = service.read_text()
         self.assertIn("KillMode=process\n", text)
         self.assertIn(' --bind-address 0.0.0.0 --ssh-port 9001 --http-port 9000 ', text)
@@ -407,7 +407,7 @@ exit 0
 
     def test_maintenance_preserves_service_configuration_and_skips_setup(self):
         self.install("--no-start", "--bind-address", "0.0.0.0", "--ssh-port", "9001", "--http-port", "9000")
-        service = self.home / ".config/systemd/user/graftty-host.service"
+        service = self.home / ".config/systemd/user/graftty-runner.service"
         before = service.read_text()
         (self.archive / "VERSION").write_text("0.2.0-test\n")
         self.install("--maintenance", "--no-start")
@@ -416,10 +416,10 @@ exit 0
         self.assertIn("--ssh-port 9001 --http-port 9000", after)
 
     def test_maintenance_rewrites_execstart_assignment_whitespace(self):
-        host = self.archive / "bin/graftty-host"
+        host = self.archive / "bin/graftty-runner"
         host.write_text('#!/bin/sh\nif [ "$1" = --version ]; then echo 0.1.0-test; fi\n')
         self.install("--no-start")
-        service = self.home / ".config/systemd/user/graftty-host.service"
+        service = self.home / ".config/systemd/user/graftty-runner.service"
         before = service.read_text()
         old_release = str(self.home / ".local/share/graftty/releases/0.1.0-test")
         new_release = str(self.home / ".local/share/graftty/releases/0.2.0-test")
@@ -433,7 +433,7 @@ if [ "$1" = status ]; then echo '{"running":true,"sshPort":8801}'; fi
         systemctl = self.root / "tools/systemctl"
         systemctl.write_text(f"#!{sys.executable}\n" + '''
 import os, pathlib, re, shlex, subprocess, sys
-unit = pathlib.Path(os.environ['HOME']) / '.config/systemd/user/graftty-host.service'
+unit = pathlib.Path(os.environ['HOME']) / '.config/systemd/user/graftty-runner.service'
 operation = sys.argv[2]
 if operation == 'show':
     print(unit if 'FragmentPath' in ' '.join(sys.argv) else 'process')
@@ -450,22 +450,22 @@ elif operation == 'restart':
             with self.subTest(directive=directive):
                 service.write_text(before.replace("ExecStart=", directive) + f"\nEnvironment=ASSET={old_release}/share\n")
                 # Recreate the current command links for this independent unit.
-                for command in ("graftty", "graftty-host", "zmx"):
+                for command in ("graftty", "graftty-runner", "zmx"):
                     link = self.home / ".local/bin" / command
                     link.unlink()
                     link.symlink_to(Path(old_release) / "bin" / command)
                 self.install("--maintenance")
                 after = service.read_text()
                 executable = next(line for line in after.splitlines() if line.lstrip().startswith("ExecStart"))
-                self.assertIn(new_release + "/bin/graftty-host", executable)
-                self.assertNotIn(old_release + "/bin/graftty-host", executable)
+                self.assertIn(new_release + "/bin/graftty-runner", executable)
+                self.assertNotIn(old_release + "/bin/graftty-runner", executable)
                 self.assertIn(f"Environment=ASSET={old_release}/share", after)
                 self.assertEqual(started_version.read_text().strip(), "0.2.0-test")
 
     def test_maintenance_rejects_missing_effective_executable_before_mutation(self):
         self.install("--no-start")
-        service = self.home / ".config/systemd/user/graftty-host.service"
-        previous = (self.home / ".local/bin/graftty-host").resolve()
+        service = self.home / ".config/systemd/user/graftty-runner.service"
+        previous = (self.home / ".local/bin/graftty-runner").resolve()
         original = service.read_text()
         (self.archive / "VERSION").write_text("0.2.0-test\n")
         for command in ('"/custom/host"', f'"{previous}-custom"', f'"/custom/wrapper" "{previous}"'):
@@ -476,12 +476,12 @@ elif operation == 'restart':
                 result = self.install("--maintenance", "--no-start", success=False)
                 self.assertIn("service executable", result.stderr)
                 self.assertEqual(service.read_text(), before)
-                self.assertEqual((self.home / ".local/bin/graftty-host").resolve(), previous)
+                self.assertEqual((self.home / ".local/bin/graftty-runner").resolve(), previous)
                 self.assertFalse((previous.parent.parent.parent / "0.2.0-test").exists())
 
     def test_maintenance_rejects_effective_killmode_override(self):
         self.install("--no-start")
-        service = self.home / ".config/systemd/user/graftty-host.service"
+        service = self.home / ".config/systemd/user/graftty-runner.service"
         before = service.read_text()
         systemctl = self.root / "tools/systemctl"
         systemctl.write_text('#!/bin/sh\nif [ "$2" = is-active ]; then exit 0; fi\necho control-group\n')
@@ -493,10 +493,10 @@ elif operation == 'restart':
 
     def test_maintenance_rejects_execstart_override_with_whitespace(self):
         self.install("--no-start")
-        service = self.home / ".config/systemd/user/graftty-host.service"
+        service = self.home / ".config/systemd/user/graftty-runner.service"
         before = service.read_text()
         systemctl = self.root / "tools/systemctl"
-        systemctl.write_text('#!/bin/sh\ncase "$2" in show) case "$*" in *FragmentPath*) echo "$HOME/.config/systemd/user/graftty-host.service" ;; *) echo process ;; esac ;; cat) cat "$HOME/.config/systemd/user/graftty-host.service"; printf "  ExecStart =\\n  ExecStart = /old/graftty-host serve\\n" ;; esac\n')
+        systemctl.write_text('#!/bin/sh\ncase "$2" in show) case "$*" in *FragmentPath*) echo "$HOME/.config/systemd/user/graftty-runner.service" ;; *) echo process ;; esac ;; cat) cat "$HOME/.config/systemd/user/graftty-runner.service"; printf "  ExecStart =\\n  ExecStart = /old/graftty-runner serve\\n" ;; esac\n')
         systemctl.chmod(0o755)
         result = self.install("--maintenance", success=False)
         self.assertIn("ExecStart overrides", result.stderr)
@@ -504,7 +504,7 @@ elif operation == 'restart':
 
     def test_maintenance_rejects_foreground_host_before_changing_service(self):
         self.install("--no-start")
-        service = self.home / ".config/systemd/user/graftty-host.service"
+        service = self.home / ".config/systemd/user/graftty-runner.service"
         before = service.read_text()
         systemctl = self.root / "tools/systemctl"
         systemctl.write_text('#!/bin/sh\nexit 3\n')
@@ -522,23 +522,23 @@ elif operation == 'restart':
         systemctl.write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$SYSTEMCTL_TEST_LOG"
 case "$2" in
-    show) case "$*" in *FragmentPath*) echo "$HOME/.config/systemd/user/graftty-host.service" ;; *) echo process ;; esac ;;
-    cat) cat "$HOME/.config/systemd/user/graftty-host.service" ;;
+    show) case "$*" in *FragmentPath*) echo "$HOME/.config/systemd/user/graftty-runner.service" ;; *) echo process ;; esac ;;
+    cat) cat "$HOME/.config/systemd/user/graftty-runner.service" ;;
 esac
 ''')
         systemctl.chmod(0o755)
-        host = self.archive / "bin/graftty-host"
+        host = self.archive / "bin/graftty-runner"
         host.write_text('''#!/bin/sh
 if [ "$1" = setup ]; then echo 'Setup must not run' >&2; exit 42; fi
 if [ "$1" = status ]; then echo '{"running":true,"sshPort":8801}'; fi
 ''')
         self.install("--maintenance")
-        self.assertNotIn("--user enable graftty-host.service", log.read_text())
-        self.assertIn("--user restart graftty-host.service", log.read_text())
+        self.assertNotIn("--user enable graftty-runner.service", log.read_text())
+        self.assertIn("--user restart graftty-runner.service", log.read_text())
 
     def test_maintenance_rechecks_reviewed_build_after_lock(self):
         self.install("--no-start")
-        service = self.home / ".config/systemd/user/graftty-host.service"
+        service = self.home / ".config/systemd/user/graftty-runner.service"
         before = service.read_text()
         preflight = self.root / "preflight.sh"
         preflight.write_text('#!/bin/sh\necho "Reviewed build changed" >&2\nexit 75\n')
@@ -550,7 +550,7 @@ if [ "$1" = status ]; then echo '{"running":true,"sshPort":8801}'; fi
 
     def test_cancelled_release_rename_restores_previous_directory(self):
         self.install("--no-start")
-        previous = (self.home / ".local/bin/graftty-host").resolve()
+        previous = (self.home / ".local/bin/graftty-runner").resolve()
         native_mv = shutil.which("mv", path=os.defpath)
         fake_mv = self.root / "tools/mv"
         fake_mv.write_text(f"#!{sys.executable}\n" + f"""
@@ -563,7 +563,7 @@ sys.exit(code)
         fake_mv.chmod(0o755)
         self.install("--maintenance", "--no-start", success=False)
         self.assertTrue(previous.exists())
-        self.assertEqual((self.home / ".local/bin/graftty-host").resolve(), previous)
+        self.assertEqual((self.home / ".local/bin/graftty-runner").resolve(), previous)
         self.assertEqual(list(previous.parent.parent.parent.glob("*.previous.*")), [])
 
     def test_rejects_invalid_options_before_installing(self):
@@ -571,7 +571,7 @@ sys.exit(code)
                      ("--ssh-port", "22;echo"), ("--bind-address", "host\nExecStart=oops"),
                      ("--ssh-port", "00080", "--http-port", "80")):
             self.install("--no-start", *args, success=False)
-        self.assertFalse((self.home / ".config/systemd/user/graftty-host.service").exists())
+        self.assertFalse((self.home / ".config/systemd/user/graftty-runner.service").exists())
 
     def test_semver_build_metadata_is_supported(self):
         (self.archive / "VERSION").write_text("1.2.3+build.4\n")
@@ -592,11 +592,11 @@ sys.exit(code)
         systemctl.chmod(0o755)
         self.env.update(PATH=str(fake) + os.pathsep + self.env["PATH"], SYSTEMCTL_TEST_LOG=str(log))
         self.install()
-        self.assertEqual(log.read_text().splitlines(), ["--user is-active --quiet graftty-host.service", "--user daemon-reload", "--user enable graftty-host.service", "--user restart graftty-host.service"])
+        self.assertEqual(log.read_text().splitlines(), ["--user is-active --quiet graftty-runner.service", "--user daemon-reload", "--user enable graftty-runner.service", "--user restart graftty-runner.service"])
 
     def test_running_upgrade_stops_before_setup_and_recovers_failure(self):
         self.install("--no-start")
-        service = self.home / ".config/systemd/user/graftty-host.service"
+        service = self.home / ".config/systemd/user/graftty-runner.service"
         previous_service = service.read_text()
         previous_cli = (self.home / ".local/bin/graftty").readlink()
         fake = self.root / "fake-bin"
@@ -605,27 +605,27 @@ sys.exit(code)
         systemctl = fake / "systemctl"
         systemctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_TEST_LOG"\n')
         systemctl.chmod(0o755)
-        host = self.archive / "bin/graftty-host"
+        host = self.archive / "bin/graftty-runner"
         host.write_text('#!/bin/sh\necho setup >> "$SYSTEMCTL_TEST_LOG"\nexit 42\n')
         self.env.update(PATH=str(fake) + os.pathsep + self.env["PATH"], SYSTEMCTL_TEST_LOG=str(log))
         self.install(success=False)
         operations = log.read_text().splitlines()
-        self.assertLess(operations.index("--user stop graftty-host.service"), operations.index("setup"))
-        self.assertIn("--user start graftty-host.service", operations)
+        self.assertLess(operations.index("--user stop graftty-runner.service"), operations.index("setup"))
+        self.assertIn("--user start graftty-runner.service", operations)
         self.assertEqual(service.read_text(), previous_service)
         self.assertEqual((self.home / ".local/bin/graftty").readlink(), previous_cli)
-        self.assertIn("exit 0", (self.home / ".local/bin/graftty-host").read_text())
+        self.assertIn("exit 0", (self.home / ".local/bin/graftty-runner").read_text())
 
     def test_failed_readiness_stops_replacement_before_restoring_service(self):
         self.install("--no-start")
-        previous_service = (self.home / ".config/systemd/user/graftty-host.service").read_text()
+        previous_service = (self.home / ".config/systemd/user/graftty-runner.service").read_text()
         fake = self.root / "fake-bin"
         fake.mkdir()
         log = self.root / "operations.log"
         systemctl = fake / "systemctl"
         systemctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_TEST_LOG"\n')
         systemctl.chmod(0o755)
-        host = self.archive / "bin/graftty-host"
+        host = self.archive / "bin/graftty-runner"
         host.write_text("""#!/bin/sh
 if [ "$1" = status ]; then echo '{"running":false,"sshPort":8801}'; fi
 exit 0
@@ -634,10 +634,10 @@ exit 0
                         GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS="1")
         self.install(success=False)
         operations = log.read_text().splitlines()
-        restart = operations.index("--user restart graftty-host.service")
-        self.assertEqual(operations[restart + 1], "--user stop graftty-host.service")
-        self.assertEqual(operations[-1], "--user start graftty-host.service")
-        self.assertEqual((self.home / ".config/systemd/user/graftty-host.service").read_text(), previous_service)
+        restart = operations.index("--user restart graftty-runner.service")
+        self.assertEqual(operations[restart + 1], "--user stop graftty-runner.service")
+        self.assertEqual(operations[-1], "--user start graftty-runner.service")
+        self.assertEqual((self.home / ".config/systemd/user/graftty-runner.service").read_text(), previous_service)
 
     def test_wrong_ssh_port_does_not_complete_installation(self):
         fake = self.root / "fake-bin"
@@ -649,7 +649,7 @@ exit 0
         self.env.update(PATH=str(fake) + os.pathsep + self.env["PATH"], SYSTEMCTL_TEST_LOG=str(log),
                         GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS="1")
         self.install("--ssh-port", "9001", success=False)
-        self.assertEqual(log.read_text().splitlines()[-1], "--user stop graftty-host.service")
+        self.assertEqual(log.read_text().splitlines()[-1], "--user stop graftty-runner.service")
 
     def test_concurrent_upgrade_cannot_roll_back_another_install(self):
         self.install("--no-start")
@@ -671,7 +671,7 @@ case "$*" in
 esac
 ''')
         systemctl.chmod(0o755)
-        (self.archive / "bin/graftty-host").write_text('''#!/bin/sh
+        (self.archive / "bin/graftty-runner").write_text('''#!/bin/sh
 touch "$GRAFTTY_TEST_ENTERED"
 for attempt in $(seq 1 200); do
     test ! -f "$GRAFTTY_TEST_RELEASE" || exit 42
@@ -702,18 +702,154 @@ exit 42
                 second_output = second.communicate(timeout=10)
         self.assertNotEqual(first.returncode, 0)
         self.assertEqual(second.returncode, 0, second_output)
-        installed = self.home / ".local/share/graftty/releases/0.2.0-test/bin/graftty-host"
+        installed = self.home / ".local/share/graftty/releases/0.2.0-test/bin/graftty-runner"
         self.assertTrue(installed.exists(), "The failed install removed the successful replacement")
-        self.assertEqual((self.home / ".local/bin/graftty-host").resolve(), installed.resolve())
+        self.assertEqual((self.home / ".local/bin/graftty-runner").resolve(), installed.resolve())
 
     def test_systemd_percent_and_dollar_escaping(self):
         self.home = self.root / 'user $dollar'
         self.home.mkdir()
         self.env["HOME"] = str(self.home)
         self.install("--no-start", "--bind-address", "fe80::1%eth0")
-        service = (self.home / ".config/systemd/user/graftty-host.service").read_text()
+        service = (self.home / ".config/systemd/user/graftty-runner.service").read_text()
         self.assertIn('user $$dollar', service)
         self.assertIn('--bind-address fe80::1%%eth0', service)
+
+    def legacy_install(self, extra_service_lines="", running=True, enabled=True):
+        """Lay down what an installer from before the runner rename left behind."""
+        release = self.home / ".local/share/graftty/releases/0.1.0-legacy"
+        (release / "bin").mkdir(parents=True)
+        for name in ("graftty", "graftty-host", "zmx"):
+            binary = release / "bin" / name
+            binary.write_text('#!/bin/sh\nif [ "$1" = status ]; then echo \'{"running":true,"sshPort":8801}\'; fi\nexit 0\n')
+            binary.chmod(0o755)
+        (release / "VERSION").write_text("0.1.0-legacy\n")
+        links = self.home / ".local/bin"
+        links.mkdir(parents=True)
+        for name in ("graftty", "graftty-host", "zmx"):
+            (links / name).symlink_to(release / "bin" / name)
+        units = self.home / ".config/systemd/user"
+        units.mkdir(parents=True)
+        legacy = units / "graftty-host.service"
+        legacy.write_text(f"""[Unit]
+Description=Graftty Linux host
+After=network.target
+
+[Service]
+Type=simple
+ExecStart="{release}/bin/graftty-host" serve --bind-address 0.0.0.0 --ssh-port 8801 --http-port 8800 --zmx "{release}/bin/zmx"
+{extra_service_lines}Restart=on-failure
+KillMode=process
+UMask=0077
+
+[Install]
+WantedBy=default.target
+""")
+        log = self.root / "systemctl.log"
+        state = self.root / "units"
+        state.mkdir()
+        if running:
+            (state / "graftty-host.service.active").touch()
+        if enabled:
+            (state / "graftty-host.service.enabled").touch()
+        systemctl = self.root / "tools/systemctl"
+        systemctl.write_text('''#!/bin/sh
+printf '%s\\n' "$*" >> "$SYSTEMCTL_TEST_LOG"
+units="$HOME/.config/systemd/user"
+case "$2" in
+    is-active) test -f "$UNIT_STATE/$4.active"; exit $? ;;
+    is-enabled) test -f "$UNIT_STATE/$4.enabled"; exit $? ;;
+    enable) touch "$UNIT_STATE/$3.enabled" ;;
+    disable) rm -f "$UNIT_STATE/$3.enabled" ;;
+    start|restart) touch "$UNIT_STATE/$3.active" ;;
+    stop) rm -f "$UNIT_STATE/$3.active" ;;
+    show) case "$*" in *FragmentPath*) echo "$units/$3" ;; *) echo process ;; esac ;;
+    cat) cat "$units/$3" ;;
+esac
+exit 0
+''')
+        systemctl.chmod(0o755)
+        self.env.update(SYSTEMCTL_TEST_LOG=str(log), UNIT_STATE=str(state))
+        return legacy, log, state
+
+    def test_fresh_install_writes_runner_unit(self):
+        log = self.root / "systemctl.log"
+        systemctl = self.root / "tools/systemctl"
+        systemctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_TEST_LOG"\ncase "$*" in *is-active*) exit 1 ;; esac\n')
+        systemctl.chmod(0o755)
+        self.env["SYSTEMCTL_TEST_LOG"] = str(log)
+        self.install()
+        self.assertEqual(log.read_text().splitlines()[-3:], ["--user daemon-reload", "--user enable graftty-runner.service", "--user restart graftty-runner.service"])
+        units = self.home / ".config/systemd/user"
+        self.assertFalse((units / "graftty-host.service").exists())
+        service = (units / "graftty-runner.service").read_text()
+        self.assertIn("Description=Graftty remote runner\n", service)
+        self.assertIn("/bin/graftty-runner\" serve ", service)
+
+    def test_maintenance_migrates_legacy_unit(self):
+        legacy, log, state = self.legacy_install("Environment=FOO=bar\n")
+        (self.archive / "VERSION").write_text("0.2.0-test\n")
+        self.install("--maintenance")
+        units = self.home / ".config/systemd/user"
+        self.assertFalse(legacy.exists())
+        service = (units / "graftty-runner.service").read_text()
+        release = self.home / ".local/share/graftty/releases/0.2.0-test"
+        self.assertIn(f'ExecStart="{release}/bin/graftty-runner" serve --bind-address 0.0.0.0 --ssh-port 8801 --http-port 8800 --zmx "{release}/bin/zmx"', service)
+        self.assertIn("Environment=FOO=bar\n", service)
+        self.assertIn("KillMode=process\n", service)
+        self.assertNotIn("graftty-host", service)
+        operations = log.read_text().splitlines()
+        order = ["--user stop graftty-host.service", "--user disable graftty-host.service",
+                 "--user enable graftty-runner.service", "--user restart graftty-runner.service"]
+        self.assertEqual([op for op in operations if op in order], order)
+        self.assertTrue((state / "graftty-runner.service.enabled").exists())
+        self.assertFalse((state / "graftty-host.service.enabled").exists())
+
+    def test_maintenance_migration_keeps_disabled_autostart(self):
+        legacy, log, state = self.legacy_install(enabled=False)
+        self.install("--maintenance")
+        self.assertNotIn("--user enable graftty-runner.service", log.read_text())
+        self.assertFalse(legacy.exists())
+
+    def test_failed_migration_restores_legacy_unit(self):
+        legacy, log, state = self.legacy_install()
+        before = legacy.read_text()
+        (self.archive / "bin/graftty-runner").write_text("""#!/bin/sh
+if [ "$1" = status ]; then echo '{"running":false,"sshPort":8801}'; fi
+exit 0
+""")
+        self.env["GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS"] = "1"
+        self.install("--maintenance", success=False)
+        units = self.home / ".config/systemd/user"
+        self.assertEqual(legacy.read_text(), before)
+        self.assertFalse((units / "graftty-runner.service").exists())
+        operations = log.read_text().splitlines()
+        self.assertEqual(operations[-2:], ["--user enable graftty-host.service", "--user start graftty-host.service"])
+        self.assertTrue((state / "graftty-host.service.enabled").exists())
+        self.assertTrue((state / "graftty-host.service.active").exists())
+        self.assertFalse((state / "graftty-runner.service.enabled").exists())
+        self.assertTrue((self.home / ".local/bin/graftty-host").resolve().is_relative_to(self.home / ".local/share/graftty/releases/0.1.0-legacy"))
+
+    def test_maintenance_refuses_inactive_legacy_unit(self):
+        legacy, log, state = self.legacy_install(running=False)
+        before = legacy.read_text()
+        result = self.install("--maintenance", success=False)
+        self.assertIn("existing user service to be active", result.stderr)
+        self.assertEqual(legacy.read_text(), before)
+        self.assertFalse((self.home / ".local/share/graftty/releases/0.1.0-test").exists())
+
+    def test_reinstall_over_legacy_unit_migrates_it(self):
+        legacy, log, state = self.legacy_install()
+        self.install()
+        self.assertFalse(legacy.exists())
+        self.assertTrue((self.home / ".config/systemd/user/graftty-runner.service").exists())
+        self.assertIn("--user disable graftty-host.service", log.read_text())
+
+    def test_legacy_command_link_is_kept(self):
+        self.install("--no-start")
+        release = self.home / ".local/share/graftty/releases/0.1.0-test"
+        for name in ("graftty-runner", "graftty-host"):
+            self.assertEqual((self.home / ".local/bin" / name).resolve(), (release / "bin" / name).resolve())
 
 class LibraryTests(unittest.TestCase):
     def test_glibc_and_loader_stay_on_target(self):
