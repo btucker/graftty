@@ -10,17 +10,37 @@ struct CompactTerminalSheet<Content: View>: View {
     @ViewBuilder let content: (String) -> Content
 
     var body: some View {
+        let terminals = CompactTerminalPresentation.terminals(in: worktree)
+        let mounted = presentation.mountedTerminal(in: terminals)
+
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Menu {
-                    ForEach(CompactTerminalPresentation.terminals(in: worktree), id: \.sessionName) { terminal in
-                        Button(terminal.displayTitle) { presentation.select(terminal.sessionName, in: worktree) }
+                    Picker("Choose terminal", selection: Binding(
+                        get: { mounted?.sessionName },
+                        set: { if let session = $0 { presentation.select(session) } }
+                    )) {
+                        ForEach(terminals, id: \.sessionName) { terminal in
+                            Text(terminal.displayTitle).tag(Optional(terminal.sessionName))
+                        }
+                        if let mounted, !terminals.contains(where: { $0.sessionName == mounted.sessionName }) {
+                            Text(mounted.displayTitle).tag(Optional(mounted.sessionName))
+                        }
                     }
+                    .pickerStyle(.inline)
                 } label: {
-                    Label("Choose terminal", systemImage: "terminal")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 44, height: 44)
-                }.disabled(CompactTerminalPresentation.terminals(in: worktree).isEmpty)
+                    HStack(spacing: 8) {
+                        Image(systemName: "terminal").frame(width: mounted == nil ? 44 : 24)
+                        if let mounted {
+                            Text(mounted.displayTitle).lineLimit(1).truncationMode(.tail)
+                        }
+                    }
+                    .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Choose terminal")
+                .accessibilityValue(mounted?.displayTitle ?? "")
+                .disabled(terminals.isEmpty && mounted == nil)
                 Spacer(minLength: 0)
                 Button { Task { await presentation.newTerminal(create: create) } } label: {
                     Image(systemName: "plus").frame(width: 36, height: 36)
@@ -33,8 +53,8 @@ struct CompactTerminalSheet<Content: View>: View {
             if let error = presentation.error {
                 Text(error).font(.callout).foregroundStyle(.secondary).padding()
             }
-            if let selected = presentation.selectedSession {
-                content(selected).id(selected)
+            if let mounted {
+                content(mounted.sessionName).id(mounted.sessionName)
             } else if presentation.isCreating || presentation.pendingUntil != nil {
                 ProgressView("Opening terminal…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

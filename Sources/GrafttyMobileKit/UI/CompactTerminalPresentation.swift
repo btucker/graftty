@@ -20,6 +20,16 @@ final class CompactTerminalPresentation {
         return worktree.layout?.leaves.filter { !agents.contains($0.sessionName) } ?? []
     }
 
+    func mountedTerminal(in terminals: [PaneLayoutNode.Leaf]) -> (sessionName: String, displayTitle: String)? {
+        guard let selectedSession else { return nil }
+        if let terminal = terminals.first(where: { $0.sessionName == selectedSession }) {
+            return (selectedSession, terminal.displayTitle)
+        }
+        // A split reply can confirm the session before inventory publishes its title.
+        guard awaitingInventory == selectedSession else { return nil }
+        return (selectedSession, "shell")
+    }
+
     /// @spec IPAD-2.25
     /// Hosts send an agents list for every worktree, often empty. Only a
     /// worktree with an agent the phone can show uses the agent workspace.
@@ -39,8 +49,9 @@ final class CompactTerminalPresentation {
         }
     }
 
-    func select(_ session: String, in worktree: WorktreePanes) {
-        guard Self.terminals(in: worktree).contains(where: { $0.sessionName == session }) else { return }
+    func select(_ session: String, in worktree: WorktreePanes? = nil) {
+        let sessions = worktree.map { Self.terminals(in: $0).map(\.sessionName) } ?? latestSessions
+        guard sessions.contains(session) else { return }
         selectedSession = session
         awaitingInventory = nil
         pendingUntil = nil
@@ -89,9 +100,9 @@ final class CompactTerminalPresentation {
             selectedSession = session
             awaitingInventory = session
             pendingUntil = Date().addingTimeInterval(5)
-            reconcileInventory(now: Date())
         } catch {
             self.error = error.localizedDescription
         }
+        reconcileInventory(now: Date())
     }
 }

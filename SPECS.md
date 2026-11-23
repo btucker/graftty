@@ -2990,6 +2990,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.28** While an iPad workspace is visible, the application shall keep agent tabs below the navigation bar, place pane resource controls alongside the tabs, and allow tab selection to change the focused terminal.
 
+**IPAD-2.29** While the compact Terminal sheet has a mounted shell, the application shall show its display name beside the switcher icon, expose the full name to accessibility, and mark only that session as selected in the picker, including after switching shells or reconciling a removed shell. Long names shall leave the new-shell and close controls usable.
+
 ### IPAD-3.x — Focused-Pane Toolbar
 
 **IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall expose a focused-pane toolbar containing Split Right, Split Down, Split Left, Split Up, Swap, and Close controls.
