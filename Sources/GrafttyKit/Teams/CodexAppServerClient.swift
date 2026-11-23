@@ -738,7 +738,7 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
     #endif
 }
 
-private enum CodexAppServerClientError: Error, Equatable, CustomStringConvertible {
+enum CodexAppServerClientError: Error, Equatable, CustomStringConvertible {
     case unsupportedPlatform
     case subprocessLaunchFailed(String)
     case writeFailed(String)
@@ -841,10 +841,13 @@ private final class CodexAppServerProxyStderrCapture {
     }
 }
 
-private final class CodexAppServerWebSocketConnection {
+/// One thread may read while another sends. Sends are serialized, including
+/// the pong a read answers a ping with.
+final class CodexAppServerWebSocketConnection: @unchecked Sendable {
     private let inputFD: Int32
     private let outputFD: Int32
     private var buffer: [UInt8] = []
+    private let writeLock = NSLock()
 
     init(inputFD: Int32, outputFD: Int32) {
         self.inputFD = inputFD
@@ -987,7 +990,7 @@ private final class CodexAppServerWebSocketConnection {
         frame.append(contentsOf: payload.enumerated().map { index, byte in
             byte ^ mask[index % mask.count]
         })
-        try writeAll(Data(frame), deadline: deadline)
+        try writeLock.withLock { try writeAll(Data(frame), deadline: deadline) }
     }
 
     private func appendClientPayloadLength(_ length: Int, to frame: inout [UInt8]) {
@@ -1035,7 +1038,7 @@ private final class CodexAppServerWebSocketConnection {
             guard remaining > 0 else {
                 throw CodexAppServerClientError.writeTimedOut
             }
-            let timeoutMilliseconds = max(1, Int32((remaining * 1000).rounded(.up)))
+            let timeoutMilliseconds = max(1, Int32((min(remaining, 60) * 1000).rounded(.up)))
             var descriptor = pollfd(fd: inputFD, events: Int16(POLLOUT), revents: 0)
             let result = poll(&descriptor, 1, timeoutMilliseconds)
             if result > 0 {
@@ -1045,7 +1048,7 @@ private final class CodexAppServerWebSocketConnection {
                 throw CodexAppServerClientError.writeFailed("stdin pipe is no longer writable")
             }
             if result == 0 {
-                throw CodexAppServerClientError.writeTimedOut
+                continue
             }
             if errno != EINTR {
                 throw CodexAppServerClientError.writeFailed(String(cString: strerror(errno)))
@@ -1059,14 +1062,14 @@ private final class CodexAppServerWebSocketConnection {
             guard remaining > 0 else {
                 throw CodexAppServerClientError.timeout
             }
-            let timeoutMilliseconds = max(1, Int32((remaining * 1000).rounded(.up)))
+            let timeoutMilliseconds = max(1, Int32((min(remaining, 60) * 1000).rounded(.up)))
             var descriptor = pollfd(fd: outputFD, events: Int16(POLLIN), revents: 0)
             let result = poll(&descriptor, 1, timeoutMilliseconds)
             if result > 0 {
                 return
             }
             if result == 0 {
-                throw CodexAppServerClientError.timeout
+                continue
             }
             if errno != EINTR {
                 throw CodexAppServerClientError.readFailed(String(cString: strerror(errno)))

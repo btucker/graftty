@@ -454,6 +454,16 @@ final class RemoteMacConnectionRegistry {
         return try await entry.connection.sendWorktreeManagement(request)
     }
 
+    /// Chat for one tab on a remote Mac, through the link connected when the
+    /// view opens.
+    func agentChatConnection(
+        identity: RemoteMacIdentity, worktreePath: String, agentID: String
+    ) -> AgentChatConnection {
+        .following(worktreePath: worktreePath, agentID: agentID) { [weak self] in
+            await self?.entries[identity]?.connection
+        }
+    }
+
     private func dial(
         remoteMac: RemoteMac,
         identity: RemoteMacIdentity,

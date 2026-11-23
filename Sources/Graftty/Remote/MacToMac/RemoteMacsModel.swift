@@ -785,6 +785,12 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
+    func agentChatConnection(
+        identity: RemoteMacIdentity, worktreePath: String, agentID: String
+    ) -> AgentChatConnection {
+        connectionRegistry.agentChatConnection(identity: identity, worktreePath: worktreePath, agentID: agentID)
+    }
+
     func repositories(on remoteMac: RemoteMac, includeRelayed: Bool = false) async throws
         -> [RemoteRepositoryInfo] {
         _ = try await connect(to: remoteMac)

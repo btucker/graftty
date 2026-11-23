@@ -45,6 +45,18 @@ public extension WorktreeEntry {
         agents.contains { $0.presentationSlotID == slot && ($0.completion != nil || $0.status == .closed) }
     }
 
+    /// The tab shows this viewer's Chat in place of its terminal.
+    func showsChat(in slot: PaneSlotID) -> Bool {
+        workspaceLayout?.showsChat(slot) == true
+            && agents.contains { $0.presentationSlotID == slot && AgentChatHost.offers($0) }
+    }
+
+    /// The slot shows something other than a live terminal, so its terminal
+    /// must not take the keyboard.
+    func showsNonTerminalContent(in slot: PaneSlotID) -> Bool {
+        hasCompletedContent(in: slot) || showsChat(in: slot)
+    }
+
     @discardableResult
     mutating func showAgentTab(_ id: String) -> PaneSlotID? {
         guard let slot = agents.first(where: { $0.id == id })?.presentationSlotID else { return nil }

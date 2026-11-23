@@ -597,6 +597,14 @@ public final class RemoteConnectionCoordinator {
         return try await connection.sendWorktreeManagement(request)
     }
 
+    /// Chat for one agent tab, through the connection in use when the view opens.
+    public func agentChatConnection(worktreePath: String, agentID: String, on host: Host) -> AgentChatConnection {
+        .following(worktreePath: worktreePath, agentID: agentID) { [weak self] in
+            guard let self, await self.isPaired(host) else { return nil }
+            return await self.connection(for: host, wake: .now)
+        }
+    }
+
     public func presentation(for host: Host, wake: WakePolicy = .whileDialing) async
         -> RemoteHostPresentation? {
         guard isPaired(host),

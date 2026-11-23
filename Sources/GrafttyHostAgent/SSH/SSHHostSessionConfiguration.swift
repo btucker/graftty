@@ -24,6 +24,7 @@ struct SSHHostSessionConfiguration: Sendable {
     var gitControl: AuthenticatedGitControl? = nil
     var chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil
     var chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { _ in }
+    var agentChatOpener: AgentChatChannelHandler.Opener? = nil
     let ownershipStore: SessionDisplayOwnershipStore
     let ownershipBroadcaster: DisplayOwnershipBroadcaster
     let teamHandler: TeamChannelHandler.Handler?
@@ -108,6 +109,20 @@ struct SSHHostSessionConfiguration: Sendable {
                             }
                         },
                         chromeTabOnDisconnect: chromeTabOnDisconnect,
+                        agentChatOpener: agentChatOpener.map { opener -> AgentChatChannelHandler.Opener in
+                            { @Sendable deviceID, worktreePath, agentID in
+                                let connection = await opener(deviceID, worktreePath, agentID)
+                                // Pairing can be revoked while the channel stays open.
+                                let allowed: @Sendable () -> Bool = {
+                                    peerBox.deviceID == deviceID && peerBox.terminalControlAllowed
+                                }
+                                return AgentChatConnection(
+                                    open: connection.open,
+                                    submit: { allowed() ? await connection.submit($0) : .rejected(.notController) },
+                                    answer: { allowed() ? await connection.answer($0, $1, $2) : false }
+                                )
+                            }
+                        },
                         ownershipStore: ownershipStore,
                         ownershipBroadcaster: ownershipBroadcaster,
                         deviceIDProvider: { peerBox.deviceID },

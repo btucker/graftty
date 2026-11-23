@@ -25,6 +25,8 @@ struct MultiPaneDetailView: View {
 
     @Environment(\.retainedMobilePanes) private var retainedPanes
     @State private var drawerResizeStart: Double?
+    /// One Chat model per tab, so a draft survives a tab change.
+    @State private var chatModels = AgentChatModelStore<String>()
     @State private var retentionOwner = UUID()
     /// The tree's only keyboard subscription; embedded panes read it from
     /// the environment (IPAD-2.10).
@@ -128,7 +130,10 @@ struct MultiPaneDetailView: View {
                             retainedPanes: retainedPanes,
                             paneHeader: currentWorkspace.group(containing: sessionName).map { AnyView(tabHeader($0)) },
                             paneBanner: currentWorkspace.group(containing: sessionName)?.id == inputRequestGroupID
-                                ? AnyView(inputRequestBanner) : nil
+                                ? AnyView(inputRequestBanner) : nil,
+                            showsChat: showsChat(sessionName),
+                            chatModel: showsChat(sessionName) ? chatModels.model(for: sessionName) : nil,
+                            onShowTerminal: { setShowsChat(false, for: sessionName) }
                         )
                         .id(sessionName)
                         }
@@ -182,6 +187,7 @@ struct MultiPaneDetailView: View {
     private func reconcileWorkspace(revealFocused: Bool) {
         let previous = Set(currentWorkspace.sessions)
         let live = Set(worktree.layout?.leaves.map(\.sessionName) ?? [])
+        chatModels.prune(keeping: live)
         retainedPanes?.retainWorkspace(Set(live.map { .init(hostID: host.id, sessionName: $0) }), owner: retentionOwner)
         workspaceStore.synchronize(hostID: host.id, worktree: worktree, focused: focusedPaneId, revealFocused: revealFocused)
         if let selected = currentWorkspace.focusedSession, selected != focusedPaneId,
@@ -199,7 +205,26 @@ struct MultiPaneDetailView: View {
     private func sessionTitle(_ session: String) -> String {
         worktree.workspaceSessionTitle(session)
     }
+    private func showsChat(_ session: String) -> Bool {
+        worktree.chatAgent(session: session) != nil && currentWorkspace.showsChat(session)
+    }
+    /// AGENT-6.187: only this device's saved layout changes. Nothing is sent to the host.
+    private func setShowsChat(_ value: Bool, for session: String) {
+        mutate { $0.setShowsChat(value, for: session) }
+        onSelectPane(session)
+    }
+
     private func tabHeader(_ group: WorkspaceLayout<String>.Group) -> some View {
+        HStack(spacing: 0) {
+            tabs(group)
+            if worktree.chatAgent(session: group.selected) != nil {
+                AgentChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
+                                                    set: { setShowsChat($0, for: group.selected) }))
+            }
+        }
+    }
+
+    private func tabs(_ group: WorkspaceLayout<String>.Group) -> some View {
         AgentTabStrip(spacing: 4) {
                 ForEach(group.sessions, id: \.self) { session in
                     Button { selectSession(session) } label: {
@@ -414,6 +439,9 @@ private struct MultiPaneLeafView: View {
     let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
     var paneHeader: AnyView? = nil
     var paneBanner: AnyView? = nil
+    var showsChat = false
+    var chatModel: AgentChatModel? = nil
+    var onShowTerminal: () -> Void = {}
 
     @State private var unusedNavigationPath = NavigationPath()
 
@@ -434,6 +462,9 @@ private struct MultiPaneLeafView: View {
             isEmbeddedPane: true,
             embeddedPaneHeader: paneHeader,
             embeddedPaneBanner: paneBanner,
+            embeddedShowsChat: showsChat,
+            onEmbeddedShowTerminal: onShowTerminal,
+            embeddedChatModel: chatModel,
             onPaneInteraction: onSelect,
             onBackToWorktrees: onBackToWorktrees,
             retainedPanes: retainedPanes

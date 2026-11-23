@@ -29,6 +29,24 @@ struct AgentSessionInfoTests {
         let old = Data(#"{"path":"/old","displayName":"main","repoDisplayName":"repo"}"#.utf8)
         #expect(try JSONDecoder().decode(WorktreePanes.self, from: old).agents == nil)
     }
+    @Test func chatIsOfferedOnlyForARunningTabTheHostSaysItCanShow() throws {
+        let legacy = Data(#"{"id":"agent","name":"Review","provider":"codex","status":"running","sessionName":"s1"}"#.utf8)
+        #expect(try JSONDecoder().decode(AgentSessionInfo.self, from: legacy).chatAvailable == nil)
+
+        let offered = AgentSessionInfo(id: "a1", name: "Codex", provider: "codex", status: "running", sessionName: "s1",
+                                       chatAvailable: true)
+        #expect(try JSONDecoder().decode(AgentSessionInfo.self, from: JSONEncoder().encode(offered)) == offered)
+        let finished = AgentSessionInfo(id: "a2", name: "Codex", provider: "codex", status: "closed", sessionName: nil,
+                                        retainedSessionName: "s2", chatAvailable: true)
+        let other = AgentSessionInfo(id: "a3", name: "Claude", provider: "claude", status: "running", sessionName: "s3")
+        let row = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "repo", displayBranch: "main",
+            state: .running, isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            agents: [offered, finished, other])
+        #expect(row.chatAgent(session: "s1") == offered)
+        #expect(row.chatAgent(session: "s2") == nil)
+        #expect(row.chatAgent(session: "s3") == nil)
+        #expect(row.chatAgent(session: "missing") == nil)
+    }
     @Test("@spec LAYOUT-2.167: When an agent resumes after completion, the application shall retain earlier assignment results in Context metadata.")
     func retainsPreviousResults() throws {
         let agent = AgentSessionInfo(id: "agent", name: "Review", provider: "codex", status: "running", sessionName: "session",

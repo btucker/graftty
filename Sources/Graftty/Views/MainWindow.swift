@@ -150,6 +150,9 @@ struct MainWindow: View {
                 }, conversationRequest: { id, action in
                     try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .agentConversation(worktreeID: snapshot.path, agentID: id, action: action))
+                }, chatConnection: { agentID in
+                    remoteMacsModel.agentChatConnection(identity: RemoteMacIdentity(remote),
+                        worktreePath: snapshot.path, agentID: agentID)
                 })
                 .id(RemoteWorktreeViewerController.WorktreeKey(identity: RemoteMacIdentity(remote), worktreePath: snapshot.path))
         }
@@ -666,8 +669,8 @@ struct MainWindow: View {
         if selectedRemoteIdentity != nil { return { requestedRemoteAgent = $0 } }
         guard let worktree = selectedWorktreeBinding else { return nil }
         return { id in
-            guard let slot = worktree.wrappedValue.showAgentTab(id) else { return }
-            if worktree.wrappedValue.hasCompletedContent(in: slot) { terminalManager.clearFocus() }
+            guard let slot = worktree.wrappedValue.showAgentTab(id), isActiveWorkspaceWindow else { return }
+            if worktree.wrappedValue.showsNonTerminalContent(in: slot) { terminalManager.clearFocus() }
             else { terminalManager.setFocus(slot) }
         }
     }
@@ -1259,7 +1262,7 @@ struct MainWindow: View {
         // typing immediately after a sidebar click without having to also
         // click into the terminal.
         if let wt = appState.worktree(forPath: path),
-           let target = wt.presentationPane, wt.hasCompletedContent(in: target) {
+           let target = wt.presentationPane, wt.showsNonTerminalContent(in: target) {
             if let owner = workspaceWindows.windowShowing(wt.id), owner === workspaceWindows.active {
                 terminalManager.clearFocus()
             }
@@ -1267,8 +1270,9 @@ struct MainWindow: View {
             makePaneFirstResponder(
                 target,
                 when: {
-                    workspaceWindows.windowShowing(worktree.id) != nil
-                        && appState.worktree(forPath: path)?.presentationPane == target
+                    guard let current = appState.worktree(forPath: path) else { return false }
+                    return workspaceWindows.windowShowing(worktree.id) != nil
+                        && current.presentationPane == target && !current.showsNonTerminalContent(in: target)
                 }
             )
         }

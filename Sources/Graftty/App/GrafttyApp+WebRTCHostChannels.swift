@@ -679,6 +679,13 @@ extension GrafttyApp {
         let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { viewer in
             await chromeBroker.disconnect(viewerID: viewer)
         }
+        let agentChatService = services.agentChatService
+        let agentChatOpener: AgentChatChannelHandler.Opener = { deviceID, worktreePath, agentID in
+            await MainActor.run {
+                agentChatService.connection(worktreePath: worktreePath, agentID: agentID,
+                                            viewer: .device(deviceID.value))
+            }
+        }
 
         // Every device gets a fully configured connection agent. Shared
         // registries keep revocation and routing consistent across devices.
@@ -692,6 +699,7 @@ extension GrafttyApp {
              displayOwnershipStore = services.displayOwnershipStore,
              activeRemotePeers, panesStateSubscribe, panesStateV2Subscribe,
              paneControlMutator, worktreeManagementMutator, chromeTabMutator, chromeTabOnDisconnect,
+             agentChatOpener,
              zmxExe = zmxBinary, zmxDir] in
             let hostAgent = WebRTCHostAgent(
                 hostKey: hostKey,
@@ -757,6 +765,7 @@ extension GrafttyApp {
                 paneControlMutator: paneControlMutator,
                 worktreeManagementMutator: worktreeManagementMutator,
                 chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+                agentChatOpener: agentChatOpener,
                 displayOwnershipStore: displayOwnershipStore,
                 sshConnectionRegistry: sshConnectionRegistry
             )

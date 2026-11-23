@@ -53,6 +53,12 @@ final class AppServices {
     /// Process-wide display ownership state shared by web/iOS bridge
     /// connections and, once wired, native Mac panes.
     let displayOwnershipStore: SessionDisplayOwnershipStore
+    /// Chat for agent tabs hosted on this Mac, shared by the local window and paired viewers.
+    lazy var agentChatService = AgentChatService(
+        storage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
+        ownership: displayOwnershipStore,
+        state: { [weak self] in self?.appStateProvider?() ?? AppState() }
+    )
     let teamInbox: TeamInbox
     let remoteTeamRouter = RemoteTeamRouter()
     /// Published on every input to the sidebar and panes-state snapshots.

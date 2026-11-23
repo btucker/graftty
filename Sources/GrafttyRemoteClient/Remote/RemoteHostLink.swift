@@ -43,6 +43,16 @@ extension DirectSSHHostConnection: MCPHostLink {}
 extension RemoteHostConnection: MCPHostLink {}
 #endif
 
+/// A link that can open the host's Chat channel for an agent tab.
+public protocol AgentChatHostLink: RemoteHostLink {
+    func makeAgentChatClient() async throws -> AgentChatChannelClient
+}
+
+extension DirectSSHHostConnection: AgentChatHostLink {}
+#if canImport(WebRTC)
+extension RemoteHostConnection: AgentChatHostLink {}
+#endif
+
 /// A link dialed by exchanging a signed SDP offer and answer.
 public protocol WebRTCHostLink: RemoteHostLink {
     func createOfferSDP() async throws -> String

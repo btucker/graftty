@@ -5516,6 +5516,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.179** When Antigravity starts a turn that no new user input began, such as a turn woken by a delivered team message, the application shall treat it as a turn start without recording the previous user prompt again.
 
+**AGENT-6.180** When the running agent advertises a new command list, the application shall replace the slash menu in that tab's Chat view with the advertised names, descriptions, and argument hints.
+
+**AGENT-6.181** When the user chooses a slash command in the graphical composer, the application shall insert its invocation into the editable draft and wait for the user to send it.
+
+**AGENT-6.182** When the user sends a slash command from an agent tab's Chat view on Mac or GrafttyMobile, the application shall deliver the draft's exact command text and arguments to that tab's bound session.
+
+**AGENT-6.183** When a user switches a supported running agent tab between Chat and Terminal on Mac or GrafttyMobile, the application shall keep the same tab, terminal session, provider process, assignment, and conversation in both directions.
+
+**AGENT-6.184** When a user switches views during a turn, the application shall continue displaying that turn in the selected view and show each submitted message exactly once.
+
+**AGENT-6.185** When a user switches views with a provider request pending, the application shall preserve the request for an explicit answer and remove its action from Chat once the provider resolves it.
+
+**AGENT-6.186** When a user switches views with unsent input, the application shall preserve each view's draft in its original input field without submitting it.
+
+**AGENT-6.187** When a paired viewer selects Chat or Terminal, the application shall change only that viewer's presentation and preserve the session's input ownership.
+
+**AGENT-6.188** When the user chooses a command from the command list of an agent tab's Chat view, the application shall insert its invocation into the editable draft, close the list, and wait for the user to send it.
+
+**AGENT-6.189** While a draft is expanded in an agent tab's Chat view, the application shall keep it expanded until the user collapses it or the whole draft is sent.
+
 ## CLI — CLI
 
 ### CLI-1.x

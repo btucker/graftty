@@ -20,6 +20,13 @@ public enum SidebarAgentTitle {
 }
 
 public extension WorktreePanes {
+    /// The agent whose conversation the host can show in Chat for this tab.
+    /// Nil for a host that does not serve Chat, another provider, and a
+    /// finished agent.
+    func chatAgent(session: String) -> AgentSessionInfo? {
+        agents?.first { $0.sessionName == session && $0.chatAvailable == true && !$0.isCompleted }
+    }
+
     func sidebarAgentLeaves(in workspace: WorkspaceLayout<String>) -> [PaneLayoutNode.Leaf] {
         guard state == .running || state == .closed, !showsCreationProgress else { return [] }
         let live = Dictionary((layout?.leaves ?? []).map { ($0.sessionName, $0) },

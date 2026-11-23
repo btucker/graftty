@@ -44,6 +44,9 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public private(set) var focusedSession: Session?
     public var drawerVisible: Bool
     public var drawerHeight: Double
+    /// Agent tabs this viewer shows as Chat. Every other tab shows Terminal.
+    /// Optional so a layout saved before Chat existed still loads.
+    public private(set) var chatSessions: Set<Session>?
     public var sessions: [Session] { groups.flatMap(\.sessions) + terminals }
     /// Visible canvas groups in spatial order, with each group's tab order.
     public var canvasSessions: [Session] {
@@ -127,7 +130,25 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         return lastAgent
     }
 
+    public func showsChat(_ session: Session) -> Bool { chatSessions?.contains(session) ?? false }
+
+    /// Records this viewer's view of a tab. It changes no selection or focus.
+    public mutating func setShowsChat(_ value: Bool, for session: Session) {
+        guard sessions.contains(session) else { return }
+        var chosen = chatSessions ?? []
+        if value { chosen.insert(session) } else { chosen.remove(session) }
+        chatSessions = chosen.isEmpty ? nil : chosen
+    }
+
     public mutating func remove(_ session: Session) {
+        chatSessions?.remove(session)
+        if chatSessions?.isEmpty == true { chatSessions = nil }
+        detach(session)
+    }
+
+    /// Takes a tab out of its group or the drawer. Its view choice stays, for
+    /// a move that puts the tab back somewhere else.
+    private mutating func detach(_ session: Session) {
         terminals.removeAll { $0 == session }
         if selectedTerminal == session { selectedTerminal = terminals.first }
         for i in groups.indices {
@@ -143,7 +164,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public mutating func move(_ session: Session, to target: UUID) {
         guard sessions.contains(session), groups.contains(where: { $0.id == target }) else { return }
         if group(containing: session)?.id == target { select(session); return }
-        remove(session)
+        detach(session)
         guard let index = groups.firstIndex(where: { $0.id == target }) else { return }
         groups[index].sessions.append(session)
         groups[index].selected = session
@@ -173,7 +194,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public mutating func split(_ session: Session, beside target: UUID, edge: Edge) {
         guard sessions.contains(session), let destination = groups.first(where: { $0.id == target }),
               !(destination.sessions == [session]) else { return }
-        remove(session)
+        detach(session)
         let group = Group(sessions: [session], selected: session)
         groups.append(group)
         let before = edge == .left || edge == .top

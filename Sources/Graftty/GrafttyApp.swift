@@ -278,6 +278,7 @@ struct GrafttyApp: App {
                     let router = SocketRequestRouter(appState: $appState, terminalManager: terminalManager, services: services)
                     return await router.handleRequest(.agent(request)) ?? .error("Agent operation returned no response")
                 })
+                .environment(\.agentChatService, services.agentChatService)
                 .environment(\.localAttentionAnswer, { answer in
                     let router = SocketRequestRouter(appState: $appState, terminalManager: terminalManager, services: services)
                     return await AttentionAnswerDelivery.deliver(worktreeID: answer.worktree.path, paneID: answer.paneID,
@@ -498,10 +499,11 @@ struct GrafttyApp: App {
         // Window activation mirrors that window's selection into AppState.
         appState.selectedWorktreePath = worktree.path
         if worktree.state == .running, let pane = worktree.focusedPaneSlotID,
-           !worktree.hasCompletedContent(in: pane) {
+           !worktree.showsNonTerminalContent(in: pane) {
             terminalManager.promoteToFirstResponder(pane, when: {
-                appState.selectedWorktreePath == worktree.path
-                    && appState.worktree(forPath: worktree.path)?.focusedPaneSlotID == pane
+                guard let current = appState.worktree(forPath: worktree.path) else { return false }
+                return appState.selectedWorktreePath == worktree.path
+                    && current.focusedPaneSlotID == pane && !current.showsNonTerminalContent(in: pane)
             }, onFocused: { terminalManager.setFocus(pane) })
         }
     }
@@ -1079,7 +1081,8 @@ struct GrafttyApp: App {
                         portBindings: running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
                             guard let session = wt.paneSessions[slot], let bindings = panesPortBindings.bindings[slot], !bindings.isEmpty else { return nil }
                             return (ZmxLauncher.sessionName(for: session), bindings)
-                        }) : nil
+                        }) : nil,
+                        offersChat: true
                     )))
                 }
             }

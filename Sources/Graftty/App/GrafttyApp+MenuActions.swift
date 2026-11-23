@@ -23,7 +23,9 @@ extension GrafttyApp {
 
     var paneCommandTargetID: PaneSlotID? {
         if workspaceWindows.active?.worktreeID == nil { return workspaceWindows.active?.remotePaneID }
-        return focusedPresentationIsCompleted ? nil : focusedPaneSlotID
+        guard let worktree = focusedWorktree, let pane = focusedPaneSlotID,
+              !worktree.showsNonTerminalContent(in: pane) else { return nil }
+        return pane
     }
 
     private func handleSplit(_ split: PaneSplit) {

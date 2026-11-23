@@ -58,6 +58,7 @@ public actor WebRTCHostAgent {
     /// propagation without sharing the instance itself.
     private let chromeTabMutator: ChromeTabChannelHandler.Mutator?
     private let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect
+    private let agentChatOpener: AgentChatChannelHandler.Opener?
     private let displayOwnershipStore: SessionDisplayOwnershipStore
     private let displayOwnershipBroadcaster: DisplayOwnershipBroadcaster
     private var sshTransport: SSHNIOTransport?
@@ -206,6 +207,7 @@ public actor WebRTCHostAgent {
         worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
         chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil,
         chromeTabOnDisconnect: @escaping ChromeTabChannelHandler.OnDisconnect = { _ in },
+        agentChatOpener: AgentChatChannelHandler.Opener? = nil,
         displayOwnershipStore: SessionDisplayOwnershipStore,
         sshConnectionRegistry: SSHConnectionRegistry = SSHConnectionRegistry()
     ) {
@@ -227,6 +229,7 @@ public actor WebRTCHostAgent {
         }
         self.chromeTabMutator = chromeTabMutator
         self.chromeTabOnDisconnect = chromeTabOnDisconnect
+        self.agentChatOpener = agentChatOpener
         self.displayOwnershipStore = displayOwnershipStore
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         self.sshConnectionRegistry = sshConnectionRegistry
@@ -755,6 +758,7 @@ public actor WebRTCHostAgent {
                     mcpControl: mcpControl,
                     gitControl: gitControl,
                     chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+                    agentChatOpener: agentChatOpener,
                     ownershipStore: ownershipStore, ownershipBroadcaster: ownershipBroadcaster,
                     teamHandler: teamHandler, teamOnConnect: teamOnConnect, teamOnDisconnect: teamOnDisconnect
                 )

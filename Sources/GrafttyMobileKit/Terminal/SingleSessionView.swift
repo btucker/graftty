@@ -114,6 +114,15 @@ struct SingleSessionView: View {
     private let embeddedPaneHeader: AnyView?
     /// Shown under an embedded pane's tabs, such as an input request.
     private let embeddedPaneBanner: AnyView?
+    /// The iPad workspace's Chat or Terminal choice for this tab.
+    private let embeddedShowsChat: Bool
+    private let onEmbeddedShowTerminal: () -> Void
+    /// The iPad workspace's model for this tab, which outlives a tab change.
+    private let embeddedChatModel: AgentChatModel?
+    /// The iPhone's choice for this tab, mirrored from `MobileChatViewChoice`.
+    @State private var compactShowsChat = false
+    /// Kept while Terminal shows, so the draft is here on the way back.
+    @State private var chatModel = AgentChatModel()
     /// Fired from the terminal's UIKit touch observer before focus/input is
     /// attempted, allowing the split tree to select this leaf first.
     let onPaneInteraction: (() -> Void)?
@@ -245,12 +254,15 @@ struct SingleSessionView: View {
         }
     }
 
+    /// `keyboardAllowed` is the terminal's choice. While Chat shows, the
+    /// keyboard belongs to its message field.
     static func shouldDismissKeyboard(
         isKeyboardVisible: Bool,
         keyboardAllowed: Bool,
-        isPaneFocused: Bool
+        isPaneFocused: Bool,
+        showsChat: Bool = false
     ) -> Bool {
-        isPaneFocused && isKeyboardVisible && !keyboardAllowed
+        isPaneFocused && isKeyboardVisible && !keyboardAllowed && !showsChat
     }
 
     /// Runs once per keyboard frame notification. Also dismisses an
@@ -260,7 +272,8 @@ struct SingleSessionView: View {
         guard Self.shouldDismissKeyboard(
             isKeyboardVisible: isKeyboardVisible,
             keyboardAllowed: keyboardAllowed,
-            isPaneFocused: isPaneFocused
+            isPaneFocused: isPaneFocused,
+            showsChat: showsChat
         ) else { return }
         UIApplication.shared.sendAction(
             #selector(UIResponder.resignFirstResponder),
@@ -345,6 +358,9 @@ struct SingleSessionView: View {
         isEmbeddedPane: Bool = false,
         embeddedPaneHeader: AnyView? = nil,
         embeddedPaneBanner: AnyView? = nil,
+        embeddedShowsChat: Bool = false,
+        onEmbeddedShowTerminal: @escaping () -> Void = {},
+        embeddedChatModel: AgentChatModel? = nil,
         isTerminalSheet: Bool = false,
         onPaneInteraction: (() -> Void)? = nil,
         onBackToWorktrees: (() -> Void)? = nil,
@@ -370,6 +386,12 @@ struct SingleSessionView: View {
         self.isEmbeddedPane = isEmbeddedPane
         self.embeddedPaneHeader = embeddedPaneHeader
         self.embeddedPaneBanner = embeddedPaneBanner
+        self.embeddedShowsChat = embeddedShowsChat
+        self.onEmbeddedShowTerminal = onEmbeddedShowTerminal
+        self.embeddedChatModel = embeddedChatModel
+        self._compactShowsChat = State(initialValue: step.worktreePath.map {
+            MobileChatViewChoice.showsChat(hostID: step.host.id, worktreePath: $0, sessionName: step.sessionName)
+        } ?? false)
         self.onPaneInteraction = onPaneInteraction
         self.onBackToWorktrees = onBackToWorktrees
         self.fontSizeStore = fontSizeStore
@@ -497,6 +519,19 @@ struct SingleSessionView: View {
         }
     }
     private var completedAgent: AgentSessionInfo? { sessionAgent.flatMap { $0.isCompleted ? $0 : nil } }
+    /// The agent whose conversation the host can show in Chat for this tab.
+    private var chatAgent: AgentSessionInfo? {
+        guard !isTerminalSheet else { return nil }
+        return (attentionWorktrees.first { $0.path == step.worktreePath } ?? terminalSheetWorktree)?
+            .chatAgent(session: step.sessionName)
+    }
+    private var showsChat: Bool { chatAgent != nil && (isEmbeddedPane ? embeddedShowsChat : compactShowsChat) }
+    /// AGENT-6.187: only this device's stored choice changes. Nothing is sent to the host.
+    private func setCompactShowsChat(_ value: Bool) {
+        guard let path = step.worktreePath else { return }
+        MobileChatViewChoice.setShowsChat(value, hostID: step.host.id, worktreePath: path, sessionName: step.sessionName)
+        compactShowsChat = value
+    }
 
     private var compactAgentKey: String { "workspace.iphone.agent.\(step.host.id).\(step.worktreePath ?? "")" }
     private func selectCreatedAgent(_ target: String, generation: UUID) {
@@ -594,6 +629,14 @@ struct SingleSessionView: View {
                     MobileAgentConversationView(host: step.host, worktreePath: path, agent: agent)
                 }
                 .padding(.top, compactContentTopInset)
+            } else if showsChat, let agent = chatAgent, let path = step.worktreePath {
+                // The terminal session stays attached underneath; only this view changes.
+                MobileAgentChatView(host: step.host, worktreePath: path, agent: agent, model: embeddedChatModel ?? chatModel,
+                    theme: terminalTheme,
+                    showTerminal: { if isEmbeddedPane { onEmbeddedShowTerminal() } else { setCompactShowsChat(false) } })
+                    .padding(.top, compactContentTopInset)
+                    // The terminal reports its own touches. Chat selects its pane here.
+                    .simultaneousGesture(TapGesture().onEnded { _ in onPaneInteraction?() })
             } else {
             switch connection.presentation {
             case .loading:
@@ -718,7 +761,7 @@ struct SingleSessionView: View {
                     // CONTEXT-37: below the floating controls, which hold Worktree context.
                     let controlsHeight = step.worktreePath != nil && coordinator != nil ? floatingControlsHeight : 0
                     ScrollbackMapOverlayHost(model: model, timeline: timeline, terminalTheme: terminalTheme,
-                                             isVisible: scenePhase == .active && connection == .live,
+                                             isVisible: scenePhase == .active && connection == .live && !showsChat,
                                              recovery: .pairedCodex(sessionAgent),
                                              loadEarlier: loadEarlierCodexPage,
                                              showSavedMessages: sessionAgent?.provider == "codex" && coordinator != nil
@@ -900,6 +943,18 @@ struct SingleSessionView: View {
                     }
                 }
                 Spacer(minLength: 0)
+                if chatAgent != nil {
+                    TerminalFloatingControlGroup(compactGlyphs: true) {
+                        Button(showsChat ? "Show Terminal" : "Show Chat",
+                               systemImage: showsChat ? "apple.terminal" : "bubble.left.and.text.bubble.right") {
+                            setCompactShowsChat(!showsChat)
+                        }
+                        .labelStyle(.iconOnly)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                        .accessibilityIdentifier("workspace.chat.toggle")
+                    }
+                }
                 remoteOpenControls.fixedSize()
             }
             WorkspaceInputRequest(context: worktreeContext, selectedSession: step.sessionName, onSelect: selectWorkspaceSession)
@@ -1229,7 +1284,7 @@ struct SingleSessionView: View {
                 if shouldExposeKeyboard && isKeyboardVisible {
                     terminalControlBar
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else if shouldExposeKeyboard && !keyboardAllowed {
+                } else if shouldExposeKeyboard && !keyboardAllowed && !showsChat {
                     HStack {
                         Spacer()
                         keyboardButton

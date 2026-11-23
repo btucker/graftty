@@ -134,6 +134,11 @@ public actor DirectSSHHostConnection {
             subsystemName: originAware ? SSHChannelTypeNames.panesStateV2 : SSHChannelTypeNames.panesState,
             requestReply: requestReply, onSnapshot: onSnapshot, onClosed: onClosed, onSidebarSnapshot: onSidebarSnapshot)
     }
+    public func makeAgentChatClient() throws -> AgentChatChannelClient {
+        let (channel, handler) = try connectedTransport()
+        return AgentChatChannelClient(parentChannel: channel, parentHandler: handler.handler)
+    }
+
     public func makeChromeTabClient() throws -> ChromeTabChannelClient {
         let (channel, handler) = try connectedTransport()
         return ChromeTabChannelClient(parentChannel: channel, parentHandler: handler.handler)

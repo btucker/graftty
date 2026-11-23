@@ -2227,9 +2227,14 @@ struct FirstLineClearanceRefreshTests {
             + ["› still typing", "", "  GPT-6 · context"]
         mounted.session.receive(Data(transcript.joined(separator: "\r\n").utf8))
         try await waitUntil("submitted prompt moved into scrollback") {
-            container.snapshotScrollView.hasScrollback && mounted.session.readViewportText()?.contains("still typing") == true
+            container.snapshotScrollView.hasScrollback && mounted.topInset() == 0
+                && mounted.session.readViewportText()?.hasSuffix("GPT-6 · context") == true
         }
-        let viewport = mounted.session.readViewportRowsText()
+        // Start between the prompt and the live tail so leaving the rail on either page fails.
+        let savedRow = rows / 2
+        let surface = try #require(container.terminalView.surface)
+        container.scroll(toRow: savedRow)
+        try #require(surface.currentScrollbar?.offset == UInt64(savedRow))
         let model = container.scrollbackMapModel
         let agent = AgentSessionInfo(id: "agent", name: "agent", provider: "codex", status: "running", sessionName: "pane")
         model.update(timeline: WorktreeTimeline(history: nil, brief: nil), recovery: .pairedCodex(agent))
@@ -2239,7 +2244,7 @@ struct FirstLineClearanceRefreshTests {
         let marks = try #require(model.map?.marks)
         #expect(marks.map(\.row) == [0], "First physical rows: \(container.scrollbackRows(limit: 200)?.rows.prefix(6) ?? [])")
         #expect(marks.compactMap { model.entries[$0.id]?.text } == ["the rail isn't appearing in this codex session on iPhone"])
-        #expect(mounted.session.readViewportRowsText() == viewport)
+        #expect(surface.currentScrollbar?.offset == UInt64(savedRow))
     }
 
     @Test("@spec IOS-6.41: While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall poll its viewport for first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.")
