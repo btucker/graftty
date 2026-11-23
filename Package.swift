@@ -138,7 +138,7 @@ let package = Package(
         // insensitive volumes. See `BundlePathSanitizer` for the runtime
         // PATH override that protects spawned panes from the same trap.
         .executable(name: "graftty-cli", targets: ["GrafttyCLI"]),
-        .executable(name: "graftty-host", targets: ["GrafttyHost"]),
+        .executable(name: "graftty-runner", targets: ["GrafttyRunner"]),
         .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
         .library(name: "GrafttyHostAgent", targets: ["GrafttyHostAgent"]),
@@ -279,7 +279,7 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .executableTarget(
-            name: "GrafttyHost",
+            name: "GrafttyRunner",
             dependencies: ["GrafttyKit", "GrafttyProtocol", "GrafttyHostAgent",
                            .product(name: "ArgumentParser", package: "swift-argument-parser")] + cryptoDependencies,
             swiftSettings: strictWarnings
@@ -329,8 +329,8 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .testTarget(
-            name: "GrafttyHostTests",
-            dependencies: ["GrafttyHost", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
+            name: "GrafttyRunnerTests",
+            dependencies: ["GrafttyRunner", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
             swiftSettings: strictWarnings
         ),
         .testTarget(
