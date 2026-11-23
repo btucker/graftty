@@ -75,6 +75,26 @@ struct WorktreeSurfaceBudgetTests {
         #expect(evicted == [leaves["/a"]])
     }
 
+    @Test("@spec MEM-1.10: While a worktree is displayed in any open macOS window, the application shall keep its terminal surfaces even when the number of open worktrees exceeds the surface budget.")
+    func displayedWorktreesSurviveUntilTheirWindowsReleaseThem() {
+        var evicted: [PaneSlotID] = []
+        let budget = WorktreeSurfaceBudget(capacity: 2) { evicted.append($0) }
+        let (trees, leaves) = singleLeafTrees(["/a", "/b", "/c", "/background"])
+        var presented: Set<String> = ["/a", "/b", "/c"]
+        budget.isPresented = { presented.contains($0) }
+        for path in ["/a", "/b", "/c"] {
+            budget.noteSelected(worktreePath: path, splitTreesByPath: trees)
+        }
+
+        #expect(evicted.isEmpty)
+        budget.noteCreated(worktreePath: "/background", splitTreesByPath: trees)
+        #expect(evicted == [leaves["/background"]])
+
+        presented.remove("/a")
+        budget.trim(using: trees)
+        #expect(evicted == [leaves["/background"], leaves["/a"]])
+    }
+
     @Test func reselectingHeadDoesNotEvict() {
         var evicted: [PaneSlotID] = []
         let budget = WorktreeSurfaceBudget(capacity: 4) { evicted.append($0) }

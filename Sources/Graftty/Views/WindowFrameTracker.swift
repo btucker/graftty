@@ -15,14 +15,20 @@ struct WindowFrameTracker: NSViewRepresentable {
     let initialFrame: CGRect?
     let debounceInterval: TimeInterval
     let onFrameChange: (CGRect) -> Void
+    let onAttach: (NSWindow) -> Bool
+    let onDetach: (NSWindow) -> Void
 
     init(
         initialFrame: CGRect? = nil,
         debounceInterval: TimeInterval = 0.25,
+        onAttach: @escaping (NSWindow) -> Bool,
+        onDetach: @escaping (NSWindow) -> Void,
         onFrameChange: @escaping (CGRect) -> Void
     ) {
         self.initialFrame = initialFrame
         self.debounceInterval = debounceInterval
+        self.onAttach = onAttach
+        self.onDetach = onDetach
         self.onFrameChange = onFrameChange
     }
 
@@ -38,7 +44,9 @@ struct WindowFrameTracker: NSViewRepresentable {
         Coordinator(
             initialFrame: initialFrame,
             onFrameChange: onFrameChange,
-            debounceInterval: debounceInterval
+            debounceInterval: debounceInterval,
+            onAttach: onAttach,
+            onDetach: onDetach
         )
     }
 
@@ -47,6 +55,8 @@ struct WindowFrameTracker: NSViewRepresentable {
         var initialFrame: CGRect?
         private let onFrameChange: (CGRect) -> Void
         private let debounceInterval: TimeInterval
+        private let onAttach: (NSWindow) -> Bool
+        private let onDetach: (NSWindow) -> Void
         private var observers: [NSObjectProtocol] = []
         private var pendingTask: Task<Void, Never>?
         private weak var window: NSWindow?
@@ -55,19 +65,24 @@ struct WindowFrameTracker: NSViewRepresentable {
         init(
             initialFrame: CGRect?,
             onFrameChange: @escaping (CGRect) -> Void,
-            debounceInterval: TimeInterval
+            debounceInterval: TimeInterval,
+            onAttach: @escaping (NSWindow) -> Bool = { _ in true },
+            onDetach: @escaping (NSWindow) -> Void = { _ in }
         ) {
             self.initialFrame = initialFrame
             self.onFrameChange = onFrameChange
             self.debounceInterval = debounceInterval
+            self.onAttach = onAttach
+            self.onDetach = onDetach
         }
 
         func attach(to window: NSWindow) {
             guard self.window !== window else { return }
             detach()
             self.window = window
+            window.tabbingMode = .disallowed
 
-            applyInitialFrameIfNeeded(to: window)
+            if onAttach(window) { applyInitialFrameIfNeeded(to: window) }
 
             let nc = NotificationCenter.default
             let resize = nc.addObserver(
@@ -84,7 +99,14 @@ struct WindowFrameTracker: NSViewRepresentable {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.scheduleFrameChange() }
             }
-            observers = [resize, move]
+            let close = nc.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.detach() }
+            }
+            observers = [resize, move, close]
         }
 
         func detach() {
@@ -92,7 +114,10 @@ struct WindowFrameTracker: NSViewRepresentable {
             observers.removeAll()
             pendingTask?.cancel()
             pendingTask = nil
-            window = nil
+            if let window {
+                self.window = nil
+                onDetach(window)
+            }
         }
 
         private func applyInitialFrameIfNeeded(to window: NSWindow) {
@@ -142,10 +167,8 @@ struct WindowFrameTracker: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard let window else { return }
-            MainActor.assumeIsolated {
-                coordinator?.attach(to: window)
-            }
+            if let window { coordinator?.attach(to: window) }
+            else { coordinator?.detach() }
         }
     }
 }
@@ -157,12 +180,16 @@ extension View {
     func trackWindowFrame(
         initialFrame: CGRect?,
         debounceInterval: TimeInterval = 0.25,
+        onAttach: @escaping (NSWindow) -> Bool,
+        onDetach: @escaping (NSWindow) -> Void,
         onChange: @escaping (CGRect) -> Void
     ) -> some View {
         background(
             WindowFrameTracker(
                 initialFrame: initialFrame,
                 debounceInterval: debounceInterval,
+                onAttach: onAttach,
+                onDetach: onDetach,
                 onFrameChange: onChange
             )
         )

@@ -114,11 +114,6 @@ extension GrafttyApp {
                         !NSApp.isHidden
                         && terminalManager.view(for: slot)?
                             .window?.isVisible == true
-                        && appStateBinding.wrappedValue
-                            .selectedWorktreePath.flatMap {
-                                appStateBinding.wrappedValue
-                                    .worktree(forPath: $0)
-                            }?.splitTree.containsLeaf(slot) == true
                     guard let newID = PaneCommands.splitPane(
                         appState: appStateBinding,
                         terminalManager: terminalManager,
@@ -158,21 +153,12 @@ extension GrafttyApp {
                         )
                     }
                     let slot = PaneSlotID(id: paneID)
-                    let targetIsVisible =
-                        !NSApp.isHidden
-                        && terminalManager.view(for: slot)?
-                            .window?.isVisible == true
-                        && appStateBinding.wrappedValue
-                            .selectedWorktreePath.flatMap {
-                                appStateBinding.wrappedValue
-                                    .worktree(forPath: $0)
-                            }?.splitTree.containsLeaf(slot) == true
                     PaneCommands.closePane(
                         appState: appStateBinding,
                         terminalManager: terminalManager,
                         targetID: slot,
                         userInitiated: true,
-                        activateReplacement: targetIsVisible
+                        activateReplacement: terminalManager.view(for: slot)?.window?.isKeyWindow == true
                     )
                     return .ok
                 case .swap:
@@ -268,6 +254,7 @@ extension GrafttyApp {
     /// against `appState` and the shared worktree flows.
     private static func makeWorktreeManagementMutator(
         appState appStateBinding: Binding<AppState>,
+        workspaceWindows: WorkspaceWindows,
         terminalManager: TerminalManager,
         services: AppServices,
         worktreeManagement: WorktreeManagement,
@@ -512,11 +499,9 @@ extension GrafttyApp {
                         terminalManager: terminalManager,
                         startSurfacesInBackground: true
                     )
-                    let targetIsVisible =
-                        !NSApp.isHidden
-                        && NSApp.mainWindow?.isVisible == true
-                        && appStateBinding.wrappedValue
-                            .selectedWorktreePath == worktreeID
+                    let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID)
+                    let displayedWindow = worktree.flatMap { workspaceWindows.windowShowing($0.id)?.window }
+                    let targetIsVisible = !NSApp.isHidden && displayedWindow?.isVisible == true
                     if result == .started || result == .alreadyRunning {
                         let splitTrees = appStateBinding.wrappedValue
                             .runningSplitTreesByPath()
@@ -534,8 +519,7 @@ extension GrafttyApp {
                     }
                     if result == .started,
                        !targetIsVisible,
-                       let worktree = appStateBinding.wrappedValue
-                           .worktree(forPath: worktreeID) {
+                       let worktree {
                         for terminalID in worktree.splitTree.allLeaves {
                             terminalManager.setVisible(
                                 false,
@@ -627,6 +611,7 @@ extension GrafttyApp {
     static func makeHostAgentPool(
         hostKey: Curve25519.Signing.PrivateKey,
         appState appStateBinding: Binding<AppState>,
+        workspaceWindows: WorkspaceWindows,
         terminalManager: TerminalManager,
         services: AppServices,
         worktreeManagement: WorktreeManagement,
@@ -668,6 +653,7 @@ extension GrafttyApp {
         let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator =
             Self.makeWorktreeManagementMutator(
                 appState: appStateBinding,
+                workspaceWindows: workspaceWindows,
                 terminalManager: terminalManager,
                 services: services,
                 worktreeManagement: worktreeManagement,

@@ -143,6 +143,7 @@ struct GrafttyApp: App {
         + GhosttyCommandRegistry.macSettingsActions
 
     @State var appState: AppState
+    @State var workspaceWindows = WorkspaceWindows()
     @StateObject var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
     @NSApplicationDelegateAdaptor(WebAccessTerminationDelegate.self)
@@ -185,6 +186,7 @@ struct GrafttyApp: App {
         // opens; this guard catches `open -n` and same-bundle-id dev
         // relaunches.
         Self.terminateIfAnotherInstanceIsRunning()
+        NSWindow.allowsAutomaticWindowTabbing = false
 
         // ZMX-7.4: If Graftty.app was launched from a terminal that
         // was itself inside a zmx session, `ZMX_SESSION=<parent-name>`
@@ -258,6 +260,7 @@ struct GrafttyApp: App {
                 appState: $appState,
                 terminalManager: terminalManager,
                 worktreeManagement: WorktreeManagement(appState: $appState, terminalManager: terminalManager, services: services),
+                workspaceWindows: workspaceWindows,
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
                 claudeSessionRegistry: services.claudeSessionRegistry,
@@ -286,12 +289,12 @@ struct GrafttyApp: App {
                     didStartup = true
                     startup()
                 }
-                .onChange(of: appState) { _, newState in
-                    Self.persistAppState(newState)
-                }
                 .onOpenURL { url in
                     handleDeepLink(url)
                 }
+        }
+        .onChange(of: appState) { _, newState in
+            Self.persistAppState(newState)
         }
         // Hide the macOS title bar so the breadcrumb row sits directly
         // under the traffic lights — Andy wanted a terminal-multiplexer
@@ -378,7 +381,7 @@ struct GrafttyApp: App {
                     bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
                         handleGhosttyCommand(command)
                     }
-                    .disabled(terminalManager.focusedTerminalID == nil)
+                    .disabled(paneCommandTargetID == nil)
                 }
             }
 
@@ -486,6 +489,10 @@ struct GrafttyApp: App {
             }
         ) else { return }
         NSApp.activate(ignoringOtherApps: true)
+        if let path = appState.selectedWorktreePath,
+           let worktree = appState.worktree(forPath: path) {
+            workspaceWindows.windowShowing(worktree.id)?.bringForward()
+        }
     }
 
     @MainActor
@@ -652,7 +659,13 @@ struct GrafttyApp: App {
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
         let tm = terminalManager
-        tm.autoSleep.start { binding.wrappedValue }
+        tm.surfaceBudget.isPresented = { [weak workspaceWindows] path in
+            guard let worktree = binding.wrappedValue.worktree(forPath: path) else { return false }
+            return workspaceWindows?.windowShowing(worktree.id) != nil
+        }
+        tm.autoSleep.start(isPresented: { [weak workspaceWindows] worktreeID in
+            workspaceWindows?.windowShowing(worktreeID) != nil
+        }) { binding.wrappedValue }
         let sleepCoordinator = tm.autoSleep.coordinator
         services.remoteAttachmentRegistry.wakeBeforeAttach = { session in
             sleepCoordinator.wake(session: session)
@@ -1113,6 +1126,7 @@ struct GrafttyApp: App {
             Self.makeHostAgentPool(
                 hostKey: hostKey,
                 appState: appStateBinding,
+                workspaceWindows: workspaceWindows,
                 terminalManager: terminalManager,
                 services: services,
                 worktreeManagement: worktreeManagement,

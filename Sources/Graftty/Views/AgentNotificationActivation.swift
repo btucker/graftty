@@ -42,11 +42,12 @@ final class AgentNotificationActivation: ObservableObject {
 
 struct AgentNotificationActivationHandler: ViewModifier {
     @ObservedObject var activation: AgentNotificationActivation
+    var canActivate = true
     let onActivate: (AgentStopNotificationPayload) -> Void
 
     func body(content: Content) -> some View {
         content.background(AgentNotificationActivationWindowBridge(
-            activation: activation, requestID: activation.pending?.id, onActivate: onActivate))
+            activation: activation, requestID: canActivate ? activation.pending?.id : nil, onActivate: onActivate))
     }
 }
 
