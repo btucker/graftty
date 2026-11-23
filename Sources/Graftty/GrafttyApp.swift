@@ -585,6 +585,11 @@ struct GrafttyApp: App {
             AgentPluginInstallOfferPresenter.presentWhenWindowIsReady()
         }
 
+        // Request Full Disk Access on startup if not granted (LAYOUT-5.4).
+        Task { @MainActor in
+            await FullDiskAccessPromptPresenter.presentWhenWindowIsReady()
+        }
+
         // One-shot cleanup of the retired graftty-channel MCP integration
         // (TEAM-8.1 / TEAM-8.2 / TEAM-8.3). Runs idempotently every launch
         // until we drop it in a few releases.

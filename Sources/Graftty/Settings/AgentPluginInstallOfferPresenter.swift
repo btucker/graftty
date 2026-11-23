@@ -7,9 +7,7 @@ enum AgentPluginInstallOfferPresenter {
         defaults: UserDefaults = .standard
     ) {
         guard AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
-        if let window = NSApp.mainWindow
-            ?? NSApp.keyWindow
-            ?? NSApp.windows.first(where: { $0.isVisible && !($0 is NSPanel) }) {
+        if let window = SheetAlert.readyHostWindow() {
             presentIfNeeded(on: window, defaults: defaults)
             return
         }

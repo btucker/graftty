@@ -18,11 +18,28 @@ enum SheetAlert {
         var style: NSAlert.Style
         var primaryButton: String
         var secondaryButton: String?
+        var tertiaryButton: String? = nil
     }
 
     enum Response {
         case primary
         case secondary
+        case tertiary
+    }
+
+    /// Returns the preferred visible non-panel host window when it is not
+    /// already presenting another sheet. Launch-time sheets share this guard
+    /// so independent startup prompts serialize instead of colliding.
+    @MainActor
+    static func readyHostWindow() -> NSWindow? {
+        let preferred = [NSApp.mainWindow, NSApp.keyWindow]
+            .compactMap { $0 }
+            .first { $0.isVisible && !($0 is NSPanel) }
+            ?? NSApp.windows.first { $0.isVisible && !($0 is NSPanel) }
+        guard let host = preferred, host.attachedSheet == nil else {
+            return nil
+        }
+        return host
     }
 
     /// Presents `config` as a sheet on `window`. Caller owns the
@@ -43,9 +60,21 @@ enum SheetAlert {
         alert.addButton(withTitle: config.primaryButton)
         if let secondary = config.secondaryButton {
             alert.addButton(withTitle: secondary)
+            if let tertiary = config.tertiaryButton {
+                alert.addButton(withTitle: tertiary)
+            }
         }
         alert.beginSheetModal(for: window) { code in
-            completion(code == .alertFirstButtonReturn ? .primary : .secondary)
+            let response: Response
+            switch code {
+            case .alertFirstButtonReturn:
+                response = .primary
+            case .alertThirdButtonReturn:
+                response = .tertiary
+            default:
+                response = .secondary
+            }
+            completion(response)
         }
     }
 }
