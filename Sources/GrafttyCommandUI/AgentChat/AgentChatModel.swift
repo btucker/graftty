@@ -14,6 +14,11 @@ public final class AgentChatModel {
     public var draft = "" {
         didSet { if draft != oldValue { notice = nil } }
     }
+    /// The draft fills the view for a long message. Kept with the draft, so
+    /// it is still expanded when the viewer switches back from Terminal.
+    public var isDraftExpanded = false
+    /// The agent's command list is open in place of the keyboard.
+    public var isBrowsingCommands = false
 
     /// The connection the current feed came from. Sends and answers go to
     /// it, so they reach the channel this viewer attached through.
@@ -61,6 +66,7 @@ public final class AgentChatModel {
     /// Puts the command in the draft. Nothing is sent until the user sends it.
     public func choose(_ command: AgentChatCommand) {
         draft = AgentChatSlashQuery.draft(choosing: command)
+        isBrowsingCommands = false
     }
 
     public func send() async {
@@ -73,6 +79,7 @@ public final class AgentChatModel {
         case .accepted:
             // Only the text that was sent is cleared; later typing stays.
             if draft.hasPrefix(text) { draft.removeFirst(text.count) }
+            if draft.isEmpty { isDraftExpanded = false }
             notice = nil
         case .uncertain:
             notice = "The agent may have received this message. Check the conversation before sending it again."

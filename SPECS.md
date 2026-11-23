@@ -5508,6 +5508,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.187** When a paired viewer selects Chat or Terminal, the application shall change only that viewer's presentation and preserve the session's input ownership.
 
+**AGENT-6.188** When the user chooses a command from the command list of an agent tab's Chat view, the application shall insert its invocation into the editable draft, close the list, and wait for the user to send it.
+
+**AGENT-6.189** While a draft is expanded in an agent tab's Chat view, the application shall keep it expanded until the user collapses it or the whole draft is sent.
+
 ## CLI — CLI
 
 ### CLI-1.x

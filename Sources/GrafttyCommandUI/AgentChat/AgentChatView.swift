@@ -2,10 +2,13 @@ import SwiftUI
 import GrafttyProtocol
 
 /// The Chat view of a running agent tab: the shared conversation, any request
-/// the provider is waiting on, and this viewer's draft.
+/// the provider is waiting on, and this viewer's draft. Every colour derives
+/// from the foreground style and tint its owner sets, so it follows the
+/// terminal theme.
 public struct AgentChatView: View {
     @Bindable private var model: AgentChatModel
     private let tabID: String
+    private let agentName: String
     private let connection: AgentChatConnection
     private let showTerminal: () -> Void
     @FocusState private var composerFocused: Bool
@@ -16,11 +19,12 @@ public struct AgentChatView: View {
     @State private var attempt = 0
 
     public init(
-        model: AgentChatModel, tabID: String, connection: AgentChatConnection,
+        model: AgentChatModel, tabID: String, agentName: String, connection: AgentChatConnection,
         showTerminal: @escaping () -> Void
     ) {
         self.model = model
         self.tabID = tabID
+        self.agentName = agentName
         self.connection = connection
         self.showTerminal = showTerminal
     }
@@ -30,7 +34,8 @@ public struct AgentChatView: View {
             if let reason = model.unavailable {
                 unavailable(reason)
             } else if let snapshot = model.snapshot {
-                transcript(snapshot)
+                let expanded = model.isDraftExpanded && snapshot.endedReason == nil
+                if expanded { lastReply(snapshot) } else { transcript(snapshot) }
                 ForEach(snapshot.requests) { request in requestCard(request) }
                 if snapshot.requests.isEmpty, snapshot.turnState == .waitingOnRequest, snapshot.endedReason == nil {
                     // Asked before Chat attached, so only the terminal has it.
@@ -40,6 +45,8 @@ public struct AgentChatView: View {
                 }
                 if let ended = snapshot.endedReason {
                     Text(ended).font(.callout).foregroundStyle(.secondary).padding(12)
+                } else if expanded {
+                    draftCard
                 } else {
                     composer
                 }
@@ -51,6 +58,11 @@ public struct AgentChatView: View {
             await model.run(connection)
         }
         .onAppear { composerFocused = true }
+        .onChange(of: model.isDraftExpanded) { _, _ in
+            // Expanding swaps in another editor. Focus it once it is on
+            // screen, so the keyboard stays up.
+            Task { composerFocused = true }
+        }
     }
 
     private func unavailable(_ reason: String) -> some View {
@@ -122,59 +134,214 @@ public struct AgentChatView: View {
         Task { await model.answer(request, decision) }
     }
 
-    private var composer: some View {
-        let matches = dismissedDraft == model.draft ? [] : model.slashMatches
-        return VStack(alignment: .leading, spacing: 0) {
-            Divider()
-            if !matches.isEmpty { slashMenu(matches) }
-            if let notice = model.notice {
-                Text(notice).font(.caption).foregroundStyle(.secondary)
-                    .padding(.horizontal, 12).padding(.top, 8)
-            }
-            HStack(alignment: .bottom, spacing: 8) {
-                TextEditor(text: $model.draft)
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 22, maxHeight: 140)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .focused($composerFocused)
-                    .accessibilityLabel("Message")
-                    .onKeyPress(phases: .down) { press in handle(press, matches: matches) }
-                Button("Send", systemImage: "arrow.up.circle.fill", action: send)
-                    .labelStyle(.iconOnly)
-                    .font(.title2)
-                    .buttonStyle(.plain)
-                    .disabled(!model.canSend)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-        }
-        .onChange(of: matches.map(\.id)) { _, _ in highlighted = 0 }
+    /// The command the typed slash would choose, and how many others match.
+    private var matches: [AgentChatCommand] {
+        dismissedDraft == model.draft ? [] : model.slashMatches
     }
 
-    private func slashMenu(_ matches: [AgentChatCommand]) -> some View {
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !model.isBrowsingCommands { matchRow }
+            if let notice = model.notice {
+                Text(notice).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                if model.snapshot?.commands.isEmpty == false {
+                    Button(
+                        model.isBrowsingCommands ? "Hide Commands" : "Commands",
+                        systemImage: model.isBrowsingCommands ? "keyboard" : "square.grid.2x2"
+                    ) {
+                        model.isBrowsingCommands.toggle()
+                        composerFocused = !model.isBrowsingCommands
+                    }
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(model.isBrowsingCommands ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                    .frame(width: 36, height: 36)
+                    .background(.primary.opacity(0.09), in: Circle())
+                }
+                HStack(alignment: .bottom, spacing: 0) {
+                    compactEditor
+                    Button("Expand Draft", systemImage: "arrow.up.left.and.arrow.down.right") {
+                        model.isBrowsingCommands = false
+                        model.isDraftExpanded = true
+                    }
+                    .labelStyle(.iconOnly).font(.footnote).foregroundStyle(.secondary)
+                    .frame(width: 30, height: 36)
+                }
+                .padding(.leading, 6)
+                .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.primary.opacity(0.16)))
+                if !model.draft.isEmpty, matches.isEmpty { sendButton.frame(height: 36) }
+            }
+            .buttonStyle(.plain)
+            if model.isBrowsingCommands { commandList }
+        }
+        .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 8)
+        .onChange(of: matches.map(\.id)) { _, _ in highlighted = 0 }
+        .onChange(of: composerFocused) { _, focused in
+            // Typing again brings the keyboard back in the list's place. An
+            // unchanged value is not written: every write redraws the view.
+            if focused, model.isBrowsingCommands { model.isBrowsingCommands = false }
+        }
+    }
+
+    /// The editor at one to three lines. A hidden copy of the draft sets the
+    /// height: an editor asked for its own ideal size makes UIKit lay out
+    /// without end when the view opens with the keyboard.
+    private var compactEditor: some View {
+        // A trailing line break has no height of its own in a label.
+        Text(model.draft.isEmpty || model.draft.hasSuffix("\n") ? model.draft + " " : model.draft)
+            .font(.body)
+            .lineLimit(1...3)
+            .padding(Self.editorInsets)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .hidden()
+            .overlay { editor }
+            .padding(.vertical, Self.editorMargin)
+    }
+
+    #if os(macOS)
+    private static let editorInsets = EdgeInsets(top: 0, leading: 5, bottom: 0, trailing: 5)
+    private static let editorMargin: CGFloat = 9
+    #else
+    /// The space UIKit's text view keeps around its text.
+    private static let editorInsets = EdgeInsets(top: 8, leading: 5, bottom: 8, trailing: 5)
+    private static let editorMargin: CGFloat = 0
+    #endif
+
+    private var editor: some View {
+        TextEditor(text: $model.draft)
+            .font(.body)
+            .scrollContentBackground(.hidden)
+            .focused($composerFocused)
+            .accessibilityLabel("Message")
+            .onKeyPress(phases: .down) { press in handle(press, matches: matches) }
+            .overlay(alignment: .topLeading) {
+                if model.draft.isEmpty {
+                    Text("Message \(agentName)").foregroundStyle(.tertiary)
+                        .padding(Self.editorInsets)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+    }
+
+    private var sendButton: some View {
+        Button(action: send) {
+            // The arrow is cut out of the disc, so it shows the theme's
+            // background whatever that is.
+            ZStack {
+                Circle().fill(.primary)
+                Image(systemName: "arrow.up").font(.system(size: 14, weight: .bold)).blendMode(.destinationOut)
+            }
+            .compositingGroup()
+            .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Send")
+        .disabled(!model.canSend)
+        .opacity(model.canSend ? 1 : 0.35)
+    }
+
+    /// One line for what the typed slash matches. Up and Down move through
+    /// the other matches.
+    @ViewBuilder private var matchRow: some View {
+        let matches = matches
+        if !matches.isEmpty {
+            let command = matches[min(highlighted, matches.count - 1)]
+            Button { choose(command) } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(command.invocation).font(.system(.callout, design: .monospaced).weight(.medium))
+                    Text(command.description).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if matches.count > 1 {
+                        Text("+\(matches.count - 1)").font(.caption).foregroundStyle(.tertiary)
+                            .accessibilityLabel("\(matches.count - 1) more")
+                    }
+                }
+                .padding(.horizontal, 14).frame(height: 36)
+                .background(.primary.opacity(0.1), in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Every command the agent offers, shown where the keyboard was.
+    private var commandList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(matches.enumerated()), id: \.element.id) { index, command in
+                Text("\(agentName) commands").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    .padding(.horizontal, 6).padding(.top, 6).padding(.bottom, 2)
+                ForEach(model.snapshot?.commands ?? []) { command in
                     Button { choose(command) } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(command.invocation).font(.system(.callout, design: .monospaced))
-                            if let hint = command.argumentHint {
-                                Text(hint).font(.callout).foregroundStyle(.tertiary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(command.invocation).font(.system(.callout, design: .monospaced).weight(.medium))
+                                if let hint = command.argumentHint {
+                                    Text(hint).font(.system(.caption, design: .monospaced)).foregroundStyle(.tertiary)
+                                }
                             }
-                            Text(command.description).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-                            Spacer(minLength: 0)
+                            Text(command.description).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(index == highlighted ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 6).padding(.vertical, 8)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityAddTraits(index == highlighted ? .isSelected : [])
+                    Divider().opacity(0.4)
                 }
             }
         }
-        .frame(maxHeight: 180)
+        .frame(height: 300)
         .accessibilityLabel("Commands")
+    }
+
+    /// The agent's latest reply, kept in view above an expanded draft.
+    @ViewBuilder private func lastReply(_ snapshot: AgentChatSnapshot) -> some View {
+        if let reply = snapshot.items.last(where: { $0.kind == .agent }) {
+            Button { model.isDraftExpanded = false } label: {
+                HStack(spacing: 6) {
+                    Text(agentName).font(.caption.weight(.semibold))
+                    Text(reply.text.replacingOccurrences(of: "\n", with: " ")).font(.caption).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up").font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Show conversation")
+        }
+    }
+
+    /// The draft at full height, for a message of many lines.
+    private var draftCard: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Button("Collapse Draft", systemImage: "chevron.down") { model.isDraftExpanded = false }
+                    .labelStyle(.iconOnly).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                Text("Draft to \(agentName)").font(.subheadline.weight(.semibold))
+                Spacer()
+                sendButton
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            Divider().opacity(0.5)
+            editor.padding(.horizontal, 8).padding(.top, 4).frame(maxHeight: .infinity)
+            matchRow.padding(.horizontal, 8).padding(.bottom, 6)
+            if let notice = model.notice {
+                Divider().opacity(0.5)
+                Text(notice).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+            }
+        }
+        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.14)))
+        .padding(.horizontal, 8).padding(.bottom, 8)
+        .onChange(of: matches.map(\.id)) { _, _ in highlighted = 0 }
     }
 
     /// Hardware keys only. On the software keyboard Return adds a line and

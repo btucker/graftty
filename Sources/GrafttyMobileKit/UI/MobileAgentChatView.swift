@@ -15,12 +15,13 @@ struct MobileAgentChatView: View {
 
     var body: some View {
         AgentChatView(
-            model: model, tabID: "\(agent.id)/\(agent.assignmentID ?? "")",
+            model: model, tabID: "\(agent.id)/\(agent.assignmentID ?? "")", agentName: agent.name,
             connection: coordinator?.agentChatConnection(worktreePath: worktreePath, agentID: agent.id, on: host)
                 ?? .unavailable("The host connection is unavailable."),
             showTerminal: showTerminal
         )
         .foregroundStyle(theme.foreground)
+        .tint(theme.foreground)
         .background(theme.background)
         .environment(\.colorScheme, theme.isDark ? .dark : .light)
     }

@@ -79,7 +79,7 @@ struct WorkspaceContentView: View {
                             return AnyView(inputRequestBanner)
                         },
                         paneContent: { slot in
-                            if let chat = chatContent(slot) { return AnyView(chat) }
+                            if let chat = chatContent(slot) { return chat }
                             guard let agent = agent(slot), agent.completion != nil || agent.status == .closed else { return nil }
                             return AnyView(CompletedAgentContent(agent: agent, launching: launching,
                                 onResume: { perform(.init(action: .resume, callerWorktree: worktree.path, agentID: agent.id)) }))
@@ -376,14 +376,14 @@ struct WorkspaceContentView: View {
             onActivateTerminal(slot)
         }
     }
-    private func chatContent(_ slot: PaneSlotID) -> AgentChatView? {
+    private func chatContent(_ slot: PaneSlotID) -> AnyView? {
         guard showsChat(slot), let chatService, let agent = agent(slot) else { return nil }
-        return AgentChatView(
+        return AnyView(AgentChatView(
             model: chatModels.model(for: slot),
-            tabID: "\(agent.id)/\(agent.providerSessionID ?? "")",
+            tabID: "\(agent.id)/\(agent.providerSessionID ?? "")", agentName: agent.name,
             connection: chatService.connection(worktreePath: worktree.path, agentID: agent.id, viewer: .host),
             showTerminal: { setView(slot, chat: false) }
-        )
+        ).foregroundStyle(theme.foreground).tint(theme.foreground).background(theme.background))
     }
     private func title(_ slot: PaneSlotID) -> String {
         WorkspaceTerminalTitle.text(terminalManager: terminalManager, slot: slot,

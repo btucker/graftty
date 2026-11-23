@@ -65,6 +65,46 @@ struct AgentChatModelTests {
         #expect(host.submissions.isEmpty)
     }
 
+    @Test("@spec AGENT-6.188: When the user chooses a command from the command list of an agent tab's Chat view, the application shall insert its invocation into the editable draft, close the list, and wait for the user to send it.")
+    func choosingFromTheCommandListClosesItAndSendsNothing() async {
+        let review = AgentChatCommand(name: "review", description: "Review changes")
+        let host = idleHost(commands: [review])
+        let (model, task) = await attached(host)
+        defer { task.cancel() }
+
+        model.draft = "half a thought"
+        model.isBrowsingCommands = true
+        model.choose(review)
+
+        #expect(model.draft == "/review ")
+        #expect(!model.isBrowsingCommands)
+        #expect(host.submissions.isEmpty)
+    }
+
+    @Test("@spec AGENT-6.189: While a draft is expanded in an agent tab's Chat view, the application shall keep it expanded until the user collapses it or the whole draft is sent.")
+    func anExpandedDraftCollapsesOnlyWhenAllOfItIsSent() async {
+        let host = idleHost()
+        let (model, task) = await attached(host)
+        defer { task.cancel() }
+
+        model.isDraftExpanded = true
+        model.draft = "a long task"
+        host.result = .rejected(.busy)
+        await model.send()
+        #expect(model.isDraftExpanded)
+
+        host.result = .accepted
+        host.whileSubmitting = { await MainActor.run { model.draft += "\nand one more thing" } }
+        await model.send()
+        #expect(model.draft == "\nand one more thing")
+        #expect(model.isDraftExpanded)
+
+        host.whileSubmitting = nil
+        await model.send()
+        #expect(model.draft.isEmpty)
+        #expect(!model.isDraftExpanded)
+    }
+
     @Test func sendingDeliversTheExactDraftOnceAndClearsIt() async {
         let host = idleHost()
         let (model, task) = await attached(host)

@@ -48,10 +48,11 @@ struct RemoteWorkspaceContentView: View {
         workspace?.setShowsChat(chat, for: session)
         select(session)
     }
-    private func chatContent(_ session: String) -> AgentChatView? {
+    private func chatContent(_ session: String) -> AnyView? {
         guard showsChat(session), let agent = chatAgent(session), let connection = chatConnection(agent.id) else { return nil }
-        return AgentChatView(model: chatModels.model(for: session), tabID: "\(agent.id)/\(agent.assignmentID ?? "")",
-                             connection: connection, showTerminal: { setView(session, chat: false) })
+        return AnyView(AgentChatView(model: chatModels.model(for: session), tabID: "\(agent.id)/\(agent.assignmentID ?? "")", agentName: agent.name,
+                                     connection: connection, showTerminal: { setView(session, chat: false) })
+            .foregroundStyle(terminalManager.theme.foreground).tint(terminalManager.theme.foreground).background(terminalManager.theme.background))
     }
     private func select(_ session: String) {
         zoomed = nil
@@ -228,7 +229,7 @@ struct RemoteWorkspaceContentView: View {
             } : nil,
             paneContent: { id in
                 if let session = layout.sessions.first(where: { slot($0) == id }), let chat = chatContent(session) {
-                    return AnyView(chat)
+                    return chat
                 }
                 guard let agent = worktree.agents?.first(where: { $0.presentationSessionName.flatMap(slot) == id && $0.isCompleted }) else { return nil }
                 return AnyView(AgentConversationView(agent: agent) { action in try await conversationRequest(agent.id, action) })
