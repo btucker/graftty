@@ -77,7 +77,7 @@ struct WorkspaceContentViewTests {
         #expect(loads.last! == model.agent.transcriptArchive?.id)
     }
 
-    @Test("@spec LAYOUT-2.190: When the user selects a live agent or terminal-drawer tab, the application shall give that terminal keyboard focus, including when the tab is already selected.", arguments: [false, true])
+    @Test("@spec LAYOUT-2.190: When the user puts a live agent on stage or selects a terminal-drawer tab, the application shall give that terminal keyboard focus, including when it is already shown.", arguments: [false, true])
     func selectingTabActivatesItsTerminal(inDrawer: Bool) async throws {
         _ = NSApplication.shared
         let first = PaneSlotID(), second = PaneSlotID()
@@ -106,12 +106,70 @@ struct WorkspaceContentViewTests {
             onActivateTerminal: { activated.append($0) })
         for _ in 0..<2 {
             if inDrawer { view.selectTerminalTab(second) }
-            else { view.selectTab(second) }
+            else { view.stageAgent(second) }
             #expect(entry.focusedPaneSlotID == second)
             if inDrawer { #expect(entry.workspaceLayout?.selectedTerminal == second) }
             else { #expect(entry.workspaceLayout?.group(containing: second)?.selected == second) }
         }
         #expect(activated == [second, second])
+    }
+
+    private func twoAgentEntry(split: Bool = false) -> (WorktreeEntry, PaneSlotID, PaneSlotID) {
+        let first = PaneSlotID(), second = PaneSlotID()
+        var entry = WorktreeEntry(path: "/repo/gallery", branch: "gallery", state: .running,
+            splitTree: SplitTree(root: .split(.init(direction: .horizontal, ratio: 0.5, left: .leaf(first), right: .leaf(second)))))
+        entry.agents = [("Codex A", first), ("Codex B", second)].map { name, slot in
+            var agent = ManagedAgent(name: name, provider: .codex, parent: nil, launchOrigin: .cliAgentAdd, isPrimary: false)
+            agent.paneSlotID = slot
+            return agent
+        }
+        var layout = WorkspaceLayout<PaneSlotID>()
+        layout.addAgent(first); layout.addAgent(second)
+        if split, let group = layout.groups.first?.id { layout.split(second, beside: group, edge: .right) }
+        layout.select(first)
+        entry.workspaceLayout = layout
+        entry.focusedPaneSlotID = first
+        return (entry, first, second)
+    }
+
+    private func view(_ entry: Binding<WorktreeEntry>) -> WorkspaceContentView {
+        WorkspaceContentView(terminalManager: TerminalManager(socketPath: "/tmp/graftty-gallery-test.sock"),
+            worktree: entry, onFocusTerminal: { entry.wrappedValue.focusedPaneSlotID = $0 }, onNewTerminal: {}, onCloseTerminal: { _ in })
+    }
+
+    @Test("@spec LAYOUT-2.251: While a worktree has one agent, the application shall keep the gallery collapsed so the terminal keeps its full width, and when a second agent starts, the application shall open the gallery without changing what is on stage.")
+    func galleryOpensFromTheSecondAgent() {
+        var (entry, first, second) = twoAgentEntry()
+        let binding = Binding(get: { entry }, set: { entry = $0 })
+        #expect(view(binding).showsGallery)
+        entry.agents.removeAll { $0.paneSlotID == second }
+        entry.workspaceLayout?.remove(second)
+        #expect(!view(binding).showsGallery)
+        #expect(entry.workspaceLayout?.isOnStage(first) == true)
+    }
+
+    @Test("@spec LAYOUT-2.252: While the gallery and Context are both open on desktop, the application shall show them in one right-hand column, the gallery above Context, so the terminal gives up one column's width.")
+    func galleryAndContextShareOneColumn() {
+        #expect(WorkspaceGalleryColumn.width(showsGallery: false, showsContext: false) == nil)
+        #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: false) == WorkspaceGalleryColumn.galleryWidth)
+        #expect(WorkspaceGalleryColumn.width(showsGallery: false, showsContext: true) == WorkspaceGalleryColumn.contextWidth)
+        #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: true) == WorkspaceGalleryColumn.contextWidth)
+    }
+
+    @Test func offStageQuestionsShowOnTheFocusedStagePane() {
+        var (entry, first, _) = twoAgentEntry(split: true)
+        let binding = Binding(get: { entry }, set: { entry = $0 })
+        #expect(view(binding).stageBannerGroupID == entry.workspaceLayout?.group(containing: first)?.id)
+    }
+
+    @Test func stagingAnOffStageAgentReplacesTheFocusedPane() {
+        var (entry, first, second) = twoAgentEntry()
+        let binding = Binding(get: { entry }, set: { entry = $0 })
+        view(binding).stageAgent(second)
+        #expect(entry.workspaceLayout?.isOnStage(second) == true)
+        #expect(entry.workspaceLayout?.isOnStage(first) == false)
+        #expect(entry.focusedPaneSlotID == second)
+        #expect(entry.workspaceLayout?.gallerySessions == [first, second])
     }
 
     private final class CompletedModel: ObservableObject {

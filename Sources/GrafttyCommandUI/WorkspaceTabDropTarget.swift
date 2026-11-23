@@ -18,20 +18,27 @@ public struct WorkspaceTabDrag: Codable, Transferable {
 /// variable label widths. The caller validates the session against its layout.
 public struct WorkspaceTabDropTarget: ViewModifier {
     let onDrop: @MainActor (String, Bool) -> Void
+    /// Vertical targets, such as gallery tiles, insert above or below.
+    let vertical: Bool
     @State private var width: CGFloat = 1
     @State private var after: Bool?
 
-    public init(onDrop: @escaping @MainActor (String, Bool) -> Void) {
+    public init(vertical: Bool = false, onDrop: @escaping @MainActor (String, Bool) -> Void) {
+        self.vertical = vertical
         self.onDrop = onDrop
     }
 
     public func body(content: Content) -> some View {
         content
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            .onDrop(of: [WorkspaceTabDrag.contentType], delegate: TabDropDelegate(width: width, after: $after, onDrop: onDrop))
-            .overlay(alignment: after == true ? .trailing : .leading) {
+            .onGeometryChange(for: CGFloat.self) { vertical ? $0.size.height : $0.size.width } action: { width = $0 }
+            .onDrop(of: [WorkspaceTabDrag.contentType],
+                    delegate: TabDropDelegate(width: width, vertical: vertical, after: $after, onDrop: onDrop))
+            .overlay(alignment: vertical ? (after == true ? .bottom : .top) : (after == true ? .trailing : .leading)) {
                 if after != nil {
-                    Rectangle().fill(Color.accentColor).frame(width: 2).allowsHitTesting(false)
+                    Rectangle().fill(Color.accentColor)
+                        .frame(width: vertical ? nil : 2, height: vertical ? 2 : nil)
+                        .offset(y: vertical ? (after == true ? 5 : -5) : 0)
+                        .allowsHitTesting(false)
                 }
             }
     }
@@ -39,20 +46,21 @@ public struct WorkspaceTabDropTarget: ViewModifier {
 
 private struct TabDropDelegate: DropDelegate {
     let width: CGFloat
+    let vertical: Bool
     @Binding var after: Bool?
     let onDrop: @MainActor (String, Bool) -> Void
 
     func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [WorkspaceTabDrag.contentType]) }
-    func dropEntered(info: DropInfo) { after = info.location.x >= width / 2 }
+    func dropEntered(info: DropInfo) { after = (vertical ? info.location.y : info.location.x) >= width / 2 }
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        after = info.location.x >= width / 2
+        after = (vertical ? info.location.y : info.location.x) >= width / 2
         return DropProposal(operation: .move)
     }
     func dropExited(info: DropInfo) { after = nil }
     func performDrop(info: DropInfo) -> Bool {
         after = nil
         guard let provider = info.itemProviders(for: [WorkspaceTabDrag.contentType]).first else { return false }
-        let insertAfter = info.location.x >= width / 2
+        let insertAfter = (vertical ? info.location.y : info.location.x) >= width / 2
         _ = provider.loadTransferable(type: WorkspaceTabDrag.self) { result in
             guard case .success(let payload) = result else { return }
             Task { @MainActor in onDrop(payload.session, insertAfter) }

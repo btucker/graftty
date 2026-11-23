@@ -839,6 +839,7 @@ public struct ScrollbackMapOverlayHost: View {
     private let loadEarlier: (() -> Void)?
     var gists: PeerMessageGistProvider = .shared
     private let previewOverhang: CGFloat
+    private let previewWidth: CGFloat?
     private let onJump: ((Int) -> Void)?
     @State private var hostID = UUID()
     /// Derived once per parent update, not on every viewport report that redraws this body.
@@ -847,9 +848,10 @@ public struct ScrollbackMapOverlayHost: View {
     public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, terminalTheme: GhosttyThemeColors? = nil, isVisible: Bool = true,
                 recovery: ScrollbackMapRecovery? = nil, loadEarlier: (() -> Void)? = nil,
                 showSavedMessages: (() -> Void)? = nil, gists: PeerMessageGistProvider = .shared,
-                previewOverhang: CGFloat = 0, onJump: ((Int) -> Void)? = nil) {
+                previewOverhang: CGFloat = 0, previewWidth: CGFloat? = nil, onJump: ((Int) -> Void)? = nil) {
         self.showSavedMessages = showSavedMessages
         self.previewOverhang = previewOverhang
+        self.previewWidth = previewWidth
         self.onJump = onJump
         self.model = model; self.timeline = timeline; self.isVisible = isVisible; self.gists = gists
         self.recovery = recovery
@@ -888,7 +890,7 @@ public struct ScrollbackMapOverlayHost: View {
                 }
                 if let map = model.map, !map.marks.isEmpty {
                     ScrollbackMapOverlay(map: map, viewport: model.viewport, entries: model.entries, gists: gists,
-                                         availableHeight: max(0, geometry.size.height - (showSavedMessages == nil ? 0 : 44)), availableWidth: geometry.size.width,
+                                         availableHeight: max(0, geometry.size.height - (showSavedMessages == nil ? 0 : 44)), availableWidth: previewWidth ?? geometry.size.width,
                                          previewOverhang: previewOverhang, scroll: { jump(toRow: $0) })
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .onAppear {

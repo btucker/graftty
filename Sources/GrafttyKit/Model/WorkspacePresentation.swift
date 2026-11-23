@@ -62,7 +62,7 @@ public extension WorktreeEntry {
         guard let slot = agents.first(where: { $0.id == id })?.presentationSlotID else { return nil }
         ensureWorkspaceLayout()
         if workspaceLayout?.sessions.contains(slot) != true { workspaceLayout?.addAgent(slot) }
-        workspaceLayout?.select(slot)
+        workspaceLayout?.stage(slot)
         return slot
     }
 

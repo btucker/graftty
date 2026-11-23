@@ -14,11 +14,16 @@ public struct AgentGalleryTile<Thumbnail: View, Rail: View>: View {
     let background: Color
     let thumbnail: Thumbnail
     let rail: Rail
+    let decorateBody: (AnyView) -> AnyView
 
+    /// `decorateBody` wraps the thumbnail and caption, not the rail, so a
+    /// click or drag on the tile never competes with the rail's own pointer input.
     public init(title: String, status: AgentTileStatus, isOnStage: Bool, foreground: Color, background: Color,
+                decorateBody: @escaping (AnyView) -> AnyView = { $0 },
                 @ViewBuilder thumbnail: () -> Thumbnail, @ViewBuilder rail: () -> Rail) {
         self.title = title; self.status = status; self.isOnStage = isOnStage
         self.foreground = foreground; self.background = background
+        self.decorateBody = decorateBody
         self.thumbnail = thumbnail(); self.rail = rail()
     }
 
@@ -26,6 +31,26 @@ public struct AgentGalleryTile<Thumbnail: View, Rail: View>: View {
 
     public var body: some View {
         HStack(spacing: 0) {
+            decorateBody(AnyView(tileBody))
+            // Not clipped: the rail's preview cards spill over the tile and the stage.
+            rail
+                .frame(width: Self.railWidth)
+                .frame(maxHeight: .infinity)
+                .background(foreground.opacity(0.03))
+                .overlay(alignment: .leading) { foreground.opacity(0.1).frame(width: 1) }
+                .zIndex(1)
+        }
+        .background(background, in: shape)
+        .overlay {
+            shape.strokeBorder(foreground.opacity(isOnStage ? 0.7 : 0.12), lineWidth: isOnStage ? 1.5 : 1)
+                .allowsHitTesting(false)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(accessibilityText))
+        .accessibilityAddTraits(isOnStage ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var tileBody: some View {
             VStack(alignment: .leading, spacing: 0) {
                 thumbnail
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -46,22 +71,9 @@ public struct AgentGalleryTile<Thumbnail: View, Rail: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(foreground.opacity(0.06))
             }
-            rail
-                .frame(width: Self.railWidth)
-                .frame(maxHeight: .infinity)
-                .background(foreground.opacity(0.03))
-                .overlay(alignment: .leading) { foreground.opacity(0.1).frame(width: 1) }
-                .zIndex(1)
-        }
-        .background(background)
-        .clipShape(shape)
-        .overlay {
-            shape.strokeBorder(foreground.opacity(isOnStage ? 0.7 : 0.12), lineWidth: isOnStage ? 1.5 : 1)
-        }
-        .contentShape(shape)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text(accessibilityText))
-        .accessibilityAddTraits(isOnStage ? [.isButton, .isSelected] : .isButton)
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: Self.cornerRadius, bottomLeadingRadius: Self.cornerRadius,
+                                              style: .continuous))
+            .contentShape(Rectangle())
     }
 
     private var accessibilityText: String {

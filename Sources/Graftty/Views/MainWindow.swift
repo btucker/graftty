@@ -137,7 +137,8 @@ struct MainWindow: View {
                     }
                 }, onPaneCommandTargetChange: { pane in
                     workspaceWindow.remotePaneID = pane
-                }, agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
+                }, agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext,
+                contextPanel: hasContextInspector ? AnyView(contextInspector) : nil, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
                     let response = try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .addAgent(worktreeID: snapshot.path, provider: provider, operationID: operationID))
                     switch response {
@@ -307,7 +308,8 @@ struct MainWindow: View {
                         onClearFocus: {
                             if isActiveWorkspaceWindow { terminalManager.clearFocus() }
                         },
-                        agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext
+                        agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext,
+                        contextPanel: hasContextInspector ? AnyView(contextInspector) : nil
                     )
                 } else {
                     ContentUnavailableView(
@@ -317,7 +319,8 @@ struct MainWindow: View {
                     )
                 }
             } inspector: {
-                contextInspector
+                // A local workspace shows Context beneath its gallery instead (LAYOUT-2.252).
+                if !showsWorkspaceColumn { contextInspector }
             }
             .ignoresSafeArea(.container, edges: .top)
         }
@@ -675,6 +678,19 @@ struct MainWindow: View {
             if worktree.wrappedValue.showsNonTerminalContent(in: slot) { terminalManager.clearFocus() }
             else { terminalManager.setFocus(slot) }
         }
+    }
+
+    private var hasContextInspector: Bool { showsWorktreeContext && selectedContext != nil }
+
+    /// Whether the detail shows a workspace, which hosts Context in its gallery column.
+    private var showsWorkspaceColumn: Bool {
+        guard routeSelector.wakeFlow == nil else { return false }
+        if selectedRemoteMac != nil {
+            guard let row = selectedRemoteWorktreeSnapshot, selectedRemoteWorktreePath != nil else { return false }
+            return !(row.showsCreationProgress && row.creationProgress != nil)
+        }
+        guard selectedWorktreeBinding != nil else { return false }
+        return !(selectedWorktree.map { $0.showsCreationProgress && $0.creationProgress != nil } ?? false)
     }
 
     @ViewBuilder private var contextInspector: some View {

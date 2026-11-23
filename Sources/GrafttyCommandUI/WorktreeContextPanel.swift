@@ -194,7 +194,7 @@ public struct WorktreeContextPanel: View {
                         if agent.resultsAreSummaries == true {
                             Text("Result previews · \(agent.resultCount ?? 0) retained assignments").foregroundStyle(secondary)
                         }
-                        if let showAgent { Button("Open agent tab") { showAgent(agent.id) } }
+                        if let showAgent { Button("Put on stage") { showAgent(agent.id) } }
                         if let result = agent.result { Text(result).textSelection(.enabled) }
                         if let readTranscript, agent.recordedStatus == .closed {
                             Button("Read transcript") {
