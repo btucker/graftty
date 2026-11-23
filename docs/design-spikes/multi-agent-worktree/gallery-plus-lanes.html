@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gallery plus lanes: two arrangements</title>
+<style>
+  :root {
+    --bg: #1f2228; --panel: #282c34; --panel2: #30353f; --line: #3d434f; --rail: #23272e;
+    --fg: #eaeaea; --dim: #9aa0aa; --faint: #666c78;
+    --you: #f0c674; --lead: #70c0b1; --a1: #c397d8; --a2: #7aa6da; --a3: #b5bd68;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 56px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 44px 0 4px; }
+  h2 span { color: var(--dim); font-weight: 400; }
+  p { margin: 6px 0 12px; color: #d0d3d8; }
+  .sub { color: var(--dim); }
+  .scroll { overflow-x: auto; }
+  .win { min-width: 640px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .bar { padding: 7px 12px; background: var(--panel2); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  .bar b { color: var(--fg); }
+  .row { display: flex; }
+  .term { flex: 1; min-width: 0; padding: 12px 14px; font: 12px/1.7 ui-monospace, Menlo, monospace;
+    color: #c5c8c6; white-space: nowrap; overflow: hidden; }
+  .term .u { color: var(--you); } .term .l { color: var(--lead); } .term .d { color: var(--faint); }
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 12px; }
+  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13.5px; }
+  .note h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+  .note p { margin: 0; }
+  .faded { opacity: .5; }
+
+  /* tiles */
+  .tile { background: #1b1e23; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .tile .mini { padding: 6px 7px; height: 40px; }
+  .tile .mini i { display: block; height: 3px; border-radius: 2px; background: #4a505c; margin-bottom: 4px; }
+  .tile .cap { padding: 3px 7px 4px; font-size: 11px; border-top: 2px solid var(--line); background: var(--panel2); white-space: nowrap; overflow: hidden; }
+  .tile .cap small { color: var(--dim); display: block; font-size: 10.5px; }
+  .tile.on { outline: 2px solid var(--fg); outline-offset: -1px; }
+
+  /* lanes */
+  .lanes { position: relative; display: grid; }
+  .lane { position: relative; }
+  .seg { position: absolute; left: 50%; width: 4px; margin-left: -2px; border-radius: 2px; }
+  .mk { position: absolute; left: 50%; width: 12px; height: 5px; margin-left: -6px; border-radius: 2px; }
+  .end { position: absolute; left: 50%; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; border: 2px solid var(--rail); }
+  .ask { position: absolute; left: 50%; margin-left: -9px; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--you); color: #222; font: 700 12px/18px sans-serif; text-align: center; }
+  .spawn { position: absolute; height: 2px; background: var(--line); }
+  .view { position: absolute; border: 1.5px solid var(--fg); border-radius: 4px; opacity: .7; }
+
+  /* Y */
+  .topgal { display: grid; grid-template-columns: repeat(4, minmax(0, 150px)); gap: 8px; padding: 8px 12px;
+    background: var(--rail); border-bottom: 1px solid var(--line); }
+  .railY { width: 112px; border-left: 1px solid var(--line); background: var(--rail); padding: 8px 6px; }
+  .railY .lanes { grid-template-columns: repeat(4, 1fr); height: 250px; }
+
+  /* Z */
+  .sideZ { width: 300px; border-left: 1px solid var(--line); background: var(--rail); padding: 8px; display: flex; flex-direction: column; }
+  .sideZ .lanes { grid-template-columns: 36px 1fr 1fr 44px; height: 190px; }
+  .feet { display: grid; grid-template-columns: 36px 1fr 1fr 44px; gap: 0; margin-top: 2px; }
+  .feet > div { padding: 0 3px; }
+  .feet .done { font-size: 10px; color: var(--dim); text-align: center; line-height: 1.2; padding-top: 4px; }
+  .feet .me { font-size: 10px; color: var(--lead); text-align: center; line-height: 1.2; padding-top: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gallery plus lanes: two arrangements</h1>
+  <p class="sub">Same moment as before. The tabs become a gallery of live tiles and the scroll rail gains a lane per
+  agent. The open question is where the two sit relative to each other.</p>
+
+  <h2>Y. Gallery on top, lanes at the side <span>— tabs grow into tiles where they already are</span></h2>
+  <p>The tab strip keeps its place but each tab becomes a small live tile. The tile with the outline is on stage.
+  Lanes in the rail follow the same left-to-right order and colours as the tiles.</p>
+  <div class="scroll"><div class="win">
+    <div class="bar"><b>multiagent-ui</b></div>
+    <div class="topgal">
+      <div class="tile on"><div class="mini"><i style="width:75%"></i><i style="width:50%"></i><i style="width:85%"></i></div>
+        <div class="cap" style="border-top-color:var(--lead)">Claude<small>on stage</small></div></div>
+      <div class="tile"><div class="mini"><i style="width:60%"></i><i style="width:90%"></i><i style="width:40%"></i></div>
+        <div class="cap" style="border-top-color:var(--a1)">design-review<small><em>working</em></small></div></div>
+      <div class="tile" style="border-color:var(--you)"><div class="mini"><i style="width:80%"></i><i style="width:55%"></i><i style="width:70%; background:var(--you)"></i></div>
+        <div class="cap" style="border-top-color:var(--a2)">code-review<small>asking you something</small></div></div>
+      <div class="tile faded"><div class="mini"><i style="width:70%"></i><i style="width:35%"></i></div>
+        <div class="cap" style="border-top-color:var(--a3)">tests<small>reported back</small></div></div>
+    </div>
+    <div class="row">
+      <div class="term">
+        <div class="u">› rework the agent tabs. get a design review and a code review going</div>
+        <div class="l">⏺ Starting two reviewers and a test run in this worktree.</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add design-review --provider codex</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add code-review --provider claude</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add tests --provider codex</div>
+        <div class="l">⏺ While they work, I'm drafting the lane layout.</div>
+        <div>&nbsp;&nbsp;Reading ScrollbackMapOverlay.swift…</div>
+        <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+        <div class="l">⏺ code-review has a question for you.</div>
+        <div class="u">› ▍</div>
+      </div>
+      <div class="railY"><div class="lanes">
+        <div class="spawn" style="top:60px; left:12.5%; width:75%"></div>
+        <div class="view" style="top:44px; left:1px; width:23%; height:200px"></div>
+        <div class="lane">
+          <div class="seg" style="top:0; bottom:0; background:#3f4652"></div>
+          <div class="mk" style="top:12px; background:var(--you)"></div><div class="mk" style="top:40px; background:var(--you)"></div>
+          <div class="mk" style="top:58px; background:var(--lead)"></div><div class="mk" style="top:118px; background:var(--lead)"></div>
+          <div class="mk" style="top:172px; background:var(--a3)"></div><div class="mk" style="top:212px; background:var(--a2)"></div>
+        </div>
+        <div class="lane"><div class="seg" style="top:60px; bottom:0; background:var(--a1)"></div></div>
+        <div class="lane"><div class="seg" style="top:60px; bottom:22px; background:var(--a2)"></div><div class="ask" style="bottom:4px">?</div></div>
+        <div class="lane"><div class="seg" style="top:60px; height:112px; background:var(--a3); opacity:.6"></div><div class="end" style="top:166px; background:var(--a3)"></div></div>
+      </div></div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><h4>Good at</h4><p>Smallest move from today. The terminal keeps its width, lanes stay thin, and tiles are wide enough for a readable caption.</p></div>
+    <div class="note"><h4>Weak at</h4><p>Tile and lane are far apart, joined only by order and colour. The strip gets taller than today's tabs.</p></div>
+  </div>
+
+  <h2>Z. Lanes flow into tiles <span>— a lane is the past, its tile is the present</span></h2>
+  <p>One side column. Each lane runs down through time and ends in that agent's live tile, so history and "right now"
+  read as one thing. A finished agent has no tile; its lane just stops at its result and its column narrows.</p>
+  <div class="scroll"><div class="win">
+    <div class="bar"><b>multiagent-ui</b> &nbsp; Claude on stage</div>
+    <div class="row">
+      <div class="term">
+        <div class="u">› rework the agent tabs. get a design review and a code review going</div>
+        <div class="l">⏺ Starting two reviewers and a test run in this worktree.</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add design-review --provider codex</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add code-review --provider claude</div>
+        <div class="l">⏺ While they work, I'm drafting the lane layout.</div>
+        <div>&nbsp;&nbsp;Reading ScrollbackMapOverlay.swift…</div>
+        <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+        <div class="l">⏺ code-review has a question for you.</div>
+        <div class="u">› ▍</div>
+        <div>&nbsp;</div><div>&nbsp;</div>
+      </div>
+      <div class="sideZ">
+        <div class="lanes">
+          <div class="spawn" style="top:46px; left:18px; right:22px"></div>
+          <div class="view" style="top:34px; left:2px; width:32px; height:152px"></div>
+          <div class="lane">
+            <div class="seg" style="top:0; bottom:0; background:#3f4652"></div>
+            <div class="mk" style="top:10px; background:var(--you)"></div><div class="mk" style="top:30px; background:var(--you)"></div>
+            <div class="mk" style="top:44px; background:var(--lead)"></div><div class="mk" style="top:92px; background:var(--lead)"></div>
+            <div class="mk" style="top:132px; background:var(--a3)"></div><div class="mk" style="top:164px; background:var(--a2)"></div>
+          </div>
+          <div class="lane"><div class="seg" style="top:46px; bottom:0; background:var(--a1)"></div></div>
+          <div class="lane"><div class="seg" style="top:46px; bottom:0; background:var(--a2)"></div><div class="ask" style="top:156px">?</div></div>
+          <div class="lane"><div class="seg" style="top:46px; height:86px; background:var(--a3); opacity:.6"></div><div class="end" style="top:126px; background:var(--a3)"></div></div>
+        </div>
+        <div class="feet">
+          <div class="me">Claude</div>
+          <div><div class="tile"><div class="mini"><i style="width:60%"></i><i style="width:90%"></i><i style="width:40%"></i></div>
+            <div class="cap" style="border-top-color:var(--a1)">design-review<small><em>working</em></small></div></div></div>
+          <div><div class="tile" style="border-color:var(--you)"><div class="mini"><i style="width:80%"></i><i style="width:55%"></i><i style="width:70%; background:var(--you)"></i></div>
+            <div class="cap" style="border-top-color:var(--a2)">code-review<small>asking you</small></div></div></div>
+          <div class="done">tests<br>done</div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><h4>Good at</h4><p>One object per agent instead of two. Nothing to match up by colour, and no strip above the terminal at all.</p></div>
+    <div class="note"><h4>Weak at</h4><p>Width. Each live helper costs about a tile's width of terminal, so three or four live helpers is the practical ceiling before it has to scroll or shrink.</p></div>
+  </div>
+
+  <h2>Calls that apply to both</h2>
+  <p>These are my proposals, open to correction.</p>
+  <ul>
+    <li><b>The lanes belong to whoever is on stage.</b> The time axis is that agent's scrollback. Swap someone else onto the stage and the lanes redraw around them.</li>
+    <li><b>Two on stage means two rails,</b> as today, each drawn around its own agent.</li>
+    <li><b>Clicking a tile or a lane swaps that agent onto the stage.</b> Dragging it onto the stage puts it side by side.</li>
+    <li><b>Finished agents leave the gallery</b> but stay in the lanes as history, with their result one hover away.</li>
+  </ul>
+</main>
+</body>
+</html>

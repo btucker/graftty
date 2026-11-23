@@ -3,34 +3,105 @@ import Testing
 @testable import GrafttyProtocol
 
 struct WorkspaceLayoutTests {
-    @Test("@spec LAYOUT-2.186: When an agent tab is dragged before or after another tab in its group, the application shall persist the new order without changing selected sessions, keyboard focus, or terminal identities.")
-    func reorderTabsKeepsSelection() throws {
+    /// Two stage panes: `a` (with `b` off stage behind it) and `other`.
+    private func twoPaneLayout() throws -> (WorkspaceLayout<String>, UUID, UUID) {
         var layout = WorkspaceLayout<String>()
-        for session in ["a", "b", "c", "other"] { layout.addAgent(session) }
-        let group = try #require(layout.groups.first?.id)
-        layout.split("other", beside: group, edge: .right)
-        layout.select("b")
-        layout.addTerminal("shell"); layout.select("shell")
+        for session in ["a", "b", "other"] { layout.addAgent(session) }
+        let first = try #require(layout.groups.first?.id)
+        layout.split("other", beside: first, edge: .right)
+        layout.select("a")
+        let second = try #require(layout.group(containing: "other")?.id)
+        return (layout, first, second)
+    }
+
+    @Test("@spec LAYOUT-2.246: When the user puts an off-stage agent on stage, the application shall show it in the focused stage pane and keep the agent it replaces in the gallery off stage.")
+    func stagingReplacesFocusedPane() throws {
+        var (layout, first, _) = try twoPaneLayout()
+        layout.addAgent("c"); layout.select("a")
+        #expect(!layout.isOnStage("c"))
+        layout.stage("c")
+        #expect(layout.isOnStage("c"))
+        #expect(!layout.isOnStage("a"))
+        #expect(layout.group(containing: "c")?.id == first)
+        #expect(layout.focusedSession == "c")
+        #expect(Set(layout.gallerySessions) == ["a", "b", "c", "other"])
+    }
+
+    @Test("@spec LAYOUT-2.247: When the user puts an agent on stage that is already on stage in another pane, the application shall focus that pane and shall not show the agent twice.")
+    func stagingAnOnStageAgentFocusesIt() throws {
+        var (layout, _, second) = try twoPaneLayout()
+        let groups = layout.groups
+        layout.stage("other")
+        #expect(layout.groups == groups)
+        #expect(layout.focusedSession == "other")
+        #expect(layout.focusedGroupID == second)
+    }
+
+    @Test("@spec LAYOUT-2.248: When the user removes a pane from a split stage, the application shall keep its agents in the gallery off stage, leave the remaining panes unchanged, and refuse to remove the last pane.")
+    func removingAPaneKeepsItsAgents() throws {
+        var (layout, first, second) = try twoPaneLayout()
+        layout.select("other")
+        let removed = layout.removePane(second)
+        #expect(removed)
+        #expect(layout.groups.count == 1)
+        #expect(layout.groups[0].selected == "a")
+        #expect(!layout.isOnStage("other"))
+        #expect(Set(layout.gallerySessions) == ["a", "b", "other"])
+        #expect(layout.focusedSession == "a")
+        let removedLast = layout.removePane(first)
+        #expect(!removedLast)
+        #expect(layout.groups.count == 1)
+    }
+
+    @Test("@spec LAYOUT-2.249: When the user drags a gallery tile before or after another, the application shall persist the new tile order, keep it across stage changes, and leave what is on stage and keyboard focus unchanged.")
+    func tileOrderIsIndependentOfStage() throws {
+        var (layout, _, _) = try twoPaneLayout()
+        layout.addAgent("c"); layout.select("a")
+        #expect(layout.gallerySessions == ["a", "b", "other", "c"])
         let before = layout
-        let movedLast = layout.moveTab("a", relativeTo: "c", after: true)
-        #expect(movedLast)
-        #expect(layout.group(containing: "a")?.sessions == ["b", "c", "a"])
-        let movedFirst = layout.moveTab("a", relativeTo: "b", after: false)
-        #expect(movedFirst)
-        #expect(layout.group(containing: "a")?.sessions == ["a", "b", "c"])
-        let movedSelected = layout.moveTab("b", relativeTo: "c", after: true)
-        #expect(movedSelected)
-        #expect(layout.group(containing: "a")?.sessions == ["a", "c", "b"])
-        #expect(layout.groups.map(\.selected) == before.groups.map(\.selected))
+        let moved = layout.moveTile("c", relativeTo: "a", after: false)
+        #expect(moved)
+        #expect(layout.gallerySessions == ["c", "a", "b", "other"])
+        #expect(layout.groups == before.groups)
         #expect(layout.focusedSession == before.focusedSession)
-        #expect(layout.lastAgent == before.lastAgent)
-        #expect(layout.terminals == before.terminals)
-        #expect(layout.selectedTerminal == before.selectedTerminal)
-        #expect(layout.root == before.root)
-        layout.reconcile(live: ["a", "b", "c", "other", "shell"], agents: ["a", "b", "c", "other"], preservingSelection: true)
+        layout.stage("b")
+        layout.split("c", beside: layout.groups[0].id, edge: .bottom)
+        #expect(layout.gallerySessions == ["c", "a", "b", "other"])
+        let sameTile = layout.moveTile("c", relativeTo: "c", after: true)
+        let missing = layout.moveTile("absent", relativeTo: "a", after: true)
+        #expect(!sameTile && !missing)
         let restored = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONEncoder().encode(layout))
         #expect(restored == layout)
-        #expect(restored.group(containing: "b")?.sessions == ["a", "c", "b"])
+    }
+
+    @Test func layoutsSavedBeforeTheGalleryDecodeInCanvasOrder() throws {
+        let legacy = WorkspaceLayout<String>(root: .group(UUID()), groups: [])
+        var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        json.removeValue(forKey: "storedGalleryOrder"); json.removeValue(forKey: "galleryVisible")
+        var layout = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(layout.galleryVisible == nil)
+        let (populated, _, _) = try twoPaneLayout()
+        var stripped = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(populated)) as? [String: Any])
+        stripped.removeValue(forKey: "storedGalleryOrder")
+        layout = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONSerialization.data(withJSONObject: stripped))
+        #expect(layout.gallerySessions == layout.canvasSessions)
+    }
+
+    @Test func removingTheStagedAgentStagesAnother() throws {
+        var (layout, _, _) = try twoPaneLayout()
+        layout.remove("a")
+        #expect(layout.isOnStage("b"))
+        #expect(!layout.gallerySessions.contains("a"))
+    }
+
+    @Test func galleryShowsByItselfFromTheSecondAgent() {
+        var layout = WorkspaceLayout<String>()
+        #expect(!layout.showsGallery(agentCount: 1))
+        #expect(layout.showsGallery(agentCount: 2))
+        layout.galleryVisible = false
+        #expect(!layout.showsGallery(agentCount: 3))
+        layout.galleryVisible = true
+        #expect(layout.showsGallery(agentCount: 1))
     }
 
     @Test func tabDropTransfersAcrossGroupsAndRejectsStaleTargets() throws {

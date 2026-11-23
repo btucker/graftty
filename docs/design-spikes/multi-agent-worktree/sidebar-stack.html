@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidebar: agent logo stack</title>
+<style>
+  :root { --bg: #1f2228; --panel: #282c34; --panel2: #30353f; --line: #3d434f;
+    --fg: #eaeaea; --dim: #9aa0aa; --faint: #666c78; --ask: #f0a35e; --work: #7aa6da; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 56px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 36px 0 4px; }
+  p { margin: 6px 0 12px; color: #d0d3d8; }
+  li { color: #d0d3d8; margin-bottom: 6px; }
+  .sub { color: var(--dim); }
+  .cols { display: flex; flex-wrap: wrap; gap: 26px; margin-top: 16px; }
+  figure { margin: 0; width: 270px; }
+  figcaption { font-size: 13.5px; color: #d0d3d8; margin-top: 10px; }
+  figcaption b { display: block; color: var(--fg); }
+  .side { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 8px; }
+  .sec { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 8px 8px 4px; }
+  .wt { padding: 7px 8px; border-radius: 7px; }
+  .wt.sel { background: #3a404b; }
+  .nm { font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .nm span.n { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .st { font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .st.q { color: #ffd9b0; background: rgba(240,163,94,.16); border-radius: 4px; padding: 1px 5px; margin-left: -5px; }
+  .stack { display: flex; margin-top: 5px; }
+  .stack.inline { margin-top: 0; }
+  .lg { width: 18px; height: 18px; border-radius: 50%; background: #454b57; border: 1.5px solid var(--panel);
+    font: 600 10px/15px -apple-system, sans-serif; text-align: center; color: #d6d9de; margin-left: -5px; position: relative; }
+  .sel .lg { border-color: #3a404b; }
+  .lg:first-child { margin-left: 0; }
+  .lg.done { opacity: .45; }
+  .lg .d { position: absolute; right: -2px; top: -2px; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--panel); }
+  .lg .d.a { background: var(--ask); } .lg .d.w { background: var(--work); }
+  .more { font-size: 10.5px; color: var(--dim); margin-left: 5px; line-height: 18px; }
+  .r3 { display: flex; gap: 9px; }
+  .idc { width: 60px; flex: none; }
+  .ic { width: 60px; height: 40px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .idc .stack { justify-content: center; margin-top: 4px; }
+  .r3 .tx { flex: 1; min-width: 0; padding-top: 2px; }
+  .r3 .st.q { white-space: normal; }
+  .stack.open { position: relative; z-index: 3; width: max-content; background: var(--panel2); border: 1px solid var(--line); border-radius: 13px; padding: 3px 5px; gap: 5px; box-shadow: 0 4px 12px rgba(0,0,0,.45); margin-left: -4px; }
+  .stack.open .lg { margin-left: 0; width: 20px; height: 20px; line-height: 17px; border-color: var(--panel2); }
+  .stack.open .lg.hov { outline: 1.5px solid var(--fg); }
+  .tip { position: absolute; left: 34px; top: 30px; background: #14161a; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; color: var(--fg); white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
+  .lg.hw { box-shadow: 0 0 0 2px var(--work), 0 0 6px 2px rgba(122,166,218,.55); border-color: transparent; z-index: 1; }
+  .lg.ha { box-shadow: 0 0 0 2px var(--ask), 0 0 6px 2px rgba(240,163,94,.6); border-color: transparent; z-index: 2; }
+  .stack.open .lg.hov { outline: none; transform: scale(1.15); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sidebar: agent logo stack</h1>
+  <p class="sub">The per-agent rows under a worktree are replaced by a small stack of provider logos, one per agent, in
+  gallery order. The first two sketches leave out the worktree icon; the third shows the real row shape. C, X and A stand in for the Claude, Codex and Antigravity marks.</p>
+
+  <div class="cols">
+    <figure>
+      <div class="side">
+        <div class="sec">Needs you</div>
+        <div class="wt sel">
+          <div class="nm"><span class="n">multiagent-ui</span></div>
+          <div class="st q">Keep the tab strip on iPad?</div>
+          <div class="stack"><div class="lg">C</div><div class="lg hw">X</div><div class="lg ha">C</div><div class="lg done">X</div></div>
+        </div>
+        <div class="sec">Working</div>
+        <div class="wt">
+          <div class="nm"><span class="n">crash-report</span></div>
+          <div class="st">Reading the symbolicated trace</div>
+          <div class="stack"><div class="lg hw">C</div><div class="lg hw">A</div></div>
+        </div>
+        <div class="wt">
+          <div class="nm"><span class="n">tailcat-transport</span></div>
+          <div class="st">Running the loopback tests</div>
+        </div>
+        <div class="sec">Recent</div>
+        <div class="wt">
+          <div class="nm"><span class="n">mobile-selection</span></div>
+          <div class="st">Merged as #897</div>
+        </div>
+      </div>
+      <figcaption><b>1. Under the row</b>The stack gets its own line beneath the status line. Only worktrees with two or
+      more agents show one, so single-agent rows stay as they are today.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="side">
+        <div class="sec">Needs you</div>
+        <div class="wt sel">
+          <div class="nm"><span class="n">multiagent-ui</span><div class="stack inline"><div class="lg">C</div><div class="lg hw">X</div><div class="lg ha">C</div><div class="lg done">X</div></div></div>
+          <div class="st q">Keep the tab strip on iPad?</div>
+        </div>
+        <div class="sec">Working</div>
+        <div class="wt">
+          <div class="nm"><span class="n">crash-report</span><div class="stack inline"><div class="lg hw">C</div><div class="lg hw">A</div></div></div>
+          <div class="st">Reading the symbolicated trace</div>
+        </div>
+        <div class="wt">
+          <div class="nm"><span class="n">tailcat-transport</span></div>
+          <div class="st">Running the loopback tests</div>
+        </div>
+        <div class="sec">Recent</div>
+        <div class="wt">
+          <div class="nm"><span class="n">mobile-selection</span></div>
+          <div class="st">Merged as #897</div>
+        </div>
+      </div>
+      <figcaption><b>2. Beside the name</b>The stack sits at the trailing edge of the name line. Every row keeps the
+      same height; a long worktree name truncates sooner.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="side">
+        <div class="sec">Needs you</div>
+        <div class="wt sel"><div class="r3">
+          <div class="idc"><div class="ic" style="background:linear-gradient(135deg,#5b7fb8,#8fb1e0)">💬</div>
+            <div class="stack"><div class="lg">C</div><div class="lg hw">X</div><div class="lg ha">C</div><div class="lg done">X</div></div></div>
+          <div class="tx"><div class="nm"><span class="n">multiagent-ui</span></div><div class="st q">Keep the tab strip on iPad, or remove it there too?</div></div>
+        </div></div>
+        <div class="sec">Working</div>
+        <div class="wt"><div class="r3">
+          <div class="idc"><div class="ic" style="background:linear-gradient(135deg,#b86a5b,#e0a38f)">🧯</div>
+            <div class="stack"><div class="lg hw">C</div><div class="lg hw">A</div></div></div>
+          <div class="tx"><div class="nm"><span class="n">crash-report</span></div><div class="st">Reading the symbolicated trace</div></div>
+        </div></div>
+        <div class="wt"><div class="r3">
+          <div class="idc"><div class="ic" style="background:linear-gradient(135deg,#5ba88a,#8fe0c0)">🐈</div></div>
+          <div class="tx"><div class="nm"><span class="n">tailcat-transport</span></div><div class="st">Running the loopback tests</div></div>
+        </div></div>
+        <div class="sec">Recent</div>
+        <div class="wt"><div class="r3">
+          <div class="idc"><div class="ic" style="background:linear-gradient(135deg,#a88a5b,#e0c88f)">✂️</div></div>
+          <div class="tx"><div class="nm"><span class="n">mobile-selection</span></div><div class="st">Merged as #897</div></div>
+        </div></div>
+      </div>
+      <figcaption><b>3. Under the worktree icon</b>The stack sits centred beneath the 60-point icon slot. The text
+      column is untouched, and the extra height it creates gives a question room for a second line.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="side">
+        <div class="sec">Needs you</div>
+        <div class="wt sel"><div class="r3">
+          <div class="idc"><div class="ic" style="background:linear-gradient(135deg,#5b7fb8,#8fb1e0)">💬</div>
+            <div class="stack open"><div class="lg">C</div><div class="lg hw">X</div><div class="lg ha hov">C</div><div class="lg done">X</div>
+              <div class="tip">Review rail hover changes</div></div></div>
+          <div class="tx"><div class="nm"><span class="n">multiagent-ui</span></div><div class="st q">Keep the tab strip on iPad, or remove it there too?</div></div>
+        </div></div>
+        <div class="sec">Working</div>
+        <div class="wt"><div class="r3">
+          <div class="idc"><div class="ic" style="background:linear-gradient(135deg,#b86a5b,#e0a38f)">🧯</div>
+            <div class="stack"><div class="lg hw">C</div><div class="lg hw">A</div></div></div>
+          <div class="tx"><div class="nm"><span class="n">crash-report</span></div><div class="st">Reading the symbolicated trace</div></div>
+        </div></div>
+      </div>
+      <figcaption><b>4. Hovering the stack</b>The stack spreads so each logo stands alone, spilling over the text
+      column if it needs to. Resting on a logo shows that terminal's title; clicking it selects that agent.</figcaption>
+    </figure>
+  </div>
+
+  <h2>How the stack behaves</h2>
+  <ul>
+    <li><b>One logo per agent,</b> in the same order as the gallery tiles, drawn in a single muted tone rather than brand colours.</li>
+    <li><b>Status is a halo around the logo,</b> in the same colours as the tile dots: an orange halo while that agent asks you something, a pulsing blue halo while it works, none otherwise. Finished agents are dimmed. A logo with a halo is drawn above its neighbours, with the asking one on top.</li>
+    <li><b>Hovering the stack expands it,</b> so the logos no longer overlap.</li>
+    <li><b>Resting the pointer on a logo</b> shows the title of that agent's terminal.</li>
+    <li><b>Clicking a logo</b> selects that agent: the worktree opens with it on stage.</li>
+    <li><b>More than five agents:</b> the stack shows five and a count.</li>
+  </ul>
+</main>
+</body>
+</html>

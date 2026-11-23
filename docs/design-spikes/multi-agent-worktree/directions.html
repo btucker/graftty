@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-agent worktree: four directions</title>
+<style>
+  :root {
+    --bg: #1f2228; --panel: #282c34; --panel2: #30353f; --line: #3d434f;
+    --fg: #eaeaea; --dim: #9aa0aa; --faint: #666c78;
+    --you: #f0c674; --lead: #70c0b1; --a1: #c397d8; --a2: #7aa6da; --a3: #b5bd68;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 56px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 44px 0 4px; }
+  h2 span { color: var(--dim); font-weight: 400; }
+  p { margin: 6px 0 12px; color: #d0d3d8; }
+  .sub { color: var(--dim); }
+  .scroll { overflow-x: auto; }
+  .win { min-width: 600px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; }
+  .bar { display: flex; align-items: center; gap: 10px; padding: 7px 12px;
+    background: var(--panel2); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  .bar b { color: var(--fg); font-weight: 600; }
+  .term { flex: 1; min-width: 0; padding: 12px 14px; font: 12px/1.7 ui-monospace, Menlo, monospace;
+    color: #c5c8c6; white-space: nowrap; overflow: hidden; }
+  .term .u { color: var(--you); } .term .l { color: var(--lead); } .term .d { color: var(--faint); }
+  .row { display: flex; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 5px; }
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 12px; }
+  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13.5px; }
+  .note h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+  .note p { margin: 0; }
+
+  /* A: lanes */
+  .rail { width: 190px; border-left: 1px solid var(--line); background: #23272e; padding: 8px 10px 10px; position: relative; }
+  .heads, .lanes { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .heads div { font-size: 10px; text-align: center; color: var(--dim); line-height: 1.2; height: 28px; }
+  .lanes { height: 250px; position: relative; }
+  .lane { position: relative; }
+  .seg { position: absolute; left: 50%; width: 4px; margin-left: -2px; border-radius: 2px; }
+  .open { border-radius: 2px 2px 0 0; }
+  .mk { position: absolute; left: 50%; width: 12px; height: 5px; margin-left: -6px; border-radius: 2px; }
+  .cap { position: absolute; left: 50%; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; border: 2px solid #23272e; }
+  .ask { position: absolute; left: 50%; margin-left: -9px; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--you); color: #222; font: 700 12px/18px sans-serif; text-align: center; }
+  .spawn { position: absolute; height: 2px; background: var(--line); }
+  .view { position: absolute; left: 2px; width: 22%; border: 1.5px solid var(--fg); border-radius: 4px; opacity: .7; }
+  .gist { position: absolute; right: 196px; width: 230px; background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font: 12px/1.45 -apple-system, sans-serif; color: var(--fg);
+    box-shadow: 0 6px 18px rgba(0,0,0,.4); white-space: normal; }
+  .gist small { color: var(--dim); display: block; margin-bottom: 2px; }
+
+  /* B: board */
+  .strip { padding: 6px 12px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--line); background: #23272e; }
+  .strip b { color: var(--fg); }
+  .board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 10px 12px;
+    border-bottom: 1px solid var(--line); background: #23272e; }
+  .col h5 { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+  .card { background: var(--panel2); border: 1px solid var(--line); border-left-width: 3px; border-radius: 6px;
+    padding: 7px 8px; font-size: 12px; line-height: 1.35; margin-bottom: 6px; }
+  .card b { display: block; }
+  .card small { color: var(--dim); display: block; }
+  .card em { color: #c9ccd1; display: block; margin-top: 3px; }
+
+  /* C: stage */
+  .gallery { width: 170px; border-left: 1px solid var(--line); background: #23272e; padding: 10px; display: flex; flex-direction: column; gap: 9px; }
+  .thumb { background: #1b1e23; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .thumb .mini { padding: 6px 7px; height: 52px; }
+  .thumb .mini i { display: block; height: 3px; border-radius: 2px; background: #4a505c; margin-bottom: 4px; }
+  .thumb .cap2 { padding: 4px 7px; font-size: 11px; border-top: 1px solid var(--line); background: var(--panel2); }
+  .thumb .cap2 small { color: var(--dim); display: block; font-size: 10.5px; }
+  .faded { opacity: .5; }
+  .shapes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+  .shape { font-size: 12px; color: var(--dim); text-align: center; }
+  .shape .box { height: 62px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); display: flex; gap: 3px; padding: 4px; margin-bottom: 4px; }
+  .shape .box div { background: var(--panel2); border-radius: 3px; flex: 1; }
+  .shape .box .g { flex: 0 0 18%; display: flex; flex-direction: column; gap: 3px; background: none; }
+  .shape .box .g div { background: #454b57; }
+
+  /* D: chatter */
+  .roster { margin: 0 14px 8px auto; width: 380px; max-width: 90%; background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 8px; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+  .roster div { padding: 7px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; }
+  .roster div:last-child { border-bottom: 0; }
+  .roster b { flex: 0 0 96px; } .roster span { color: #c9ccd1; flex: 1; } .roster small { color: var(--dim); }
+  .chatter { padding: 6px 14px; border-top: 1px solid var(--line); background: #23272e; font-size: 12px; color: var(--dim);
+    white-space: nowrap; overflow: hidden; }
+  .chatter b { color: var(--fg); font-weight: 600; }
+  .chatter .sep { margin: 0 8px; color: var(--faint); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 8px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Multi-agent worktree: four directions</h1>
+  <p class="sub">Rough sketches to react to, not designs. Every one uses the same moment: you are talking to Claude,
+  which started a design review, a code review and a test run in this worktree. The test run has reported back and the
+  code review has a question for you.</p>
+  <p class="sub">All four drop the tab strip, keep every agent one click from a full terminal, and treat the agent you
+  last typed to as the lead.</p>
+
+  <!-- A -->
+  <h2>A. Swim-lane rail <span>— the scroll rail grows a lane per agent</span></h2>
+  <p>Time runs down the rail, lined up with the lead's scrollback. A helper's lane starts where the lead started it and
+  ends where it reported back. Hover a lane for a gist; click it to open that agent beside the lead.</p>
+  <div class="scroll"><div class="win">
+    <div class="bar"><b>multiagent-ui</b> <span><span class="dot" style="background:var(--lead)"></span>Claude</span></div>
+    <div class="row" style="position:relative">
+      <div class="term">
+        <div class="u">› rework the agent tabs. get a design review and a code review going</div>
+        <div class="l">⏺ Starting two reviewers and a test run in this worktree.</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add design-review --provider codex</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add code-review --provider claude</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add tests --provider codex</div>
+        <div class="l">⏺ While they work, I'm drafting the lane layout.</div>
+        <div>&nbsp;&nbsp;Reading ScrollbackMapOverlay.swift…</div>
+        <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+        <div class="l">⏺ code-review has a question for you.</div>
+        <div class="u">› ▍</div>
+      </div>
+      <div class="gist" style="top:150px"><small>tests · Codex · finished 4 min ago</small>212 pass. One known flake in the reconnect test, unrelated to this change.</div>
+      <div class="rail">
+        <div class="heads">
+          <div style="color:var(--lead)">Claude<br>lead</div><div style="color:var(--a1)">design<br>review</div>
+          <div style="color:var(--a2)">code<br>review</div><div style="color:var(--a3)">tests</div>
+        </div>
+        <div class="lanes">
+          <div class="spawn" style="top:60px; left:12.5%; width:75%"></div>
+          <div class="view" style="top:44px; height:196px"></div>
+          <div class="lane">
+            <div class="seg" style="top:0; bottom:0; background:#3f4652"></div>
+            <div class="mk" style="top:12px; background:var(--you)"></div>
+            <div class="mk" style="top:40px; background:var(--you)"></div>
+            <div class="mk" style="top:58px; background:var(--lead)"></div>
+            <div class="mk" style="top:118px; background:var(--lead)"></div>
+            <div class="mk" style="top:172px; background:var(--a3)"></div>
+            <div class="mk" style="top:212px; background:var(--a2)"></div>
+          </div>
+          <div class="lane"><div class="seg open" style="top:60px; bottom:0; background:var(--a1)"></div></div>
+          <div class="lane"><div class="seg open" style="top:60px; bottom:22px; background:var(--a2)"></div><div class="ask" style="bottom:6px">?</div></div>
+          <div class="lane"><div class="seg" style="top:60px; height:112px; background:var(--a3); opacity:.6"></div><div class="cap" style="top:166px; background:var(--a3)"></div></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><h4>Good at</h4><p>Answering "what happened, and when" without leaving the lead. Finished helpers stay visible as history instead of dead tabs.</p></div>
+    <div class="note"><h4>Weak at</h4><p>Saying what a helper is doing right now. A lane shows that it is alive, not what it is reading.</p></div>
+    <div class="note"><h4>Needs</h4><p>Mostly what exists: start time, messages to the lead, results. The rail gets wider with each live helper.</p></div>
+  </div>
+
+  <!-- B -->
+  <h2>B. Board strip <span>— kanban of assignments, folded into one line</span></h2>
+  <p>The cards are pieces of work, not agents. Normally the board is a single line of counts above the terminal; it
+  unfolds when you want the picture. Click a card to open the agent doing it.</p>
+  <div class="scroll"><div class="win">
+    <div class="bar"><b>multiagent-ui</b> <span><span class="dot" style="background:var(--lead)"></span>Claude</span></div>
+    <div class="strip">Folded: &nbsp;<b>1</b> working &nbsp;·&nbsp; <b style="color:var(--you)">1 needs you</b> &nbsp;·&nbsp; <b>1</b> reported back &nbsp; ▾</div>
+    <div class="board">
+      <div class="col"><h5>Asked</h5></div>
+      <div class="col"><h5>Working</h5>
+        <div class="card" style="border-left-color:var(--a1)"><b>Design review of lane layout</b><small>design-review · Codex · 6 min</small><em>Comparing against the phone agent cards</em></div>
+      </div>
+      <div class="col"><h5>Needs you</h5>
+        <div class="card" style="border-left-color:var(--a2)"><b>Code review of rail changes</b><small>code-review · Claude · 9 min</small><em>"Keep the tab strip on iPad, or remove it there too?"</em></div>
+      </div>
+      <div class="col"><h5>Reported back</h5>
+        <div class="card faded" style="border-left-color:var(--a3)"><b>Run the test suite</b><small>tests · Codex · done 4 min ago</small><em>212 pass, 1 known flake</em></div>
+      </div>
+    </div>
+    <div class="term">
+      <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+      <div class="l">⏺ code-review has a question for you.</div>
+      <div class="u">› ▍</div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><h4>Good at</h4><p>"What needs me?" at a glance. Scales to many helpers, and to work that outlives the agent that did it.</p></div>
+    <div class="note"><h4>Weak at</h4><p>Most worktrees have two or three helpers, so three of four columns are often empty. It can feel like a project tool bolted onto a terminal.</p></div>
+    <div class="note"><h4>Needs</h4><p>A short title per assignment and a live one-line status per helper. Neither exists today.</p></div>
+  </div>
+
+  <!-- C -->
+  <h2>C. Stage and gallery <span>— borrowed from video calls</span></h2>
+  <p>The agent you are talking to has the stage. Everyone else is a small live thumbnail of their terminal at the side.
+  Click a thumbnail to swap it onto the stage; drag it on to share the stage side by side. Type to someone else and
+  they become the lead.</p>
+  <div class="scroll"><div class="win">
+    <div class="bar"><b>multiagent-ui</b> <span><span class="dot" style="background:var(--lead)"></span>Claude on stage</span></div>
+    <div class="row">
+      <div class="term">
+        <div class="u">› rework the agent tabs. get a design review and a code review going</div>
+        <div class="l">⏺ Starting two reviewers and a test run in this worktree.</div>
+        <div class="l">⏺ While they work, I'm drafting the lane layout.</div>
+        <div>&nbsp;&nbsp;Reading ScrollbackMapOverlay.swift…</div>
+        <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+        <div class="l">⏺ code-review has a question for you.</div>
+        <div class="u">› ▍</div>
+        <div>&nbsp;</div><div>&nbsp;</div>
+      </div>
+      <div class="gallery">
+        <div class="thumb" style="border-color:var(--you)"><div class="mini"><i style="width:80%"></i><i style="width:55%"></i><i style="width:70%; background:var(--you)"></i></div>
+          <div class="cap2">code-review<small>asking you something</small></div></div>
+        <div class="thumb"><div class="mini"><i style="width:60%"></i><i style="width:90%"></i><i style="width:40%"></i><i style="width:75%"></i></div>
+          <div class="cap2">design-review<small><em>working</em></small></div></div>
+        <div class="thumb faded"><div class="mini"><i style="width:70%"></i><i style="width:35%"></i></div>
+          <div class="cap2">tests<small>reported back</small></div></div>
+      </div>
+    </div>
+  </div></div>
+  <div class="shapes">
+    <div class="shape"><div class="box"><div></div><div class="g"><div></div><div></div><div></div></div></div>One on stage</div>
+    <div class="shape"><div class="box"><div></div><div></div><div class="g"><div></div><div></div></div></div>Two side by side</div>
+    <div class="shape"><div class="box"><div></div></div>Gallery hidden</div>
+  </div>
+  <div class="notes">
+    <div class="note"><h4>Good at</h4><p>Seeing motion. You notice a helper is busy or stuck from the shape of its screen, and layout stays as free as today's splits.</p></div>
+    <div class="note"><h4>Weak at</h4><p>A terminal shrunk to a thumbnail is texture, not text. The caption has to carry the meaning, and there is no history.</p></div>
+    <div class="note"><h4>Needs</h4><p>Small live renders of each terminal, and the same one-line status as B for the captions.</p></div>
+  </div>
+
+  <!-- D -->
+  <h2>D. Chatter line <span>— helpers get one line, nothing more</span></h2>
+  <p>If the lead is the interface, helpers may only deserve a single quiet line under its terminal that says what each
+  is up to. It opens into a small roster when you want to drop in.</p>
+  <div class="scroll"><div class="win">
+    <div class="bar"><b>multiagent-ui</b> <span><span class="dot" style="background:var(--lead)"></span>Claude</span></div>
+    <div class="term">
+      <div class="u">› rework the agent tabs. get a design review and a code review going</div>
+      <div class="l">⏺ Starting two reviewers and a test run in this worktree.</div>
+      <div class="l">⏺ While they work, I'm drafting the lane layout.</div>
+      <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+      <div class="l">⏺ code-review has a question for you.</div>
+      <div class="u">› ▍</div>
+    </div>
+    <div class="roster">
+      <div><b style="color:var(--a2)">code-review</b><span>"Keep the tab strip on iPad, or remove it there too?"</span><small>open</small></div>
+      <div><b style="color:var(--a1)">design-review</b><span><em>Comparing against the phone agent cards</em></span><small>open</small></div>
+      <div class="faded"><b style="color:var(--a3)">tests</b><span>212 pass, 1 known flake</span><small>open</small></div>
+    </div>
+    <div class="chatter"><b style="color:var(--you)">code-review asks you something</b><span class="sep">·</span><b>design-review</b> <em>comparing against the phone agent cards</em><span class="sep">·</span><b>tests</b> reported back &nbsp;▴</div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><h4>Good at</h4><p>Staying out of the way. Matches "I often don't care" most directly, and it costs almost no screen.</p></div>
+    <div class="note"><h4>Weak at</h4><p>Many helpers, and history. With five helpers the line overflows; once a helper finishes there is nowhere to see what it did.</p></div>
+    <div class="note"><h4>Needs</h4><p>The live one-line status per helper, which is the main new piece of data in B, C and D.</p></div>
+  </div>
+
+  <h2>Side by side</h2>
+  <div class="scroll"><table>
+    <tr><th></th><th>Organised by</th><th>Screen cost</th><th>Shows right now</th><th>Shows history</th></tr>
+    <tr><td><b>A. Swim-lane rail</b></td><td>Time</td><td>Wider rail</td><td>Alive or not</td><td>Yes</td></tr>
+    <tr><td><b>B. Board strip</b></td><td>State of the work</td><td>One line, unfolds</td><td>Yes</td><td>Finished column</td></tr>
+    <tr><td><b>C. Stage and gallery</b></td><td>Who you are with</td><td>Side column</td><td>Yes, as motion</td><td>No</td></tr>
+    <tr><td><b>D. Chatter line</b></td><td>Nothing; a flat list</td><td>One line</td><td>Yes</td><td>No</td></tr>
+  </table></div>
+  <p class="sub" style="margin-top:14px">These mix. For example, D's line as the everyday surface with A's lanes for history,
+  or C's stage with B's "needs you" ordering in the gallery.</p>
+</main>
+</body>
+</html>

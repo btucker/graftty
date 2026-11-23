@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone: zoom out to the gallery</title>
+<style>
+  :root {
+    --bg: #1f2228; --panel: #282c34; --panel2: #30353f; --line: #3d434f; --rail: #23272e;
+    --fg: #eaeaea; --dim: #9aa0aa; --faint: #666c78;
+    --human: #f0a35e; --peer: #c397d8; --reply: #70c0b1; --ask: #f0c674;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 56px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 36px 0 4px; }
+  p { margin: 6px 0 12px; color: #d0d3d8; }
+  li { color: #d0d3d8; margin-bottom: 6px; }
+  .sub { color: var(--dim); }
+  .phones { display: flex; flex-wrap: wrap; gap: 26px; justify-content: center; margin-top: 18px; }
+  figure { margin: 0; width: 280px; }
+  figcaption { font-size: 13.5px; color: #d0d3d8; margin-top: 10px; }
+  figcaption b { display: block; color: var(--fg); }
+  .phone { height: 560px; background: var(--panel); border: 2px solid #4a505c; border-radius: 30px; overflow: hidden; position: relative; }
+  .h { background: var(--human); border-radius: 2px; } .p { background: var(--peer); } .r { background: var(--reply); }
+
+  /* top floating row, as today */
+  .top { position: absolute; top: 12px; left: 10px; right: 10px; display: flex; align-items: center; gap: 8px; z-index: 3; }
+  .btn { height: 34px; min-width: 34px; border-radius: 17px; background: rgba(60,66,78,.95); border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--fg); padding: 0 10px; }
+  .name { flex: 1; min-width: 0; font-size: 13px; line-height: 1.2; }
+  .name small { display: block; color: var(--dim); font-size: 10px; }
+  .chip { position: absolute; top: 54px; left: 10px; z-index: 3; font-size: 11.5px; padding: 4px 10px; border-radius: 12px;
+    background: rgba(60,66,78,.96); border: 1px solid var(--ask); color: var(--ask); }
+
+  .term { position: absolute; inset: 0; padding: 88px 12px 54px; font: 10.5px/1.7 ui-monospace, Menlo, monospace; color: #c5c8c6;
+    white-space: nowrap; overflow: hidden; }
+  .term .u { color: var(--ask); } .term .l { color: var(--reply); } .term .d { color: var(--faint); }
+  .keys { position: absolute; bottom: 0; left: 0; right: 0; height: 44px; border-top: 1px solid var(--line); background: var(--rail);
+    font-size: 11px; color: var(--faint); display: flex; align-items: center; justify-content: center; }
+  .mapcard { position: absolute; top: 56px; right: 10px; width: 22px; height: 300px; border-radius: 8px; background: rgba(35,39,46,.95);
+    border: 1px solid var(--line); z-index: 2; }
+  .mapcard i { position: absolute; left: 5px; width: 10px; height: 4px; }
+  .mapcard .view { position: absolute; left: 2px; right: 2px; border: 1.5px solid var(--fg); border-radius: 4px; opacity: .7; }
+
+  /* gallery grid */
+  .grid { position: absolute; top: 62px; left: 10px; right: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tile { background: #1b1e23; border: 1px solid var(--line); border-radius: 10px; position: relative; display: flex; height: 222px; }
+  .tile.on { outline: 2px solid var(--fg); outline-offset: -1px; }
+  .tile.faded { opacity: .55; }
+  .body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .mini { flex: 1; padding: 9px 8px 0; overflow: hidden; }
+  .mini i { display: block; height: 3px; border-radius: 2px; background: #4a505c; margin-bottom: 5px; }
+  .cap { padding: 5px 8px 6px; font-size: 11.5px; background: var(--panel2); border-radius: 0 0 0 10px; line-height: 1.3; }
+  .cap small { color: var(--dim); display: block; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mrail { width: 18px; background: var(--rail); border-left: 1px solid var(--line); border-radius: 0 10px 10px 0; position: relative; }
+  .mrail i { position: absolute; left: 4px; width: 9px; height: 4px; }
+  .mrail .view { position: absolute; left: 1px; right: 1px; border: 1.5px solid var(--fg); border-radius: 3px; opacity: .7; }
+  .mrail i.m1 { left: 1px; width: 15px; height: 6px; }
+  .mrail i.m2 { left: -9px; width: 26px; height: 10px; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+  .finger { position: absolute; left: -6px; width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--fg); background: rgba(255,255,255,.14); }
+  .vcol { position: absolute; z-index: 5; right: 100%; margin-right: 10px; top: 28px; width: 214px; display: flex; flex-direction: column; gap: 5px; }
+  .pc { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid; border-radius: 8px; padding: 6px 9px;
+    font-size: 11.5px; line-height: 1.35; box-shadow: 0 6px 18px rgba(0,0,0,.55); }
+  .pc small { color: var(--dim); float: right; margin-left: 8px; }
+  .pc.s { font-size: 9.5px; padding: 3px 8px; opacity: .82; margin-left: 24px; }
+  .pc.m { font-size: 10.5px; opacity: .93; margin-left: 12px; }
+  .new { position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; font-size: 12px; color: var(--dim); }
+  .levels { display: flex; flex-wrap: wrap; gap: 18px; justify-content: center; align-items: flex-end; margin-top: 14px; }
+  .lv { width: 120px; text-align: center; font-size: 12px; color: var(--dim); }
+  .lv .ph { height: 210px; border: 2px solid #4a505c; border-radius: 16px; background: var(--panel); padding: 22px 7px 8px; display: grid; gap: 5px; align-content: start; margin-bottom: 6px; }
+  .lv .t { background: #1b1e23; border: 1px solid var(--line); border-radius: 4px; border-right: 5px solid var(--rail); }
+  .lv .t.q { border-color: var(--ask); border-right-color: var(--rail); }
+  .lv b { display: block; color: var(--fg); font-size: 12.5px; }
+  .arrow { align-self: center; color: var(--dim); font-size: 13px; padding-bottom: 40px; }
+  .tile.empty { border: 1.5px dashed #5a616e; background: none; align-items: flex-start; justify-content: center; color: var(--dim); font-size: 12px; text-align: center; padding-top: 6px; line-height: 1.2; }
+  .sd { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  .sd.ask { background: #f0a35e; } .sd.work { background: #7aa6da; box-shadow: 0 0 0 3px rgba(122,166,218,.25); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Phone: zoom out to the gallery</h1>
+  <p class="sub">A phone can't show the stage and the gallery at once, so it shows one or the other. The stage is today's
+  terminal screen. Zooming out replaces it with the gallery, where every agent is a small terminal with its rail on the
+  right, the same rule as the desktop.</p>
+
+  <div class="phones">
+    <figure>
+      <div class="phone">
+        <div class="top"><div class="btn">‹</div><div class="name">Claude ⌄<small>multiagent-ui · MacBook</small></div><div class="btn">▣ ◎ ▯</div></div>
+        <div class="chip">code-review asks ›</div>
+        <div class="mapcard"><div class="view" style="top:150px; bottom:3px"></div>
+          <i class="h" style="top:14px"></i><i class="r" style="top:36px"></i><i class="h" style="top:64px"></i><i class="r" style="top:96px"></i>
+          <i class="r" style="top:160px"></i><i class="p" style="top:216px"></i><i class="r" style="top:230px"></i><i class="p" style="top:270px"></i></div>
+        <div class="term">
+          <div class="u">› rework the agent tabs. get a</div>
+          <div class="u">&nbsp;&nbsp;design review and a code</div>
+          <div class="l">⏺ Starting two reviewers and a</div>
+          <div class="l">&nbsp;&nbsp;test run in this worktree.</div>
+          <div class="d">&nbsp;&nbsp;⎿ graftty agent add design-rev</div>
+          <div class="d">&nbsp;&nbsp;⎿ graftty agent add code-revie</div>
+          <div class="d">&nbsp;&nbsp;⎿ graftty agent add tests</div>
+          <div class="l">⏺ While they work, I'm drafting</div>
+          <div class="l">&nbsp;&nbsp;the lane layout.</div>
+          <div class="l">⏺ tests reported back: 212</div>
+          <div class="l">&nbsp;&nbsp;pass, 1 known flake.</div>
+          <div class="l">⏺ code-review has a question</div>
+          <div class="u">› ▍</div>
+        </div>
+        <div class="keys">keyboard</div>
+      </div>
+      <figcaption><b>1. On stage</b>Today's screen, almost unchanged. The only addition is a small chip that appears
+      when another agent needs you; tap it to jump straight there. If nobody needs you, nothing is added.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone">
+        <div class="top"><div class="btn">‹</div><div class="name">multiagent-ui<small>4 agents · MacBook</small></div><div class="btn">▣ ◎ ▯</div></div>
+        <div class="grid">
+          <div class="tile on"><div class="body"><div class="mini"><i style="width:80%"></i><i style="width:55%"></i><i style="width:90%"></i><i style="width:40%"></i><i style="width:75%"></i><i style="width:60%"></i><i style="width:85%"></i><i style="width:30%"></i></div>
+            <div class="cap">Claude<small>was on stage</small></div></div>
+            <div class="mrail"><div class="view" style="top:120px; bottom:1px"></div><i class="h" style="top:10px"></i><i class="r" style="top:24px"></i><i class="h" style="top:42px"></i><i class="r" style="top:62px"></i><i class="r" style="top:104px"></i><i class="p" style="top:140px"></i><i class="r" style="top:150px"></i><i class="p" style="top:176px"></i></div></div>
+          <div class="tile"><div class="body"><div class="mini"><i style="width:70%"></i><i style="width:90%"></i><i style="width:45%"></i><i style="width:80%"></i><i style="width:65%"></i><i style="width:75%; background:var(--ask)"></i></div>
+            <div class="cap"><span class="sd ask"></span>code-review<small>Keep the tab strip on iPad?</small></div></div>
+            <div class="mrail"><div class="view" style="top:130px; bottom:1px"></div><i class="p" style="top:8px"></i><i class="r" style="top:30px"></i><i class="r" style="top:70px"></i><i class="p" style="top:96px"></i><i class="r" style="top:124px"></i><i class="r" style="top:172px"></i></div></div>
+          <div class="tile"><div class="body"><div class="mini"><i style="width:60%"></i><i style="width:85%"></i><i style="width:40%"></i><i style="width:90%"></i><i style="width:55%"></i><i style="width:70%"></i><i style="width:35%"></i></div>
+            <div class="cap"><span class="sd work"></span>design-review<small>working</small></div></div>
+            <div class="mrail"><div class="view" style="top:126px; bottom:1px"></div><i class="p" style="top:8px"></i><i class="r" style="top:52px"></i><i class="r" style="top:110px"></i><i class="r" style="top:164px"></i></div></div>
+          <div class="tile faded"><div class="body"><div class="mini"><i style="width:70%"></i><i style="width:35%"></i><i style="width:80%"></i></div>
+            <div class="cap">tests<small>212 pass, 1 known flake</small></div></div>
+            <div class="mrail"><i class="p" style="top:8px"></i><i class="r" style="top:80px"></i><i class="r" style="top:180px"></i></div></div>
+          <div class="tile empty"><span>＋<br>New agent</span></div>
+        </div>
+      </div>
+      <figcaption><b>2. Zoomed out</b>Tap the agent's name and the stage shrinks into its tile
+      among the others. Each tile is a live miniature with its rail on the right. Tap a tile and it grows back into the
+      stage. This replaces today's agent menu.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone">
+        <div class="top"><div class="btn">‹</div><div class="name">multiagent-ui<small>4 agents · MacBook</small></div><div class="btn">▣ ◎ ▯</div></div>
+        <div class="grid">
+          <div class="tile on"><div class="body"><div class="mini"><i style="width:80%"></i><i style="width:55%"></i><i style="width:90%"></i><i style="width:40%"></i><i style="width:75%"></i></div>
+            <div class="cap">Claude<small>was on stage</small></div></div>
+            <div class="mrail"><i class="h" style="top:10px"></i><i class="r" style="top:24px"></i><i class="h" style="top:42px"></i><i class="r" style="top:104px"></i><i class="p" style="top:150px"></i></div></div>
+          <div class="tile"><div class="body"><div class="mini"><i style="width:70%"></i><i style="width:90%"></i><i style="width:45%"></i><i style="width:80%"></i></div>
+            <div class="cap"><span class="sd ask"></span>code-review<small>Keep the tab strip on iPad?</small></div></div>
+            <div class="mrail"><i class="p" style="top:8px"></i><i class="r" style="top:30px"></i>
+              <i class="r m1" style="top:66px"></i><i class="p m1" style="top:82px"></i><i class="r m2" style="top:98px"></i><i class="r m1" style="top:120px"></i><i class="r" style="top:172px"></i>
+              <div class="finger" style="top:88px"></div>
+              <div class="vcol">
+                <div class="pc s" style="border-left-color:var(--reply)">Read the rail overlay<small>7m</small></div>
+                <div class="pc m" style="border-left-color:var(--peer)">✦ Claude asks for a review of the rail changes<small>6m</small></div>
+                <div class="pc" style="border-left-color:var(--reply)">Found the hover target ignores the horizontal axis; two fixes suggested<small>3m</small></div>
+                <div class="pc m" style="border-left-color:var(--reply)">Unsure whether iPad keeps the tab strip<small>1m</small></div>
+              </div></div></div>
+          <div class="tile"><div class="body"><div class="mini"><i style="width:60%"></i><i style="width:85%"></i><i style="width:40%"></i></div>
+            <div class="cap"><span class="sd work"></span>design-review<small>working</small></div></div>
+            <div class="mrail"><i class="p" style="top:8px"></i><i class="r" style="top:52px"></i><i class="r" style="top:164px"></i></div></div>
+          <div class="tile faded"><div class="body"><div class="mini"><i style="width:70%"></i><i style="width:35%"></i></div>
+            <div class="cap">tests<small>212 pass, 1 known flake</small></div></div>
+            <div class="mrail"><i class="p" style="top:8px"></i><i class="r" style="top:80px"></i></div></div>
+          <div class="tile empty"><span>＋<br>New agent</span></div>
+        </div>
+      </div>
+      <figcaption><b>3. Scrubbing a tile's rail</b>Drag a finger down any tile's rail and the marks under it magnify,
+      with the preview cards stacked to its left, free to cover the neighbouring tile. Lift on a card to open that agent
+      at that message.</figcaption>
+    </figure>
+  </div>
+
+  <h2>Pinch to zoom the gallery</h2>
+  <p>The gallery has two sizes, and the tiles always fill the screen. The stage is a separate view, not a third size.</p>
+  <div class="levels">
+    <div class="lv"><div class="ph" style="grid-template-columns:1fr 1fr"><div class="t" style="height:86px"></div><div class="t q" style="height:86px"></div><div class="t" style="height:86px"></div><div class="t" style="height:86px"></div></div><b>4-up</b>Everyone at a glance, as sketched above</div>
+    <div class="arrow">‹ pinch ›</div>
+    <div class="lv"><div class="ph" style="grid-template-columns:1fr"><div class="t" style="height:86px"></div><div class="t q" style="height:86px"></div></div><b>2-up</b>Two agents stacked, each readable</div>
+  </div>
+  <ul style="margin-top:16px">
+    <li><b>Two views only: stage and gallery.</b> You type on the stage. The gallery is for watching, scrolling and scrubbing.</li>
+    <li><b>Pinch moves between 4-up and 2-up,</b> and goes no further. The tile under your fingers is one of the two that stay.</li>
+    <li><b>Tap a tile to put it on stage.</b> Tap the agent's name on the stage to return to the gallery.</li>
+    <li><b>The last tile is always an empty one</b> for starting a new agent. With three agents it fills the fourth slot; with four it is the first thing you reach by scrolling.</li>
+    <li><b>More agents than slots:</b> scroll. With six agents, 4-up scrolls down to the other two.</li>
+    <li><b>2-up is the phone's side by side.</b> Each half is about 390 by 380 points, a real terminal you can read and scroll.</li>
+    <li><b>The gallery remembers the size you left it at.</b></li>
+  </ul>
+
+  <h2>Calls I made</h2>
+  <ul>
+    <li><b>4-up is the default gallery size.</b> A tile is about 170 by 220 points, so its rail is three times the height of a desktop tile's.</li>
+    <li><b>Tiles keep a fixed position,</b> in the order agents were started. The one that needs you is marked, not moved.</li>
+    <li><b>The caption's second line carries the meaning:</b> the question for an asking agent, the result for a finished one, the status otherwise.</li>
+    <li><b>Opening a worktree still lands on the agent that most needs you,</b> as today, not on the gallery.</li>
+    <li><b>Pinch on the terminal stays text size,</b> as today. The gallery is reached by tapping the agent's name.</li>
+    <li><b>Shells are left out of this sketch.</b> Today's menu also offers Terminal and About this worktree; those need a home.</li>
+  </ul>
+</main>
+</body>
+</html>

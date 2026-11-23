@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strip cards: two fixes</title>
+<style>
+  :root {
+    --bg: #1f2228; --panel: #282c34; --panel2: #30353f; --line: #3d434f; --rail: #23272e;
+    --fg: #eaeaea; --dim: #9aa0aa; --faint: #666c78;
+    --human: #f0a35e; --peer: #c397d8; --reply: #70c0b1; --ask: #f0c674;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 56px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 40px 0 4px; }
+  h2 span { color: var(--dim); font-weight: 400; }
+  p { margin: 6px 0 12px; color: #d0d3d8; }
+  .sub { color: var(--dim); }
+  .scroll { overflow-x: auto; }
+  .win { min-width: 700px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .row { display: flex; position: relative; }
+  .term { flex: 1; min-width: 0; padding: 12px 14px; font: 12px/1.7 ui-monospace, Menlo, monospace;
+    color: #c5c8c6; white-space: nowrap; overflow: hidden; }
+  .term .u { color: var(--ask); } .term .l { color: var(--reply); } .term .d { color: var(--faint); }
+  .faded { opacity: .55; }
+  .gallery { width: 200px; border-left: 1px solid var(--line); background: var(--rail); padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .tile { background: #1b1e23; border: 1px solid var(--line); border-radius: 6px; position: relative; }
+  .tile.on { outline: 2px solid var(--fg); outline-offset: -1px; }
+  .mini { padding: 6px 8px 2px; height: 34px; }
+  .mini i { display: block; height: 3px; border-radius: 2px; background: #4a505c; margin-bottom: 4px; }
+  .cap { padding: 3px 8px 4px; font-size: 11.5px; background: var(--panel2); white-space: nowrap; overflow: hidden; }
+  .cap small { color: var(--dim); display: block; font-size: 10.5px; }
+  .h { background: var(--human); border-radius: 2px; } .p { background: var(--peer); } .r { background: var(--reply); }
+
+  .pc { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px;
+    font-size: 11.5px; line-height: 1.4; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+  .pc small { color: var(--dim); display: block; font-size: 10px; margin-top: 2px; }
+
+  /* 1: horizontal strip, cards in a row */
+  .strip { position: relative; height: 16px; background: var(--rail); border-top: 1px solid var(--line); border-radius: 0 0 6px 6px; }
+  .strip i { position: absolute; top: 4px; width: 4px; height: 8px; }
+  .strip .view { position: absolute; top: 1px; bottom: 1px; border: 1.5px solid var(--fg); border-radius: 3px; opacity: .7; }
+  .strip i.m1 { top: 1px; width: 6px; height: 14px; }
+  .strip i.m2 { top: -4px; width: 9px; height: 22px; }
+  .hrow { position: absolute; z-index: 5; top: 26px; right: -4px; display: flex; align-items: flex-start; gap: 6px; }
+  .hrow .pc { border-top: 3px solid; }
+  .hrow .s { width: 92px; font-size: 9.5px; opacity: .78; margin-top: 10px; }
+  .hrow .m { width: 124px; font-size: 10.5px; opacity: .9; margin-top: 5px; }
+  .hrow .f { width: 176px; }
+
+  /* 2: vertical mini-rail on the tile's edge */
+  .vt { display: flex; }
+  .vt .body { flex: 1; min-width: 0; }
+  .mrail { width: 16px; background: var(--rail); border-right: 1px solid var(--line); border-radius: 6px 0 0 6px; position: relative; }
+  .mrail i { position: absolute; left: 4px; width: 8px; height: 4px; }
+  .mrail .view { position: absolute; left: 1px; right: 1px; border: 1.5px solid var(--fg); border-radius: 3px; opacity: .7; }
+  .mrail i.m1 { left: 1px; width: 14px; height: 6px; }
+  .mrail i.m2 { left: -5px; width: 22px; height: 9px; }
+  .vcol { position: absolute; z-index: 5; right: 100%; margin-right: 10px; top: -22px; width: 250px; display: flex; flex-direction: column; gap: 5px; }
+  .vcol .pc { border-left: 3px solid; }
+  .vcol .s { font-size: 10px; padding: 3px 8px; opacity: .78; margin-left: 24px; }
+  .vcol .m { font-size: 11px; opacity: .9; margin-left: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Strip cards: two fixes</h1>
+  <p class="sub">The clash was a strip that runs left to right with cards that stack top to bottom. Either the cards
+  turn to match the strip, or the strip turns to match the cards.</p>
+
+  <h2>1. Cards follow the strip <span>— a row, left to right</span></h2>
+  <p>The cards line up under the strip in the same order as the marks. The one under the pointer is largest; its
+  neighbours shrink to each side. The row spills left over the terminal as far as it needs.</p>
+  <div class="scroll"><div class="win"><div class="row">
+    <div class="term">
+      <div class="u">› rework the agent tabs. get a design review and a code review going</div>
+      <div class="l">⏺ Starting two reviewers and a test run in this worktree.</div>
+      <div class="d">&nbsp;&nbsp;⎿ graftty agent add design-review --provider codex</div>
+      <div class="l">⏺ While they work, I'm drafting the lane layout.</div>
+      <div>&nbsp;&nbsp;Reading ScrollbackMapOverlay.swift…</div>
+      <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+      <div class="l">⏺ code-review has a question for you.</div>
+      <div class="u">› ▍</div>
+      <div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div>
+    </div>
+    <div class="gallery">
+      <div class="tile on"><div class="mini"><i style="width:75%"></i><i style="width:50%"></i></div><div class="cap">Claude<small>on stage</small></div>
+        <div class="strip"><div class="view" style="left:128px; right:2px"></div><i class="h" style="left:8px"></i><i class="r" style="left:34px"></i><i class="r" style="left:86px"></i><i class="p" style="left:132px"></i><i class="r" style="left:162px"></i></div></div>
+      <div class="tile" style="border-color:var(--ask)"><div class="mini"><i style="width:80%"></i><i style="width:55%"></i></div><div class="cap">code-review<small>asking you · hovered</small></div>
+        <div class="strip"><div class="view" style="left:134px; right:2px"></div>
+          <i class="p" style="left:6px"></i><i class="r" style="left:24px"></i>
+          <i class="r m1" style="left:66px"></i><i class="p m1" style="left:84px"></i><i class="r m2" style="left:102px"></i><i class="r m1" style="left:124px"></i><i class="r" style="left:160px"></i>
+          <div class="hrow">
+            <div class="pc s" style="border-top-color:var(--reply)">Read the rail overlay<small>7m</small></div>
+            <div class="pc m" style="border-top-color:var(--peer)">✦ Claude asks for a review of the rail changes<small>6m</small></div>
+            <div class="pc f" style="border-top-color:var(--reply)">Found the hover target ignores the horizontal axis; two fixes suggested<small>3m</small></div>
+            <div class="pc m" style="border-top-color:var(--reply)">Unsure whether iPad keeps the tab strip<small>1m</small></div>
+          </div>
+        </div></div>
+      <div class="tile"><div class="mini"><i style="width:60%"></i><i style="width:90%"></i></div><div class="cap">design-review<small><em>working</em></small></div>
+        <div class="strip"><i class="p" style="left:6px"></i><i class="r" style="left:74px"></i><i class="r" style="left:128px"></i></div></div>
+      <div class="tile faded"><div class="mini"><i style="width:70%"></i></div><div class="cap">tests<small>reported back</small></div>
+        <div class="strip"><i class="p" style="left:6px"></i><i class="r" style="left:150px"></i></div></div>
+    </div>
+  </div></div></div>
+
+  <h2>2. The strip turns upright <span>— a small rail on each tile's edge</span></h2>
+  <p>Each tile gets a short vertical rail on its left edge instead of a line underneath. Time runs downward everywhere,
+  and the cards stack beside the tile exactly as they do beside the main rail.</p>
+  <div class="scroll"><div class="win"><div class="row">
+    <div class="term">
+      <div class="u">› rework the agent tabs. get a design review and a code review going</div>
+      <div class="l">⏺ Starting two reviewers and a test run in this worktree.</div>
+      <div class="d">&nbsp;&nbsp;⎿ graftty agent add design-review --provider codex</div>
+      <div class="l">⏺ While they work, I'm drafting the lane layout.</div>
+      <div>&nbsp;&nbsp;Reading ScrollbackMapOverlay.swift…</div>
+      <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+      <div class="l">⏺ code-review has a question for you.</div>
+      <div class="u">› ▍</div>
+      <div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div>
+    </div>
+    <div class="gallery">
+      <div class="tile on vt"><div class="mrail"><div class="view" style="top:44px; bottom:1px"></div><i class="h" style="top:5px"></i><i class="r" style="top:16px"></i><i class="r" style="top:34px"></i><i class="p" style="top:50px"></i><i class="r" style="top:60px"></i></div>
+        <div class="body"><div class="mini"><i style="width:75%"></i><i style="width:50%"></i></div><div class="cap">Claude<small>on stage</small></div></div></div>
+      <div class="tile vt" style="border-color:var(--ask)"><div class="mrail"><div class="view" style="top:52px; bottom:1px"></div>
+          <i class="p" style="top:4px"></i><i class="r" style="top:12px"></i>
+          <i class="r m1" style="top:22px"></i><i class="p m1" style="top:31px"></i><i class="r m2" style="top:41px"></i><i class="r m1" style="top:54px"></i>
+          <div class="vcol">
+            <div class="pc s" style="border-left-color:var(--reply)">Read the rail overlay<small style="display:inline"> · 7m</small></div>
+            <div class="pc m" style="border-left-color:var(--peer)">✦ Claude asks for a review of the rail changes<small>6m</small></div>
+            <div class="pc" style="border-left-color:var(--reply)">Found the hover target ignores the horizontal axis; two fixes suggested<small>3m</small></div>
+            <div class="pc m" style="border-left-color:var(--reply)">Unsure whether iPad keeps the tab strip<small>1m</small></div>
+          </div></div>
+        <div class="body"><div class="mini"><i style="width:80%"></i><i style="width:55%"></i></div><div class="cap">code-review<small>asking you · hovered</small></div></div></div>
+      <div class="tile vt"><div class="mrail"><i class="p" style="top:4px"></i><i class="r" style="top:28px"></i><i class="r" style="top:52px"></i></div>
+        <div class="body"><div class="mini"><i style="width:60%"></i><i style="width:90%"></i></div><div class="cap">design-review<small><em>working</em></small></div></div></div>
+      <div class="tile faded vt"><div class="mrail"><i class="p" style="top:4px"></i><i class="r" style="top:56px"></i></div>
+        <div class="body"><div class="mini"><i style="width:70%"></i></div><div class="cap">tests<small>reported back</small></div></div></div>
+    </div>
+  </div></div></div>
+
+  <h2>The trade</h2>
+  <p><b>1</b> keeps your line-under-the-tile and gives the strip the tile's full width, about 200 points, so marks are
+  easier to tell apart. Its cost is a new card layout: text in a row of narrow cards wraps more.</p>
+  <p><b>2</b> makes every agent's history read the same way and reuses the rail's card stack unchanged. Its cost is
+  resolution: a tile is only about 70 points tall, a third of the width, so a long history crowds sooner.</p>
+</main>
+</body>
+</html>

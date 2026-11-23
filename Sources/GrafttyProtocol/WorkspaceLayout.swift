@@ -47,6 +47,10 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     /// Agent tabs this viewer shows as Chat. Every other tab shows Terminal.
     /// Optional so a layout saved before Chat existed still loads.
     public private(set) var chatSessions: Set<Session>?
+    /// The user's tile order. Absent in layouts saved before the gallery.
+    private var storedGalleryOrder: [Session]?
+    /// The user's choice to show or hide the gallery; nil follows the agent count.
+    public var galleryVisible: Bool?
     public var sessions: [Session] { groups.flatMap(\.sessions) + terminals }
     /// Visible canvas groups in spatial order, with each group's tab order.
     public var canvasSessions: [Session] {
@@ -82,8 +86,72 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
 
     public func group(containing session: Session) -> Group? { groups.first { $0.sessions.contains(session) } }
 
+    /// Every agent, on stage or off, in tile order: the user's order first,
+    /// then any agent not yet placed, in canvas order.
+    public var gallerySessions: [Session] {
+        let placed = groups.flatMap(\.sessions)
+        let inCanvasOrder = (root?.groupIDs ?? []).flatMap { id in groups.first { $0.id == id }?.sessions ?? [] }
+            + placed.filter { session in !(root?.groupIDs ?? []).contains { group(containing: session)?.id == $0 } }
+        let ordered = (storedGalleryOrder ?? []).filter(placed.contains)
+        return ordered + inCanvasOrder.filter { !ordered.contains($0) }
+    }
+
+    /// Whether the session is the one a stage pane shows.
+    public func isOnStage(_ session: Session) -> Bool {
+        guard let group = group(containing: session) else { return false }
+        return group.selected == session && root?.groupIDs.contains(group.id) == true
+    }
+
+    /// The stage pane that a newly staged agent replaces.
+    public var focusedGroupID: UUID? {
+        focusedSession.flatMap { group(containing: $0)?.id }
+            ?? lastAgent.flatMap { group(containing: $0)?.id }
+            ?? root?.groupIDs.first ?? groups.first?.id
+    }
+
+    public func showsGallery(agentCount: Int) -> Bool { galleryVisible ?? (agentCount >= 2) }
+
+    /// Puts an agent on stage in the focused pane, or focuses the pane that
+    /// already shows it, so that no terminal is shown twice.
+    public mutating func stage(_ session: Session) {
+        guard groups.contains(where: { $0.sessions.contains(session) }) else { return }
+        if isOnStage(session) { select(session); return }
+        guard let target = focusedGroupID else { return }
+        if group(containing: session)?.id == target { select(session) } else { move(session, to: target) }
+        focusedSession = session
+    }
+
+    /// Takes a pane off a split stage, keeping its agents off stage in a
+    /// neighbouring pane. The last pane stays.
+    @discardableResult
+    public mutating func removePane(_ id: UUID) -> Bool {
+        let order = root?.groupIDs ?? []
+        guard groups.count > 1, let removed = groups.first(where: { $0.id == id }),
+              let position = order.firstIndex(of: id) else { return false }
+        let neighbour = position > 0 ? order[position - 1] : order.dropFirst().first
+        guard let neighbour, let index = groups.firstIndex(where: { $0.id == neighbour }) else { return false }
+        groups[index].sessions.append(contentsOf: removed.sessions)
+        groups.removeAll { $0.id == id }
+        root = root?.replacing(id, with: nil)
+        if let focused = focusedSession, removed.sessions.contains(focused) { focusedSession = groups[index].selected }
+        if let last = lastAgent, removed.sessions.contains(last) { lastAgent = groups[index].selected }
+        return true
+    }
+
+    @discardableResult
+    public mutating func moveTile(_ session: Session, relativeTo target: Session, after: Bool) -> Bool {
+        var order = gallerySessions
+        guard session != target, order.contains(session), order.contains(target) else { return false }
+        order.removeAll { $0 == session }
+        guard let index = order.firstIndex(of: target) else { return false }
+        order.insert(session, at: index + (after ? 1 : 0))
+        storedGalleryOrder = order
+        return true
+    }
+
     public mutating func addAgent(_ session: Session) {
         guard !sessions.contains(session) else { select(session); return }
+        storedGalleryOrder = gallerySessions + [session]
         if let index = lastAgent.flatMap({ group(containing: $0)?.id }).flatMap({ id in groups.firstIndex { $0.id == id } })
             ?? groups.indices.first {
             groups[index].sessions.append(session)
@@ -143,11 +211,13 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public mutating func remove(_ session: Session) {
         chatSessions?.remove(session)
         if chatSessions?.isEmpty == true { chatSessions = nil }
+        storedGalleryOrder?.removeAll { $0 == session }
+        if storedGalleryOrder?.isEmpty == true { storedGalleryOrder = nil }
         detach(session)
     }
 
-    /// Takes a tab out of its group or the drawer. Its view choice stays, for
-    /// a move that puts the tab back somewhere else.
+    /// Takes a tab out of its group or the drawer. Its view choice and tile
+    /// position stay, for a move that puts it back somewhere else.
     private mutating func detach(_ session: Session) {
         terminals.removeAll { $0 == session }
         if selectedTerminal == session { selectedTerminal = terminals.first }
