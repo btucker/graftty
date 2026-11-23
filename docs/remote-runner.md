@@ -288,7 +288,7 @@ FROM ghcr.io/btucker/graftty-runner:latest
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
 	&& rm -rf /var/lib/apt/lists/*
-## Install agent executables here using their official Linux installers.
+# Install agent executables here using their official Linux installers.
 USER runner
 ```
 

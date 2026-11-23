@@ -61,6 +61,23 @@ struct LinuxHostPackagingTests {
         }
     }
 
+    @Test("@spec DIST-4.15: When a Linux archive is installed over a graftty-host.service unit from before the runner rename, the installer shall move its options, drop-ins and autostart setting to graftty-runner.service and remove the legacy unit so only one service runs; if installation fails, the installer shall restore the legacy unit with its autostart and running state.")
+    func legacyHostUnitIsMigrated() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path] + [
+            "test_maintenance_migrates_legacy_unit", "test_maintenance_migration_keeps_disabled_autostart",
+            "test_no_start_migration_keeps_autostart", "test_no_start_migration_reports_a_running_legacy_service",
+            "test_failed_migration_restores_legacy_unit", "test_maintenance_refuses_inactive_legacy_unit",
+            "test_reinstall_over_legacy_unit_migrates_it", "test_migration_moves_legacy_dropins",
+            "test_failed_migration_restores_legacy_dropins", "test_install_removes_a_legacy_unit_beside_the_runner",
+            "test_failed_install_restores_both_units", "test_failed_install_restores_disabled_runner_autostart",
+        ].map { "InstallerTests." + $0 }
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
     @Test("@spec DIST-4.2: When a Linux archive is installed, the installer shall use the invoking user's directories and systemd service with explicit ports and KillMode=process so zmx sessions survive host restarts.")
     func installerBehavior() throws {
         let process = Process()

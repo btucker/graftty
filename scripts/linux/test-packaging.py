@@ -811,6 +811,19 @@ exit 0
         self.assertNotIn("--user enable graftty-runner.service", log.read_text())
         self.assertFalse(legacy.exists())
 
+    def test_no_start_migration_keeps_autostart(self):
+        legacy, log, state = self.legacy_install(running=False)
+        self.install("--no-start")
+        self.assertFalse(legacy.exists())
+        self.assertTrue((state / "graftty-runner.service.enabled").exists())
+        self.assertFalse((state / "graftty-runner.service.active").exists())
+
+    def test_no_start_migration_reports_a_running_legacy_service(self):
+        legacy, log, state = self.legacy_install()
+        result = self.install("--no-start")
+        self.assertNotIn("--user stop graftty-host.service", log.read_text())
+        self.assertIn("graftty-host.service is still running", result.stderr)
+
     def test_failed_migration_restores_legacy_unit(self):
         legacy, log, state = self.legacy_install()
         before = legacy.read_text()
@@ -901,6 +914,19 @@ exit 0
         self.assertEqual(runner.read_text(), runner_before)
         self.assertTrue((state / "graftty-host.service.enabled").exists())
         self.assertTrue((state / "graftty-runner.service.enabled").exists())
+
+    def test_failed_install_restores_disabled_runner_autostart(self):
+        legacy, runner, log, state = self.both_units()
+        (state / "graftty-runner.service.enabled").unlink()
+        (self.archive / "bin/graftty-runner").write_text("""#!/bin/sh
+if [ "$1" = status ]; then echo '{"running":false,"sshPort":8801}'; fi
+exit 0
+""")
+        self.env["GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS"] = "1"
+        self.install(success=False)
+        self.assertIn("--user enable graftty-runner.service", log.read_text())
+        self.assertFalse((state / "graftty-runner.service.enabled").exists())
+        self.assertTrue((state / "graftty-host.service.enabled").exists())
 
     def test_legacy_command_link_is_kept(self):
         self.install("--no-start")

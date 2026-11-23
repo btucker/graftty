@@ -185,10 +185,12 @@ struct LinuxHostMaintenanceTests {
         #expect(commands.count == 3)
     }
 
-    @Test("@spec REMOTE-22.67: When maintenance checks which service owns the paired state, the application shall query graftty-runner.service, or graftty-host.service on an install that predates the rename.", arguments: [true, false])
-    func ownershipCheckQueriesTheInstalledUnit(renamed: Bool) throws {
+    @Test("@spec REMOTE-22.67: When maintenance checks which service owns the paired state, the application shall query graftty-runner.service, or graftty-host.service on an install that predates the rename.", arguments: [true, false], [true, false])
+    func ownershipCheckQueriesTheInstalledUnit(renamed: Bool, explicitConfigHome: Bool) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("maintenance-unit-\(UUID())")
-        let units = root.appendingPathComponent("config/systemd/user")
+        // Like the installer, an empty XDG_CONFIG_HOME means ~/.config.
+        let configHome = root.appendingPathComponent(explicitConfigHome ? "config" : ".config")
+        let units = configHome.appendingPathComponent("systemd/user")
         try FileManager.default.createDirectory(at: units, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try "".write(to: units.appendingPathComponent(renamed ? "graftty-runner.service" : "graftty-host.service"), atomically: true, encoding: .utf8)
@@ -205,7 +207,7 @@ struct LinuxHostMaintenanceTests {
         try (python + "\n" + LinuxHostMaintenanceScripts.serviceOwnershipPython).write(to: script, atomically: true, encoding: .utf8)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["XDG_CONFIG_HOME=" + root.appendingPathComponent("config").path, "python3", script.path]
+        process.arguments = ["HOME=" + root.path, "XDG_CONFIG_HOME=" + (explicitConfigHome ? configHome.path : ""), "python3", script.path]
         let output = Pipe(); process.standardOutput = output
         try process.run()
         let queried = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)

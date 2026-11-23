@@ -282,6 +282,17 @@ struct LinuxHostCompatibilityTests {
         }
     }
 
+    @Test("@spec REMOTE-21.29: If a staged Linux archive has no graftty-runner executable, then the application shall report that the archive predates the runner rename, rather than a CPU or library incompatibility, without changing the installed service.")
+    func rejectsArchivesFromBeforeTheRename() async throws {
+        let result = try await runInstallFixture(archiveCommands: ["graftty-host", "graftty", "zmx"])
+        #expect(result.output.exitCode != 0)
+        #expect(!result.installed)
+        #expect(result.lingerCalls.isEmpty)
+        let message = LinuxHostSetupError.remoteFailure(result.output.stderr).localizedDescription
+        #expect(message.contains("predates graftty-runner"))
+        #expect(!message.contains("CPU architecture"))
+    }
+
     @Test("@spec REMOTE-21.15: When Linux setup installs a user service, the application shall enable and verify lingering for the authenticated user without interactive authorization, or stop before installation with an actionable administrator command.", arguments: ["enabled", "enables", "denied", "no-effect"])
     func ensuresLingeringBeforeInstallation(mode: String) async throws {
         let result = try await runInstallFixture(lingerMode: mode)
@@ -300,7 +311,7 @@ struct LinuxHostCompatibilityTests {
         #expect(result.lingerCalls.contains("--no-ask-password enable-linger -- fixture-user") == (mode != "enabled"))
     }
 
-    private func runInstallFixture(failingBinary: String = "none", lingerMode: String = "enabled") async throws -> (output: CLIOutput, installed: Bool, lingerCalls: String) {
+    private func runInstallFixture(failingBinary: String = "none", lingerMode: String = "enabled", archiveCommands: [String] = ["graftty-runner", "graftty", "zmx"]) async throws -> (output: CLIOutput, installed: Bool, lingerCalls: String) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source")
@@ -333,7 +344,7 @@ struct LinuxHostCompatibilityTests {
           *) exit 99 ;;
         esac
         """)
-        for name in ["graftty-runner", "graftty", "zmx"] {
+        for name in archiveCommands {
             try executable(source.appendingPathComponent("bin/" + name), name == failingBinary ? "exit 47" : "exit 0")
         }
         let marker = root.appendingPathComponent("installed")

@@ -139,6 +139,9 @@ public enum LinuxHostSetupError: Error, LocalizedError, Sendable, Equatable {
             if stderr.contains("GRAFTTY_LINGER_REQUIRED:") {
                 return "The Linux user service must stay running after SSH disconnects. Graftty could not enable lingering automatically. Ask the host administrator to run the command below, then retry; the installation was not changed.\n\(stderr)"
             }
+            if stderr.contains("GRAFTTY_ARCHIVE_PREDATES_RUNNER") {
+                return "The Linux archive predates graftty-runner and cannot be installed by this version of Graftty. Choose a newer release. The existing installation was not changed.\n\(stderr)"
+            }
             if stderr.contains("GRAFTTY_INCOMPATIBLE:") {
                 return "The Linux archive cannot run on this host. Check its CPU architecture and runtime library requirements. The existing installation was not changed.\n\(stderr)"
             }

@@ -1892,6 +1892,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-4.14** The Linux runner executable shall name itself graftty-runner in its usage text.
 
+**DIST-4.15** When a Linux archive is installed over a graftty-host.service unit from before the runner rename, the installer shall move its options, drop-ins and autostart setting to graftty-runner.service and remove the legacy unit so only one service runs; if installation fails, the installer shall restore the legacy unit with its autostart and running state.
+
 ## WEB — Web Access
 
 ### WEB-1.x — Binding
@@ -4146,9 +4148,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.26** When Linux setup reports agent tool outcomes, the application shall bound failure diagnostics and emit concise success messages before serializing the setup result.
 
-**REMOTE-21.27** When the application runs a command on an installed Linux runner, it shall invoke graftty-runner, or the graftty-host command of an install that predates the rename.
+**REMOTE-21.27** When the application runs a command on an installed Linux runner, the application shall invoke graftty-runner, or the graftty-host command of an install that predates the rename.
 
 **REMOTE-21.28** The CLI shall accept graftty remote add-runner as another name for graftty remote setup-linux.
+
+**REMOTE-21.29** If a staged Linux archive has no graftty-runner executable, then the application shall report that the archive predates the runner rename, rather than a CPU or library incompatibility, without changing the installed service.
 
 ### REMOTE-22.x
 

@@ -15,8 +15,9 @@ enum LinuxHostScripts {
     }
 
     /// The installed runner launcher. Installs from before the rename have
-    /// only `graftty-host`, which a Mac can still inspect and update.
-    static let runnerCommand = #""$(if [ -x "$HOME/.local/bin/graftty-runner" ]; then echo "$HOME/.local/bin/graftty-runner"; else echo "$HOME/.local/bin/graftty-host"; fi)""#
+    /// only `graftty-host`, which a Mac can still inspect and update. printf,
+    /// unlike sh's echo, leaves backslashes in the home path intact.
+    static let runnerCommand = #""$(if [ -x "$HOME/.local/bin/graftty-runner" ]; then printf %s "$HOME/.local/bin/graftty-runner"; else printf %s "$HOME/.local/bin/graftty-host"; fi)""#
 
     static let detect = """
     set -eu
@@ -59,6 +60,7 @@ enum LinuxHostScripts {
         mkdir unpacked
         tar -xzf archive.tar.gz -C unpacked --no-same-owner
         test -f unpacked/install.sh || { echo 'Linux archive is missing install.sh' >&2; exit 71; }
+        test -e unpacked/bin/graftty-runner || { echo 'GRAFTTY_ARCHIVE_PREDATES_RUNNER: this Linux archive predates graftty-runner; choose a newer release' >&2; exit 71; }
         for binary in graftty-runner graftty zmx; do
           if test "$binary" = zmx; then argument=--version; else argument=--help; fi
           if timeout --kill-after=1 15 "unpacked/bin/$binary" "$argument" > compatibility.log 2>&1; then

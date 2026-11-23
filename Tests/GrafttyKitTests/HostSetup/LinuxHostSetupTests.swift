@@ -24,14 +24,15 @@ struct LinuxHostSetupTests {
         #expect(LinuxHostScripts.quote("a'b $HOME; x") == "'a'\\''b $HOME; x'")
     }
 
-    @Test("@spec REMOTE-21.27: When the application runs a command on an installed Linux runner, it shall invoke graftty-runner, or the graftty-host command of an install that predates the rename.", arguments: ["graftty-runner", "graftty-host"])
+    @Test("@spec REMOTE-21.27: When the application runs a command on an installed Linux runner, the application shall invoke graftty-runner, or the graftty-host command of an install that predates the rename.", arguments: ["graftty-runner", "graftty-host"])
     func runnerCommandFindsTheInstalledLauncher(installed: String) async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("runner-command-\(UUID())")
+        // A backslash in the home path must reach the shell unchanged.
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("runner\\command\\t-\(UUID())")
         defer { try? FileManager.default.removeItem(at: home) }
         let bin = home.appendingPathComponent(".local/bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let launcher = bin.appendingPathComponent(installed)
-        try "#!/bin/sh\necho \"$0 $*\"\n".write(to: launcher, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\nprintf '%s\\n' \"$0 $*\"\n".write(to: launcher, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: launcher.path)
         let output = try await CLIRunner().capture(command: "/usr/bin/env",
             args: ["HOME=" + home.path, "/bin/sh", "-c", LinuxHostScripts.runnerCommand + " status --json"], at: home.path)

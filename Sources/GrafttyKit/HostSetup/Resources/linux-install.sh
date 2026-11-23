@@ -80,6 +80,7 @@ legacy_removed=0
 legacy_enabled=0
 legacy_active=0
 dropins_moved=0
+runner_enabled=0
 
 previous_release=""
 release_installed=0
@@ -112,6 +113,7 @@ cleanup() {
             systemctl --user disable graftty-runner.service >/dev/null 2>&1 || true
             rm -f -- "$service_file"
         fi
+        if ((runner_enabled)); then systemctl --user disable graftty-runner.service >/dev/null 2>&1 || true; fi
         if ((dropins_moved)); then mv -- "$service_file.d" "$legacy_file.d"; fi
         if ((had_service)); then cp "$service_backup" "$active_file"; else rm -f -- "$active_file"; fi
         if ((legacy_removed)); then cp "$legacy_backup" "$legacy_file"; fi
@@ -238,6 +240,9 @@ if [[ -f $legacy_file ]]; then
         legacy_active=1
         systemctl --user stop graftty-host.service
     fi
+    if ((!start_service)) && systemctl --user is-active --quiet graftty-host.service 2>/dev/null; then
+        echo 'graftty-host.service is still running; stop it before starting graftty-runner.service' >&2
+    fi
     systemctl --user disable graftty-host.service >/dev/null 2>&1 || true
     rm -f -- "$legacy_file"
     # Drop-ins carry user options; they follow a converted unit.
@@ -249,7 +254,13 @@ fi
 if ((start_service)); then
     if ((!maintenance)); then "$release/bin/graftty-runner" setup --json >/dev/null; fi
     systemctl --user daemon-reload
-    if ((!maintenance || legacy_enabled)); then systemctl --user enable graftty-runner.service; fi
+    if ((!maintenance || legacy_enabled)); then
+        # Rollback disables an existing runner unit only if this run enabled it.
+        if ((had_service && !legacy)) && ! systemctl --user is-enabled --quiet graftty-runner.service 2>/dev/null; then
+            runner_enabled=1
+        fi
+        systemctl --user enable graftty-runner.service
+    fi
     replacement_started=1
     systemctl --user restart graftty-runner.service
     ready_timeout=${GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS:-30}
@@ -271,6 +282,10 @@ if ((start_service)); then
         sleep 0.1
     done
     ((ready)) || { echo 'Graftty runner did not become ready on the requested SSH port' >&2; exit 1; }
+elif ((legacy_enabled)); then
+    # --no-start carries the retired unit's autostart to the runner unit.
+    systemctl --user enable graftty-runner.service >/dev/null 2>&1 ||
+        echo 'Could not enable graftty-runner.service; enable it to start the runner at login' >&2
 fi
 completed=1
 printf 'Installed Graftty %s in %s\n' "$version" "$release"

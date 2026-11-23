@@ -45,7 +45,8 @@ enum LinuxHostMaintenanceScripts {
     """
 
     static let serviceOwnershipPython = #"""
-    units = pathlib.Path(os.environ.get('XDG_CONFIG_HOME', str(pathlib.Path.home() / '.config'))) / 'systemd/user'
+    # Match the installer: an empty XDG_CONFIG_HOME means ~/.config.
+    units = pathlib.Path(os.environ.get('XDG_CONFIG_HOME') or str(pathlib.Path.home() / '.config')) / 'systemd/user'
     unit = 'graftty-runner.service' if (units / 'graftty-runner.service').exists() else 'graftty-host.service'
     service_pid = int(subprocess.check_output(['systemctl', '--user', 'show', unit, '--property=MainPID', '--value'], timeout=15).strip())
     lease = (state / 'host.lock').stat()
