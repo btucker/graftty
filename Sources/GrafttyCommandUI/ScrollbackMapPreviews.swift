@@ -86,14 +86,19 @@ struct ScrollbackMapPreviews: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.layoutDirection) private var layoutDirection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Measured card heights; a card stays hidden until it has been measured.
+    @State private var heights: [String: CGFloat] = [:]
 
     var body: some View {
         TimelineView(.everyMinute) { _ in
             let now = Date.now
-            let focusedIndex = groups.firstIndex { $0.messages.contains { $0.id == focusedID } }
-            ScrollbackPreviewStack(width: cardWidth, height: height, gap: gap, focusY: focusY,
-                                   maximumShift: maximumShift, focusedIndex: focusedIndex) {
-                ForEach(groups) { group in
+            let slots = ScrollbackPreviewStack.slots(
+                anchors: groups.map(\.y), heights: groups.map { heights[$0.id] }, height: height, focusY: focusY,
+                maximumShift: maximumShift,
+                focusedIndex: groups.firstIndex { $0.messages.contains { $0.id == focusedID } })
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(zip(groups, slots)), id: \.0.id) { group, slot in
                     Button { onSelect(group.id) } label: {
                         card(for: group, now: now).contentShape(Rectangle())
                     }
@@ -105,10 +110,18 @@ struct ScrollbackMapPreviews: View {
                             .accessibilityHidden(true)
                     }
                     #endif
-                    .layoutValue(key: PreviewY.self, value: group.y)
-                    .anchorPreference(key: PreviewBounds.self, value: .bounds) { [group.id: $0] }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { heights[group.id] = $0 }
+                    .opacity(slot.visible ? 1 : 0)
+                    .allowsHitTesting(slot.visible)
+                    .accessibilityHidden(!slot.visible)
+                    .anchorPreference(key: PreviewBounds.self, value: .bounds) { slot.visible ? [group.id: $0] : [:] }
+                    // Padding, unlike an offset, moves the anchors that place connectors and the Mac hover area.
+                    .padding(.top, slot.top)
                 }
             }
+            .frame(width: cardWidth + gap, height: height, alignment: .topLeading)
+            .animation(ScrollbackPreviewStack.animation(reduceMotion: reduceMotion), value: slots)
             .backgroundPreferenceValue(PreviewBounds.self) { connectors(for: $0).allowsHitTesting(false) }
             .overlayPreferenceValue(FocusedRowBounds.self) { focusedConnector(for: $0).allowsHitTesting(false) }
             .clipped()
@@ -254,10 +267,6 @@ enum ScrollbackPreviewArea: PreferenceKey {
 }
 #endif
 
-private enum PreviewY: LayoutValueKey {
-    static let defaultValue: CGFloat = 0
-}
-
 private enum PreviewBounds: PreferenceKey {
     static let defaultValue: [String: Anchor<CGRect>] = [:]
 
@@ -266,28 +275,29 @@ private enum PreviewBounds: PreferenceKey {
     }
 }
 
-struct ScrollbackPreviewStack: Layout {
-    let width: CGFloat
-    let height: CGFloat
-    let gap: CGFloat
-    let focusY: CGFloat
-    let maximumShift: CGFloat
-    let focusedIndex: Int?
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        CGSize(width: width + gap, height: height)
+/// @spec CONTEXT-57.14
+/// When the previewed scrollback message changes, the application shall slide preview cards to their new positions and fade cards that no longer fit out where they stand, keeping unmeasured cards hidden, instead of moving or replacing them instantly. While Reduce Motion is on, the application shall change them without motion.
+enum ScrollbackPreviewStack {
+    struct Slot: Equatable {
+        let top: CGFloat
+        let visible: Bool
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let cardProposal = ProposedViewSize(width: width, height: nil)
-        let heights = subviews.map { $0.sizeThatFits(cardProposal).height }
-        let anchors = subviews.map { $0[PreviewY.self] }
-        let tops = Self.tops(anchors: anchors, heights: heights, height: bounds.height, focusY: focusY,
-                             maximumShift: maximumShift, focusedIndex: focusedIndex)
-        for (subview, top) in zip(subviews, tops) {
-            // Unplaced cards would default to the center, so place surplus cards past the clip edge.
-            subview.place(at: CGPoint(x: bounds.minX, y: bounds.minY + (top ?? bounds.height)),
-                          anchor: .topLeading, proposal: cardProposal)
+    static func animation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .smooth(duration: 0.18)
+    }
+
+    /// Every card keeps a position, so a card that no longer fits fades beside its
+    /// mark instead of jumping off the edge; unmeasured cards stay hidden at their mark.
+    static func slots(anchors: [CGFloat], heights: [CGFloat?], height: CGFloat, focusY: CGFloat,
+                      maximumShift: CGFloat, focusedIndex: Int? = nil) -> [Slot] {
+        let tops = tops(anchors: anchors, heights: heights.map { $0 ?? .infinity }, height: height,
+                        focusY: focusY, maximumShift: maximumShift, focusedIndex: focusedIndex)
+        return zip(anchors, zip(heights, tops)).map { anchor, measured in
+            let (cardHeight, top) = measured
+            if let top { return Slot(top: top, visible: true) }
+            guard let cardHeight else { return Slot(top: min(height, anchor), visible: false) }
+            return Slot(top: min(max(0, height - cardHeight), max(0, anchor - cardHeight / 2)), visible: false)
         }
     }
 

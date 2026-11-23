@@ -484,6 +484,16 @@ struct ScrollbackMapPreviewTests {
             size: CGSize(width: 380, height: 332), named: "scrollback-map-grouped")
     }
 
+    @Test("@spec CONTEXT-57.14: When the previewed scrollback message changes, the application shall slide preview cards to their new positions and fade cards that no longer fit out where they stand, keeping unmeasured cards hidden, instead of moving or replacing them instantly. While Reduce Motion is on, the application shall change them without motion.")
+    func hiddenCardsFadeWhereTheyStand() {
+        let slots = ScrollbackPreviewStack.slots(anchors: [55, 67, 79, 130], heights: [36, 36, 36, nil],
+                                                 height: 190, focusY: 67, maximumShift: 16)
+        #expect(slots.map(\.visible) == [true, true, false, false])
+        #expect(slots.map(\.top) == [22, 64, 61, 130])
+        #expect(ScrollbackPreviewStack.animation(reduceMotion: true) == nil)
+        #expect(ScrollbackPreviewStack.animation(reduceMotion: false) != nil)
+    }
+
     @Test func nudgesOnlyTheOverlappingPair() {
         let tops = ScrollbackPreviewStack.tops(anchors: [45, 136, 152, 260], heights: [30, 40, 32, 32],
                                                height: 310, focusY: 77, maximumShift: 24)
