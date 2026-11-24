@@ -4164,6 +4164,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.30** When setting up a new runner, the application shall bind its SSH and HTTP listeners to loopback.
 
+**REMOTE-21.31** When graftty remote add-runner receives an invite, the CLI shall redeem it through the running app instead of installing over SSH.
+
 ### REMOTE-22.x
 
 **REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.
@@ -4683,6 +4685,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-33.16** When SSH setup finishes on a runner that reports a Tailcat endpoint, the application shall save the runner with the Tailcat transport and keep its OpenSSH destination for updates.
 
 **REMOTE-33.17** When SSH setup finishes on a runner that reports no Tailcat endpoint, the application shall save it with direct SSH.
+
+**REMOTE-33.18** When the user adds a runner with an invite, the application shall pin the invite key and save the runner with the Tailcat transport and no OpenSSH destination.
+
+**REMOTE-33.19** When an invite names a runner already saved with the same key, the application shall replace the saved entry; if the key differs, then the application shall refuse it.
+
+**REMOTE-33.20** If the runner presents a key other than the invite key, then the application shall abort enrollment without trusting anything.
 
 ## CHROME — Dedicated Chrome tabs
 

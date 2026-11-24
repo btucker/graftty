@@ -91,6 +91,9 @@ struct ControlSocketWireFixtureTests {
             (.linuxSetupIdentity, #"{"type":"linux_setup_identity"}"#),
             (.completeLinuxSetup(try setupResult()),
              #"{"result":{"destination":"alias","identity":{"deviceID":"dev","displayName":"Linux","port":8801,"publicKey":"key"},"openSSH":{"hostname":"h","port":22,"user":"u"},"projectPaths":["/home/u/app"],"toolOutcomes":[{"component":"codex","message":"ok","status":"succeeded"}]},"type":"complete_linux_setup"}"#),
+            (.addInvitedRunner(identity: LinuxHostIdentity(deviceID: "dev", displayName: "Linux", publicKey: "key", port: 8801),
+                               endpoint: TailcatEndpoint(address: "a", port: 8801)),
+             #"{"endpoint":{"address":"a","port":8801},"identity":{"deviceID":"dev","displayName":"Linux","port":8801,"publicKey":"key"},"type":"add_invited_runner"}"#),
             (.previewFiles(path: "/r", targets: ["a.md"], paneSessionName: "s"),
              #"{"pane_session_name":"s","path":"/r","targets":["a.md"],"type":"preview_files"}"#),
             (.previewImage(path: "/r", target: "a.png", paneSessionName: "s"),
@@ -208,7 +211,7 @@ struct ControlSocketWireFixtureTests {
     /// keep at least one encoding fixture per case.
     static func fixtureCoverage(_ request: NotificationMessage, _ response: ResponseMessage) {
         switch request {
-        case .addProject, .projectAddCapability, .linuxSetupIdentity, .completeLinuxSetup, .previewFiles, .previewImage, .offerResource, .notify, .clear,
+        case .addProject, .projectAddCapability, .linuxSetupIdentity, .completeLinuxSetup, .addInvitedRunner, .previewFiles, .previewImage, .offerResource, .notify, .clear,
              .listPanes, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree, .addPane, .paneAgentCapability,
              .closePane, .showPane, .sendPane, .teamSend, .teamReply, .teamBroadcast, .teamHook,
              .providerActivity, .attentionReport, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,

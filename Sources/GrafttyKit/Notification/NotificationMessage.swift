@@ -96,6 +96,8 @@ public enum NotificationMessage: Sendable, Equatable {
     case projectAddCapability
     case linuxSetupIdentity
     case completeLinuxSetup(LinuxHostSetupResult)
+    /// Saves a runner whose invite the CLI already redeemed. Carries no secret.
+    case addInvitedRunner(identity: LinuxHostIdentity, endpoint: TailcatEndpoint)
     case previewFiles(path: String, targets: [String], paneSessionName: String? = nil)
     case previewImage(path: String, target: String, paneSessionName: String? = nil)
     case offerResource(path: String, target: String, paneSessionName: String? = nil)
@@ -223,7 +225,7 @@ extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case targets
         case type, path, text, clearAfter, index, lines
-        case target, request, result, host
+        case target, request, result, host, identity, endpoint
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
         case recipient, priority, worktree, repo, member, unread, all, limit, consuming
@@ -254,6 +256,10 @@ extension NotificationMessage: Codable {
         case .completeLinuxSetup(let result):
             try container.encode("complete_linux_setup", forKey: .type)
             try container.encode(result, forKey: .result)
+        case let .addInvitedRunner(identity, endpoint):
+            try container.encode("add_invited_runner", forKey: .type)
+            try container.encode(identity, forKey: .identity)
+            try container.encode(endpoint, forKey: .endpoint)
         case let .previewFiles(path, targets, paneSessionName):
             try container.encode("preview_files", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -431,6 +437,9 @@ extension NotificationMessage: Codable {
             self = .linuxSetupIdentity
         case "complete_linux_setup":
             self = .completeLinuxSetup(try container.decode(LinuxHostSetupResult.self, forKey: .result))
+        case "add_invited_runner":
+            self = .addInvitedRunner(identity: try container.decode(LinuxHostIdentity.self, forKey: .identity),
+                                     endpoint: try container.decode(TailcatEndpoint.self, forKey: .endpoint))
         case "preview_files":
             self = .previewFiles(path: try container.decode(String.self, forKey: .path),
                                  targets: try container.decode([String].self, forKey: .targets),

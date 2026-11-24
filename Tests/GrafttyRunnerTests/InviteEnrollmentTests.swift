@@ -99,6 +99,35 @@ struct InviteEnrollmentTests {
         await service.stop()
     }
 
+    @Test("@spec REMOTE-33.20: If the runner presents a key other than the invite key, then the application shall abort enrollment without trusting anything.",
+          .timeLimit(.minutes(2)))
+    func enrollmentPinsTheInviteKey() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let service = try HostService(configuration: fixture.configuration, enablePairing: false)
+        do {
+            let port = try await service.start()
+            let genuine = try await fixture.invite()
+            let impostorKey = Data(repeating: 8, count: 32).base64EncodedString()
+            let tampered = RunnerInvite(identity: LinuxHostIdentity(deviceID: genuine.identity.deviceID,
+                displayName: genuine.identity.displayName, publicKey: impostorKey, port: 8801),
+                endpoint: genuine.endpoint, secret: genuine.secret, expiresAt: genuine.expiresAt)
+            let key = Curve25519.Signing.PrivateKey()
+            func enroll(_ invite: RunnerInvite) async throws {
+                try await RunnerInviteEnrollment.enroll(
+                    hostPublicKey: RemoteIdentityPublicKey(rawRepresentation: #require(Data(base64Encoded: invite.identity.publicKey))),
+                    enrollmentUsername: Self.token(invite).username, clientKey: key) {
+                    try await $0.connect(host: "127.0.0.1", port: port)
+                }
+            }
+            await #expect(throws: (any Error).self) { try await enroll(tampered) }
+            #expect(try fixture.trusted.list().isEmpty)
+            try await enroll(genuine)
+            #expect(try fixture.trusted.get(id: RemoteDeviceID(value: "mac-id")) != nil)
+        } catch { await service.stop(); throw error }
+        await service.stop()
+    }
+
     @Test("@spec REMOTE-33.11: When asked for an invite, the runner shall print one invite line and nothing else.")
     func invitePrintsOneLine() throws {
         let invite = RunnerInvite(identity: LinuxHostIdentity(deviceID: "r", displayName: "Runner",

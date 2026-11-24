@@ -11,6 +11,20 @@ struct RemoteSetupLinuxCLITests {
         #expect(command.version == "1.2.3")
     }
 
+    @Test("@spec REMOTE-21.31: When graftty remote add-runner receives an invite, the CLI shall redeem it through the running app instead of installing over SSH.")
+    func addRunnerAcceptsAnInvite() throws {
+        let invite = RunnerInvite(identity: LinuxHostIdentity(deviceID: "runner", displayName: "Runner",
+            publicKey: Data(repeating: 2, count: 32).base64EncodedString(), port: 8801),
+            endpoint: .init(address: "fixture", port: 8801), secret: Data(repeating: 3, count: 32),
+            expiresAt: Date(timeIntervalSince1970: 1_900_000_000))
+        let command = try #require(GrafttyCLI.parseAsRoot(["remote", "add-runner", invite.encoded()]) as? RemoteSetupLinux)
+        #expect(command.invite == invite)
+        #expect(throws: (any Error).self) {
+            _ = try GrafttyCLI.parseAsRoot(["remote", "add-runner", invite.encoded(), "--version", "1.2.3"])
+        }
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["remote", "add-runner", "graftty-invite-1:broken"]) }
+    }
+
     @Test("@spec REMOTE-21.22: When graftty remote setup-linux runs, the CLI shall require an explicit release or archive, resolve selected repositories and branches, and reuse Linux setup with the running Mac app's public identity.")
     func parsesAndResolvesProjectPlan() async throws {
         let command = try #require(GrafttyCLI.parseAsRoot([
