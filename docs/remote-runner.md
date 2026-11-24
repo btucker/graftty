@@ -24,9 +24,9 @@ import committed projects, and open persistent remote terminals.
    ssh -o BatchMode=yes -o StrictHostKeyChecking=yes user@host true
    ```
 
-6. Allow your Mac to reach the Linux host's TCP port 8801 over your LAN or VPN.
-   An SSH config alias with `ProxyJump` can provision the host, but Graftty's
-   terminal connection still needs a direct network route to port 8801.
+6. Make sure the host has outbound internet access. Graftty reaches the runner
+   over Tailcat, an encrypted connection that needs no open inbound port. Setup
+   binds the runner's own listeners to loopback, so nothing new is exposed.
 
 Setup checks and enables lingering for your account so the user service keeps
 running after SSH disconnects. It does not request interactive authorization.
@@ -45,7 +45,7 @@ administrator to run `sudo loginctl enable-linger USER`, then retry.
 
 The setup flow verifies release archive checksums and checks that the host, CLI, and terminal binaries can execute before modifying an existing installation. Incompatible runtime libraries or architectures produce an error. It then installs a service for your Linux
 account, and exchanges public identity keys through your existing SSH connection.
-The host then appears among your saved remote connections.
+The host then appears among your saved remote connections, reached over Tailcat.
 
 Only committed branch and tag history is imported, including unpushed commits.
 Working edits, untracked files, ignored files, stashes, and local Git configuration
@@ -79,6 +79,28 @@ creation/removal, team messaging, hooks, and Attention reports, plus
 `graftty-runner` for service administration. Mac GUI operations, enrollment from
 Linux, and managing onward host connections are not supported by the headless
 runtime.
+
+## Add a runner with an invite
+
+A runner that is already running, such as a container or a service you
+installed by hand, prints a one-time invite on request:
+
+```sh
+graftty-runner invite
+```
+
+On the Mac, with Graftty running, pass that line to:
+
+```sh
+graftty remote add-runner 'graftty-invite-1:…'
+```
+
+The invite carries the runner's identity, its Tailcat address and a secret that
+works once and expires after an hour. Treat it like a password: anyone who sees
+it before you use it can add their own Mac. Restarting the runner cancels
+unused invites. A runner added this way has no SSH destination saved, so the
+Mac does not offer **Update Runner…** or project import for it; clone projects
+on the runner and register them with `graftty-runner project add`.
 
 ## Prepare development tools and agents
 
@@ -181,7 +203,7 @@ journalctl --user -u graftty-runner.service -n 100
 For a foreground host, run:
 
 ```sh
-~/.local/bin/graftty-runner serve --bind-address 0.0.0.0 --ssh-port 8801
+~/.local/bin/graftty-runner serve
 ```
 
 Stop the installed service before starting a foreground instance with the same
@@ -194,9 +216,11 @@ imports are accepted only while their recorded commit, branch, and clean working
 tree still match. If you have changed the Linux checkout, choose another project
 root or manage that checkout directly.
 
-If installation succeeds but connection fails, check port 8801 and the direct
-network route. If the saved host identity has changed, verify the cause before
-removing the old saved connection and enrolling the replacement.
+If installation succeeds but connection fails, check that the runner has
+outbound internet access and CA certificates; `journalctl --user -u
+graftty-runner.service` reports when it cannot listen on Tailcat. If the saved
+host identity has changed, verify the cause before removing the old saved
+connection and enrolling the replacement.
 
 ## Run the runner in Docker
 
@@ -216,20 +240,17 @@ After the first image release, run this command on the Docker host:
 docker run --detach --name graftty-runner --hostname graftty-runner \
 	--restart unless-stopped \
 	--mount type=volume,source=graftty-runner-home,target=/home/runner \
-	--publish 127.0.0.1:8800:8800 --publish 127.0.0.1:8801:8801 \
 	ghcr.io/btucker/graftty-runner:latest
 ```
+
+No ports are published: the Mac reaches the runner over Tailcat, which needs
+only outbound internet access from the container.
 
 For repeatable deployments, replace `latest` with a published version tag or
 image digest. Stable releases publish a version tag and `latest`. Prereleases
 publish only their full version tag. Build metadata uses `_` in place of `+`,
 so release `v1.2.3+build.4` has image tag `1.2.3_build.4`.
 Both AMD64 and ARM64 are supported.
-
-For a Mac on another machine, replace `127.0.0.1` with the Docker host's LAN or
-VPN address. Allow that Mac to reach ports 8800 and 8801. Verify Windows firewall
-and Docker port forwarding from the Mac. Publishing to loopback allows only
-connections from the Docker host.
 
 Check readiness:
 
@@ -238,30 +259,26 @@ docker inspect --format '{{.State.Health.Status}}' graftty-runner
 docker exec graftty-runner graftty-runner status --json
 ```
 
-Wait for `healthy` and `"running":true`.
+Wait for `healthy`, `"running":true` and `"tailcat":true`.
 
-### Pair the Mac
+### Add the runner to your Mac
 
-1. In the Mac's **Remote Hosts** menu, choose **Add Remote Mac…**.
-2. Enter `http://DOCKER_HOST:8800` in **URL**.
-3. Choose **Direct SSH**, enter the Docker host's address, and use port `8801`.
-4. Start pairing, then inspect the pending verification code on the runner:
+Print an invite and redeem it on the Mac, as in
+[Add a runner with an invite](#add-a-runner-with-an-invite):
 
-   ```sh
-   docker exec graftty-runner graftty-runner pair pending
-   ```
+```sh
+docker exec graftty-runner graftty-runner invite
+graftty remote add-runner 'graftty-invite-1:…'
+```
 
-5. Compare the code with the Mac's code. Confirm the matching code locally:
+On a platform that shows container logs but offers no `exec`, start the
+container with `--env GRAFTTY_PRINT_INVITE=1`. The runner then prints one invite
+to its log at first start, while no Mac is paired. Logs are often retained, so
+use this only where you control who can read them.
 
-   ```sh
-   docker exec graftty-runner graftty-runner pair confirm 123456
-   ```
-
-6. Complete verification on the Mac.
-
-Use **Add Remote Mac…** for a container. **Add Remote Runner…** expects
-system SSH and a systemd user service. Container startup uses the foreground
-runner process and tini instead of systemd.
+A container paired earlier through published ports keeps working after an
+image update if you keep publishing port 8801; Macs move to Tailcat the next
+time they connect.
 
 ### Add repositories and agent tools
 
@@ -305,8 +322,8 @@ the same home volume. Do not remove the volume.
 Use image replacement for updates. The Mac's **Update Runner…** flow manages a
 systemd installation and cannot update this container.
 
-Docker does not add the unfinished outbound enrollment or rendezvous
-connection. This deployment requires a reachable direct route from the Mac.
+The runner's Tailcat identity lives in the home volume, so replacing the
+container keeps its address and every paired Mac reconnects without a new invite.
 Container restart, Docker engine shutdown, WSL termination, and Windows reboot
 end live processes. Docker's restart policy starts a new host process afterward.
 

@@ -25,10 +25,13 @@ ENV HOME=/home/runner \
 
 USER runner
 WORKDIR /home/runner/projects
-EXPOSE 8800 8801
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
     CMD graftty-runner status --json | grep -q '"running":true'
 
 # zmx daemons fork; tini reaps them and forwards termination to the runner.
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/graftty/bin/graftty-runner"]
-CMD ["serve", "--bind-address", "0.0.0.0", "--enable-pairing"]
+# Macs reach the runner over Tailcat. The direct listener stays on all
+# interfaces inside the container's own namespace, so a container paired
+# earlier through a published port keeps working; nothing is reachable unless
+# the operator publishes it.
+CMD ["serve", "--bind-address", "0.0.0.0"]
