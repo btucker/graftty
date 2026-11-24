@@ -50,7 +50,7 @@ struct RemoteMacConnectionsPopover: View {
             }.buttonStyle(.plain).padding(12)
             if let onSetupLinuxHost {
                 Button(action: onSetupLinuxHost) {
-                    Label("Set Up Linux Host…", systemImage: "server.rack")
+                    Label("Add Remote Runner…", systemImage: "server.rack")
                         .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }.buttonStyle(.plain).padding(12)
             }
@@ -124,7 +124,7 @@ struct RemoteMacConnectionsPopover: View {
             }
             Spacer(minLength: 8)
             if let onUpdateHost, model.maintenanceHost(for: mac) != nil {
-                Button("Update Host…") { onUpdateHost(mac) }
+                Button("Update Runner…") { onUpdateHost(mac) }
                     .controlSize(.small)
                     .accessibilityIdentifier("updateHost-\(mac.id.value)")
             }

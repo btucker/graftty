@@ -210,7 +210,7 @@ struct ProviderEnroll: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "enroll", abstract: "Enroll an explicit AWS instance through Systems Manager",
         discussion: """
         Requires SSM Agent, an instance role permitting Systems Manager, and a
-        prepared graftty-host installation owned by the development user.
+        prepared graftty-runner installation owned by the development user.
         Uses the running Mac app's public identities. Saves the target and SSM
         command for retries; reuse the same operation UUID and options.
         Grants the worker replication access only. This does not start its
@@ -222,9 +222,9 @@ struct ProviderEnroll: AsyncParsableCommand {
     @Option(help: "Expected 12-digit AWS account ID") var accountId: String
     @Option(help: "Exact EC2 instance ID") var instanceId: String
     @Option(help: "Stable provisioning/enrollment operation UUID; reuse on retry") var operationId: String
-    @Option(help: "Non-root development user that runs graftty-host") var user: String
-    @Option(help: "Absolute graftty-host executable path on the instance") var hostExecutable: String
-    @Option(help: "Absolute graftty-host state directory on the instance") var hostStateDirectory: String
+    @Option(help: "Non-root development user that runs graftty-runner") var user: String
+    @Option(help: "Absolute graftty-runner executable path on the instance") var hostExecutable: String
+    @Option(help: "Absolute graftty-runner state directory on the instance") var hostStateDirectory: String
     @Flag(help: "Print the enrolled public identity as JSON") var json = false
 
     private var target: AWSHostEnrollmentTarget {

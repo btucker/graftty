@@ -6,7 +6,7 @@ import GrafttyRemoteClient
 
 struct ProviderProbe: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "probe", abstract: "Authenticate an enrolled AWS host and read its current load",
-        discussion: "Uses AWS CLI v2 and the Session Manager plugin on this Mac, plus the saved enrollment. The host must be running graftty-host and SSM Agent. No inbound ports are required. This command closes its connection after one observation; it does not start background replication.")
+        discussion: "Uses AWS CLI v2 and the Session Manager plugin on this Mac, plus the saved enrollment. The host must be running graftty-runner and SSM Agent. No inbound ports are required. This command closes its connection after one observation; it does not start background replication.")
     @Argument(help: "Compute provider: aws") var provider: String
     @Option(help: "Completed enrollment operation UUID") var operationId: String
     @Flag(help: "Print pinned identity and resource observation as JSON") var json = false
@@ -73,7 +73,7 @@ struct ProviderProbe: AsyncParsableCommand {
             // AWS/plugin diagnostics may contain session URLs or tokens. Keep
             // them out of CLI output; users can diagnose SSM directly with AWS.
             if error is CancellationError { throw error }
-            throw ValidationError("AWS host probe failed: \(error). Check the Session Manager plugin, SSM access, graftty-host readiness, and enrollment trust.")
+            throw ValidationError("AWS host probe failed: \(error). Check the Session Manager plugin, SSM access, graftty-runner readiness, and enrollment trust.")
         }
     }
 

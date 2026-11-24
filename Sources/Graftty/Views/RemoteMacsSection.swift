@@ -390,7 +390,7 @@ struct RemoteMacsSection: View {
             .help("Add Remote Mac")
             if let onSetupLinuxHost {
                 Button(action: onSetupLinuxHost) {
-                    Label("Set Up Linux Host...", systemImage: "server.rack")
+                    Label("Add Remote Runner…", systemImage: "server.rack")
                         .foregroundColor(theme.sidebarPrimaryText(isActive: false))
                 }
                 .buttonStyle(.plain)

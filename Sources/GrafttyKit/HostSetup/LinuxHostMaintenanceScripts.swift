@@ -10,7 +10,9 @@ enum LinuxHostMaintenanceScripts {
         raise SystemExit('Maintenance requires Linux')
     home = pathlib.Path.home()
     data = pathlib.Path(os.environ.get('XDG_DATA_HOME', str(home / '.local/share')))
-    host = home / '.local/bin/graftty-host'
+    host = home / '.local/bin/graftty-runner'
+    if not host.exists():
+        host = home / '.local/bin/graftty-host'
     status = json.loads(subprocess.run([str(host), 'status', '--json'], check=True, capture_output=True, timeout=15).stdout)
     if not status.get('running'):
         raise SystemExit('The existing host must be running for maintenance')
@@ -43,7 +45,10 @@ enum LinuxHostMaintenanceScripts {
     """
 
     static let serviceOwnershipPython = #"""
-    service_pid = int(subprocess.check_output(['systemctl', '--user', 'show', 'graftty-host.service', '--property=MainPID', '--value'], timeout=15).strip())
+    # Match the installer: an empty XDG_CONFIG_HOME means ~/.config.
+    units = pathlib.Path(os.environ.get('XDG_CONFIG_HOME') or str(pathlib.Path.home() / '.config')) / 'systemd/user'
+    unit = 'graftty-runner.service' if (units / 'graftty-runner.service').exists() else 'graftty-host.service'
+    service_pid = int(subprocess.check_output(['systemctl', '--user', 'show', unit, '--property=MainPID', '--value'], timeout=15).strip())
     lease = (state / 'host.lock').stat()
     owner_matches = False
     for line in pathlib.Path('/proc/locks').read_text().splitlines():

@@ -41,7 +41,7 @@ Graftty organizes persistent terminal sessions by Git worktree. Every project an
 
 - **iPhone and iPad.** GrafttyMobile pairs with your Mac and attaches to the same live sessions. You can type, take control of a pane's size, answer agents, create worktrees, and view previews. On iPad, panes split side by side.
 - **Remote Macs.** Pair two Macs and use one Mac's worktrees and sessions from the other, over the LAN or Tailscale. The connection carries authenticated SSH inside an encrypted WebRTC channel. See [Remote Macs](docs/remote-macs.md).
-- **Linux hosts.** Run Graftty's headless host on Ubuntu 24.04 and connect to it from the Mac app. **Set Up Linux Host…** installs it over SSH and imports projects, including committed work that hasn't been pushed. See [Linux hosts](docs/linux-host.md).
+- **Remote runners.** Run Graftty's headless runner on Ubuntu 24.04 or in Docker and connect to it from the Mac app. **Add Remote Runner…** installs it over SSH and imports projects, including committed work that hasn't been pushed. See [Remote runners](docs/remote-runner.md).
 - **Web access.** An optional HTTPS web client is served only on your Tailscale addresses.
 - **Windows (in progress).** Windows 11 support through WSL2 is under way; see [Windows headless host](docs/windows-host.md).
 
@@ -119,7 +119,7 @@ If you only touch Swift, you need neither — the committed bundle is what
 - [Agents in Graftty](docs/agents.md): pinned agents, `GRAFTTY.md` instruction files, and agent teams.
 - [The graftty CLI](docs/cli.md): common commands, with examples.
 - [Remote Macs](docs/remote-macs.md): pairing, reconnection, and the trust model.
-- [Linux hosts](docs/linux-host.md) and [Windows hosts](docs/windows-host.md).
+- [Remote runners](docs/remote-runner.md) and [Windows hosts](docs/windows-host.md).
 - [`SPECS.md`](SPECS.md): the authoritative EARS-style behavior spec.
 - [`docs/`](docs): design notes and architecture details.
 

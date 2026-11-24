@@ -18,12 +18,13 @@ export HOME=/tmp/graftty-user
 mkdir -p "$HOME"
 /bundle/install.sh --bind-address 127.0.0.1 --ssh-port 18001 --http-port 18000 --no-start
 export PATH="$HOME/.local/bin:$PATH"
+graftty-runner --help
 graftty-host --help
 graftty --help
 zmx version
 export GRAFTTY_STATE_DIR=/tmp/graftty-state
 export GRAFTTY_SOCK=/tmp/graftty-socket/graftty.sock
-graftty-host setup --json --runtime-directory /tmp/graftty-socket
+graftty-runner setup --json --runtime-directory /tmp/graftty-socket
 # Runtime linkage was checked before adding Git for the fixture repository.
 # Bound apt so a mirror stall fails fast with a diagnostic instead of
 # consuming the job timeout in silence (#571). apt's own per-connection
@@ -45,16 +46,16 @@ apt_bounded apt-get install -y --no-install-recommends git
 mkdir /tmp/fixture
 git -C /tmp/fixture init -q -b main
 git -C /tmp/fixture -c user.name=Smoke -c user.email=smoke@example.invalid commit -q --allow-empty -m fixture
-graftty-host project add /tmp/fixture --json --runtime-directory /tmp/graftty-socket
-grep -q '^KillMode=process$' "$HOME/.config/systemd/user/graftty-host.service"
+graftty-runner project add /tmp/fixture --json --runtime-directory /tmp/graftty-socket
+grep -q '^KillMode=process$' "$HOME/.config/systemd/user/graftty-runner.service"
 host_pid=""
 trap 'if [[ -n $host_pid ]]; then kill "$host_pid" 2>/dev/null || true; wait "$host_pid" 2>/dev/null || true; fi' EXIT
 start_host() {
-    graftty-host serve --bind-address 127.0.0.1 --ssh-port 18001 --http-port 18000 \
+    graftty-runner serve --bind-address 127.0.0.1 --ssh-port 18001 --http-port 18000 \
         --runtime-directory /tmp/graftty-socket > /tmp/graftty-serve.log 2>&1 &
     host_pid=$!
     for attempt in $(seq 1 100); do
-        if graftty-host status --json --runtime-directory /tmp/graftty-socket 2>/dev/null | grep -q '"running":true'; then return; fi
+        if graftty-runner status --json --runtime-directory /tmp/graftty-socket 2>/dev/null | grep -q '"running":true'; then return; fi
         if ! kill -0 "$host_pid" 2>/dev/null; then cat /tmp/graftty-serve.log; return 1; fi
         sleep 0.1
     done
@@ -82,5 +83,5 @@ for attempt in $(seq 1 100); do
     sleep 0.1
 done
 [[ $found_marker == 1 ]] || { echo "$output"; exit 1; }
-graftty-host status --json --runtime-directory /tmp/graftty-socket
+graftty-runner status --json --runtime-directory /tmp/graftty-socket
 SMOKE
