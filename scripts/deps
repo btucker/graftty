@@ -112,6 +112,39 @@ zig_path() {
   echo "$dir/zig"
 }
 
+# Go builds Tailcat's C archive on Linux. Apple builds use the developer's Go.
+go_path() {
+  local version host dir line sha url stage
+  version="$(tr -d '[:space:]' < "$DEPS_ROOT/go/VERSION")"
+  host="$(host_triple)"
+  dir="$CACHE/go/$version-$host"
+  if [[ -x "$dir/bin/go" && "$("$dir/bin/go" env GOVERSION 2>/dev/null)" == "go$version" ]]; then
+    echo "$dir/bin/go"
+    return
+  fi
+  line="$(awk -v host="$host" '$1 == host { print $2, $3 }' "$DEPS_ROOT/go/checksums")"
+  [[ -n "$line" ]] || die "no Go $version checksum for $host"
+  read -r sha url <<<"$line"
+  mkdir -p "$CACHE/go"
+  rm -rf "$CACHE/go"/.stage.*
+  stage="$(mktemp -d "$CACHE/go/.stage.XXXXXX")" || die "could not create a Go stage in $CACHE/go"
+  log "downloading Go $version for $host"
+  if ! curl --retry 3 -fsSL "$url" -o "$stage/go.tar.gz"; then
+    rm -rf "$stage"; die "could not download $url"
+  fi
+  if [[ "$(sha256 < "$stage/go.tar.gz")" != "$sha" ]]; then
+    rm -rf "$stage"; die "checksum mismatch for $url"
+  fi
+  if ! tar -xzf "$stage/go.tar.gz" -C "$stage" \
+      || [[ "$("$stage/go/bin/go" env GOVERSION 2>/dev/null)" != "go$version" ]]; then
+    rm -rf "$stage"; die "could not unpack Go $version from $url"
+  fi
+  rm -rf "$dir"
+  mv "$stage/go" "$dir" || { rm -rf "$stage"; die "could not install Go into $dir"; }
+  rm -rf "$stage"
+  echo "$dir/bin/go"
+}
+
 # Zig 0.17.0's std does not compile for iOS. Stage a patched copy of its lib
 # directory; the toolchain itself stays untouched.
 zig_lib_ios() {
@@ -396,8 +429,33 @@ write_record() {
   log "wrote build record $file"
 }
 
+prepare_tailcat_linux() {
+  local rebuild="$1" key pin artifact stage go
+  pin="$(cat "$REPO/Prototypes/Tailcat/UPSTREAM_COMMIT")"
+  key="$( { echo "$pin"; host_triple; cat "$REPO/scripts/build-tailcat-linux" "$DEPS_ROOT/go/VERSION"; } | sha256)"
+  if [[ "$rebuild" == 0 && -f "$LINK_DIR/tailcat-linux/libtailcat.a" ]] \
+      && [[ "$(cat "$LINK_DIR/tailcat-linux.key" 2>/dev/null)" == "$key" ]]; then return; fi
+  artifact="$CACHE/tailcat-linux/$key"
+  if [[ ! -f "$artifact/libtailcat.a" || "$rebuild" == 1 ]]; then
+    go="$(go_path)" || die "could not prepare Go"
+    mkdir -p "$CACHE/tailcat-linux"
+    stage="$(mktemp -d "$CACHE/tailcat-linux/.stage.XXXXXX")"
+    log "building Tailcat for $(host_triple)"
+    if ! "$REPO/scripts/build-tailcat-linux" "$stage" "$pin" "$go"; then
+      rm -rf "$stage"
+      die "Tailcat build failed"
+    fi
+    rm -rf "$artifact"
+    mv "$stage/out" "$artifact"
+    rm -rf "$stage"
+  fi
+  link_artifact "$artifact" "$LINK_DIR/tailcat-linux"
+  echo "$key" > "$LINK_DIR/tailcat-linux.key"
+}
+
 prepare_tailcat() {
   local platforms="$1" rebuild="$2" key pin base stage artifact
+  if [[ "$(uname -s)" == Linux ]]; then prepare_tailcat_linux "$rebuild"; return; fi
   pin="$(cat "$REPO/Prototypes/Tailcat/UPSTREAM_COMMIT")"
   key="$( { echo "$pin"; cat "$REPO/scripts/build-tailcat-framework"; xcodebuild -version; } | sha256 | cut -d ' ' -f 1)"
   if [[ "$rebuild" == 0 && -d "$LINK_DIR/Tailcat.xcframework" ]] && linked_satisfies "$LINK_DIR/tailcat.key" "$key" "$platforms"; then return; fi
@@ -433,7 +491,7 @@ prepare() {
   platforms="$(normalize_platforms "$platforms")"
   if [[ "$which" == all || "$which" == ghostty ]]; then prepare_ghostty "$platforms" "$rebuild"; fi
   if [[ "$which" == all || "$which" == zmx ]]; then prepare_zmx "$rebuild"; fi
-  if [[ "$(uname -s)" == Darwin && ( "$which" == all || "$which" == tailcat ) ]]; then prepare_tailcat "$platforms" "$rebuild"; fi
+  if [[ "$which" == all || "$which" == tailcat ]]; then prepare_tailcat "$platforms" "$rebuild"; fi
   if [[ -n "$record" ]]; then write_record "$record"; fi
 }
 

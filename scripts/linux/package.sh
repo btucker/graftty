@@ -21,6 +21,8 @@ else
     flock 9
     build_command=(scripts/swiftpm --graftty-swiftpm-lock-held)
 fi
+# The runner links Tailcat's C archive (a no-op when already prepared).
+scripts/deps prepare tailcat
 "${build_command[@]}" build --jobs "$build_jobs" -c release --product graftty-runner
 "${build_command[@]}" build --jobs "$build_jobs" -c release --product graftty-cli
 binary_dir=$("${build_command[@]}" build --jobs "$build_jobs" -c release --show-bin-path)

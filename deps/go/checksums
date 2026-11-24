@@ -1,0 +1,5 @@
+# Go 1.27.2 release tarballs for building Tailcat on Linux: <host> <sha256> <url>
+# Source: https://go.dev/dl/?mode=json&include=all (fetched 2026-11-23).
+# Match the `go` line of the pinned Tailcat module's go.mod.
+x86_64-linux ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5 https://go.dev/dl/go1.27.2.linux-amd64.tar.gz
+aarch64-linux 94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8 https://go.dev/dl/go1.27.2.linux-arm64.tar.gz

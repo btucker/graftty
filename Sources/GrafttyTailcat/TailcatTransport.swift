@@ -1,5 +1,9 @@
 import CTailcat
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// Numeric errors deliberately exclude upstream text, which can contain secrets.
@@ -193,12 +197,21 @@ public final class TailcatPipe: @unchecked Sendable {
     fileprivate init(_ handle: tc_handle) throws {
         let resource = Resource(handle)
         var sockets: [Int32] = [-1, -1]
-        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0 else {
+        #if canImport(Darwin)
+        let streamType = SOCK_STREAM
+        #else
+        let streamType = Int32(SOCK_STREAM.rawValue)
+        #endif
+        guard socketpair(AF_UNIX, streamType, 0, &sockets) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
-        var enabled: Int32 = 1
         for socket in sockets {
+            // Linux has no SO_NOSIGPIPE: the bridge sends with MSG_NOSIGNAL
+            // instead, and the process ignores SIGPIPE for the SSH side.
+            #if canImport(Darwin)
+            var enabled: Int32 = 1
             _ = setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
+            #endif
             _ = fcntl(socket, F_SETFD, FD_CLOEXEC)
         }
         file = FileHandle(fileDescriptor: sockets[0], closeOnDealloc: true)
@@ -230,7 +243,7 @@ private final class SocketBridge: @unchecked Sendable {
         pumps.enter()
         Runtime.workers.async { [self] in readTailcat(); stop(); pumps.leave() }
         Runtime.workers.async { [self] in writeTailcat(); stop(); pumps.leave() }
-        pumps.notify(queue: Runtime.workers) { [socket] in Darwin.close(socket) }
+        pumps.notify(queue: Runtime.workers) { [socket] in _ = closeSocket(socket) }
     }
     func stop() {
         lock.lock()
@@ -238,7 +251,7 @@ private final class SocketBridge: @unchecked Sendable {
         stopped = true
         // shutdown interrupts both local I/O calls. Close the descriptor only
         // after both workers exit, so a recycled descriptor cannot be touched.
-        _ = shutdown(socket, SHUT_RDWR)
+        _ = shutdown(socket, Int32(SHUT_RDWR))
         lock.unlock()
         let handle = resource.handle
         Runtime.workers.async { _ = tc_close(handle, nil) }
@@ -259,7 +272,7 @@ private final class SocketBridge: @unchecked Sendable {
             let delivered = buffer.withUnsafeBytes { bytes -> Bool in
                 var sent = 0
                 while sent < count {
-                    let result = Darwin.write(socket, bytes.baseAddress!.advanced(by: sent), count - sent)
+                    let result = sendSocket(socket, bytes.baseAddress!.advanced(by: sent), count - sent)
                     if result < 0 && errno == EINTR { continue }
                     guard result > 0 else { return false }
                     sent += result
@@ -272,7 +285,7 @@ private final class SocketBridge: @unchecked Sendable {
     private func writeTailcat() {
         var buffer = [UInt8](repeating: 0, count: 32 * 1024)
         while true {
-            let count = buffer.withUnsafeMutableBytes { Darwin.read(socket, $0.baseAddress, $0.count) }
+            let count = buffer.withUnsafeMutableBytes { readSocket(socket, $0.baseAddress, $0.count) }
             if count < 0 && errno == EINTR { continue }
             guard count > 0 else { return }
             let delivered = buffer.withUnsafeMutableBytes { bytes -> Bool in
@@ -289,3 +302,15 @@ private final class SocketBridge: @unchecked Sendable {
         }
     }
 }
+
+#if canImport(Darwin)
+private func closeSocket(_ socket: Int32) -> Int32 { Darwin.close(socket) }
+private func readSocket(_ socket: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int) -> Int { Darwin.read(socket, buffer, count) }
+private func sendSocket(_ socket: Int32, _ buffer: UnsafeRawPointer, _ count: Int) -> Int { Darwin.write(socket, buffer, count) }
+#else
+private func closeSocket(_ socket: Int32) -> Int32 { Glibc.close(socket) }
+private func readSocket(_ socket: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int) -> Int { Glibc.read(socket, buffer, count) }
+private func sendSocket(_ socket: Int32, _ buffer: UnsafeRawPointer, _ count: Int) -> Int {
+    Glibc.send(socket, buffer, count, Int32(MSG_NOSIGNAL))
+}
+#endif

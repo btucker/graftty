@@ -1,0 +1,7 @@
+// Linux build of Tailcat's C archive, prepared by `scripts/deps prepare tailcat`.
+// Apple platforms use .deps/Tailcat.xcframework instead.
+module CTailcat [system] {
+  header "../../.deps/tailcat-linux/tailcat.h"
+  link "tailcat"
+  export *
+}

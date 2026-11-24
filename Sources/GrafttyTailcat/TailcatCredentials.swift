@@ -1,3 +1,4 @@
+#if canImport(Security)
 import Foundation
 import Security
 import GrafttyProtocol
@@ -53,3 +54,4 @@ public enum TailcatCredentials {
 
     private struct KeychainError: Error { let status: OSStatus }
 }
+#endif
