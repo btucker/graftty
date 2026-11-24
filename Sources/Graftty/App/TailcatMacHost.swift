@@ -5,9 +5,12 @@ import GrafttyTailcat
 
 @MainActor
 final class TailcatMacHost {
-    private struct SavedHost: Codable {
-        let identity: TailcatServerIdentity
-        let address: String
+    /// Same account and JSON shape as the listener entry saved before the
+    /// listener moved into GrafttyTailcat, so a Mac keeps its address.
+    private struct KeychainListenerStore: TailcatListenerStateStore {
+        let account: String
+        func load() throws -> TailcatListenerState? { try TailcatCredentials.load(TailcatListenerState.self, account: account) }
+        func save(_ state: TailcatListenerState) throws { try TailcatCredentials.save(state, account: account) }
     }
 
     private var task: Task<Void, Never>?
@@ -46,34 +49,15 @@ final class TailcatMacHost {
         self.generation = generation
         task = Task {
             let ssh = await configuration.pool.makeStreamServer()
+            let listener = TailcatSSHListener(store: KeychainListenerStore(account: configuration.account),
+                                              port: UInt16(DirectSSHHostServer.defaultPort)) { file in
+                let closed = try await ssh.accept(input: file, output: file)
+                return { _ = try? await closed.get() }
+            }
             do {
-                try Task.checkCancellation()
-                let saved = try TailcatCredentials.load(SavedHost.self, account: configuration.account)
-                let identity = try saved?.identity ?? TailcatServerIdentity.generate()
-                let peer = try TailcatPeer.server(identity: identity, previousAddress: saved?.address)
-                do {
-                    let port = UInt16(DirectSSHHostServer.defaultPort)
-                    let listener = try await peer.listen(port: port)
-                    let address = try await peer.address()
-                    try Task.checkCancellation()
-                    try TailcatCredentials.save(SavedHost(identity: identity, address: address), account: configuration.account)
-                    endpoint = TailcatEndpoint(address: address, port: port)
-                    while !Task.isCancelled {
-                        let pipe = try await listener.accept()
-                        do {
-                            let closed = try await ssh.accept(input: pipe.file, output: pipe.file)
-                            try pipe.file.close()
-                            Task {
-                                _ = try? await closed.get()
-                                await pipe.close()
-                            }
-                        } catch { await pipe.close() }
-                    }
-                } catch {
-                    await peer.close()
-                    throw error
+                try await listener.run { endpoint in
+                    await MainActor.run { if self.generation == generation { self.endpoint = endpoint } }
                 }
-                await peer.close()
             } catch {
                 if !Task.isCancelled { NSLog("[Graftty] Tailcat listener unavailable") }
             }

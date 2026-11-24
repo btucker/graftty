@@ -4650,6 +4650,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-33.1** When the runner is built for Linux, the application shall carry a Tailcat byte stream between a server and a client peer in the runner process.
 
+**REMOTE-33.2** When the runner saves its Tailcat listener state, the application shall write it to a file readable only by its owner.
+
+**REMOTE-33.3** When the Tailcat listener restarts with saved state, the application shall keep the same Tailcat address.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership
