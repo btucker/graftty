@@ -1848,6 +1848,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.10** When Xcode Cloud clones the repository for GrafttyMobile, its post-clone script shall prepare libghostty for iOS before Xcode resolves the package.
 
+**DIST-1.11** When packaging the macOS app icon, the build shall supply PNG-backed small icon representations so macOS can display 16-point and 32-point icons without a gray frame around the artwork.
+
 ### DIST-2.x — Release Automation
 
 **DIST-2.1** When a git tag containing valid SemVer after its leading `v` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, rebuild libghostty and zmx from the tag's pins and patches rather than a cached build, ensure a GitHub release tagged `v<version>` has the zip and the native dependency build record `native-deps-record.json` attached, and, for stable versions, ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
