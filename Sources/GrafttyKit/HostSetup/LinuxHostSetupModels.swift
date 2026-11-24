@@ -116,6 +116,14 @@ public struct LinuxHostSetupResult: Codable, Sendable, Equatable {
     public let destination: LinuxHostDestination
     public let projectPaths: [String]
     public var toolOutcomes: [LinuxHostComponentOutcome] = []
+
+    /// This result without the runner's Tailcat endpoint, a secret, for output.
+    public var withoutTailcatEndpoint: LinuxHostSetupResult {
+        LinuxHostSetupResult(identity: LinuxHostIdentity(deviceID: identity.deviceID, displayName: identity.displayName,
+                                                         publicKey: identity.publicKey, port: identity.port,
+                                                         supportsTailcat: identity.supportsTailcat),
+                             openSSH: openSSH, destination: destination, projectPaths: projectPaths, toolOutcomes: toolOutcomes)
+    }
 }
 
 public enum LinuxHostSetupError: Error, LocalizedError, Sendable, Equatable {

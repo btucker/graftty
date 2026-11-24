@@ -200,7 +200,9 @@ public final class TailcatPipe: @unchecked Sendable {
         #if canImport(Darwin)
         let streamType = SOCK_STREAM
         #else
-        let streamType = Int32(SOCK_STREAM.rawValue)
+        // Atomic close-on-exec: the runner spawns panes constantly, and a
+        // child forked before fcntl below could hold a bridge socket open.
+        let streamType = Int32(SOCK_STREAM.rawValue | SOCK_CLOEXEC.rawValue)
         #endif
         guard socketpair(AF_UNIX, streamType, 0, &sockets) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)

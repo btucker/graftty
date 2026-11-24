@@ -4162,9 +4162,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.29** If a staged Linux archive has no graftty-runner executable, then the application shall report that the archive predates the runner rename, rather than a CPU or library incompatibility, without changing the installed service.
 
-**REMOTE-21.30** When setting up a new runner, the application shall bind its SSH and HTTP listeners to loopback.
+**REMOTE-21.30** When setting up a new runner whose archive listens on Tailcat, the application shall bind its SSH and HTTP listeners to loopback; if the archive predates Tailcat, then the application shall bind them to all interfaces so the Mac can reach them directly.
 
 **REMOTE-21.31** When graftty remote add-runner receives an invite, the CLI shall redeem it through the running app instead of installing over SSH.
+
+**REMOTE-21.32** When graftty remote setup-linux prints its JSON result, the CLI shall omit the runner's Tailcat endpoint.
 
 ### REMOTE-22.x
 
@@ -4691,6 +4693,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-33.19** When an invite names a runner already saved with the same key, the application shall replace the saved entry; if the key differs, then the application shall refuse it.
 
 **REMOTE-33.20** If the runner presents a key other than the invite key, then the application shall abort enrollment without trusting anything.
+
+**REMOTE-33.21** If an invite redeemer names a device already trusted with a different key, then the runner shall refuse enrollment and leave that peer unchanged.
+
+**REMOTE-33.22** If a Tailcat runner presents a key other than its pinned key, then the application shall report the key mismatch rather than an unreachable runner.
+
+**REMOTE-33.23** If the application cannot save the Tailcat endpoint a direct-SSH runner reports, then it shall keep using direct SSH for that runner.
+
+**REMOTE-33.24** If a runner that supports Tailcat reports no Tailcat endpoint at setup, then the application shall fail setup without saving the runner.
 
 ## CHROME — Dedicated Chrome tabs
 

@@ -439,6 +439,9 @@ prepare_tailcat_linux() {
   if [[ ! -f "$artifact/libtailcat.a" || "$rebuild" == 1 ]]; then
     go="$(go_path)" || die "could not prepare Go"
     mkdir -p "$CACHE/tailcat-linux"
+    # Under the lock, any stage here was left by an interrupted build; each
+    # holds its own Go module and build caches.
+    rm -rf "$CACHE/tailcat-linux"/.stage.*
     stage="$(mktemp -d "$CACHE/tailcat-linux/.stage.XXXXXX")"
     log "building Tailcat for $(host_triple)"
     if ! "$REPO/scripts/build-tailcat-linux" "$stage" "$pin" "$go"; then

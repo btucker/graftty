@@ -99,6 +99,24 @@ struct InviteEnrollmentTests {
         await service.stop()
     }
 
+    @Test("@spec REMOTE-33.21: If an invite redeemer names a device already trusted with a different key, then the runner shall refuse enrollment and leave that peer unchanged.")
+    func refusesToReplaceATrustedDevice() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let original = Curve25519.Signing.PrivateKey()
+        try HostService.trust(LinuxHostTrustRequest(deviceID: "mac-id", displayName: "Original Mac",
+            publicKey: original.publicKey.rawRepresentation.base64EncodedString()),
+            publicKeyData: original.publicKey.rawRepresentation, configuration: fixture.configuration)
+        let book = RunnerInviteBook()
+        let enroll = HostService.inviteEnrollment(book: book, configuration: fixture.configuration)
+        let impostor = try RemoteIdentityPublicKey(rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation)
+        let token = RunnerEnrollmentToken(secret: book.issue().secret, deviceID: "mac-id", displayName: "Impostor")
+        #expect(enroll(token, impostor) == nil)
+        let peer = try #require(try fixture.trusted.get(id: RemoteDeviceID(value: "mac-id")))
+        #expect(peer.publicKey.rawRepresentation == original.publicKey.rawRepresentation)
+        #expect(peer.displayName == "Original Mac")
+    }
+
     @Test("@spec REMOTE-33.20: If the runner presents a key other than the invite key, then the application shall abort enrollment without trusting anything.",
           .timeLimit(.minutes(2)))
     func enrollmentPinsTheInviteKey() async throws {

@@ -26,7 +26,9 @@ import committed projects, and open persistent remote terminals.
 
 6. Make sure the host has outbound internet access. Graftty reaches the runner
    over Tailcat, an encrypted connection that needs no open inbound port. Setup
-   binds the runner's own listeners to loopback, so nothing new is exposed.
+   binds the runner's own listeners to loopback, so nothing new is exposed. A
+   release that predates Tailcat is instead installed listening on all
+   interfaces, and your Mac needs a direct route to its port 8801.
 
 Setup checks and enables lingering for your account so the user service keeps
 running after SSH disconnects. It does not request interactive authorization.

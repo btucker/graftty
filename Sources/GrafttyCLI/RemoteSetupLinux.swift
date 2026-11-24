@@ -172,8 +172,14 @@ struct RemoteSetupLinux: AsyncParsableCommand {
     }
     #endif
 
-    private struct SetupOutput: Encodable {
+    /// What --json prints. The runner's Tailcat endpoint is a secret and is left out.
+    struct SetupOutput: Encodable {
         let host: LinuxHostSetupResult
         let connectionRequested: Bool
+
+        init(host: LinuxHostSetupResult, connectionRequested: Bool) {
+            self.host = host.withoutTailcatEndpoint
+            self.connectionRequested = connectionRequested
+        }
     }
 }

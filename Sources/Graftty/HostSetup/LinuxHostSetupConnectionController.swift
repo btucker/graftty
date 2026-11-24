@@ -22,6 +22,10 @@ struct LinuxHostSetupConnectionController {
     /// direct endpoint stays saved: it records the Graftty port that updates
     /// over OpenSSH verify. An older archive without Tailcat keeps direct SSH.
     func save(_ result: LinuxHostSetupResult, model: RemoteMacsModel) throws -> RemoteMac {
+        // Such a runner listens only on loopback, so direct SSH could never reach it.
+        if result.identity.supportsTailcat == true, result.identity.tailcatEndpoint == nil {
+            throw LinuxHostSetupError.invalidPlan("The runner is installed, but it could not start Tailcat, so Graftty cannot reach it. Check that the runner has outbound internet access and CA certificates (journalctl --user -u graftty-runner.service), then run setup again.")
+        }
         let endpoint = try DirectSSHEndpoint(host: result.openSSH.hostname, port: result.identity.port)
         let known = model.savedRemoteMacs.filter {
             $0.id.value == result.identity.deviceID

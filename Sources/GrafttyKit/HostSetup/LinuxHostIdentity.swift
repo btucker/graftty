@@ -36,13 +36,18 @@ public struct LinuxHostIdentity: Codable, Sendable, Equatable {
     public let port: Int
     /// The runner's Tailcat endpoint, a secret; nil from a runner that predates Tailcat.
     public let tailcatEndpoint: TailcatEndpoint?
+    /// True from a runner built with Tailcat, which binds its own listeners to
+    /// loopback; nil from an older runner reached directly.
+    public let supportsTailcat: Bool?
 
-    public init(deviceID: String, displayName: String, publicKey: String, port: Int, tailcatEndpoint: TailcatEndpoint? = nil) {
+    public init(deviceID: String, displayName: String, publicKey: String, port: Int, tailcatEndpoint: TailcatEndpoint? = nil,
+                supportsTailcat: Bool? = nil) {
         self.deviceID = deviceID
         self.displayName = displayName
         self.publicKey = publicKey
         self.port = port
         self.tailcatEndpoint = tailcatEndpoint
+        self.supportsTailcat = supportsTailcat
     }
 
     public func validate() throws {

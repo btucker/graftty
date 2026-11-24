@@ -47,7 +47,10 @@ final class HostService {
         try HostSetup.identity(configuration: configuration)
     }
 
-    nonisolated static func trust(_ request: LinuxHostTrustRequest, publicKeyData: Data, configuration: HostConfiguration) throws {
+    /// `replacingIdentity` is false for an invite, which may only add a device:
+    /// it never replaces the key of a device already trusted under that ID.
+    nonisolated static func trust(_ request: LinuxHostTrustRequest, publicKeyData: Data, configuration: HostConfiguration,
+                                  replacingIdentity: Bool = true) throws {
         try request.validate()
         let key = try RemoteIdentityPublicKey(rawRepresentation: publicKeyData)
         let store = TrustedPeerStore(directory: configuration.identityDirectory)
@@ -60,7 +63,7 @@ final class HostService {
         let peer = TrustedPeer(id: id, kind: .mac, publicKey: key,
             displayName: request.displayName, capabilities: capabilities,
             pairedAt: existing?.pairedAt ?? Date(), lastSeenAt: existing?.lastSeenAt)
-        try store.upsertAfterPairing(peer)
+        if replacingIdentity { try store.upsertAfterPairing(peer) } else { try store.enrollWithoutReplacingIdentity(peer) }
     }
 
     init(configuration: HostConfiguration, enablePairing: Bool,
@@ -333,13 +336,15 @@ final class HostService {
         printInvite(invite.encoded())
     }
 
-    /// Trusts a key that redeems an unexpired invite secret, once.
+    /// Trusts a key that redeems an unexpired invite secret, once. An invite
+    /// adds a Mac; it never takes over a device ID already trusted with another key.
     nonisolated static func inviteEnrollment(book: RunnerInviteBook, configuration: HostConfiguration) -> InviteEnrollment {
         { token, key in
             let request = LinuxHostTrustRequest(deviceID: token.deviceID, displayName: token.displayName,
                                                 publicKey: key.rawRepresentation.base64EncodedString())
             guard (try? request.validate()) != nil, book.redeem(token.secret),
-                  (try? trust(request, publicKeyData: key.rawRepresentation, configuration: configuration)) != nil else { return nil }
+                  (try? trust(request, publicKeyData: key.rawRepresentation, configuration: configuration,
+                              replacingIdentity: false)) != nil else { return nil }
             return try? TrustedPeerStore(directory: configuration.identityDirectory).get(id: RemoteDeviceID(value: token.deviceID))
         }
     }

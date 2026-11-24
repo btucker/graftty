@@ -64,7 +64,7 @@ struct Setup: AsyncParsableCommand {
 
 struct Invite: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Print a one-time invite that adds this runner to Graftty. Paste it into Add a Remote Runner or graftty remote add-runner.")
+        abstract: "Print a one-time invite that adds this runner to Graftty. On the Mac, pass it to graftty remote add-runner.")
     @OptionGroup var paths: HostOptions
 
     static func render(_ response: HostAdminResponse) throws -> String {
@@ -105,7 +105,7 @@ struct TrustClient: AsyncParsableCommand {
         let identity = try HostService.identity(configuration: config)
         try printJSON(LinuxHostIdentity(deviceID: identity.deviceID, displayName: identity.displayName,
             publicKey: identity.publicKey, port: identity.port,
-            tailcatEndpoint: await Self.runningTailcatEndpoint(configuration: config)))
+            tailcatEndpoint: await Self.runningTailcatEndpoint(configuration: config), supportsTailcat: true))
     }
 
     /// The running service's Tailcat endpoint, waiting briefly for a service

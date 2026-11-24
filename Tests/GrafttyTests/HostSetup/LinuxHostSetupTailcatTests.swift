@@ -11,7 +11,7 @@ struct LinuxHostSetupTailcatTests {
         var endpoints: [TailcatEndpoint] = []
     }
 
-    private func save(tailcat: TailcatEndpoint?) async throws -> (RemoteMac, Saved) {
+    private func save(tailcat: TailcatEndpoint?, supportsTailcat: Bool? = nil) async throws -> (RemoteMac, Saved) {
         let root = URL.temporaryDirectory.appendingPathComponent("linux-tailcat-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let model = RemoteMacsModel(store: RemoteMacStore(storeURL: root.appendingPathComponent("remotes.json")))
@@ -20,7 +20,8 @@ struct LinuxHostSetupTailcatTests {
         let controller = LinuxHostSetupConnectionController(pinnedHostStore: PinnedHostStore(directory: root.appendingPathComponent("pins")),
                                                             saveTailcatEndpoint: { endpoint, _ in saved.endpoints.append(endpoint) })
         let result = LinuxHostSetupResult(identity: .init(deviceID: "linux-id", displayName: "Ubuntu",
-            publicKey: Data(repeating: 1, count: 32).base64EncodedString(), port: 8801, tailcatEndpoint: tailcat),
+            publicKey: Data(repeating: 1, count: 32).base64EncodedString(), port: 8801, tailcatEndpoint: tailcat,
+            supportsTailcat: supportsTailcat),
             openSSH: try .parse("hostname 192.0.2.2\nuser alice\nport 2222\n"), destination: try .init("linux-alias"), projectPaths: [])
         return (try controller.save(result, model: model), saved)
     }
@@ -41,5 +42,10 @@ struct LinuxHostSetupTailcatTests {
         let (remote, saved) = try await save(tailcat: nil)
         #expect(remote.transport == .directSSH)
         #expect(saved.endpoints.isEmpty)
+    }
+
+    @Test("@spec REMOTE-33.24: If a runner that supports Tailcat reports no Tailcat endpoint at setup, then the application shall fail setup without saving the runner.")
+    func refusesTailcatRunnerWithoutEndpoint() async throws {
+        await #expect(throws: LinuxHostSetupError.self) { _ = try await save(tailcat: nil, supportsTailcat: true) }
     }
 }

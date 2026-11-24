@@ -125,14 +125,14 @@ final class RemoteMacConnectionRegistry {
     /// are secrets and stay in Keychain, never in the saved host list.
     struct TailcatRunnerAccess: Sendable {
         var endpoint: @Sendable (RemoteIdentityFingerprint) -> TailcatEndpoint?
-        var saveEndpoint: @Sendable (TailcatEndpoint, RemoteIdentityFingerprint) -> Void
+        var saveEndpoint: @Sendable (TailcatEndpoint, RemoteIdentityFingerprint) throws -> Void
         var dial: @MainActor @Sendable (any DirectHostLink, TailcatEndpoint) async throws -> Void
         /// Asks a connected runner for its Tailcat endpoint; nil when it has none.
         var query: @MainActor @Sendable (any RemoteHostLink) async -> TailcatEndpoint?
 
         static let live = TailcatRunnerAccess(
             endpoint: { try? TailcatCredentials.endpoint(for: $0) },
-            saveEndpoint: { endpoint, fingerprint in try? TailcatCredentials.saveEndpoint(endpoint, for: fingerprint) },
+            saveEndpoint: { endpoint, fingerprint in try TailcatCredentials.saveEndpoint(endpoint, for: fingerprint) },
             dial: { link, endpoint in
                 guard let direct = link as? DirectSSHHostConnection else { throw URLError(.unsupportedURL) }
                 try await direct.connect(tailcat: endpoint)
@@ -546,8 +546,14 @@ final class RemoteMacConnectionRegistry {
                 // An updated runner also listens on Tailcat; move to it from now on.
                 if pinnedHost.kind == .linux, let learned = await tailcat.query(direct) {
                     try ensureCurrentAttempt(attemptID, identity: identity)
-                    tailcat.saveEndpoint(learned, identity.fingerprint)
-                    onTailcatEndpointLearned(identity)
+                    // Switch only once the endpoint is saved: a Tailcat runner
+                    // without one has no route at all.
+                    do {
+                        try tailcat.saveEndpoint(learned, identity.fingerprint)
+                        onTailcatEndpointLearned(identity)
+                    } catch {
+                        NSLog("[Graftty] could not save a runner's Tailcat endpoint; it stays on direct SSH")
+                    }
                 }
                 var refreshed = pinnedHost
                 refreshed.lastConnectedAt = now()
@@ -555,6 +561,8 @@ final class RemoteMacConnectionRegistry {
             case .tailcat(let direct, let endpoint):
                 do { try await tailcat.dial(direct, endpoint) }
                 catch is CancellationError { throw CancellationError() }
+                // A changed runner key needs pairing again, not a network check.
+                catch let error as PinnedHostKeyError { throw error }
                 catch { throw ConnectionError.runnerUnreachable(identity) }
                 try ensureCurrentAttempt(attemptID, identity: identity)
                 var refreshed = pinnedHost

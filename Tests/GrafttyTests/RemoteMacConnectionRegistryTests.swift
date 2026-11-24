@@ -849,12 +849,17 @@ struct RemoteMacConnectionRegistryTests {
     }
 
     private func tailcatAccess(saved: TailcatEndpoint?, reported: TailcatEndpoint? = nil, dialFails: Bool = false,
+                               dialError: (any Error & Sendable)? = nil, saveFails: Bool = false,
                                calls: TailcatCalls) -> RemoteMacConnectionRegistry.TailcatRunnerAccess {
         RemoteMacConnectionRegistry.TailcatRunnerAccess(
             endpoint: { _ in saved },
-            saveEndpoint: { endpoint, _ in calls.save(endpoint) },
+            saveEndpoint: { endpoint, _ in
+                if saveFails { throw URLError(.cannotCreateFile) }
+                calls.save(endpoint)
+            },
             dial: { _, endpoint in
                 calls.dial(endpoint)
+                if let dialError { throw dialError }
                 if dialFails { throw URLError(.cannotConnectToHost) }
             },
             query: { _ in reported })
@@ -938,6 +943,36 @@ struct RemoteMacConnectionRegistryTests {
         _ = try await registry.connect(to: remote)
         #expect(calls.saved == [endpoint])
         #expect(learned == [RemoteMacIdentity(remote)])
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test("@spec REMOTE-33.22: If a Tailcat runner presents a key other than its pinned key, then the application shall report the key mismatch rather than an unreachable runner.", .timeLimit(.minutes(1)))
+    func tailcatRunnerReportsKeyMismatch() async throws {
+        let remote = try runnerRemote(transport: .tailcat)
+        let mismatch = PinnedHostKeyError.hostKeyMismatch(expected: remote.fingerprint, offered: remote.fingerprint)
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in throw URLError(.unsupportedURL) },
+            pinnedHostProvider: linuxPin(remote),
+            directConnectionFactory: { _, _ in connection },
+            tailcat: tailcatAccess(saved: TailcatEndpoint(address: "fixture", port: 8801), dialError: mismatch, calls: TailcatCalls()))
+        await #expect(throws: mismatch) { _ = try await registry.connect(to: remote) }
+    }
+
+    @Test("@spec REMOTE-33.23: If the application cannot save the Tailcat endpoint a direct-SSH runner reports, then it shall keep using direct SSH for that runner.", .timeLimit(.minutes(1)))
+    func directRunnerStaysDirectWhenEndpointSaveFails() async throws {
+        let remote = try runnerRemote(transport: .directSSH)
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in throw URLError(.unsupportedURL) },
+            pinnedHostProvider: linuxPin(remote),
+            directConnectionFactory: { _, _ in connection },
+            tailcat: tailcatAccess(saved: nil, reported: TailcatEndpoint(address: "fixture", port: 8801), saveFails: true,
+                                   calls: TailcatCalls()))
+        var learned: [RemoteMacIdentity] = []
+        registry.onTailcatEndpointLearned = { learned.append($0) }
+        _ = try await registry.connect(to: remote)
+        #expect(learned.isEmpty)
         await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
     }
 
