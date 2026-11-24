@@ -145,6 +145,9 @@ final class RemoteMacsModel: ObservableObject {
                   let remoteMac = self.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }) else { return }
             _ = self.beginReconnect(to: remoteMac)
         }
+        registry.onTailcatEndpointLearned = { [weak self] identity in
+            self?.useTailcat(for: identity)
+        }
         registry.onPaneSnapshot = { [weak self] identity, snapshot in
             self?.applyPaneSnapshot(snapshot, from: identity)
         }
@@ -1847,6 +1850,20 @@ final class RemoteMacsModel: ObservableObject {
         trustedLinuxHosts[pinnedHost.id] = pinnedHost.kind == .linux ? pinnedHost : nil
         linuxPinGeneration &+= 1
         connectionStates[RemoteMacIdentity(remoteMac)] = .offline
+    }
+
+    /// A runner saved with direct SSH reported its Tailcat endpoint, already
+    /// in Keychain; connect over Tailcat from now on (REMOTE-33.15).
+    func useTailcat(for identity: RemoteMacIdentity) {
+        guard var remoteMac = savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }),
+              remoteMac.transport != .tailcat else { return }
+        remoteMac.transport = .tailcat
+        do {
+            try store.update(remoteMac)
+            savedRemoteMacs = store.remoteMacs
+        } catch {
+            NSLog("[Graftty] could not save the runner's Tailcat transport: %@", String(describing: error))
+        }
     }
 
     private static func baseURL(fromPairingURL pairingURL: URL) -> URL? {

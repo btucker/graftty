@@ -4674,6 +4674,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-33.12** When GRAFTTY_PRINT_INVITE is 1 and no peer is trusted, the runner shall print one invite at start.
 
+**REMOTE-33.13** When a saved runner uses Tailcat, the application shall dial its saved Tailcat endpoint and pin the runner key over that stream.
+
+**REMOTE-33.14** If a Tailcat runner cannot be dialed, then the application shall report it unreachable without trying another transport.
+
+**REMOTE-33.15** When a direct-SSH runner reports a Tailcat endpoint, the application shall save it and use Tailcat for later connections.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership

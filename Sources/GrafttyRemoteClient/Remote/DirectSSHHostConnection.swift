@@ -26,6 +26,8 @@ public actor DirectSSHHostConnection {
     private let clientKey: Curve25519.Signing.PrivateKey
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private let username: String
+    /// Resources such as a Tailcat peer that must outlive the SSH transport.
+    private var closeHandlers: [@Sendable () async -> Void] = []
     private var channel: Channel?
     private var handlerBox: DirectSSHHandlerBox?
     private var onStateChange: (@Sendable (State) -> Void)?
@@ -227,7 +229,12 @@ public actor DirectSSHHostConnection {
     private func disposeTransport() async {
         let channel = channel; self.channel = nil; handlerBox = nil
         try? await channel?.close().get()
+        let handlers = closeHandlers; closeHandlers = []
+        for handler in handlers { await handler() }
     }
+
+    /// Runs when this connection closes, after its SSH transport.
+    public func onClose(_ handler: @escaping @Sendable () async -> Void) { closeHandlers.append(handler) }
     /// The event loop serving the SSH transport, once TCP is connected.
     var transportEventLoopForTesting: (any EventLoop)? { channel?.eventLoop }
     func connectedTransport() throws -> (Channel, DirectSSHHandlerBox) {
