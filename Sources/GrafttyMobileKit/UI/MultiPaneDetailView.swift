@@ -53,7 +53,10 @@ struct MultiPaneDetailView: View {
                 MobileAgentGalleryColumn(host: host, worktree: worktree, context: context, agents: galleryAgents,
                     onStage: Set(currentWorkspace.gallerySessions.filter(currentWorkspace.isOnStage)), theme: theme,
                     onSelect: stageSession,
-                    onJump: { session, row in stageSession(session) ; _ = row },
+                    onJump: { session, eventID in
+                        stageSession(session)
+                        MobileGalleryJump.reveal(eventID, in: session, context: context)
+                    },
                     onNewAgent: onSelectPane,
                     onMove: { source, target, after in mutate { _ = $0.moveTile(source, relativeTo: target, after: after) } },
                     onCollapse: { mutate { $0.galleryVisible = false } })

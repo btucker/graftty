@@ -767,6 +767,44 @@ struct ScrollbackMapTileRailTests {
         #expect(ScrollbackMapOverlay.previewFrame(railHeight: 80, overhang: 0) == .init(top: 0, height: 80))
     }
 
+    /// A phone or iPad tile renders its own preview surface, so its rows
+    /// mean nothing on the staged terminal; the jump carries the message
+    /// and retries until the staged terminal has mounted and loaded it.
+    @Test func aStagedJumpRetriesUntilTheMessageIsRevealed() async {
+        var calls = 0
+        let revealed = await StagedMessageReveal.reveal(attempts: 5, sleep: { _ in }) {
+            calls += 1
+            return calls == 3
+        }
+        #expect(revealed)
+        #expect(calls == 3)
+
+        calls = 0
+        let gaveUp = await StagedMessageReveal.reveal(attempts: 4, sleep: { _ in }) { calls += 1; return false }
+        #expect(!gaveUp)
+        #expect(calls == 4)
+    }
+
+    @Test func aStagedJumpStopsWhenCancelled() async {
+        var calls = 0
+        let task = Task { @MainActor in
+            await StagedMessageReveal.reveal(attempts: 50, sleep: { _ in withUnsafeCurrentTask { $0?.cancel() } }) {
+                calls += 1
+                return false
+            }
+        }
+        #expect(await task.value == false)
+        #expect(calls == 1)
+    }
+
+    @Test func aStagedJumpCarriesTheMessageNearestTheRow() {
+        let map = ScrollbackMap(totalRows: 100, marks: [.init(row: 10, kind: .input, eventID: "a"),
+                                                        .init(row: 40, kind: .peer, eventID: "b")])
+        #expect(StagedMessageReveal.eventID(forRow: 12, in: map) == "a")
+        #expect(StagedMessageReveal.eventID(forRow: 38, in: map) == "b")
+        #expect(StagedMessageReveal.eventID(forRow: 12, in: nil) == nil)
+    }
+
     @Test func aModelShownTwiceKeepsScanningUntilBothHide() async {
         let terminal = FakeScrollback(rows: sampleRows())
         let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)

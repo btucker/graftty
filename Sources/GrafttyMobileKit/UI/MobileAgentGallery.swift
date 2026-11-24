@@ -69,6 +69,23 @@ final class MobileGalleryPreviews {
     func stop() { pool?.stopAll(); pool = nil }
 }
 
+/// Scrolls the agent a tile rail just put on stage to the message it
+/// pointed at, once the staged terminal has mounted and loaded it (CONTEXT-57.15).
+@MainActor
+enum MobileGalleryJump {
+    private static var task: Task<Void, Never>?
+
+    static func reveal(_ eventID: String, in session: String, context: SidebarWorktreeContext) {
+        let messages = ScrollbackMap.messages(in: WorktreeTimeline(context))
+        task?.cancel()
+        task = Task {
+            _ = await StagedMessageReveal.reveal {
+                await MobileTerminalRegistry.shared.container(for: session)?.reveal(eventID: eventID, messages: messages) ?? false
+            }
+        }
+    }
+}
+
 /// One mobile gallery tile: a live preview when it has a client, otherwise
 /// its caption alone, with the agent's scroll rail on the right edge.
 struct MobileGalleryTile: View {
@@ -78,7 +95,9 @@ struct MobileGalleryTile: View {
     let previews: MobileGalleryPreviews
     let timeline: WorktreeTimeline?
     let theme: GhosttyThemeColors
-    let onJump: (Int) -> Void
+    /// The message a rail mark or card points at; the preview's rows mean
+    /// nothing on the staged terminal.
+    let onJump: (String) -> Void
     /// The preview's map, which holds its terminal weakly; the tile keeps no
     /// reference to the container itself.
     @State private var mapModel: ScrollbackMapModel?
@@ -101,7 +120,9 @@ struct MobileGalleryTile: View {
         } rail: {
             if client != nil, let mapModel, let timeline {
                 ScrollbackMapOverlayHost(model: mapModel, timeline: timeline,
-                                         previewOverhang: 200, previewWidth: 240, onJump: onJump)
+                                         previewOverhang: 200, previewWidth: 240, onJump: { row in
+                                             if let eventID = StagedMessageReveal.eventID(forRow: row, in: mapModel.map) { onJump(eventID) }
+                                         })
             }
         }
     }
@@ -121,7 +142,8 @@ struct MobileAgentGalleryGrid: View {
     /// At most this many tiles show a live terminal at once (IOS-13.33).
     var liveLimit = 4
     let onSelect: (String) -> Void
-    let onJump: (String, Int) -> Void
+    /// Session and message of a tile rail jump.
+    let onJump: (String, String) -> Void
     let onNewAgent: (String) -> Void
     /// Dragging a tile before or after another reorders the gallery, where supported.
     var onMove: ((String, String, Bool) -> Void)? = nil
@@ -198,7 +220,7 @@ struct MobileAgentGalleryColumn: View {
     let onStage: Set<String>
     let theme: GhosttyThemeColors
     let onSelect: (String) -> Void
-    let onJump: (String, Int) -> Void
+    let onJump: (String, String) -> Void
     let onNewAgent: (String) -> Void
     let onMove: (String, String, Bool) -> Void
     let onCollapse: () -> Void
@@ -279,7 +301,10 @@ struct MobileAgentGalleryScreen: View {
                     MobileAgentGalleryGrid(host: host, worktree: worktree, context: context,
                         agents: MobileGalleryAgent.agents(in: worktree, context: context), onStage: [stagedSession],
                         columns: density.columns, tileSize: size, theme: theme,
-                        onSelect: onSelect, onJump: { session, _ in onSelect(session) }, onNewAgent: onNewAgent)
+                        onSelect: onSelect, onJump: { session, eventID in
+                            onSelect(session)
+                            MobileGalleryJump.reveal(eventID, in: session, context: context)
+                        }, onNewAgent: onNewAgent)
                         .padding(.horizontal, 12).padding(.vertical, 6)
                         .animation(.snappy, value: densityValue)
                 }
