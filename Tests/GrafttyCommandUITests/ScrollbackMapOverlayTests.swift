@@ -753,16 +753,26 @@ struct ScrollbackMapMobileCollapseTests {
 struct ScrollbackMapTileRailTests {
     @Test("@spec CONTEXT-57.15: While an agent is shown as a gallery tile, the application shall show its scrollback map on the tile's right edge, let its preview cards extend beyond the tile, and when a mark or card is activated, put that agent on stage scrolled to that message.")
     func tileRailJumpsThroughTheGallery() {
-        let terminal = FakeScrollback(rows: sampleRows())
-        let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
-        var jumped: [Int] = []
-        let host = ScrollbackMapOverlayHost(model: model, timeline: sampleTimeline(), previewOverhang: 200,
-                                            onJump: { jumped.append($0) })
-        host.jump(toRow: 12)
-        #expect(jumped == [12])
-        #expect(terminal.scrolled.isEmpty)
-        ScrollbackMapOverlayHost(model: model, timeline: sampleTimeline()).jump(toRow: 7)
-        #expect(terminal.scrolled == [7])
+        let map = ScrollbackMap(totalRows: 1000, marks: [.init(row: 100, kind: .input, eventID: "early"),
+                                                         .init(row: 900, kind: .input, eventID: "late")])
+        let viewport = ScrollbackViewport(offset: 950, length: 50, total: 1000)
+        let layout = ScrollbackMapLayout(height: 200, map: map, viewport: viewport)
+        var jumped: [String] = []
+        var scrolled: [Int] = []
+        let tile = ScrollbackMapOverlay(map: map, viewport: viewport, entries: [:], availableHeight: 212,
+                                        previewOverhang: 200, jump: { jumped.append($0) }, scroll: { scrolled.append($0) })
+        let late = ScrollbackMapLayout.stripInset.top + layout.y(forRow: 900)
+        tile.click(at: late, layout: layout)
+        // A scrub only previews until it ends, then jumps to the previewed
+        // message rather than to a row half a viewport above the finger.
+        tile.finishDrag(at: late, layout: layout)
+        #expect(jumped == ["late", "late"])
+        #expect(scrolled.isEmpty)
+
+        let stage = ScrollbackMapOverlay(map: map, viewport: viewport, entries: [:], availableHeight: 212,
+                                         scroll: { scrolled.append($0) })
+        stage.click(at: late, layout: layout)
+        #expect(scrolled == [900])
         #expect(ScrollbackMapOverlay.previewFrame(railHeight: 80, overhang: 200) == .init(top: -200, height: 480))
         #expect(ScrollbackMapOverlay.previewFrame(railHeight: 80, overhang: 0) == .init(top: 0, height: 80))
     }
@@ -795,14 +805,6 @@ struct ScrollbackMapTileRailTests {
         }
         #expect(await task.value == false)
         #expect(calls == 1)
-    }
-
-    @Test func aStagedJumpCarriesTheMessageNearestTheRow() {
-        let map = ScrollbackMap(totalRows: 100, marks: [.init(row: 10, kind: .input, eventID: "a"),
-                                                        .init(row: 40, kind: .peer, eventID: "b")])
-        #expect(StagedMessageReveal.eventID(forRow: 12, in: map) == "a")
-        #expect(StagedMessageReveal.eventID(forRow: 38, in: map) == "b")
-        #expect(StagedMessageReveal.eventID(forRow: 12, in: nil) == nil)
     }
 
     @Test func aModelShownTwiceKeepsScanningUntilBothHide() async {

@@ -131,10 +131,11 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         let neighbour = position > 0 ? order[position - 1] : order.dropFirst().first
         guard let neighbour, let index = groups.firstIndex(where: { $0.id == neighbour }) else { return false }
         groups[index].sessions.append(contentsOf: removed.sessions)
+        let neighbourSelected = groups[index].selected
         groups.removeAll { $0.id == id }
         root = root?.replacing(id, with: nil)
-        if let focused = focusedSession, removed.sessions.contains(focused) { focusedSession = groups[index].selected }
-        if let last = lastAgent, removed.sessions.contains(last) { lastAgent = groups[index].selected }
+        if let focused = focusedSession, removed.sessions.contains(focused) { focusedSession = neighbourSelected }
+        if let last = lastAgent, removed.sessions.contains(last) { lastAgent = neighbourSelected }
         return true
     }
 
@@ -156,14 +157,17 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         return true
     }
 
-    public mutating func addAgent(_ session: Session) {
+    /// `isAgent` tells agents from shells, which can share the stage: a new
+    /// agent joins the last agent's pane, never a shell's, so no shell is hidden.
+    public mutating func addAgent(_ session: Session, isAgent: (Session) -> Bool = { _ in true }) {
         guard !sessions.contains(session) else { select(session); return }
         storedGalleryOrder = gallerySessions + [session]
         // A second agent opens the gallery by itself, whatever the user chose
         // while there was only one (LAYOUT-2.252).
-        if groups.flatMap(\.sessions).count == 1 { galleryVisible = nil }
-        if let index = lastAgent.flatMap({ group(containing: $0)?.id }).flatMap({ id in groups.firstIndex { $0.id == id } })
-            ?? groups.indices.first {
+        if groups.flatMap(\.sessions).filter(isAgent).count == 1 { galleryVisible = nil }
+        let agentPane = lastAgent.flatMap { isAgent($0) ? group(containing: $0)?.id : nil }
+            ?? groups.first { isAgent($0.selected) }?.id
+        if let index = agentPane.flatMap({ id in groups.firstIndex { $0.id == id } }) ?? groups.indices.first {
             groups[index].sessions.append(session)
             groups[index].selected = session
         } else {
@@ -172,6 +176,8 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
             root = .group(group.id)
         }
         lastAgent = session
+        // With only shells on stage, the agent takes one's place (LAYOUT-2.255).
+        returnHiddenShellsToDrawer(isAgent: isAgent)
     }
 
     public mutating func addTerminal(_ session: Session) {
@@ -297,13 +303,13 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         let liveSet = Set(live).union(retained)
         for session in sessions where !liveSet.contains(session) { remove(session) }
         for session in live where !sessions.contains(session) && !completed.contains(session) {
-            if agents.contains(session) { addAgent(session) }
+            if agents.contains(session) { addAgent(session, isAgent: agents.union(launched).contains) }
             else { addTerminal(session) }
         }
         let misfiled = terminals.filter(launched.contains)
         for session in misfiled {
             remove(session)
-            addAgent(session)
+            addAgent(session, isAgent: agents.union(launched).contains)
         }
         if preservingSelection {
             for group in previous.groups { select(group.selected) }

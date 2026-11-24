@@ -147,6 +147,44 @@ struct WorkspaceLayoutTests {
         #expect(untouched == layout)
     }
 
+    @Test func removingTheFirstPaneHandsFocusToItsNeighbour() throws {
+        var layout = WorkspaceLayout<String>()
+        for session in ["a", "b", "c"] { layout.addAgent(session) }
+        let first = try #require(layout.groups.first?.id)
+        layout.split("b", beside: first, edge: .right)
+        layout.split("c", beside: try #require(layout.group(containing: "b")?.id), edge: .right)
+        layout.select("a")
+        let removed = layout.removePane(first)
+        #expect(removed)
+        #expect(layout.focusedSession == "b")
+        #expect(layout.lastAgent == "b")
+
+        var pair = WorkspaceLayout<String>()
+        pair.addAgent("a"); pair.addAgent("b")
+        let pairFirst = try #require(pair.groups.first?.id)
+        pair.split("b", beside: pairFirst, edge: .right)
+        pair.select("a")
+        let pairRemoved = pair.removePane(pairFirst)
+        #expect(pairRemoved)
+        #expect(pair.focusedSession == "b")
+    }
+
+    @Test func aNewAgentNeverJoinsOrHidesAStageShell() throws {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("a")
+        layout.galleryVisible = false
+        layout.addTerminal("shell")
+        layout.split("shell", beside: try #require(layout.groups.first?.id), edge: .right)
+        layout.select("shell")
+        let isAgent: (String) -> Bool = { $0 != "shell" }
+
+        layout.addAgent("b", isAgent: isAgent)
+        #expect(layout.isOnStage("shell"))
+        #expect(layout.group(containing: "b")?.id == layout.group(containing: "a")?.id)
+        // The second agent opens the gallery although a shell shares the stage (LAYOUT-2.252).
+        #expect(layout.showsGallery(agentCount: 2))
+    }
+
     @Test func tabDropTransfersAcrossGroupsAndRejectsStaleTargets() throws {
         var layout = WorkspaceLayout<String>()
         for session in ["a", "b", "c"] { layout.addAgent(session) }

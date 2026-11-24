@@ -45,7 +45,8 @@ struct MultiPaneDetailView: View {
                                 .background(.regularMaterial, in: Capsule())
                         }
                         .buttonStyle(.plain).foregroundStyle(theme.foreground)
-                        .padding(.top, 6).padding(.trailing, 44)
+                        // Below the 44-point pane header row, whose trailing controls it would cover.
+                        .padding(.top, 50).padding(.trailing, 44)
                         .accessibilityIdentifier("workspace.gallery.open")
                     }
                 }
@@ -222,7 +223,7 @@ struct MultiPaneDetailView: View {
     }
 
     /// LAYOUT-2.196: a live question shows at the top of the focused stage
-    /// pane, whichever agent asks, so it can be answered without switching.
+    /// pane, whichever agent asks, with a way to put the asking agent on stage.
     private var inputRequestGroupID: UUID? {
         guard context.question != nil else { return nil }
         return focusedPaneId.flatMap { currentWorkspace.group(containing: $0)?.id } ?? currentWorkspace.focusedGroupID

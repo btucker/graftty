@@ -98,6 +98,9 @@ struct SingleSessionView: View {
     @State private var terminalSheet = CompactTerminalPresentation()
     @State private var terminalSheetWorktree: WorktreePanes?
     @State private var showsAgentGallery = false
+    /// UIKit drops a sheet presented while the gallery cover is still
+    /// dismissing, so Terminal opens once the cover is gone.
+    @State private var opensTerminalAfterGallery = false
     @State private var agentLaunchSelection = CompactAgentLaunchSelection()
     /// IPAD-2.26: contained routes keep the home-indicator inset, so their
     /// keyboard padding subtracts the gap between the window bottom and the
@@ -973,7 +976,11 @@ struct SingleSessionView: View {
                 .accessibilityIdentifier("workspace.agent.askingChip")
             }
         }
-        .fullScreenCover(isPresented: $showsAgentGallery) {
+        .fullScreenCover(isPresented: $showsAgentGallery, onDismiss: {
+            guard opensTerminalAfterGallery else { return }
+            opensTerminalAfterGallery = false
+            openCompactTerminal(in: workspace)
+        }) {
             MobileAgentGalleryScreen(host: step.host, worktree: workspace,
                 context: worktreeContext ?? SidebarWorktreeContext(worktree: workspace),
                 stagedSession: step.sessionName, theme: terminalTheme,
@@ -986,8 +993,8 @@ struct SingleSessionView: View {
                     selectCreatedAgent(session, generation: generation)
                 },
                 onOpenTerminal: {
+                    opensTerminalAfterGallery = true
                     showsAgentGallery = false
-                    openCompactTerminal(in: workspace)
                 },
                 onClose: { showsAgentGallery = false })
         }

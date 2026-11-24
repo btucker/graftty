@@ -80,7 +80,8 @@ struct RemoteWorkspaceContentView: View {
                         WorkspaceGalleryOpener(agentCount: galleryAgents.count,
                             askingCount: galleryAgents.count { context.needsInput(session: $0) },
                             theme: terminalManager.theme) { workspace?.galleryVisible = true }
-                            .padding(.top, 6).padding(.trailing, 22)
+                            // Below any stage pane header, whose trailing controls it would cover.
+                            .padding(.top, stageShowsPaneHeader ? 30 : 6).padding(.trailing, 22)
                     }
                 }
             if let width = WorkspaceGalleryColumn.width(showsGallery: showsGallery, showsContext: contextPanel != nil) {
@@ -124,6 +125,10 @@ struct RemoteWorkspaceContentView: View {
     }
 
     private var context: SidebarWorktreeContext { attentionContext ?? SidebarWorktreeContext(worktree: worktree) }
+    private func isAgentSession(_ session: String) -> Bool { agent(session) != nil }
+    private var stageShowsPaneHeader: Bool {
+        layout.groups.count > 1 || layout.groups.contains { chatAgent($0.selected) != nil }
+    }
     private func agent(_ session: String) -> AgentSessionInfo? {
         worktree.agents?.first { $0.presentationSessionName == session }
     }
@@ -133,9 +138,12 @@ struct RemoteWorkspaceContentView: View {
     private var gallery: some View {
         WorkspaceGallery(tiles: galleryAgents.map(tileModel), theme: terminalManager.theme,
             onStage: stage,
-            onJump: { session, row in
+            onJump: { session, eventID in
                 stage(session)
-                DispatchQueue.main.async { slot(session).flatMap(terminalManager.handle(for:))?.scrollbackMapModel.scroll(toRow: row) }
+                let slot = slot(session)
+                MacGalleryJump.reveal(eventID, timeline: slot.flatMap { agentScrollbackMaps[$0] }?.timeline) { [terminalManager] in
+                    slot.flatMap(terminalManager.handle(for:))
+                }
             },
             onMove: { source, target, after in _ = workspace?.moveTile(source, relativeTo: target, after: after) },
             onCollapse: { workspace?.galleryVisible = false },
@@ -260,7 +268,7 @@ struct RemoteWorkspaceContentView: View {
         }
         guard let session = pendingAgentSession,
               worktree.layout?.leaves.contains(where: { $0.sessionName == session }) == true else { return }
-        workspace?.addAgent(session)
+        workspace?.addAgent(session, isAgent: isAgentSession)
         select(session)
         pendingAgentSession = nil
     }
@@ -268,7 +276,7 @@ struct RemoteWorkspaceContentView: View {
     private func showRequestedAgent() {
         guard let requestedAgent, let agent = worktree.agents?.first(where: { $0.id == requestedAgent }),
               let session = agent.presentationSessionName else { return }
-        if !layout.sessions.contains(session) { workspace?.addAgent(session) }
+        if !layout.sessions.contains(session) { workspace?.addAgent(session, isAgent: isAgentSession) }
         stage(session)
         consumeAgentRequest()
     }

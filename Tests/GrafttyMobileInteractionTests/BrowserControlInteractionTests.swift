@@ -3,7 +3,7 @@ import XCTest
 
 @MainActor
 final class IPadWorkspaceInteractionTests: XCTestCase {
-    /// @spec IPAD-2.28: While an iPad workspace is visible, the application shall keep agent tabs below the navigation bar, place pane resource controls alongside the tabs, and allow tab selection to change the focused terminal.
+    /// @spec IPAD-2.28: While an iPad workspace is visible, the application shall keep the agent gallery's tiles below the navigation bar and let selecting a tile change the focused terminal.
     func testTabsRemainBelowNavigationAndReceiveTaps() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -67,7 +67,7 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         XCTAssertFalse(forward.isEnabled, "Forward is enabled with no later worktree")
     }
 
-    /// @spec LAYOUT-2.196: While an agent has a live input request, the application shall show the request once, at the top of the focused stage pane, whichever agent asks, so the user can answer it without switching agents.
+    /// @spec LAYOUT-2.196: While an agent has a live input request, the application shall show the request once, at the top of the focused stage pane, whichever agent asks, and while another agent is on stage, offer to put the asking agent on stage.
     func testInputRequestSitsAtTheTopOfTheStage() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
         let app = XCUIApplication()

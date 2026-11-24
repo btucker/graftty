@@ -75,7 +75,8 @@ struct WorkspaceContentView: View {
                             askingCount: galleryAgents.count { needsInput($0) }, theme: theme) {
                             mutate { $0.galleryVisible = true }
                         }
-                        .padding(.top, 6).padding(.trailing, 22)
+                        // Below any stage pane header, whose trailing controls it would cover.
+                        .padding(.top, stageShowsPaneHeader ? 30 : 6).padding(.trailing, 22)
                     }
                 }
             if let width = WorkspaceGalleryColumn.width(showsGallery: showsGallery, showsContext: contextPanel != nil) {
@@ -118,11 +119,12 @@ struct WorkspaceContentView: View {
     private var gallery: some View {
         WorkspaceGallery(tiles: galleryAgents.map(tileModel), theme: theme,
             onStage: { id in slot(id).map(stageAgent) },
-            onJump: { id, row in
+            onJump: { id, eventID in
                 guard let slot = slot(id) else { return }
                 stageAgent(slot)
-                // Scroll once the staged surface is mounted.
-                DispatchQueue.main.async { terminalManager.handle(for: slot)?.scrollbackMapModel.scroll(toRow: row) }
+                MacGalleryJump.reveal(eventID, timeline: agentScrollbackMaps[slot]?.timeline) { [terminalManager] in
+                    terminalManager.handle(for: slot)
+                }
             },
             onMove: { source, target, after in
                 guard let source = slot(source), let target = slot(target) else { return }
@@ -230,6 +232,12 @@ struct WorkspaceContentView: View {
 
     /// A stage pane's slim header: in a split stage it names the pane and
     /// lets it leave the stage without closing its agent; an agent that offers
+    private var stageShowsPaneHeader: Bool {
+        layout.groups.count > 1 || layout.groups.contains { group in
+            chatService != nil && agent(group.selected).map(AgentChatHost.offers) == true
+        }
+    }
+
     /// Chat shows its Chat / Terminal switch here. Otherwise there is none.
     @ViewBuilder private func stagePaneHeader(for slot: PaneSlotID) -> some View {
         let offersChat = chatService != nil && agent(slot).map(AgentChatHost.offers) == true
@@ -261,7 +269,7 @@ struct WorkspaceContentView: View {
     }
 
     /// A live question shows at the top of the focused stage pane, whichever
-    /// agent asks, so the user can answer without switching (LAYOUT-2.196).
+    /// agent asks, with a way to put the asking agent on stage (LAYOUT-2.196).
     var stageBannerGroupID: UUID? { layout.focusedGroupID }
 
     private var inputRequestBanner: some View {

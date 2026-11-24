@@ -1178,7 +1178,8 @@ struct MainWindow: View {
             return
         }
         selectWorktree(path)
-        guard appState.selectedWorktreePath == path else { return }
+        // This window's selection: the app's only follows the active window.
+        guard selectedLocalWorktreePath == path else { return }
         var slot: PaneSlotID?
         appState.mutateWorktrees(atPath: path) { slot = $0.showAgentTab(agentID) }
         guard let slot else { return }

@@ -1,17 +1,11 @@
 import GrafttyProtocol
 
 /// Scrolls an agent that a gallery tile just put on stage to a message
-/// (CONTEXT-57.15) on GrafttyMobile, where a tile renders its own preview
-/// surface: the tile's rows mean nothing on the staged terminal, so the jump
-/// carries the message, and the staged terminal may not have mounted or
-/// loaded that message yet.
+/// (CONTEXT-57.15). The jump carries the message rather than a row, because
+/// a mobile tile renders its own preview surface and staging can resize a
+/// terminal, and the staged terminal may not have mounted or loaded it yet.
 @MainActor
 public enum StagedMessageReveal {
-    /// The message a rail jump to `row` points at.
-    public static func eventID(forRow row: Int, in map: ScrollbackMap?) -> String? {
-        map?.nearestMark(toRow: row)?.eventID
-    }
-
     /// Calls `attempt` until it reveals the message, up to `attempts` times
     /// with `interval` between tries; false if it never does or the task is cancelled.
     public static func reveal(attempts: Int = 20, interval: Duration = .milliseconds(150),

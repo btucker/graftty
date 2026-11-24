@@ -53,9 +53,9 @@ public extension WorktreeEntry {
     mutating func showAgentTab(_ id: String) -> PaneSlotID? {
         guard let slot = agents.first(where: { $0.id == id })?.presentationSlotID else { return nil }
         ensureWorkspaceLayout()
-        if workspaceLayout?.sessions.contains(slot) != true { workspaceLayout?.addAgent(slot) }
-        workspaceLayout?.stage(slot)
         let agentSlots = Set(agents.compactMap(\.presentationSlotID))
+        if workspaceLayout?.sessions.contains(slot) != true { workspaceLayout?.addAgent(slot, isAgent: agentSlots.contains) }
+        workspaceLayout?.stage(slot)
         workspaceLayout?.returnHiddenShellsToDrawer(isAgent: agentSlots.contains)
         return slot
     }
@@ -92,7 +92,7 @@ public extension WorktreeEntry {
         if workspaceLayout == nil { workspaceLayout = .preserving(splitTree) }
         for slot in agents.filter({ $0.launchOperationID != nil && $0.status != .closed }).compactMap(\.paneSlotID) where workspaceLayout?.terminals.contains(slot) == true {
             workspaceLayout?.remove(slot)
-            workspaceLayout?.addAgent(slot)
+            workspaceLayout?.addAgent(slot, isAgent: Set(agents.compactMap(\.presentationSlotID)).contains)
         }
         workspaceLayout?.reconcile(live: splitTree.allLeaves, agents: Set(agents.compactMap(\.paneSlotID)),
             retained: Set(agents.compactMap(\.presentationSlotID)),

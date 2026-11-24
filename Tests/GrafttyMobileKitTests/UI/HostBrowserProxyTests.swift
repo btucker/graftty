@@ -63,6 +63,12 @@ struct HostBrowserProxyTests {
         #expect(afterOneSecond && afterStall && justBeforeBudget)
         #expect(wait.stalled == .seconds(348))
         #expect(!pastBudget)
+
+        // Blocking beyond the cap is a hang, and fails the wait.
+        var hung = MainThreadStallDeadline(.seconds(60), now: { now })
+        now += .seconds(9 * 60)
+        let afterHang = hung.hasTimeLeft()
+        #expect(!afterHang)
     }
 
     private final class ControlledAppearanceContainer: UIViewController {
@@ -973,6 +979,8 @@ struct HostBrowserProxyTests {
 struct MainThreadStallDeadline {
     /// A poll that returns this late means the main thread was blocked.
     static let stallThreshold: Duration = .seconds(2)
+    /// Stalls beyond this count against the deadline, so a real hang still fails.
+    static let maximumStall: Duration = .seconds(8 * 60)
     private var remaining: Duration
     private var last: ContinuousClock.Instant
     private let now: () -> ContinuousClock.Instant
@@ -988,7 +996,7 @@ struct MainThreadStallDeadline {
         let current = now()
         let elapsed = last.duration(to: current)
         last = current
-        if elapsed >= Self.stallThreshold {
+        if elapsed >= Self.stallThreshold, stalled + elapsed <= Self.maximumStall {
             stalled += elapsed
             print("WebKit blocked the main thread for \(elapsed) during a browser wait")
         } else {

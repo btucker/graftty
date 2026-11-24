@@ -16,6 +16,29 @@ enum WorkspaceGalleryColumn {
 }
 
 /// One agent's tile, as the gallery needs it.
+/// Scrolls the agent a tile rail just put on stage to the message it pointed
+/// at (CONTEXT-57.15). Staging can resize the terminal and reflow its rows,
+/// so the jump finds the message again once the staged surface has settled.
+@MainActor
+enum MacGalleryJump {
+    private static var task: Task<Void, Never>?
+
+    static func reveal(_ eventID: String, timeline: WorktreeTimeline?, handle: @escaping @MainActor () -> SurfaceHandle?) {
+        let messages = timeline.map(ScrollbackMap.messages(in:)) ?? []
+        task?.cancel()
+        task = Task {
+            _ = await StagedMessageReveal.reveal {
+                guard let handle = handle() else { return false }
+                if let row = handle.scrollbackMapModel.map?.row(for: eventID) {
+                    handle.scrollbackMapModel.scroll(toRow: row)
+                    return true
+                }
+                return await handle.reveal(eventID: eventID, messages: messages)
+            }
+        }
+    }
+}
+
 struct WorkspaceGalleryTileModel: Identifiable {
     /// The drag payload and the key the callbacks receive.
     let id: String
@@ -34,11 +57,13 @@ struct WorkspaceGallery<NewAgent: View, TileMenu: View>: View {
     let tiles: [WorkspaceGalleryTileModel]
     let theme: GhosttyTheme
     let onStage: (String) -> Void
-    let onJump: (String, Int) -> Void
+    /// A tile's id and the event ID of the message its rail activated.
+    let onJump: (String, String) -> Void
     let onMove: (String, String, Bool) -> Void
     let onCollapse: () -> Void
     @ViewBuilder let newAgent: () -> NewAgent
     @ViewBuilder let tileMenu: (String) -> TileMenu
+    @State private var activeRail: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -77,6 +102,11 @@ struct WorkspaceGallery<NewAgent: View, TileMenu: View>: View {
                         // The tile body is a native click and drag source with no press of its own for VoiceOver.
                         .accessibilityAction { onStage(tile.id) }
                         .modifier(WorkspaceTabDropTarget(vertical: true) { source, after in onMove(source, tile.id, after) })
+                        // A tile whose rail is in use draws above the next, which its cards overlap.
+                        .onPreferenceChange(ScrollbackMapActive.self) { active in
+                            if active { activeRail = tile.id } else if activeRail == tile.id { activeRail = nil }
+                        }
+                        .zIndex(activeRail == tile.id ? 1 : 0)
                     }
                     newAgent()
                         .frame(height: 44)

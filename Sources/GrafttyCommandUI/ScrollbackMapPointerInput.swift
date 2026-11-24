@@ -10,6 +10,7 @@ struct ScrollbackMapPointerInput: NSViewRepresentable {
     var onHover: (CGFloat?) -> Void
     var onScrub: (CGFloat?) -> Void
     var onDrag: (CGFloat) -> Void
+    var onDragEnd: (CGFloat) -> Void
     var onClick: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ScrollbackMapPointerView { ScrollbackMapPointerView(content: content) }
@@ -20,6 +21,7 @@ struct ScrollbackMapPointerInput: NSViewRepresentable {
         view.onHover = onHover
         view.onScrub = onScrub
         view.onDrag = onDrag
+        view.onDragEnd = onDragEnd
         view.onClick = onClick
         view.previewArea = previewArea
     }
@@ -36,6 +38,7 @@ final class ScrollbackMapPointerView: NSView {
     var onHover: ((CGFloat?) -> Void)?
     var onScrub: ((CGFloat?) -> Void)?
     var onDrag: ((CGFloat) -> Void)?
+    var onDragEnd: ((CGFloat) -> Void)?
     var onClick: ((CGFloat) -> Void)?
     private var press: NSPoint?
     private var dragged = false
@@ -146,7 +149,7 @@ final class ScrollbackMapPointerView: NSView {
     override func mouseUp(with event: NSEvent) {
         guard press != nil else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if dragged { onDrag?(point.y) } else { onClick?(point.y) }
+        if dragged { onDragEnd?(point.y) } else { onClick?(point.y) }
         press = nil
         setHover(bounds.contains(point) || previewArea?.contains(point) == true ? point.y : nil)
         onScrub?(nil)

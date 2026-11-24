@@ -319,6 +319,9 @@ public struct ScrollbackMapOverlay: View {
     let entries: [String: ScrollbackMapEntry]
     let gists: PeerMessageGistProvider
     let scroll: (Int) -> Void
+    /// A gallery tile's rail: activating a message reports it instead of
+    /// scrolling, and a scrub only previews until it is released.
+    let jump: ((String) -> Void)?
     private let availableHeight: CGFloat
     private let availableWidth: CGFloat
     /// Room above and below the rail that preview cards may use, so a short
@@ -342,9 +345,9 @@ public struct ScrollbackMapOverlay: View {
     public init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
                 gists: PeerMessageGistProvider = .shared, availableHeight: CGFloat = ScrollbackMapLayout.cardSize.height,
                 availableWidth: CGFloat = 360, previewOverhang: CGFloat = 0,
-                scroll: @escaping (Int) -> Void) {
+                jump: ((String) -> Void)? = nil, scroll: @escaping (Int) -> Void) {
         self.init(map: map, viewport: viewport, entries: entries, gists: gists, availableHeight: availableHeight,
-                  availableWidth: availableWidth, previewOverhang: previewOverhang, focusY: nil, scroll: scroll)
+                  availableWidth: availableWidth, previewOverhang: previewOverhang, focusY: nil, jump: jump, scroll: scroll)
     }
 
     struct PreviewFrame: Equatable { var top: CGFloat; var height: CGFloat }
@@ -357,8 +360,10 @@ public struct ScrollbackMapOverlay: View {
     /// `focusY` starts the overlay mid-scrub, for rendering tests.
     init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
          gists: PeerMessageGistProvider, availableHeight: CGFloat = ScrollbackMapLayout.cardSize.height,
-         availableWidth: CGFloat = 360, previewOverhang: CGFloat = 0, focusY: CGFloat?, scroll: @escaping (Int) -> Void) {
+         availableWidth: CGFloat = 360, previewOverhang: CGFloat = 0, focusY: CGFloat?,
+         jump: ((String) -> Void)? = nil, scroll: @escaping (Int) -> Void) {
         self.map = map; self.viewport = viewport; self.entries = entries; self.gists = gists; self.scroll = scroll
+        self.jump = jump
         self.availableHeight = availableHeight
         self.availableWidth = availableWidth
         self.previewOverhang = previewOverhang
@@ -401,9 +406,11 @@ public struct ScrollbackMapOverlay: View {
                     let forward = direction == .increment
                     guard let mark = ScrollbackMapLayout.adjacentMark(in: map, from: accessibilityMark, forward: forward) else { return }
                     accessibilityMark = mark.eventID
-                    scroll(mark.row)
+                    if jump == nil { scroll(mark.row) }
                 }
+                .modifier(ScrollbackMapJumpAction(jump: jump, eventID: accessibilityMark))
                 .accessibilityIdentifier("terminal.scrollbackMap")
+                .preference(key: ScrollbackMapActive.self, value: isActive)
                 .overlay(alignment: .topTrailing) {
                     if let interactionY {
                         previews(layout: layout, focused: mark, focusY: interactionY)
@@ -451,7 +458,7 @@ public struct ScrollbackMapOverlay: View {
             ScrollbackMapPreviews(groups: groups, height: frame.height, cardWidth: cardWidth,
                                   gap: gap, railCenter: railCenter, focusY: focusY - frame.top, maximumShift: maximumShift,
                                   focusedID: focused?.eventID, responseGist: responseGist) { firstID in
-                if let row = map.row(for: firstID) { scroll(row) }
+                if let jump { jump(firstID) } else if let row = map.row(for: firstID) { scroll(row) }
                 #if !os(macOS)
                 scrub = nil
                 previewReleasedAt = nil
@@ -476,6 +483,7 @@ public struct ScrollbackMapOverlay: View {
             onHover: { hover = $0 },
             onScrub: { scrub = $0 },
             onDrag: { drag(at: $0, layout: layout) },
+            onDragEnd: { finishDrag(at: $0, layout: layout) },
             onClick: { click(at: $0, layout: layout) }
         )
         .frame(width: ScrollbackMapLayout.macGutterWidth, height: layout.cardHeight)
@@ -576,7 +584,7 @@ public struct ScrollbackMapOverlay: View {
                 }
                 #endif
                 if let value = gestures.first, hasMoved(value) {
-                    drag(at: value.location.y, layout: layout)
+                    finishDrag(at: value.location.y, layout: layout)
                 } else if let y = gestures.second?.location.y {
                     click(at: y, layout: layout)
                 }
@@ -587,14 +595,30 @@ public struct ScrollbackMapOverlay: View {
         abs(value.translation.height) >= 2 || abs(value.translation.width) >= 2
     }
 
+    /// A live scrub scrolls the terminal; a tile's rail only previews.
     private func drag(at cardY: CGFloat, layout: ScrollbackMapLayout) {
+        guard jump == nil else { return }
         let y = ScrollbackMapLayout.stripY(forCardY: cardY, height: layout.height)
         scroll(layout.scrubTopRow(atY: y, viewportLength: viewport.length))
     }
 
-    private func click(at cardY: CGFloat, layout: ScrollbackMapLayout) {
+    /// A tile's rail jumps to the message its preview shows where the scrub ends.
+    func finishDrag(at cardY: CGFloat, layout: ScrollbackMapLayout) {
+        guard let jump else { return drag(at: cardY, layout: layout) }
+        let y = ScrollbackMapLayout.stripY(forCardY: cardY, height: layout.height)
+        if let mark = layout.previewTarget(in: map, atY: y, isIncoming: { entries[$0]?.isIncomingPeer == true }) {
+            jump(mark.eventID)
+        }
+    }
+
+    func click(at cardY: CGFloat, layout: ScrollbackMapLayout) {
         let y = ScrollbackMapLayout.stripY(forCardY: cardY, height: layout.height)
         let target = layout.tapTarget(in: map, atY: y) { entries[$0]?.isIncomingPeer == true }
+        if let jump {
+            let mark = target ?? layout.previewTarget(in: map, atY: y, isIncoming: { entries[$0]?.isIncomingPeer == true })
+            if let mark { jump(mark.eventID) }
+            return
+        }
         scroll(target?.row ?? layout.scrubTopRow(atY: y, viewportLength: viewport.length))
     }
 
@@ -845,7 +869,9 @@ public struct ScrollbackMapOverlayHost: View {
     var gists: PeerMessageGistProvider = .shared
     private let previewOverhang: CGFloat
     private let previewWidth: CGFloat?
-    private let onJump: ((Int) -> Void)?
+    /// A gallery tile's rail reports the activated message's event ID; the
+    /// gallery stages the agent and reveals it there (CONTEXT-57.15).
+    let onJump: ((String) -> Void)?
     @State private var hostID = UUID()
     /// Derived once per parent update, not on every viewport report that redraws this body.
     private let messages: [ScrollbackMap.Message]
@@ -853,7 +879,7 @@ public struct ScrollbackMapOverlayHost: View {
     public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, terminalTheme: GhosttyThemeColors? = nil, isVisible: Bool = true,
                 recovery: ScrollbackMapRecovery? = nil, loadEarlier: (() -> Void)? = nil,
                 showSavedMessages: (() -> Void)? = nil, gists: PeerMessageGistProvider = .shared,
-                previewOverhang: CGFloat = 0, previewWidth: CGFloat? = nil, onJump: ((Int) -> Void)? = nil) {
+                previewOverhang: CGFloat = 0, previewWidth: CGFloat? = nil, onJump: ((String) -> Void)? = nil) {
         self.showSavedMessages = showSavedMessages
         self.previewOverhang = previewOverhang
         self.previewWidth = previewWidth
@@ -863,11 +889,6 @@ public struct ScrollbackMapOverlayHost: View {
         self.terminalTheme = terminalTheme
         self.loadEarlier = loadEarlier
         self.messages = ScrollbackMap.messages(in: timeline)
-    }
-
-    /// A tile rail hands the row to the gallery, which stages the agent first.
-    func jump(toRow row: Int) {
-        if let onJump { onJump(row) } else { model.scroll(toRow: row) }
     }
 
     var earlierHistoryAction: (() -> Void)? {
@@ -896,7 +917,7 @@ public struct ScrollbackMapOverlayHost: View {
                 if let map = model.map, !map.marks.isEmpty {
                     ScrollbackMapOverlay(map: map, viewport: model.viewport, entries: model.entries, gists: gists,
                                          availableHeight: max(0, geometry.size.height - (showSavedMessages == nil ? 0 : 44)), availableWidth: previewWidth ?? geometry.size.width,
-                                         previewOverhang: previewOverhang, scroll: { jump(toRow: $0) })
+                                         previewOverhang: previewOverhang, jump: onJump, scroll: { model.scroll(toRow: $0) })
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .onAppear {
                             let userCount = map.marks.count { $0.kind == .input }
@@ -944,3 +965,24 @@ public extension View {
     }
 }
 #endif
+
+/// Activates the message VoiceOver is on, for a tile rail whose adjustments only move between messages.
+private struct ScrollbackMapJumpAction: ViewModifier {
+    let jump: ((String) -> Void)?
+    let eventID: String?
+
+    func body(content: Content) -> some View {
+        if let jump {
+            content.accessibilityAction(named: "Show message") { if let eventID { jump(eventID) } }
+        } else {
+            content
+        }
+    }
+}
+
+/// Whether a rail is being hovered or scrubbed, so a gallery can draw that
+/// tile above its neighbours and keep its spilling preview cards reachable.
+public enum ScrollbackMapActive: PreferenceKey {
+    public static let defaultValue = false
+    public static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}

@@ -80,7 +80,13 @@ enum MobileGalleryJump {
         task?.cancel()
         task = Task {
             _ = await StagedMessageReveal.reveal {
-                await MobileTerminalRegistry.shared.container(for: session)?.reveal(eventID: eventID, messages: messages) ?? false
+                guard let container = MobileTerminalRegistry.shared.container(for: session) else { return false }
+                // The staged map also holds marks located by recovery, which the timeline alone cannot place.
+                if let row = container.scrollbackMapModel.map?.row(for: eventID) {
+                    container.scrollbackMapModel.scroll(toRow: row)
+                    return true
+                }
+                return await container.reveal(eventID: eventID, messages: messages)
             }
         }
     }
@@ -94,7 +100,10 @@ struct MobileGalleryTile: View {
     let client: SessionClient?
     let previews: MobileGalleryPreviews
     let timeline: WorktreeTimeline?
+    /// A paired Codex agent's marks come from its recovered conversation, as on the stage.
+    var recovery: ScrollbackMapRecovery? = nil
     let theme: GhosttyThemeColors
+    let onSelect: () -> Void
     /// The message a rail mark or card points at; the preview's rows mean
     /// nothing on the staged terminal.
     let onJump: (String) -> Void
@@ -103,8 +112,10 @@ struct MobileGalleryTile: View {
     @State private var mapModel: ScrollbackMapModel?
 
     var body: some View {
+        // Only the body selects: the rail's marks and cards take their own taps.
         AgentGalleryTile(title: agent.title, status: agent.status, isOnStage: isOnStage,
-                         foreground: theme.foreground, background: theme.background) {
+                         foreground: theme.foreground, background: theme.background,
+                         decorateBody: { body in AnyView(Button(action: onSelect) { body }.buttonStyle(.plain)) }) {
             if let client {
                 MobileTerminalPreview(client: client, baseConfig: previews.baseConfig,
                                       preferredInterfaceStyle: previews.preferredStyle,
@@ -119,10 +130,8 @@ struct MobileGalleryTile: View {
             }
         } rail: {
             if client != nil, let mapModel, let timeline {
-                ScrollbackMapOverlayHost(model: mapModel, timeline: timeline,
-                                         previewOverhang: 200, previewWidth: 240, onJump: { row in
-                                             if let eventID = StagedMessageReveal.eventID(forRow: row, in: mapModel.map) { onJump(eventID) }
-                                         })
+                ScrollbackMapOverlayHost(model: mapModel, timeline: timeline, recovery: recovery,
+                                         previewOverhang: 200, previewWidth: 240, onJump: onJump)
             }
         }
     }
@@ -153,6 +162,7 @@ struct MobileAgentGalleryGrid: View {
     @Environment(\.remoteConnectionCoordinator) private var coordinator
     @State private var previews = MobileGalleryPreviews()
     @State private var visible: Set<String> = []
+    @State private var activeRail: String?
 
     private var isReady: Bool { LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) }
     private var liveSessions: [String] {
@@ -164,15 +174,19 @@ struct MobileAgentGalleryGrid: View {
         let grid = Array(repeating: GridItem(.fixed(tileSize.width), spacing: 10), count: columns)
         LazyVGrid(columns: grid, spacing: 10) {
             ForEach(agents) { agent in
-                Button { onSelect(agent.id) } label: {
-                    MobileGalleryTile(agent: agent, isOnStage: onStage.contains(agent.id),
-                        client: liveSessions.contains(agent.id) ? previews.client(for: agent.id) : nil,
-                        previews: previews,
-                        timeline: context.scrollbackPaneIDs.contains(agent.id) ? WorktreeTimeline(context) : nil,
-                        theme: theme, onJump: { onJump(agent.id, $0) })
-                }
-                .buttonStyle(.plain)
+                let recovery = ScrollbackMapRecovery.pairedCodex(worktree.agents?.first { $0.presentationSessionName == agent.id })
+                MobileGalleryTile(agent: agent, isOnStage: onStage.contains(agent.id),
+                    client: liveSessions.contains(agent.id) ? previews.client(for: agent.id) : nil,
+                    previews: previews,
+                    timeline: context.scrollbackPaneIDs.contains(agent.id) || recovery != nil ? WorktreeTimeline(context) : nil,
+                    recovery: recovery, theme: theme, onSelect: { onSelect(agent.id) }, onJump: { onJump(agent.id, $0) })
                 .frame(width: tileSize.width, height: tileSize.height)
+                .accessibilityAction { onSelect(agent.id) }
+                // A tile whose rail is in use draws above the next, which its cards overlap.
+                .onPreferenceChange(ScrollbackMapActive.self) { active in
+                    if active { activeRail = agent.id } else if activeRail == agent.id { activeRail = nil }
+                }
+                .zIndex(activeRail == agent.id ? 1 : 0)
                 .accessibilityIdentifier("workspace.gallery.tile.\(agent.id)")
                 .modifier(MobileGalleryReorder(session: agent.id, onMove: onMove))
                 .onAppear { visible.insert(agent.id) }
