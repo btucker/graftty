@@ -3738,7 +3738,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-8.2** When the host receives a userauth request, the host shall accept only the `publickey` method and reject `password` and `keyboard-interactive` immediately.
 
-**REMOTE-8.3** When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore` and shall ignore the username field.
+**REMOTE-8.3** When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore`, and the username field shall never select or change a trusted peer.
 
 **REMOTE-8.4** When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch.
 
@@ -4161,6 +4161,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-21.28** The CLI shall accept graftty remote add-runner as another name for graftty remote setup-linux.
 
 **REMOTE-21.29** If a staged Linux archive has no graftty-runner executable, then the application shall report that the archive predates the runner rename, rather than a CPU or library incompatibility, without changing the installed service.
+
+**REMOTE-21.30** When setting up a new runner, the application shall bind its SSH and HTTP listeners to loopback.
 
 ### REMOTE-22.x
 
@@ -4653,6 +4655,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-33.2** When the runner saves its Tailcat listener state, the application shall write it to a file readable only by its owner.
 
 **REMOTE-33.3** When the Tailcat listener restarts with saved state, the application shall keep the same Tailcat address.
+
+**REMOTE-33.4** While the runner is serving, the application shall accept paired SSH sessions over Tailcat.
+
+**REMOTE-33.5** When a worktree-management client asks a runner for its Tailcat endpoint, the application shall return the endpoint it is listening on.
+
+**REMOTE-33.6** The runner status output shall report whether Tailcat is listening without including its address.
+
+**REMOTE-33.7** When a runner invite is encoded and parsed, the application shall recover the runner identity, Tailcat endpoint, secret, and expiry.
+
+**REMOTE-33.8** When a Mac presents an unexpired invite secret while signing with its key, the runner shall trust that key and accept the session.
+
+**REMOTE-33.9** If an invite secret was already redeemed or has expired, then the runner shall refuse enrollment and leave its trusted peers unchanged.
+
+**REMOTE-33.10** If an enrollment request is not a signed public-key request, then the runner shall not enroll its key.
+
+**REMOTE-33.11** When asked for an invite, the runner shall print one invite line and nothing else.
+
+**REMOTE-33.12** When GRAFTTY_PRINT_INVITE is 1 and no peer is trusted, the runner shall print one invite at start.
 
 ## CHROME — Dedicated Chrome tabs
 

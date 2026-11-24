@@ -69,7 +69,7 @@ struct LinuxHostSetupExecutionTests {
         let install = try #require(calls.first { $0.arguments.last?.contains("install.sh") == true })
         #expect(install.arguments.last?.contains("graftty-linux-1.2.3-beta.1-aarch64.tar.gz") == true)
         #expect(install.arguments.last?.contains("sha256sum --check") == true)
-        #expect(install.arguments.last?.contains("--bind-address 0.0.0.0 --ssh-port 8801") == true)
+        #expect(install.arguments.last?.contains("--bind-address 127.0.0.1 --ssh-port 8801") == true)
         let trust = try #require(calls.first { $0.arguments.last?.contains("trust-client") == true })
         let trustData = try #require(trust.input)
         #expect(try JSONDecoder().decode(LinuxHostTrustRequest.self, from: trustData) == client)

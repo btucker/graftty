@@ -87,7 +87,7 @@ public extension HeadlessHostRuntime {
                 _ = SidebarHostNavigation.acknowledge(in: &state, worktreeID: path, paneID: pane, occurrence: occurrence)
                 try save()
             case .tailcatEndpoint:
-                return .tailcatEndpoint(nil)
+                return .tailcatEndpoint(tailcatEndpointProvider?())
             case .hostPresentation:
                 return .hostPresentation(RemoteHostPresentation(ghosttyConfig: "", keybindings: .init(bindings: [:])))
             case .setWorktreeOrder(let repositoryID, let mode):

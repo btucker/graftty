@@ -295,7 +295,7 @@ let package = Package(
         .executableTarget(
             name: "GrafttyRunner",
             dependencies: ["GrafttyKit", "GrafttyProtocol", "GrafttyHostAgent",
-                           .product(name: "ArgumentParser", package: "swift-argument-parser")] + cryptoDependencies,
+                           .product(name: "ArgumentParser", package: "swift-argument-parser")] + cryptoDependencies + tailcatDependencies,
             swiftSettings: strictWarnings
         ),
         .executableTarget(

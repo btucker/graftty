@@ -49,6 +49,8 @@ public final class HeadlessHostRuntime {
     var worktreeStats: [String: WorktreeWireStats] = [:]
     public internal(set) var hostResources: HostResourceSnapshot?
     public var origin: WorktreeOrigin?
+    /// The runner's current Tailcat endpoint, reported to authenticated clients.
+    public var tailcatEndpointProvider: (@MainActor @Sendable () -> TailcatEndpoint?)?
     public var displayOwnershipStore: SessionDisplayOwnershipStore?
 
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,

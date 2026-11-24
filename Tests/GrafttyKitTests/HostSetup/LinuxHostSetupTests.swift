@@ -166,6 +166,28 @@ struct LinuxHostSetupTests {
         #expect(throws: LinuxHostSetupError.self) { try LinuxHostSetup.validateOrigin("https://alice:password@example.com/repo.git") }
         try LinuxHostSetup.validateOrigin("git@example.com:org/repo.git")
     }
+    @Test("@spec REMOTE-21.30: When setting up a new runner, the application shall bind its SSH and HTTP listeners to loopback.")
+    func newRunnerBindsLoopback() {
+        let script = LinuxHostScripts.install(staging: "/tmp/stage", archiveURL: nil)
+        #expect(script.contains("--bind-address 127.0.0.1 --ssh-port 8801 --http-port 8800"))
+        #expect(!script.contains("0.0.0.0"))
+    }
+
+    @Test("@spec REMOTE-33.6: The runner status output shall report whether Tailcat is listening without including its address.")
+    func statusOmitsTailcatAddress() throws {
+        let configuration = HostConfiguration(stateDirectory: URL(fileURLWithPath: "/tmp/state"),
+                                              runtimeDirectory: URL(fileURLWithPath: "/tmp/run"))
+        let status = HostStatus(running: true, configuration: configuration, repositoryCount: 0, paneCount: 0, tailcat: true)
+        let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(status)) as? [String: Any])
+        #expect(json["tailcat"] as? Bool == true)
+        #expect(!json.keys.contains { $0.lowercased().contains("address") })
+    }
+
+    @Test func identityFromARunnerWithoutTailcatDecodes() throws {
+        let json = #"{"deviceID":"d","displayName":"n","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","port":8801}"#
+        #expect(try JSONDecoder().decode(LinuxHostIdentity.self, from: Data(json.utf8)).tailcatEndpoint == nil)
+    }
+
 }
 
 private struct RepositoryFixture {
@@ -189,4 +211,5 @@ private struct RepositoryFixture {
         return Self(root: root, repository: repository)
     }
     func remove() { try? FileManager.default.removeItem(at: root) }
+
 }

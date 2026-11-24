@@ -91,7 +91,11 @@ public actor DirectSSHHostServer {
             ownershipStore: c.ownershipStore, ownershipBroadcaster: c.ownershipBroadcaster,
             teamHandler: handler, teamOnConnect: onConnect, teamOnDisconnect: onDisconnect
         )
+        configuration.inviteEnrollment = c.inviteEnrollment
     }
+
+    /// Lets an unknown key enroll by redeeming a runner invite. Configure before starting.
+    public func setInviteEnrollment(_ enrollment: InviteEnrollment?) { configuration.inviteEnrollment = enrollment }
 
     /// Port zero requests an ephemeral listener for loopback tests.
     @discardableResult

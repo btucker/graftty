@@ -75,7 +75,7 @@ enum LinuxHostScripts {
         \(maintenanceInstaller == nil ? ensureLinger : "")
         \(maintenanceInstaller.map { "printf '%s' " + quote($0) + " > unpacked/install.sh" } ?? "")
         \(maintenancePreflight.map { "printf '%s' " + quote($0) + " > preflight.sh" } ?? "")
-        \(maintenancePreflight == nil ? "" : "GRAFTTY_MAINTENANCE_PREFLIGHT_FILE=\"$PWD/preflight.sh\" ")/bin/bash unpacked/install.sh \(maintenanceInstaller == nil ? "--bind-address 0.0.0.0 --ssh-port 8801 --http-port 8800" : "--maintenance")
+        \(maintenancePreflight == nil ? "" : "GRAFTTY_MAINTENANCE_PREFLIGHT_FILE=\"$PWD/preflight.sh\" ")/bin/bash unpacked/install.sh \(maintenanceInstaller == nil ? "--bind-address 127.0.0.1 --ssh-port 8801 --http-port 8800" : "--maintenance")
         """
     }
 

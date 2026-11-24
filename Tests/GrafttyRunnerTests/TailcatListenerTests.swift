@@ -18,7 +18,9 @@ struct TailcatListenerStateFileTests {
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         let loaded = try #require(try store.load())
         #expect(loaded.address == state.address)
-        #expect(try JSONEncoder().encode(loaded.identity) == JSONEncoder().encode(state.identity))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        #expect(try encoder.encode(loaded.identity) == encoder.encode(state.identity))
         #expect(!String(describing: loaded).contains(state.address))
     }
 }

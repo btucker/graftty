@@ -101,7 +101,7 @@ struct SSHAuthLoopbackTests {
 
     @Test(
         """
-@spec REMOTE-8.3: When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore` and shall ignore the username field.
+@spec REMOTE-8.3: When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore`, and the username field shall never select or change a trusted peer.
 """,
         .timeLimit(.minutes(3))
     )
