@@ -2,6 +2,7 @@ import Foundation
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
+import GrafttyTailcat
 
 struct LinuxHostPreparedConnection {
     let host: PinnedHost
@@ -12,15 +13,25 @@ struct LinuxHostPreparedConnection {
 @MainActor
 struct LinuxHostSetupConnectionController {
     let pinnedHostStore: PinnedHostStore
+    /// Keychain by default; the endpoint is a secret and never enters the saved host list.
+    var saveTailcatEndpoint: (TailcatEndpoint, RemoteIdentityFingerprint) throws -> Void = { endpoint, fingerprint in
+        try TailcatCredentials.saveEndpoint(endpoint, for: fingerprint)
+    }
 
+    /// A runner that reports a Tailcat endpoint is reached over Tailcat. Its
+    /// direct endpoint stays saved: it records the Graftty port that updates
+    /// over OpenSSH verify. An older archive without Tailcat keeps direct SSH.
     func save(_ result: LinuxHostSetupResult, model: RemoteMacsModel) throws -> RemoteMac {
         let endpoint = try DirectSSHEndpoint(host: result.openSSH.hostname, port: result.identity.port)
         let known = model.savedRemoteMacs.filter {
             $0.id.value == result.identity.deviceID
-                || ($0.transport == .directSSH && $0.directEndpoint?.host.lowercased() == endpoint.host.lowercased() && $0.directEndpoint?.port == endpoint.port)
+                || ($0.transport != .webRTC && $0.directEndpoint?.host.lowercased() == endpoint.host.lowercased() && $0.directEndpoint?.port == endpoint.port)
         }.map(RemoteMacIdentity.init)
         let prepared = try accept(result, kind: .linux, knownRemotes: known)
-        try model.recordPairingResult(.paired(prepared.host), transport: .directSSH,
+        if let tailcat = result.identity.tailcatEndpoint {
+            try saveTailcatEndpoint(tailcat, prepared.host.fingerprint)
+        }
+        try model.recordPairingResult(.paired(prepared.host), transport: result.identity.tailcatEndpoint == nil ? .directSSH : .tailcat,
                                       directEndpoint: endpoint, maintenanceDestination: result.destination)
         guard let saved = model.savedRemoteMacs.first(where: {
             $0.id == prepared.host.id && $0.fingerprint == prepared.host.fingerprint

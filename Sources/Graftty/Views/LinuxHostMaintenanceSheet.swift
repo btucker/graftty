@@ -37,7 +37,7 @@ struct LinuxHostMaintenanceSheet: View {
                 .disabled(isRunning)
                 .accessibilityIdentifier("hostMaintenanceDestination")
                 .onChange(of: destination) { _, _ in inspection = nil; confirmPublishedBuild = false }
-            Text("Use the host's OpenSSH destination, not Graftty's port \(remote.directEndpoint?.port ?? 8801). Its public identity must match the saved pairing.")
+            Text("Use the runner's OpenSSH destination, such as user@hostname or an SSH config alias. Its public identity must match the saved pairing.")
                 .font(.caption).foregroundStyle(.secondary)
             Button("Check Host", action: inspect)
                 .disabled(isRunning || (try? LinuxHostDestination(destination)) == nil)

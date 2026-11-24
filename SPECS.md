@@ -4680,6 +4680,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-33.15** When a direct-SSH runner reports a Tailcat endpoint, the application shall save it and use Tailcat for later connections.
 
+**REMOTE-33.16** When SSH setup finishes on a runner that reports a Tailcat endpoint, the application shall save the runner with the Tailcat transport and keep its OpenSSH destination for updates.
+
+**REMOTE-33.17** When SSH setup finishes on a runner that reports no Tailcat endpoint, the application shall save it with direct SSH.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership

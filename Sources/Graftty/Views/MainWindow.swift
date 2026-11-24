@@ -1335,7 +1335,10 @@ struct MainWindow: View {
             _ = try await remoteMacsModel.connect(to: saved)
         } catch is CancellationError { throw CancellationError() }
         catch {
-            throw LinuxHostSetupError.invalidPlan("The host is installed and paired, but Graftty could not reach \(saved.directEndpoint?.host ?? result.openSSH.hostname):\(result.identity.port). Check the firewall and direct network route, then retry.\n\(error.localizedDescription)")
+            if saved.transport == .tailcat {
+                throw LinuxHostSetupError.invalidPlan("The runner is installed and paired, but Graftty could not reach it over Tailcat. Check that the runner has outbound internet access, then retry.\n\(error.localizedDescription)")
+            }
+            throw LinuxHostSetupError.invalidPlan("The runner is installed and paired, but Graftty could not reach \(saved.directEndpoint?.host ?? result.openSSH.hostname):\(result.identity.port). This release predates Tailcat, so the runner needs that port reachable. Check the firewall, then retry.\n\(error.localizedDescription)")
         }
     }
 

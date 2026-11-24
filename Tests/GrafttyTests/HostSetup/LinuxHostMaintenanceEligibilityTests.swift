@@ -19,4 +19,15 @@ struct LinuxHostMaintenanceEligibilityTests {
         #expect(!RemoteMacsModel.canMaintain(remote, state: .connected, pinned: pin(.mac)))
         #expect(!RemoteMacsModel.canMaintain(remote, state: .connected, pinned: nil))
     }
+
+    @Test func tailcatRunnerIsUpdatableOnlyWhenInstalledOverSSH() throws {
+        let key = try RemoteIdentityPublicKey(rawRepresentation: Data(repeating: 2, count: 32))
+        let pin = PinnedHost(id: .init(value: "host"), kind: .linux, publicKey: key, displayName: "Host", pinnedAt: Date(),
+                             pairingURL: URL(string: "ssh://host:8801")!)
+        let installed = RemoteMac(id: pin.id, label: "Host", fingerprint: .init(of: key), transport: .tailcat,
+                                  directEndpoint: try .init(host: "host"))
+        let invited = RemoteMac(id: pin.id, label: "Host", fingerprint: .init(of: key), transport: .tailcat)
+        #expect(RemoteMacsModel.canMaintain(installed, state: .connected, pinned: pin))
+        #expect(!RemoteMacsModel.canMaintain(invited, state: .connected, pinned: pin))
+    }
 }
