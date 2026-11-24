@@ -20,6 +20,7 @@ public struct CodexHomeMirror: Sendable {
         "config.toml",
         ".graftty-mirror-version",
         ".graftty-mirror.lock",
+        ".graftty-model-defaults.json",
     ]
     private static let runtimeDirectoryNames: Set<String> = [
         "app-server-control",
@@ -163,17 +164,60 @@ public struct CodexHomeMirror: Sendable {
         let destination = mirrorDirectory.appendingPathComponent("config.toml")
         let data = try readDataIfPresent(at: source) ?? Data()
         let managedData = try readDataIfPresent(at: destination) ?? Data()
-        let snapshot = Self.preservingHookState(from: managedData, in: data)
+        let defaultsFile = mirrorDirectory.appendingPathComponent(".graftty-model-defaults.json")
+        let previousDefaults = try readDataIfPresent(at: defaultsFile).map {
+            try JSONDecoder().decode([String: String].self, from: $0)
+        }
+        let selected = Self.preservingModelSelection(from: managedData, in: data, previousDefaults: previousDefaults)
+        let snapshot = Self.preservingHookState(from: managedData, in: selected)
         if (try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil {
             try fm.removeItem(at: destination)
         }
         try snapshot.write(to: destination, options: .atomic)
+        try JSONEncoder().encode(Self.modelDefaults(in: data)).write(to: defaultsFile, options: .atomic)
+    }
+
+    private static func isModelSelection(_ key: [String]) -> Bool {
+        key == ["model"] || key == ["model_reasoning_effort"]
+    }
+
+    private static func modelDefaults(in data: Data) -> [String: String] {
+        let root = tomlSections(in: String(decoding: data, as: UTF8.self))[0]
+        return Dictionary(tomlAssignmentBlocks(in: root.lines).filter { isModelSelection($0.key) }.map { block in
+            let assignment = tomlContentBeforeComment(in: block.lines[0])
+            let value = assignment.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1]
+                .trimmingCharacters(in: .whitespaces)
+            return (block.key[0], value)
+        }, uniquingKeysWith: { _, last in last })
+    }
+
+    /// `/model` writes into the active home. Preserve that choice while the
+    /// durable defaults are unchanged; an explicit durable model edit wins.
+    /// Track only these defaults, so unrelated config refreshes do not reset it.
+    private static func preservingModelSelection(from managedData: Data, in durableData: Data,
+                                                  previousDefaults: [String: String]?) -> Data {
+        let managedDefaults = modelDefaults(in: managedData)
+        guard let previousDefaults, !managedData.isEmpty,
+              previousDefaults == modelDefaults(in: durableData),
+              managedDefaults["model"] != nil,
+              managedDefaults != previousDefaults,
+              let managed = String(data: managedData, encoding: .utf8),
+              let durable = String(data: durableData, encoding: .utf8) else { return durableData }
+        let sections = tomlSections(in: durable)
+        let root = tomlAssignmentLayout(in: sections[0].lines)
+        let localRoot = tomlSections(in: managed)[0]
+        let selection = tomlAssignmentBlocks(in: localRoot.lines).filter { isModelSelection($0.key) }
+        var lines = root.prefixLines
+            + root.blocks.filter { !isModelSelection($0.key) }.flatMap(\.lines)
+            + selection.flatMap(\.lines)
+        for section in sections.dropFirst() { appendSection(section, to: &lines) }
+        return Data(lines.joined(separator: "\n").utf8)
     }
 
     /// Codex saves `/hooks` decisions in its active config. Keep those exact
     /// hashes and disabled switches in the managed home across refreshes;
     /// Codex still decides whether each hash matches the current definition.
-    /// Other runtime config edits are intentionally replaced by durable settings.
+    /// Settings other than the retained model choice refresh from durable settings.
     private static func preservingHookState(from managedData: Data, in durableData: Data) -> Data {
         guard let managed = String(data: managedData, encoding: .utf8),
               let durable = String(data: durableData, encoding: .utf8) else { return durableData }

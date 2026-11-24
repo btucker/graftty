@@ -1476,8 +1476,9 @@ final class RemoteMacsModel: ObservableObject {
         let originalPins = Set(candidates.filter { $0.peer.deviceID == owner }.map(\.peer))
         let source = candidates.first { $0.id == RemoteMacIdentity(remoteMac) }
         let operations = routeOperations(owner: owner, pins: originalPins)
+        let liveHosts = Set(candidates.map(\.id).filter { connectionState(for: $0) == .connected && paneFeedFailures[$0] == nil })
         let resolved = try await hostRouteResolver.resolveWorktree(worktree, source: source, hosts: candidates, excluding: excluding,
-            connect: operations.connect, send: operations.send, fetch: operations.fetch)
+            liveHosts: liveHosts, connect: operations.connect, send: operations.send, fetch: operations.fetch)
         let currentPins = Set(hostRouteCandidates.filter { $0.peer.deviceID == owner }.map(\.peer))
         guard originalPins == currentPins, currentPins.isEmpty || currentPins.contains(resolved.route.destination) else {
             throw ProjectControlError.unavailable

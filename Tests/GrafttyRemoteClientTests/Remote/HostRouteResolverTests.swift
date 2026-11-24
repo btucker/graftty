@@ -141,6 +141,53 @@ struct HostRouteResolverTests {
         #expect(WorktreeRouteIdentity.matching(target, in: [otherOwner, otherWorktree], owner: owner) == nil)
     }
 
+    @Test("@spec REMOTE-13.68: When a worktree is already listed through a live relay, the application shall open it through that relay without dialing an offline direct path, and shall prefer an already connected direct path.", arguments: [false, true])
+    func liveRelayDoesNotWaitForColdDirectDial(directIsLive: Bool) async throws {
+        let destination = try peer("lan-mac")
+        let direct = Resolver.Host(id: "direct", peer: destination)
+        let gateway = Resolver.Host(id: "gateway", peer: try peer("gateway"))
+        let original = row(path: "/repo/feature", owner: destination.deviceID, depth: 0)
+        let listed = row(path: "relay-listed", owner: destination.deviceID, depth: 1)
+        let current = listed.with(path: "relay-current")
+        var dials: [String] = []
+        let result = try await Resolver().resolveWorktree(listed, source: gateway, hosts: [direct, gateway],
+            liveHosts: directIsLive ? [direct.id, gateway.id] : [gateway.id], connect: { host in
+                dials.append(host.id)
+                if !directIsLive && host == direct { throw URLError(.timedOut) }
+            }, send: { host, request in
+                #expect(host == gateway && request == .listRemoteMacConnections)
+                return .remoteMacConnections([summary(destination, state: .connected)])
+            }, fetch: { host in host == direct ? [original] : [current] })
+        #expect(dials == (directIsLive ? [direct.id] : []))
+        #expect(result.route.host == (directIsLive ? direct : gateway))
+        #expect(result.worktree.path == (directIsLive ? original.path : current.path))
+    }
+
+    @Test("A live relay with an unavailable or mismatched destination falls back to a fresh direct connection", arguments: [false, true])
+    func unusableLiveRelayFallsBackToDirect(wrongFingerprint: Bool) async throws {
+        let destination = try peer("lan-mac")
+        let reported = wrongFingerprint ? try peer("lan-mac", key: 2) : destination
+        let direct = Resolver.Host(id: "direct", peer: destination)
+        let gateway = Resolver.Host(id: "gateway", peer: try peer("gateway"))
+        let original = row(path: "/repo/feature", owner: destination.deviceID, depth: 0)
+        let listed = row(path: "relay-listed", owner: destination.deviceID, depth: 1)
+        var probes = 0
+        let result = try await Resolver().resolveWorktree(listed, source: gateway, hosts: [direct, gateway],
+            liveHosts: [gateway.id], connect: { host in
+                #expect(host == direct)
+            }, send: { host, request in
+                probes += 1
+                #expect(host == gateway && request == .listRemoteMacConnections)
+                return .remoteMacConnections([summary(reported, state: wrongFingerprint ? .connected : .offline)])
+            }, fetch: { host in
+                #expect(host == direct)
+                return [original]
+            })
+        #expect(probes == 1)
+        #expect(result.route.host == direct)
+        #expect(result.worktree.path == original.path)
+    }
+
     @Test("A path that fails while fetching resources falls back before dispatch")
     func failedResourceReadTriesRelay() async throws {
         let peer = try peer("lan-mac")

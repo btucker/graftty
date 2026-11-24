@@ -1131,10 +1131,16 @@ public struct WorktreeListContent: View {
         let project = feed.state.projects.first { $0.id == memberID }
             ?? SidebarProject(id: memberID, repositoryID: wt.repositoryID ?? memberID, name: wt.repoDisplayName)
         let host = row.showsHostLabel ? row.hostLabel : nil
+        let isOpening = openingWorktrees.contains(OpeningWorktreeKey(hostID: feed.state.hostID(for: wt), path: wt.path))
         return PinnedTileFace(identity: wt.iconIdentity, project: project,
                               imageData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
                               word: word,
                               hostBadge: badge, state: state, isSelected: isSelected(wt))
+            .overlay(alignment: .topTrailing) {
+                if isOpening {
+                    ProgressView().controlSize(.mini).padding(4).allowsHitTesting(false)
+                }
+            }
             .onTapGesture { beginSelectingWorktree(wt) }
             .contextMenu {
                 if !wt.state.isInFlight {
@@ -1154,6 +1160,7 @@ public struct WorktreeListContent: View {
             .pinnedTileAccessibility(name: row.relativeName, host: host, state: state, isSelected: isSelected(wt)) {
                 beginSelectingWorktree(wt)
             }
+            .accessibilityValue(isOpening ? "Opening" : "")
             .id(row.id)
     }
 

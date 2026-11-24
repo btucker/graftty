@@ -2868,6 +2868,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-13.30** While a mobile worktree delete confirmation is open, the application shall keep its row in its section and position through live activity updates.
 
+**IOS-13.31** When a mobile pinned tile is tapped while its relayed worktree is available, the application shall indicate that the open is pending and navigate to the worktree through the paired intermediary.
+
 ## IPAD — iPad Layout
 
 ### IPAD-1.x — Root Layout and Sidebar
@@ -3310,7 +3312,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.23** If lockf is unavailable, then the Codex wrapper shall use an exclusive flock to coordinate durable administration with managed-home rebuilds.
 
-**TEAM-10.24** When Graftty refreshes a managed Codex config, the application shall retain hook trust hashes and enablement saved in that managed home, refresh other settings from the durable config, and leave the durable config unchanged.
+**TEAM-10.24** When Graftty refreshes a managed Codex config, the application shall retain hook trust hashes and enablement saved in that managed home without copying them into the durable config.
+
+**TEAM-10.25** When Graftty refreshes a managed Codex home after a /model choice, the application shall retain the saved model and reasoning effort across launches while honoring subsequent durable model changes.
 
 ### TEAM-11.x — Idle Delivery
 
@@ -4033,6 +4037,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.65** While the mobile host list is open, the application shall render each relay host as an indented row beneath its paired intermediary Mac and preserve a separate reconnect action for each route.
 
 **REMOTE-13.66** While an explicitly selected remote worktree resolves its route, the application shall show a connecting screen, and shall remove that screen when the route resolves, when resolving fails for a pane, or when any other navigation supersedes the selection.
+
+**REMOTE-13.67** When a Mac relays a worktree to a paired viewer, the application shall map live and retained agent session names to the same aliases as pane inventory so agents remain identifiable.
+
+**REMOTE-13.68** When a worktree is already listed through a live relay, the application shall open it through that relay without dialing an offline direct path, and shall prefer an already connected direct path.
 
 ### REMOTE-14.x — Shared project navigation
 

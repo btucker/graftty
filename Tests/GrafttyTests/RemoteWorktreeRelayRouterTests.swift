@@ -8,6 +8,35 @@ import Testing
 @Suite("Remote worktree one-hop relay")
 @MainActor
 struct RemoteWorktreeRelayRouterTests {
+    @Test("@spec REMOTE-13.67: When a Mac relays a worktree to a paired viewer, the application shall map live and retained agent session names to the same aliases as pane inventory so agents remain identifiable.")
+    func relayedAgentsMatchPaneInventory() throws {
+        let remote = try makeRemoteMac()
+        let router = RemoteWorktreeRelayRouter()
+        let live = AgentSessionInfo(id: "agent", name: "Implementer", provider: "codex", status: "running",
+            sessionName: "agent-session", assignmentID: "assignment", retainedSessionName: "agent-session",
+            launched: true, chatAvailable: true)
+        let finished = AgentSessionInfo(id: "finished", name: "Review", provider: "claude", status: "closed",
+            sessionName: nil, completionID: "completion", result: "Done", retainedSessionName: "finished-session")
+        let original = worktree(path: "/repo/feature", repositoryID: "/repo",
+            layout: .leaf(sessionName: "agent-session", title: "/", attentionText: nil, isBusy: false, attentionSource: nil), origin: nil)
+            .with(agents: [live, finished])
+        let row = try #require(router.promotedWorktrees(snapshots: [RemoteMacIdentity(remote): [original]], remoteMacs: [remote]).first)
+        let session = try #require(row.layout?.leaves.first?.sessionName)
+        let agent = try #require(row.agents?.first)
+        #expect(agent.sessionName == session)
+        #expect(agent.retainedSessionName == session)
+        #expect(agent.id == live.id && agent.assignmentID == live.assignmentID)
+        #expect(agent.launched == true)
+        #expect(agent.chatAvailable == nil)
+        #expect(row.sidebarAgentLeaves.map(\.sessionName) == [session])
+        #expect(row.chatAgent(session: session) == nil)
+        let retained = try #require(row.agents?.last)
+        #expect(retained.sessionName == nil)
+        #expect(retained.retainedSessionName?.hasPrefix("relay-pane-") == true)
+        #expect(retained.completionID == finished.completionID && retained.result == finished.result)
+        #expect(router.resolvePane(session)?.sessionName == "agent-session")
+    }
+
     @Test("Listing onward repositories preserves local downstream project routes")
     func onwardRepositoryListPreservesDownstreamRoute() throws {
         let remote = try makeRemoteMac()
