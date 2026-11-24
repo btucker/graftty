@@ -90,6 +90,8 @@ build.mkdir(parents=True, exist_ok=True)
 if '--show-bin-path' in args:
     print(build)
 else:
+    if not (Path(__import__('os').environ['GRAFTTY_TEST_REPO']) / '.deps/tailcat-linux/libtailcat.a').exists():
+        sys.exit('Tailcat was not prepared before the build')
     binary = build / args[args.index('--product') + 1]
     binary.write_text('#!/bin/sh\\n# expected worktree\\nexit 0\\n')
     binary.chmod(0o755)
@@ -98,6 +100,9 @@ else:
     (resource / 'marker').write_text('expected worktree')
 """)
         executable(scripts / "build-zmx.sh", '#!/bin/sh\nprintf \'#!/bin/sh\\nexit 0\\n\' > "$2"\nchmod 755 "$2"\n')
+        # The runner links Tailcat, so packaging prepares it before any build.
+        executable(self.repo / "scripts/deps", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$GRAFTTY_TEST_REPO/deps.log"\n'
+                   'mkdir -p "$GRAFTTY_TEST_REPO/.deps/tailcat-linux"\n: > "$GRAFTTY_TEST_REPO/.deps/tailcat-linux/libtailcat.a"\n')
         (scripts / "bundle-libraries.py").write_text("from pathlib import Path\nimport sys\n(Path(sys.argv[1]) / 'libswiftCore.so').touch()\n")
         # At the first artifact copy, impersonate another worktree build. It
         # can overwrite the shared products only when packaging lost its lock.
@@ -128,6 +133,12 @@ sys.exit(subprocess.call([{native_install!r}] + sys.argv[1:]))
         with tarfile.open(archive) as bundle:
             for name in ("libexec/graftty-runner", "libexec/graftty-cli", "libexec/Graftty_GrafttyKit.resources/marker"):
                 self.assertIn(b"expected worktree", bundle.extractfile("./" + name).read(), name)
+
+    def test_package_prepares_tailcat(self):
+        result = subprocess.run(["bash", str(self.repo / "scripts/linux/package.sh"), "test"],
+                                cwd=self.repo, env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("prepare tailcat", (self.repo / "deps.log").read_text())
 
     def test_legacy_launcher_runs_the_runner(self):
         result = subprocess.run(["bash", str(self.repo / "scripts/linux/package.sh"), "test"],
