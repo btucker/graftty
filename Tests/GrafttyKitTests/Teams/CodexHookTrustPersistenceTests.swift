@@ -5,7 +5,7 @@ import Testing
 @Suite("Codex hook trust persistence")
 struct CodexHookTrustPersistenceTests {
     @Test("""
-    @spec TEAM-10.24: When Graftty refreshes a managed Codex config, the application shall retain hook trust hashes and enablement saved in that managed home, refresh other settings from the durable config, and leave the durable config unchanged.
+    @spec TEAM-10.24: When Graftty refreshes a managed Codex config, the application shall retain hook trust hashes and enablement saved in that managed home without copying them into the durable config.
     """, arguments: [false, true])
     func managedHookDecisionsSurviveConfigRefresh(durableHasHookState: Bool) throws {
         let (src, dst) = try makeMirrorSandbox()

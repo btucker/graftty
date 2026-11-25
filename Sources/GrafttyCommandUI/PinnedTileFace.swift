@@ -20,11 +20,12 @@ public struct PinnedTileFace: View {
     let hostBadge: String?
     let state: PinnedTileState
     let isSelected: Bool
+    let isOpening: Bool
 
     public init(identity: WorktreeIconIdentity, project: SidebarProject, imageData: Data? = nil, word: String,
-                hostBadge: String?, state: PinnedTileState, isSelected: Bool) {
+                hostBadge: String?, state: PinnedTileState, isSelected: Bool, isOpening: Bool = false) {
         self.identity = identity; self.project = project; self.imageData = imageData; self.word = word
-        self.hostBadge = hostBadge; self.state = state; self.isSelected = isSelected
+        self.hostBadge = hostBadge; self.state = state; self.isSelected = isSelected; self.isOpening = isOpening
     }
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous) }
@@ -69,11 +70,13 @@ public struct PinnedTileFace: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if state == .asleep {
+            if isOpening {
+                ProgressView().controlSize(.mini).padding(4).allowsHitTesting(false)
+            } else if state == .asleep {
                 Image(systemName: "moon.zzz.fill").font(.system(size: 8)).foregroundStyle(.secondary).padding(4)
             }
         }
-        .opacity(state == .asleep ? 0.55 : 1)
+        .opacity(state == .asleep && !isOpening ? 0.55 : 1)
         .contentShape(shape)
     }
 

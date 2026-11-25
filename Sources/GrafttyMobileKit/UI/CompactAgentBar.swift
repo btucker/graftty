@@ -18,7 +18,7 @@ struct CompactAgentBar: View {
         ([worktree.displayName, worktree.origin?.deviceLabel ?? hostLabel].compactMap { $0 }).joined(separator: " · ")
     }
 
-    /// @spec IOS-13.31: While the phone shows one agent on stage and another agent in the worktree asks for user input that the stage's question bar does not already show, the application shall show a chip naming the asking agent, and tapping it shall put that agent on stage.
+    /// @spec IOS-13.34: While the phone shows one agent on stage and another agent in the worktree asks for user input that the stage's question bar does not already show, the application shall show a chip naming the asking agent, and tapping it shall put that agent on stage.
     static func askingChip(worktree: WorktreePanes, context: SidebarWorktreeContext, session: String) -> (session: String, title: String)? {
         for agent in worktree.agents ?? [] {
             guard let target = agent.presentationSessionName, target != session, !agent.isCompleted,

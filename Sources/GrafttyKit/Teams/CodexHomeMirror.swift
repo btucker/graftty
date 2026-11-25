@@ -20,6 +20,7 @@ public struct CodexHomeMirror: Sendable {
         "config.toml",
         ".graftty-mirror-version",
         ".graftty-mirror.lock",
+        ".graftty-model-defaults.json",
     ]
     private static let runtimeDirectoryNames: Set<String> = [
         "app-server-control",
@@ -163,17 +164,260 @@ public struct CodexHomeMirror: Sendable {
         let destination = mirrorDirectory.appendingPathComponent("config.toml")
         let data = try readDataIfPresent(at: source) ?? Data()
         let managedData = try readDataIfPresent(at: destination) ?? Data()
-        let snapshot = Self.preservingHookState(from: managedData, in: data)
+        let defaultsFile = mirrorDirectory.appendingPathComponent(".graftty-model-defaults.json")
+        let previousDefaults = try readDataIfPresent(at: defaultsFile).flatMap {
+            try? JSONDecoder().decode([String: String].self, from: $0)
+        }
+        let durableDefaults = Self.modelDefaults(in: data)
+        let selected = Self.preservingModelSelection(
+            from: managedData,
+            in: data,
+            durableDefaults: durableDefaults,
+            previousDefaults: previousDefaults
+        )
+        let snapshot = Self.preservingHookState(from: managedData, in: selected)
         if (try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil {
             try fm.removeItem(at: destination)
         }
         try snapshot.write(to: destination, options: .atomic)
+        try JSONEncoder().encode(durableDefaults).write(to: defaultsFile, options: .atomic)
+    }
+
+    private static func isModelSelection(_ key: [String]) -> Bool {
+        key == ["model"] || key == ["model_reasoning_effort"]
+    }
+
+    private static func modelDefaults(in data: Data) -> [String: String] {
+        let root = tomlSections(in: String(decoding: data, as: UTF8.self))[0]
+        return modelDefaults(in: tomlAssignmentBlocks(in: root.lines))
+    }
+
+    private static func modelDefaults(in blocks: [TOMLAssignmentBlock]) -> [String: String] {
+        Dictionary(blocks.filter { isModelSelection($0.key) }.compactMap { block -> (String, String)? in
+            guard let value = tomlAssignmentValue(in: block) else { return nil }
+            return (block.key[0], value)
+        }, uniquingKeysWith: { _, last in last })
+    }
+
+    /// Separates trailing structural blank lines and `#` comments from an
+    /// assignment block so edits to one key preserve adjacent comments.
+    private static func splitAssignmentTrivia(in lines: [String]) -> (assignment: [String], trivia: [String]) {
+        let scanned = scanningTOMLLines(in: lines.joined(separator: "\n"))
+        var splitIndex = scanned.count
+        while splitIndex > 1 {
+            let line = scanned[splitIndex - 1]
+            guard line.isStructural else { break }
+            let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.isEmpty || trimmed.hasPrefix("#") else { break }
+            splitIndex -= 1
+        }
+        return (Array(lines[..<splitIndex]), Array(lines[splitIndex...]))
+    }
+
+    private static func tomlAssignmentValue(in block: TOMLAssignmentBlock) -> String? {
+        let assignmentLines = splitAssignmentTrivia(in: block.lines).assignment
+        guard let firstLine = assignmentLines.first,
+              let equalsOffset = tomlAssignmentEqualsOffset(in: firstLine) else { return nil }
+        let firstBytes = Array(firstLine.utf8)
+        let firstRHS = String(decoding: firstBytes[(equalsOffset + 1)...], as: UTF8.self)
+        let combined = ([firstRHS] + assignmentLines.dropFirst()).joined(separator: "\n")
+        let raw = stripTrailingTOMLComment(from: combined).trimmingCharacters(in: .whitespacesAndNewlines)
+        return decodeTOMLStringValue(raw) ?? raw
+    }
+
+    private static func tomlAssignmentEqualsOffset(in line: String) -> Int? {
+        let bytes = Array(line.utf8)
+        var quote: UInt8?
+        for index in bytes.indices {
+            if let activeQuote = quote {
+                if bytes[index] == activeQuote,
+                   activeQuote == literalQuote || !isEscaped(bytes, at: index) {
+                    quote = nil
+                }
+            } else if bytes[index] == basicQuote || bytes[index] == literalQuote {
+                quote = bytes[index]
+            } else if bytes[index] == 61 {
+                return index
+            } else if bytes[index] == commentMarker {
+                return nil
+            }
+        }
+        return nil
+    }
+
+    private static func stripTrailingTOMLComment(from value: String) -> String {
+        let bytes = Array(value.utf8)
+        var multilineQuote: UInt8?
+        var singleLineQuote: UInt8?
+        var index = 0
+        while index < bytes.count {
+            if let quote = multilineQuote {
+                if hasTripleQuote(bytes, at: index, quote: quote),
+                   quote == literalQuote || !isEscaped(bytes, at: index) {
+                    multilineQuote = nil
+                    index += 3
+                } else {
+                    index += 1
+                }
+            } else if let quote = singleLineQuote {
+                if bytes[index] == quote,
+                   quote == literalQuote || !isEscaped(bytes, at: index) {
+                    singleLineQuote = nil
+                }
+                index += 1
+            } else if bytes[index] == commentMarker {
+                return String(decoding: bytes[..<index], as: UTF8.self)
+            } else if bytes[index] == basicQuote || bytes[index] == literalQuote {
+                let quote = bytes[index]
+                if hasTripleQuote(bytes, at: index, quote: quote) {
+                    multilineQuote = quote
+                    index += 3
+                } else {
+                    singleLineQuote = quote
+                    index += 1
+                }
+            } else {
+                index += 1
+            }
+        }
+        return value
+    }
+
+    private static func decodeTOMLStringValue(_ raw: String) -> String? {
+        let bytes = Array(raw.utf8)
+        if bytes.count >= 6, hasTripleQuote(bytes, at: 0, quote: basicQuote),
+           hasTripleQuote(bytes, at: bytes.count - 3, quote: basicQuote) {
+            return decodeMultilineBasicTOMLString(in: Array(bytes[3..<(bytes.count - 3)]))
+        }
+        if bytes.count >= 6, hasTripleQuote(bytes, at: 0, quote: literalQuote),
+           hasTripleQuote(bytes, at: bytes.count - 3, quote: literalQuote) {
+            var interior = String(decoding: bytes[3..<(bytes.count - 3)], as: UTF8.self)
+            if interior.hasPrefix("\r\n") { interior.removeFirst(2) }
+            else if interior.hasPrefix("\n") { interior.removeFirst() }
+            return interior.replacingOccurrences(of: "\r\n", with: "\n")
+        }
+        if bytes.first == basicQuote {
+            var index = 0
+            guard let decoded = parseBasicQuotedKey(in: bytes, index: &index), index == bytes.count else { return nil }
+            return decoded
+        }
+        if bytes.count >= 2, bytes.first == literalQuote, bytes.last == literalQuote {
+            let interior = bytes[1..<(bytes.count - 1)]
+            guard !interior.contains(literalQuote) else { return nil }
+            return String(decoding: interior, as: UTF8.self)
+        }
+        return nil
+    }
+
+    private static func decodeMultilineBasicTOMLString(in bytes: [UInt8]) -> String? {
+        var index = 0
+        if bytes.count >= 2, bytes[0] == 13, bytes[1] == 10 { index = 2 }
+        else if bytes.first == 10 { index = 1 }
+        var result = ""
+        while index < bytes.count {
+            if bytes[index] == backslash {
+                index += 1
+                guard index < bytes.count else { return nil }
+                // Line-ending backslash trims trailing whitespace and newlines.
+                var ws = index
+                while ws < bytes.count, bytes[ws] == 32 || bytes[ws] == 9 { ws += 1 }
+                if ws < bytes.count, bytes[ws] == 10 || (bytes[ws] == 13 && ws + 1 < bytes.count && bytes[ws + 1] == 10) {
+                    index = ws
+                    while index < bytes.count, bytes[index] == 32 || bytes[index] == 9 || bytes[index] == 10 || bytes[index] == 13 {
+                        index += 1
+                    }
+                    continue
+                }
+                switch bytes[index] {
+                case 34: result.append("\"")
+                case 92: result.append("\\")
+                case 98: result.append("\u{8}")
+                case 102: result.append("\u{C}")
+                case 110: result.append("\n")
+                case 114: result.append("\r")
+                case 116: result.append("\t")
+                case 117, 85:
+                    let digitCount = bytes[index] == 117 ? 4 : 8
+                    let start = index + 1
+                    let end = start + digitCount
+                    guard end <= bytes.count,
+                          let scalarValue = UInt32(String(decoding: bytes[start..<end], as: UTF8.self), radix: 16),
+                          let scalar = UnicodeScalar(scalarValue) else { return nil }
+                    result.unicodeScalars.append(scalar)
+                    index = end - 1
+                default: return nil
+                }
+                index += 1
+                continue
+            }
+            if bytes[index] == 13, index + 1 < bytes.count, bytes[index + 1] == 10 {
+                result.append("\n")
+                index += 2
+                continue
+            }
+            let start = index
+            while index < bytes.count, bytes[index] != backslash, bytes[index] != 13 { index += 1 }
+            result += String(decoding: bytes[start..<index], as: UTF8.self)
+        }
+        return result
+    }
+
+    /// `/model` writes into the active home. Preserve that choice while the
+    /// durable defaults are unchanged; an explicit durable model edit wins.
+    /// Track only these defaults, so unrelated config refreshes do not reset it.
+    private static func preservingModelSelection(from managedData: Data, in durableData: Data,
+                                                  durableDefaults: [String: String],
+                                                  previousDefaults: [String: String]?) -> Data {
+        guard let previousDefaults, !managedData.isEmpty,
+              previousDefaults == durableDefaults,
+              let managed = String(data: managedData, encoding: .utf8),
+              let durable = String(data: durableData, encoding: .utf8) else { return durableData }
+        let localRoot = tomlSections(in: managed)[0]
+        let localBlocks = tomlAssignmentBlocks(in: localRoot.lines)
+        let managedDefaults = modelDefaults(in: localBlocks)
+        guard managedDefaults["model"] != nil
+                || (previousDefaults["model"] == nil && managedDefaults["model_reasoning_effort"] != nil),
+              managedDefaults != previousDefaults else { return durableData }
+        let selectionLines = localBlocks
+            .filter { isModelSelection($0.key) }
+            .flatMap { splitAssignmentTrivia(in: $0.lines).assignment }
+        guard !selectionLines.isEmpty else { return durableData }
+        let sections = tomlSections(in: durable)
+        var lines: [String]
+        if sections[0].lines.isEmpty {
+            lines = selectionLines
+            if sections.count == 1, managed.hasSuffix("\n") { lines.append("") }
+        } else {
+            let root = tomlAssignmentLayout(in: sections[0].lines)
+            lines = root.prefixLines
+            var insertedSelection = false
+            for block in root.blocks {
+                if isModelSelection(block.key) {
+                    let (_, trivia) = splitAssignmentTrivia(in: block.lines)
+                    if !insertedSelection {
+                        lines.append(contentsOf: selectionLines)
+                        insertedSelection = true
+                    }
+                    lines.append(contentsOf: trivia)
+                } else {
+                    lines.append(contentsOf: block.lines)
+                }
+            }
+            if !insertedSelection {
+                var trailingBlanks: [String] = []
+                while lines.last == "" { trailingBlanks.append(lines.removeLast()) }
+                lines.append(contentsOf: selectionLines)
+                lines.append(contentsOf: trailingBlanks)
+            }
+        }
+        for section in sections.dropFirst() { appendSection(section, to: &lines) }
+        return Data(lines.joined(separator: "\n").utf8)
     }
 
     /// Codex saves `/hooks` decisions in its active config. Keep those exact
     /// hashes and disabled switches in the managed home across refreshes;
     /// Codex still decides whether each hash matches the current definition.
-    /// Other runtime config edits are intentionally replaced by durable settings.
+    /// Settings other than the retained model choice refresh from durable settings.
     private static func preservingHookState(from managedData: Data, in durableData: Data) -> Data {
         guard let managed = String(data: managedData, encoding: .utf8),
               let durable = String(data: durableData, encoding: .utf8) else { return durableData }

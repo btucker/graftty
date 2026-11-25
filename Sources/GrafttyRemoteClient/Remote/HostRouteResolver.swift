@@ -82,15 +82,37 @@ public final class HostRouteResolver<HostID: Hashable & Sendable> {
     /// Recently failed terminal paths yield to alternatives for this recovery.
     /// They remain eligible after alternatives fail and on every new open.
     public func resolveWorktree(_ worktree: WorktreePanes, source: Host?, hosts: [Host], excluding: Set<HostID> = [],
+                                liveHosts: Set<HostID> = [],
                                 connect: @escaping Connect, send: @escaping Send, fetch: @escaping Fetch) async throws -> WorktreeRoute {
         guard let owner = worktree.origin?.deviceID ?? source?.peer.deviceID else { throw Failure.worktreeUnavailable }
+        let alternatives = hosts.filter { !excluding.contains($0.id) }
         let expected = (source?.peer.deviceID == owner ? source : nil)?.peer.fingerprint
+            ?? alternatives.first { $0.peer.deviceID == owner && liveHosts.contains($0.id) }?.peer.fingerprint
+            ?? alternatives.first { $0.peer.deviceID == owner }?.peer.fingerprint
             ?? hosts.first { $0.peer.deviceID == owner }?.peer.fingerprint
+        let target = Target(deviceID: owner, fingerprint: expected)
+
+        // A live relay is already delivering this worktree. Check it before
+        // dialing an offline direct path, which can take several timeouts.
+        if let source, worktree.origin?.relayDepth == 1, source.peer.deviceID != owner,
+           alternatives.contains(source), liveHosts.contains(source.id),
+           !alternatives.contains(where: { $0.peer.deviceID == owner && $0.peer.fingerprint == expected && liveHosts.contains($0.id) }) {
+            do {
+                if let summary = try await destinationSummary(target, on: source, send: send), summary.state == .connected {
+                    let rows = try await fetch(source)
+                    try Task.checkCancellation()
+                    if let current = WorktreeRouteIdentity.matching(worktree, in: rows, owner: owner) {
+                        return WorktreeRoute(route: Route(host: source, destination: summary.id), worktree: current)
+                    }
+                }
+            } catch is CancellationError { throw CancellationError() }
+            catch { /* A stale or failed relay read falls back to route establishment. */ }
+        }
+
         var matched: WorktreePanes?
         var destinationVisible = false
-        let alternatives = hosts.filter { !excluding.contains($0.id) }
         let attempt: @MainActor ([Host]) async throws -> Route = { candidates in
-            try await self.resolveAvailable(target: .init(deviceID: owner, fingerprint: expected), hosts: candidates,
+            try await self.resolveAvailable(target: target, hosts: candidates,
                 preferredRelayID: source?.id, connect: { host in
                     try await connect(host)
                     _ = try await fetch(host)
@@ -206,9 +228,8 @@ public final class HostRouteResolver<HostID: Hashable & Sendable> {
             do {
                 try await connect(relay)
                 try Task.checkCancellation()
-                guard let summary = try await summaries(on: relay, send: send).first(where: {
-                    $0.deviceID == target.deviceID && (fingerprint == nil || $0.fingerprint == fingerprint)
-                }), summary.state != .needsPairing else { continue }
+                guard let summary = try await destinationSummary(.init(deviceID: target.deviceID, fingerprint: fingerprint), on: relay, send: send),
+                      summary.state != .needsPairing else { continue }
                 if summary.state == .connected { return Route(host: relay, destination: summary.id) }
                 if summary.state != .connecting {
                     let reply = try await send(relay, .connectRemoteMac(deviceID: summary.deviceID, fingerprint: summary.fingerprint))
@@ -227,6 +248,16 @@ public final class HostRouteResolver<HostID: Hashable & Sendable> {
         throw Failure.unavailable
     }
 
+    private func destinationSummary(_ target: Target, on host: Host, send: Send) async throws -> RemoteMacConnectionSummary? {
+        let matching = try await summaries(on: host, send: send).filter {
+            $0.deviceID == target.deviceID && (target.fingerprint == nil || $0.fingerprint == target.fingerprint)
+        }
+        return matching.first { $0.state == .connected }
+            ?? matching.first { $0.state == .connecting }
+            ?? matching.first { $0.state != .needsPairing }
+            ?? matching.first
+    }
+
     private func summaries(on host: Host, send: Send) async throws -> [RemoteMacConnectionSummary] {
         try Task.checkCancellation()
         guard case .remoteMacConnections(let peers) = try await send(host, .listRemoteMacConnections) else { throw Failure.invalidReply }
@@ -240,6 +271,10 @@ public enum WorktreeRouteIdentity {
     public static func paneSession(_ session: String, from source: WorktreePanes, to destination: WorktreePanes) -> String? {
         if let stableID = source.sidebar?.paneIDs?[session] {
             return destination.sidebar?.paneIDs?.first { $0.value == stableID }?.key
+        }
+        if let agentID = source.agents?.first(where: { $0.presentationSessionName == session })?.id,
+           let mapped = destination.agents?.first(where: { $0.id == agentID })?.presentationSessionName {
+            return mapped
         }
         return source.path == destination.path && destination.layout?.leaves.contains(where: { $0.sessionName == session }) == true ? session : nil
     }

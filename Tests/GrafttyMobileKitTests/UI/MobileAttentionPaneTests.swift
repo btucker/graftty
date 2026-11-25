@@ -91,7 +91,7 @@ struct MobileAttentionPaneTests {
         #expect(!accessibilityObjects(in: host.view).contains { $0 is UIActivityIndicatorView })
     }
 
-    @Test("@spec IOS-13.31: While the phone shows one agent on stage and another agent in the worktree asks for user input that the stage's question bar does not already show, the application shall show a chip naming the asking agent, and tapping it shall put that agent on stage.")
+    @Test("@spec IOS-13.34: While the phone shows one agent on stage and another agent in the worktree asks for user input that the stage's question bar does not already show, the application shall show a chip naming the asking agent, and tapping it shall put that agent on stage.")
     func askingChipNamesAnotherAgent() {
         func leaf(_ session: String, asks: Bool) -> PaneLayoutNode {
             .leaf(sessionName: session, title: session, attentionText: asks ? "Keep the strip?" : nil, isBusy: !asks,
