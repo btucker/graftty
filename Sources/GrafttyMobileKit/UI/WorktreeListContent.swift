@@ -35,7 +35,7 @@ public struct WorktreeListContent: View {
     @State private var pendingForceDelete: PendingForceDelete?
     @State private var errorToast: String?
     @State private var errorToastTask: Task<Void, Never>?
-    @State private var openingWorktrees: Set<OpeningWorktreeKey> = []
+    @State private var openingWorktrees: [String: UInt64] = [:]
     @State private var selectionIntentGeneration: UInt64 = 0
     @State private var worktreeCreation = MobileWorktreeCreation()
 
@@ -136,11 +136,6 @@ public struct WorktreeListContent: View {
         let stderr: String
         let shortStatus: String
         let requestContext: DeleteRequestContext
-    }
-
-    private struct OpeningWorktreeKey: Hashable {
-        let hostID: UUID?
-        let path: String
     }
 
     public let feed: MultiHostFeed
@@ -286,6 +281,10 @@ public struct WorktreeListContent: View {
 
     private func isSelected(_ worktree: WorktreePanes) -> Bool {
         worktree.path == selectedWorktreePath && feed.state.hostID(for: worktree) == selectedHostID
+    }
+
+    private func isOpening(_ worktree: WorktreePanes) -> Bool {
+        openingWorktrees[MergedWorktreeList.identity(worktree)] != nil
     }
 
     private struct PendingWorktreeRouteKey: Hashable {
@@ -1131,11 +1130,12 @@ public struct WorktreeListContent: View {
         let project = feed.state.projects.first { $0.id == memberID }
             ?? SidebarProject(id: memberID, repositoryID: wt.repositoryID ?? memberID, name: wt.repoDisplayName)
         let host = row.showsHostLabel ? row.hostLabel : nil
+        let opening = isOpening(wt)
         return PinnedTileFace(identity: wt.iconIdentity, project: project,
                               imageData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
                               word: word,
-                              hostBadge: badge, state: state, isSelected: isSelected(wt))
-            .onTapGesture { beginSelectingWorktree(wt) }
+                              hostBadge: badge, state: state, isSelected: isSelected(wt), isOpening: opening)
+            .onTapGesture { if !opening { beginSelectingWorktree(wt) } }
             .contextMenu {
                 if !wt.state.isInFlight {
                     MobileWorktreeRowMenu(context: context, onReport: { showReport(wt) }, onDismiss: { dismissRequest(wt) })
@@ -1152,8 +1152,9 @@ public struct WorktreeListContent: View {
             .modifier(reportPopover(wt))
             .modifier(deleteConfirmation(wt))
             .pinnedTileAccessibility(name: row.relativeName, host: host, state: state, isSelected: isSelected(wt)) {
-                beginSelectingWorktree(wt)
+                if !opening { beginSelectingWorktree(wt) }
             }
+            .accessibilityValue(opening ? "Opening" : "")
             .id(row.id)
     }
 
@@ -1205,7 +1206,7 @@ public struct WorktreeListContent: View {
             projectIconData: MobileWorktreeIdentity.iconData(for: wt, in: projectIcons, drawings: worktreeDrawingCache.images),
             theme: theme,
             isActive: isSelected(wt),
-            isOpening: openingWorktrees.contains(OpeningWorktreeKey(hostID: feed.state.hostID(for: wt), path: wt.path)),
+            isOpening: isOpening(wt),
             projectColumn: true,
             context: navigation.worktreeContext(wt),
             onSelect: { beginSelectingWorktree(wt) },
@@ -1254,14 +1255,18 @@ public struct WorktreeListContent: View {
             return
         }
         let routeIntent = feed.beginRouteSelection()
-        let routeOpeningKey = OpeningWorktreeKey(hostID: selectionHost.id, path: worktree.path)
-        openingWorktrees.insert(routeOpeningKey)
+        let routeOpeningID = MergedWorktreeList.identity(worktree)
+        openingWorktrees[routeOpeningID] = generation
         Task {
-            defer { feed.endRouteSelection(routeIntent); openingWorktrees.remove(routeOpeningKey) }
+            defer {
+                feed.endRouteSelection(routeIntent)
+                if openingWorktrees[routeOpeningID] == generation {
+                    openingWorktrees.removeValue(forKey: routeOpeningID)
+                }
+            }
             do {
                 let resolved = try await feed.resolveWorktreeRoute(worktree, from: selectionHost)
                 guard generation == selectionIntentGeneration else { return }
-                openingWorktrees.remove(routeOpeningKey)
                 await selectWorktree(resolved.worktree, generation: generation,
                     selectionHost: resolved.host, provider: feed.provider(for: resolved.host))
             } catch is CancellationError { return }
@@ -1298,13 +1303,15 @@ public struct WorktreeListContent: View {
             }
             return
         }
-        let openingKey = OpeningWorktreeKey(
-            hostID: selectionHost.id,
-            path: worktree.path
-        )
-        guard !openingWorktrees.contains(openingKey) else { return }
-        openingWorktrees.insert(openingKey)
-        defer { openingWorktrees.remove(openingKey) }
+        let openingID = MergedWorktreeList.identity(worktree)
+        let insertedHere = openingWorktrees[openingID] == nil
+        guard insertedHere || openingWorktrees[openingID] == generation else { return }
+        openingWorktrees[openingID] = generation
+        defer {
+            if insertedHere, openingWorktrees[openingID] == generation {
+                openingWorktrees.removeValue(forKey: openingID)
+            }
+        }
 
         do {
             let response = try await RelayedWorktreeManagementClient.send(

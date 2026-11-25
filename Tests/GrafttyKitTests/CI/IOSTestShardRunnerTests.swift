@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@Suite("@spec TECH-6.1: If an iOS CI test shard loses access to its selected simulator or `xcodebuild` produces no output before its startup deadline, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
+@Suite("@spec TECH-6.1: If an iOS CI test shard loses access to its selected simulator or `xcodebuild` produces no output before its five-minute startup deadline, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
 struct IOSTestShardRunnerTests {
     @Test("@spec TECH-6.4: When an iOS CI runner executes multiple test batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.")
     func preservesProcessBoundariesAndFailuresAcrossBatches() throws {

@@ -6,7 +6,7 @@ public struct AgentSessionInfo: Codable, Sendable, Hashable, Identifiable {
     public let name: String
     public let provider: String
     public let status: String
-    public let sessionName: String?
+    public var sessionName: String?
     public let assignmentID: String?
     public let completionID: String?
     public let result: String?

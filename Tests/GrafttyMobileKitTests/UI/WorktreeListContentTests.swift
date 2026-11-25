@@ -3,6 +3,7 @@ import Testing
 import Foundation
 import GrafttyProtocol
 import GrafttyCommandUI
+import GrafttyRemoteClient
 import SwiftUI
 import UIKit
 @testable import GrafttyMobileKit
@@ -334,15 +335,70 @@ struct WorktreeListContentTests {
     }
 
     private func hostProjects(_ feed: MultiHostFeed, project: SidebarProject? = nil, width: Double = 400,
+                              onSelect: @escaping (Host, WorktreePanes) -> Void = { _, _ in },
                               onSelectPane: @escaping (Host, WorktreePanes, PaneLayoutNode.Leaf) -> Void = { _, _, _ in }) throws -> UIWindow {
         let defaults = try #require(UserDefaults(suiteName: "worktree-projects-\(UUID())"))
         defaults.set(true, forKey: SidebarLayoutPolicy.projectRailSettingKey)
-        let list = WorktreeListContent(feed: feed, onSelect: { _, _ in }, onSelectPane: onSelectPane,
+        let list = WorktreeListContent(feed: feed, onSelect: onSelect, onSelectPane: onSelectPane,
             navigation: SidebarNavigationState(prefix: "test", defaults: defaults), project: project)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 700))
         window.rootViewController = UIHostingController(rootView: rendered(list, defaults: defaults))
         window.makeKeyAndVisible()
         return window
+    }
+
+    @Test("@spec IOS-13.31: When a mobile pinned tile is tapped while its relayed worktree is available, the application shall indicate that the open is pending and navigate to the worktree through the paired intermediary.", .timeLimit(.minutes(1)))
+    func opensPinnedTileThroughLiveRelay() async throws {
+        let directory = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gateway = try RemoteConnectionTestSupport.makePairedHost(directory: directory)
+        let owner = try RemoteConnectionTestSupport.makePairedHost(directory: directory)
+        let coordinator = RemoteConnectionCoordinator(directory: directory)
+        let peer = try #require(coordinator.pairedPeerIdentity(for: owner))
+        let row = activityWorktree("relay-pin", pinned: true).with(path: "relay-worktree-pin",
+            layout: .leaf(sessionName: "relay-pane-pin", title: "Codex", attentionText: nil, isBusy: false, attentionSource: nil),
+            origin: .init(deviceID: peer.deviceID, deviceLabel: "Worker", relayDepth: 1))
+        let reply = AsyncStream<Void>.makeStream()
+        defer { reply.continuation.finish() }
+        var sendCount = 0
+        let operations = HostRouteResolver<UUID>.Operations(connect: { _ in
+            Issue.record("The live relay should not wait for a new connection")
+        }, send: { host, request in
+            sendCount += 1
+            #expect(host.id == gateway.id && request == .listRemoteMacConnections)
+            for await _ in reply.stream {}
+            return .remoteMacConnections([.init(deviceID: peer.deviceID, fingerprint: peer.fingerprint,
+                label: "Worker", lastKnownHost: nil, state: .connected)])
+        }, fetch: { _ in [row] })
+        let feed = MultiHostFeed(coordinator: coordinator, routeOperations: operations)
+        feed.setHosts([gateway, owner])
+        feed.receive(.frame(.snapshot([row])), from: gateway)
+        var selection: (Host, WorktreePanes)?
+        let window = try hostProjects(feed, project: SidebarProjection.projects([row]).first,
+            onSelect: { selection = ($0, $1) })
+        defer { window.isHidden = true }
+        let name = PinnedTile.accessibilityLabel(name: row.displayName, host: nil, state: .idle)
+        try await waitUntilRendered(window, [name])
+        try #require(renderedObjects(in: window)[name]?.accessibilityActivate() == true)
+        for _ in 0..<100 where renderedObjects(in: window)[name]?.accessibilityValue != "Opening" {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(renderedObjects(in: window)[name]?.accessibilityValue == "Opening")
+        #expect(selection == nil)
+        // A duplicate tap while opening must not start a second resolution or clear the indicator.
+        _ = renderedObjects(in: window)[name]?.accessibilityActivate()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(sendCount == 1)
+        #expect(renderedObjects(in: window)[name]?.accessibilityValue == "Opening")
+        reply.continuation.finish()
+        for _ in 0..<100 where selection == nil { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(selection?.0.id == gateway.id)
+        #expect(selection?.1.path == row.path)
+        #expect(selection?.1.layout?.leaves.first?.sessionName == "relay-pane-pin")
+        for _ in 0..<100 where renderedObjects(in: window)[name]?.accessibilityValue == "Opening" {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(renderedObjects(in: window)[name]?.accessibilityValue != "Opening")
     }
 
     private func activityWorktree(_ name: String, project: String = "repo", pinned: Bool = false,

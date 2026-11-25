@@ -250,8 +250,9 @@ public final class MultiHostFeed {
         }
         let originalPins = Set(candidates.filter { $0.peer.deviceID == owner }.map(\.peer))
         let operations = routeOperations(owner: owner, pins: originalPins)
+        let liveHosts = Set(candidates.map(\.id).filter { state.isLive($0) })
         let resolved = try await hostRouteResolver.resolveWorktree(worktree, source: candidates.first { $0.id == source?.id }, hosts: candidates, excluding: excluding,
-            connect: operations.connect, send: operations.send, fetch: operations.fetch)
+            liveHosts: liveHosts, connect: operations.connect, send: operations.send, fetch: operations.fetch)
         let currentPins = Set(routeHosts.filter { $0.peer.deviceID == owner }.map(\.peer))
         guard currentPins == originalPins, currentPins.isEmpty || currentPins.contains(resolved.route.destination) else {
             throw RelayedWorktreeManagementClient.ClientError.pairedConnectionUnavailable

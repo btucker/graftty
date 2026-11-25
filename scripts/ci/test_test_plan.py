@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import re
+import runpy
 import select
 import signal
 import subprocess
@@ -350,6 +351,21 @@ class MacPlanTests(unittest.TestCase):
         for tests in [[], ["warning: no tests"], ["OwnershipModelTests.Smoke/corpus()"]]:
             with self.subTest(tests=tests), self.assertRaises(ValueError):
                 test_plan.mac_filters(tests)
+
+
+class IOSRunnerTests(unittest.TestCase):
+    def test_cold_start_has_five_minutes_before_simulator_recovery(self):
+        runner = Path(__file__).with_name("run-ios-xcodebuild.py")
+        command = [sys.executable, "-c", "raise SystemExit(65)"]
+        with mock.patch.dict(os.environ):
+            os.environ.pop("IOS_XCODEBUILD_STARTUP_TIMEOUT_SECONDS", None)
+            with (mock.patch.object(sys, "argv", [str(runner), *command]),
+                  mock.patch("select.select", wraps=select.select) as wait_for_output,
+                  self.assertRaises(SystemExit) as status):
+                runpy.run_path(str(runner), run_name="__main__")
+
+        self.assertEqual(wait_for_output.call_args.args[-1], 300)
+        self.assertEqual(status.exception.code, 65)
 
 
 class IOSPlanTests(unittest.TestCase):

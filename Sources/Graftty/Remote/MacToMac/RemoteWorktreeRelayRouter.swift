@@ -102,11 +102,6 @@ final class RemoteWorktreeRelayRouter {
                     identity: identity,
                     value: worktree.path
                 )
-                let repositoryAlias = Self.alias(
-                    kind: "repository",
-                    identity: identity,
-                    value: worktree.repositoryID ?? worktree.repoDisplayName
-                )
                 nextWorktrees[worktreeAlias] = RelayedWorktreeTarget(
                     identity: identity,
                     path: worktree.path
@@ -121,8 +116,27 @@ final class RemoteWorktreeRelayRouter {
                         nextPanes: &nextPanes
                     )
                 }
+                guard depth == 0 || includeRelayed else { continue }
+                let repositoryAlias = Self.alias(
+                    kind: "repository",
+                    identity: identity,
+                    value: worktree.repositoryID ?? worktree.repoDisplayName
+                )
                 var sidebar = worktree.sidebar
                 sidebar?.paneIDs = worktree.sidebar?.paneIDs.map { Dictionary($0.map { (Self.paneAlias(identity: identity, worktreePath: worktree.path, sessionName: $0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
+                let agents = worktree.agents?.map { original in
+                    var agent = original
+                    agent.sessionName = original.sessionName.map {
+                        Self.paneAlias(identity: identity, worktreePath: worktree.path, sessionName: $0)
+                    }
+                    agent.retainedSessionName = original.retainedSessionName.map {
+                        Self.paneAlias(identity: identity, worktreePath: worktree.path, sessionName: $0)
+                    }
+                    // The relay serves terminal and saved-conversation requests,
+                    // but its live Chat opener resolves only local worktrees.
+                    agent.chatAvailable = nil
+                    return agent
+                }
                 let row = worktree.with(
                     path: worktreeAlias,
                     repositoryID: repositoryAlias,
@@ -136,9 +150,10 @@ final class RemoteWorktreeRelayRouter {
                         repositoryID: repositoryAlias,
                         worktreeID: worktreeAlias
                     ),
-                    sidebar: sidebar
+                    sidebar: sidebar,
+                    agents: agents
                 )
-                if depth == 0 || includeRelayed { promoted.append(row) }
+                promoted.append(row)
             }
         }
 
