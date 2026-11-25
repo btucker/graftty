@@ -1692,7 +1692,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TECH-6.x
 
-**TECH-6.1** If an iOS CI test shard loses access to its selected simulator or `xcodebuild` produces no output before its startup deadline, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
+**TECH-6.1** If an iOS CI test shard loses access to its selected simulator or `xcodebuild` produces no output before its five-minute startup deadline, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
 
 **TECH-6.2** While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.
 

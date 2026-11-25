@@ -33,5 +33,7 @@ def run(command, startup_timeout):
 
 
 if __name__ == "__main__":
-    timeout = int(os.environ.get("IOS_XCODEBUILD_STARTUP_TIMEOUT_SECONDS", "180"))
+    # On hosted runners the cold unit batch can take nearly three minutes
+    # to emit its first line even when it completes successfully.
+    timeout = int(os.environ.get("IOS_XCODEBUILD_STARTUP_TIMEOUT_SECONDS", "300"))
     sys.exit(run(sys.argv[1:], timeout))
