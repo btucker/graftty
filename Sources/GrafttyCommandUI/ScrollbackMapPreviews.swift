@@ -32,11 +32,15 @@ struct ScrollbackMapPreviewGroup: Identifiable {
     /// The rows of a grouped card: a window of up to `limit` messages around
     /// the focused one, each with its distance from it, or the latest messages when
     /// no message in the group is focused.
-    func fisheye(focusedID: String?, limit: Int = 7)
+    ///
+    /// `windowID` keeps the window where the rail put it while the pointer moves
+    /// the focus between the rows shown, so rows never slide under the pointer.
+    func fisheye(focusedID: String?, windowID: String? = nil, limit: Int = 7)
         -> (rows: [(preview: ScrollbackMapPreview, distance: Int?)], earlier: Int, later: Int) {
         let count = min(messages.count, limit)
         let focus = messages.firstIndex { $0.id == focusedID }
-        let start = focus.map { min(messages.count - count, max(0, $0 - count / 2)) } ?? messages.count - count
+        let center = messages.firstIndex { $0.id == windowID } ?? focus
+        let start = center.map { min(messages.count - count, max(0, $0 - count / 2)) } ?? messages.count - count
         let rows = (start ..< start + count).map { index in
             (preview: messages[index], distance: focus.map { abs(index - $0) })
         }
@@ -85,6 +89,12 @@ struct ScrollbackMapPreviews: View {
     let focusY: CGFloat
     let maximumShift: CGFloat
     let focusedID: String?
+    /// The message the rail points at, which fixes each card's window of rows.
+    var windowID: String? = nil
+    /// The message whose row the pointer is over, if any.
+    var hoveredID: String? = nil
+    /// Scroll-wheel travel over a card: the delta and whether it is precise.
+    var onWheel: (CGFloat, Bool) -> Void = { _, _ in }
     let responseGist: (entry: ScrollbackMapEntry, gist: PeerMessageGist)?
     let onSelect: (String) -> Void
 
@@ -103,7 +113,7 @@ struct ScrollbackMapPreviews: View {
                 focusedIndex: groups.firstIndex { $0.messages.contains { $0.id == focusedID } })
             ZStack(alignment: .topLeading) {
                 ForEach(Array(zip(groups, slots)), id: \.0.id) { group, slot in
-                    Button { onSelect(group.id) } label: {
+                    Button { onSelect(target(in: group)) } label: {
                         card(for: group, now: now).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -112,7 +122,7 @@ struct ScrollbackMapPreviews: View {
                     .overlay {
                         // AppKit keeps a transparent native view's pointing-hand cursor rect.
                         if slot.visible {
-                            ScrollbackPreviewButtonInput(railOnRight: layoutDirection == .leftToRight) { onSelect(group.id) }
+                            ScrollbackPreviewButtonInput(wheel: onWheel) { onSelect(target(in: group)) }
                                 .accessibilityHidden(true)
                         }
                     }
@@ -137,9 +147,24 @@ struct ScrollbackMapPreviews: View {
             .frame(width: cardWidth + gap, height: height, alignment: .topLeading)
             .animation(ScrollbackPreviewStack.animation(reduceMotion: reduceMotion), value: slots)
             .backgroundPreferenceValue(PreviewBounds.self) { connectors(for: $0).allowsHitTesting(false) }
+            #if os(macOS)
+            .backgroundPreferenceValue(PreviewRowBounds.self) { rows in
+                GeometryReader { geometry in
+                    // In the rail's coordinates, like the hover area: its origin is the gutter's leading edge.
+                    let shift = layoutDirection == .leftToRight ? ScrollbackMapLayout.macGutterWidth - geometry.size.width : 0
+                    Color.clear.preference(key: ScrollbackPreviewRows.self,
+                                           value: rows.mapValues { geometry[$0].offsetBy(dx: shift, dy: 0) })
+                }
+            }
+            #endif
             .overlayPreferenceValue(FocusedRowBounds.self) { focusedConnector(for: $0).allowsHitTesting(false) }
             .clipped()
         }
+    }
+
+    /// Activating a card goes to the message under the pointer, else its first (CONTEXT-57.7).
+    private func target(in group: ScrollbackMapPreviewGroup) -> String {
+        group.messages.first { $0.id == hoveredID }?.id ?? group.id
     }
 
     @ViewBuilder private func card(for group: ScrollbackMapPreviewGroup, now: Date) -> some View {
@@ -152,7 +177,7 @@ struct ScrollbackMapPreviews: View {
     }
 
     private func fisheyeCard(for group: ScrollbackMapPreviewGroup, now: Date) -> some View {
-        let window = group.fisheye(focusedID: focusedID)
+        let window = group.fisheye(focusedID: focusedID, windowID: windowID)
         let palette = ScrollbackMapPalette(scheme: colorScheme)
         return VStack(alignment: .leading, spacing: 3) {
             Text(group.messages[0].entry.speaker)
@@ -178,6 +203,7 @@ struct ScrollbackMapPreviews: View {
                 .opacity(style.opacity)
                 .padding(.vertical, isFocused ? 3 : 0)
                 .anchorPreference(key: FocusedRowBounds.self, value: .bounds) { isFocused ? $0 : nil }
+                .anchorPreference(key: PreviewRowBounds.self, value: .bounds) { [row.preview.id: $0] }
             }
             if window.later > 0 {
                 Text("+\(window.later) later").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -273,6 +299,28 @@ enum ScrollbackPreviewArea: PreferenceKey {
     static let defaultValue: CGRect? = nil
     static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
         if let next = nextValue() { value = value?.union(next) ?? next }
+    }
+}
+#endif
+
+/// Each fisheye row's bounds, so the pointer can focus the row it is over (CONTEXT-57.17).
+private enum PreviewRowBounds: PreferenceKey {
+    static let defaultValue: [String: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
+#if os(macOS)
+enum ScrollbackPreviewRows: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+
+    /// The row at `point`: rows span their card's width, so only `y` picks among them.
+    static func row(at point: CGPoint, in rows: [String: CGRect]) -> String? {
+        rows.first { $0.value.insetBy(dx: -12, dy: -2).contains(point) }?.key
     }
 }
 #endif

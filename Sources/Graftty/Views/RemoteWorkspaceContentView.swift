@@ -16,6 +16,8 @@ struct RemoteWorkspaceContentView: View {
     var attentionContext: SidebarWorktreeContext?
     /// Context, shown beneath the gallery in one right-hand column (LAYOUT-2.253).
     var contextPanel: AnyView? = nil
+    /// The header's sidebar button shows or hides the whole column (LAYOUT-2.266).
+    var showsSidebar = true
     var requestedAgent: String? = nil
     var consumeAgentRequest: () -> Void = {}
     var launchAgent: @MainActor (String?, UUID) async throws -> String = { _, _ in
@@ -75,26 +77,8 @@ struct RemoteWorkspaceContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             stage
-                .overlay(alignment: .topTrailing) {
-                    if !showsGallery && !layout.groups.isEmpty {
-                        WorkspaceGalleryOpener(agentCount: galleryAgents.count,
-                            askingCount: galleryAgents.count { context.needsInput(session: $0) },
-                            theme: terminalManager.theme) { workspace?.galleryVisible = true }
-                            // Below any stage pane header, whose trailing controls it would cover.
-                            .padding(.top, stageShowsPaneHeader ? 30 : 6).padding(.trailing, 22)
-                    }
-                }
-            if let width = WorkspaceGalleryColumn.width(showsGallery: showsGallery, showsContext: contextPanel != nil) {
-                VStack(spacing: 0) {
-                    if showsGallery { gallery.frame(maxHeight: contextPanel == nil ? .infinity : 320) }
-                    if let contextPanel {
-                        if showsGallery { terminalManager.theme.foreground.opacity(0.08).frame(height: 1) }
-                        contextPanel.frame(maxHeight: .infinity)
-                    }
-                }
-                .frame(width: width)
-                .zIndex(1)
-            }
+            WorkspaceRightColumn(showsGallery: showsGallery, contextPanel: contextPanel,
+                                 separator: terminalManager.theme.foreground.opacity(0.08)) { gallery }
         }
         .onAppear {
             workspace = viewer.workspaceLayout(identity: identity, worktree: worktree)
@@ -126,14 +110,16 @@ struct RemoteWorkspaceContentView: View {
 
     private var context: SidebarWorktreeContext { attentionContext ?? SidebarWorktreeContext(worktree: worktree) }
     private func isAgentSession(_ session: String) -> Bool { agent(session) != nil }
-    private var stageShowsPaneHeader: Bool {
-        layout.groups.count > 1 || layout.groups.contains { chatAgent($0.selected) != nil }
+    private func chatSwitch(_ session: String) -> AnyView? {
+        guard chatAgent(session) != nil else { return nil }
+        return AnyView(AgentChatSwitch(showsChat: Binding(get: { showsChat(session) }, set: { setView(session, chat: $0) }))
+            .controlSize(.small))
     }
     private func agent(_ session: String) -> AgentSessionInfo? {
         worktree.agents?.first { $0.presentationSessionName == session }
     }
     private var galleryAgents: [String] { layout.gallerySessions.filter { agent($0) != nil } }
-    private var showsGallery: Bool { layout.showsGallery(agentCount: galleryAgents.count) }
+    private var showsGallery: Bool { showsSidebar }
 
     private var gallery: some View {
         WorkspaceGallery(tiles: galleryAgents.map(tileModel), theme: terminalManager.theme,
@@ -146,9 +132,8 @@ struct RemoteWorkspaceContentView: View {
                 }
             },
             onMove: { source, target, after in _ = workspace?.moveTile(source, relativeTo: target, after: after) },
-            onCollapse: { workspace?.galleryVisible = false },
             newAgent: {
-                newAgentMenu(label: AnyView(AgentGalleryEmptyTile(foreground: terminalManager.theme.foreground)))
+                newAgentMenu(label: AnyView(AgentGalleryEmptyTile(worktreePath: worktree.path, foreground: terminalManager.theme.foreground)))
                     .menuStyle(.borderlessButton).menuIndicator(.hidden)
             },
             tileMenu: { session in tileMenu(session) })
@@ -160,8 +145,8 @@ struct RemoteWorkspaceContentView: View {
         let completed = info?.isCompleted == true
         let status = info.map { AgentAssignmentStatus(agent: $0, needsInput: asking).label } ?? "Terminal"
         return WorkspaceGalleryTileModel(id: session,
-            handle: completed ? nil : slot(session).flatMap(terminalManager.handle(for:)),
-            title: title(session),
+            handle: { [terminalManager, slot = slot(session)] in completed ? nil : slot.flatMap(terminalManager.handle(for:)) },
+            title: title(session), provider: info?.provider,
             status: AgentTileStatus(needsInput: asking,
                 isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy == true,
                 isCompleted: completed, isCached: false, question: context.question(session: session),
@@ -338,8 +323,13 @@ struct RemoteWorkspaceContentView: View {
             }, agentScrollbackMaps: agentScrollbackMaps,
             paneHeader: headers ? { id in AnyView(header(id)) } : nil,
             paneBanner: headers ? { id in
-                guard let group = layout.groups.first(where: { slot($0.selected) == id }), attentionContext?.question != nil, group.id == layout.focusedGroupID else { return nil }
-                return AnyView(WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: stage))
+                guard let group = layout.groups.first(where: { slot($0.selected) == id }) else { return nil }
+                let asks = attentionContext?.question != nil && group.id == layout.focusedGroupID
+                let split = StagePaneChrome.showsHeader(paneCount: layout.groups.count)
+                let top = StagePaneTopControls(
+                    banner: asks ? AnyView(WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: stage)) : nil,
+                    chatSwitch: split ? nil : chatSwitch(group.selected))
+                return top.isEmpty ? nil : AnyView(top)
             } : nil,
             paneContent: { id in
                 if let session = layout.sessions.first(where: { slot($0) == id }), let chat = chatContent(session) {
@@ -390,40 +380,26 @@ struct RemoteWorkspaceContentView: View {
     }
 
     private func dropTarget(_ id: PaneSlotID, content: AnyView) -> some View {
-        GeometryReader { geometry in
-            content.dropDestination(for: WorkspaceTabDrag.self) { sessions, location in
-                guard let session = sessions.first?.session, layout.sessions.contains(session),
-                      let group = layout.groups.first(where: { slot($0.selected) == id }) else { return false }
-                if let edge = WorkspaceLayout<String>.dropEdge(x: location.x, y: location.y,
-                    width: geometry.size.width, height: geometry.size.height) {
-                    workspace?.split(session, beside: group.id, edge: edge)
-                } else { workspace?.move(session, to: group.id); returnHiddenShells() }
-                select(session)
-                return true
-            }
-        }
+        content.modifier(WorkspaceStageDropTarget { session, edge in
+            guard layout.sessions.contains(session),
+                  let group = layout.groups.first(where: { slot($0.selected) == id }) else { return }
+            if let edge { workspace?.split(session, beside: group.id, edge: edge) }
+            else { workspace?.move(session, to: group.id); returnHiddenShells() }
+            select(session)
+        })
     }
 
-    /// A stage pane's slim header: names a split pane and removes it from the
-    /// stage, and holds the Chat / Terminal switch for an agent that offers Chat.
+    /// A split stage's slim pane header: names the pane, holds its Chat /
+    /// Terminal switch, and removes it from the stage. A lone pane has none (LAYOUT-2.257).
     @ViewBuilder private func header(_ id: PaneSlotID) -> some View {
-        let offersChat = chatAgent(layout.groups.first(where: { slot($0.selected) == id })?.selected ?? "") != nil
-        if let group = layout.groups.first(where: { slot($0.selected) == id }), layout.groups.count > 1 || offersChat {
+        if let group = layout.groups.first(where: { slot($0.selected) == id }), StagePaneChrome.showsHeader(paneCount: layout.groups.count) {
             HStack(spacing: 6) {
-                if layout.groups.count > 1 {
-                    AgentStatusDot(dot: tileModel(group.selected).status.dot)
-                    Text(title(group.selected)).lineLimit(1).truncationMode(.middle)
-                }
+                AgentStatusDot(dot: tileModel(group.selected).status.dot)
+                Text(title(group.selected)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
-                if offersChat {
-                    AgentChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
-                                                       set: { setView(group.selected, chat: $0) }))
-                        .controlSize(.small)
-                }
-                if layout.groups.count > 1 {
-                    Button { removePane(group.id) } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.plain).help("Remove from stage").accessibilityLabel("Remove from stage")
-                }
+                chatSwitch(group.selected)
+                Button { removePane(group.id) } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).help("Remove from stage").accessibilityLabel("Remove from stage")
             }
             .font(.system(size: 11.5))
             .foregroundStyle(terminalManager.theme.foreground.opacity(layout.focusedGroupID == group.id ? 0.85 : 0.55))

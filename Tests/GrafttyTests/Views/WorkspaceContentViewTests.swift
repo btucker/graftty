@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 @testable import Graftty
 
 @MainActor
@@ -137,15 +138,18 @@ struct WorkspaceContentViewTests {
             worktree: entry, onFocusTerminal: { entry.wrappedValue.focusedPaneSlotID = $0 }, onNewTerminal: {}, onCloseTerminal: { _ in })
     }
 
-    @Test("@spec LAYOUT-2.252: While a worktree has one agent, the application shall keep the gallery collapsed so the terminal keeps its full width, and when a second agent starts, the application shall open the gallery without changing what is on stage.")
-    func galleryOpensFromTheSecondAgent() {
-        var (entry, first, second) = twoAgentEntry()
+    @Test("@spec LAYOUT-2.266: When the user clicks the sidebar button in the Mac worktree header, the application shall show or hide one right-hand column that holds the worktree's agents above its Context, however many agents the worktree has, and shall offer no separate control that opens or hides either part.")
+    func oneButtonOwnsTheWholeColumn() {
+        var (entry, _, second) = twoAgentEntry()
         let binding = Binding(get: { entry }, set: { entry = $0 })
+        entry.workspaceLayout?.galleryVisible = false
         #expect(view(binding).showsGallery)
         entry.agents.removeAll { $0.paneSlotID == second }
         entry.workspaceLayout?.remove(second)
-        #expect(!view(binding).showsGallery)
-        #expect(entry.workspaceLayout?.isOnStage(first) == true)
+        #expect(view(binding).showsGallery)
+        var hidden = view(binding)
+        hidden.showsSidebar = false
+        #expect(!hidden.showsGallery)
     }
 
     @Test("@spec LAYOUT-2.253: While the gallery and Context are both open on desktop, the application shall show them in one right-hand column, the gallery above Context, so the terminal gives up one column's width.")
@@ -154,6 +158,90 @@ struct WorkspaceContentViewTests {
         #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: false) == WorkspaceGalleryColumn.galleryWidth)
         #expect(WorkspaceGalleryColumn.width(showsGallery: false, showsContext: true) == WorkspaceGalleryColumn.contextWidth)
         #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: true) == WorkspaceGalleryColumn.contextWidth)
+    }
+
+    @Test("@spec LAYOUT-2.257: While the stage shows one pane, the application shall show no pane header, and shall float that pane's Chat / Terminal switch at the pane's top trailing corner, after any input request, so the terminal keeps the row.")
+    func aLoneStagePaneHasNoHeader() {
+        #expect(!StagePaneChrome.showsHeader(paneCount: 1))
+        #expect(StagePaneChrome.showsHeader(paneCount: 2))
+        #expect(StagePaneTopControls(banner: nil, chatSwitch: nil).isEmpty)
+        #expect(!StagePaneTopControls(banner: nil, chatSwitch: AnyView(EmptyView())).isEmpty)
+        #expect(!StagePaneTopControls(banner: AnyView(EmptyView()), chatSwitch: nil).isEmpty)
+    }
+
+    @Test("@spec LAYOUT-2.267: While Context shares the right-hand column with the agents on Mac, the application shall give Context the column's width, and when the user minimizes Context, the application shall reduce it to a bar at the foot of the column that opens it again and give the agents the rest of the column.")
+    func contextMinimizesToTheFootOfTheColumn() {
+        #expect(WorkspaceGalleryColumn.galleryMaxHeight(showsContext: true, contextMinimized: false) == 320)
+        #expect(WorkspaceGalleryColumn.galleryMaxHeight(showsContext: true, contextMinimized: true) == .infinity)
+        #expect(WorkspaceGalleryColumn.galleryMaxHeight(showsContext: false, contextMinimized: false) == .infinity)
+    }
+
+    @Test func theColumnWashMirrorsTheHeaderBandDownward() {
+        #expect(WorktreeColumnWash.stretch(bandHeight: 42) == -10)
+        #expect(WorktreeColumnWash.stretch(bandHeight: 0) == 0)
+    }
+
+    @Test("@spec LAYOUT-2.263: While an agent is shown as a gallery tile or as a row under Finished, the application shall show its provider's logo before its name.")
+    func aTileCarriesItsAgentsProvider() {
+        var (entry, first, _) = twoAgentEntry()
+        let binding = Binding(get: { entry }, set: { entry = $0 })
+        let manager = TerminalManager(socketPath: "/tmp/graftty-gallery-test.sock")
+        let tile = WorkspaceContentView(terminalManager: manager, worktree: binding, onFocusTerminal: { _ in },
+                                        onNewTerminal: {}, onCloseTerminal: { _ in }).tileModel(first)
+        #expect(tile.provider == "codex")
+    }
+
+    @Test("@spec LAYOUT-2.258: When a gallery tile is shown before its agent's terminal surface exists, such as while the application restores terminals at launch, the application shall show the terminal's miniature and scroll rail once the surface exists.")
+    func aTileFindsASurfaceCreatedAfterItWasBuilt() throws {
+        var (entry, first, _) = twoAgentEntry()
+        let binding = Binding(get: { entry }, set: { entry = $0 })
+        let manager = TerminalManager(socketPath: "/tmp/graftty-gallery-test.sock")
+        let tile = WorkspaceContentView(terminalManager: manager, worktree: binding, onFocusTerminal: { _ in },
+                                        onNewTerminal: {}, onCloseTerminal: { _ in }).tileModel(first)
+        #expect(tile.handle() == nil)
+
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(terminalID: first, app: fakeApp(), worktreePath: entry.path,
+            socketPath: "/tmp/graftty-gallery-test.sock", zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory, zmxBackendFactory: { _, _, _, _ in FakeSurfaceHandleZmxBackend() }))
+        manager.insertSurfaceForTesting(handle, for: first)
+        #expect(tile.handle() === handle)
+    }
+
+    @Test("@spec LAYOUT-2.260: When the user drags the leading edge of the right-hand column on Mac, the application shall resize the column between 180 and 600 points, size gallery tiles in proportion to its width, and keep the width for later sessions, separately for the gallery alone and for the column with Context.")
+    func theRightColumnResizesAndScalesItsTiles() {
+        #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: false, galleryWidth: 300, contextWidth: 400) == 300)
+        #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: true, galleryWidth: 300, contextWidth: 400) == 400)
+        #expect(WorkspaceGalleryColumn.width(showsGallery: false, showsContext: false, galleryWidth: 300, contextWidth: 400) == nil)
+        // Dragging the leading edge left widens the column.
+        #expect(WorkspaceGalleryColumn.resized(220, by: -80) == 300)
+        #expect(WorkspaceGalleryColumn.resized(220, by: 500) == WorkspaceGalleryColumn.widthRange.lowerBound)
+        #expect(WorkspaceGalleryColumn.resized(220, by: -900) == WorkspaceGalleryColumn.widthRange.upperBound)
+        #expect(WorkspaceGalleryColumn.widthRange == 180...600)
+        #expect(WorkspaceGalleryColumn.tileHeight(columnWidth: 220, showsContext: false) == 128)
+        #expect(WorkspaceGalleryColumn.tileHeight(columnWidth: 440, showsContext: false) == 256)
+        #expect(WorkspaceGalleryColumn.tileHeight(columnWidth: 360, showsContext: true) == 128)
+    }
+
+    @Test("@spec LAYOUT-2.261: While the user drags an agent tile over a stage pane on Mac or iPad, the application shall highlight the half of the pane the agent would take, left or right over the pane's side thirds and upper or lower over the top or bottom of its middle, and the whole pane over its center, where the drop replaces what the pane shows.")
+    func aDragHighlightsWhereTheAgentWouldLand() {
+        typealias Layout = WorkspaceLayout<String>
+        #expect(Layout.dropEdge(x: 100, y: 300, width: 1000, height: 600) == .left)
+        #expect(Layout.dropEdge(x: 900, y: 300, width: 1000, height: 600) == .right)
+        #expect(Layout.dropEdge(x: 500, y: 100, width: 1000, height: 600) == .top)
+        #expect(Layout.dropEdge(x: 500, y: 500, width: 1000, height: 600) == .bottom)
+        #expect(Layout.dropEdge(x: 500, y: 300, width: 1000, height: 600) == nil)
+        let size = CGSize(width: 1000, height: 600)
+        #expect(WorkspaceStageDropTarget.highlight(.right, in: size) == CGRect(x: 500, y: 0, width: 500, height: 600))
+        #expect(WorkspaceStageDropTarget.highlight(.left, in: size) == CGRect(x: 0, y: 0, width: 500, height: 600))
+        #expect(WorkspaceStageDropTarget.highlight(.top, in: size) == CGRect(x: 0, y: 0, width: 1000, height: 300))
+        #expect(WorkspaceStageDropTarget.highlight(.bottom, in: size) == CGRect(x: 0, y: 300, width: 1000, height: 300))
+        #expect(WorkspaceStageDropTarget.highlight(nil, in: size) == CGRect(origin: .zero, size: size))
+    }
+
+    @Test func theEmptyTileNamesItsWorktree() {
+        #expect(AgentGalleryEmptyTile.title(worktreePath: "/repo/.worktrees/graft-bug") == "Add agent to graft-bug")
+        #expect(AgentGalleryEmptyTile.title(worktreePath: "") == "Add agent")
     }
 
     @Test func offStageQuestionsShowOnTheFocusedStagePane() {

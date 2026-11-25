@@ -65,4 +65,41 @@ struct SurfaceScrollbackTests {
         let topRow = text.text.map { String(decoding: Data(bytes: $0, count: Int(text.text_len)), as: UTF8.self) }
         #expect(topRow == "> Please fix the sidebar layout")
     }
+
+    @Test("@spec LAYOUT-2.259: While a terminal has reported no scrollbar, as a reattached terminal whose screen has not scrolled since launch has not, the application shall still draw its gallery miniature from the rows on its screen.")
+    func readsTheScreenBeforeAnyScrollbarReport() async throws {
+        _ = NSApplication.shared
+        #expect(ghosttyInitWithoutArguments() == 0)
+        final class Scrollbar: @unchecked Sendable { var value = ghostty_action_scrollbar_s() }
+        let scrollbar = Scrollbar()
+        let app = GhosttyApp(config: GhosttyConfig()) { _, action in
+            if action.tag == GHOSTTY_ACTION_SCROLLBAR { scrollbar.value = action.action.scrollbar }
+            return true
+        }
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        let view = NSView(frame: window.contentView!.bounds)
+        window.contentView = view
+        var config = ghostty_surface_config_new()
+        config.platform_tag = GHOSTTY_PLATFORM_MACOS
+        config.platform.macos.nsview = Unmanaged.passUnretained(view).toOpaque()
+        config.scale_factor = 2
+        config.backend = GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED
+        config.receive_buffer = { _, _, _ in }
+        config.receive_resize = { _, _, _, _, _ in }
+        let surface = try #require(ghostty_surface_new(app.app, &config))
+        window.orderBack(nil)
+        defer { window.orderOut(nil); ghostty_surface_free(surface); withExtendedLifetime(app) {} }
+        let data = Data("first line\r\nsecond line".utf8)
+        data.withUnsafeBytes { ghostty_surface_write_buffer(surface, $0.baseAddress!.assumingMemoryBound(to: UInt8.self), UInt($0.count)) }
+        var rows: [String] = []
+        for _ in 0..<100 where rows.first != "first line" {
+            app.tick()
+            try await Task.sleep(for: .milliseconds(10))
+            rows = SurfaceHandle.screenRows(surface)
+        }
+        print("scrollbar total without scrolling: \(scrollbar.value.total)")
+        #expect(rows.count == Int(ghostty_surface_size(surface).rows))
+        #expect(Array(rows.prefix(2)) == ["first line", "second line"])
+    }
 }

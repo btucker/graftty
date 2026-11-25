@@ -14,6 +14,8 @@ public struct AgentTileStatus: Sendable, Equatable {
     public let dot: AgentTileDot?
     /// Finished agents and agents on a sleeping host are drawn faded.
     public let isDimmed: Bool
+    /// Finished agents leave the live tiles for the gallery's Finished section (LAYOUT-2.262).
+    public let isFinished: Bool
     public let caption: String
 
     public init(needsInput: Bool, isBusy: Bool, isCompleted: Bool, isCached: Bool,
@@ -23,6 +25,7 @@ public struct AgentTileStatus: Sendable, Equatable {
         else if isBusy { dot = .working }
         else { dot = nil }
         isDimmed = isCached || isCompleted
+        isFinished = isCompleted
         let question = needsInput ? question?.nonBlank : nil
         caption = question ?? result?.nonBlank ?? statusLabel
     }

@@ -31,6 +31,13 @@ struct SidebarWorktreeStatusTarget: View {
     }
 }
 
+/// The primary colour of a worktree's drawing, which fills its agents' logos (LAYOUT-2.264).
+enum WorktreeAgentLogoTint {
+    static func color(hue: Double?) -> Color? {
+        hue.map(WorktreeDrawingRenderer.primary(hue:)).map { Color(.sRGB, red: $0.red, green: $0.green, blue: $0.blue) }
+    }
+}
+
 /// One sidebar worktree block: the heading button, its status line, the active
 /// highlight, and the block-level drag source and drop target. The click-target
 /// tests compose the same block, so hit testing covers the production structure.
@@ -63,7 +70,8 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
                 .rightClickMenu(anchored: menu)
         } belowIdentity: {
             // Each logo owns its click; the block's selection target would only select the worktree (LAYOUT-2.256).
-            AgentLogoStack(logos: logos, background: theme.background, onSelect: onSelectAgent)
+            AgentLogoStack(logos: logos, background: theme.background, tint: WorktreeAgentLogoTint.color(hue: worktree.drawingHue),
+                           onSelect: onSelectAgent)
                 .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.agentLogos: $0] }
         } content: {
             Button(action: onSelect) { heading() }

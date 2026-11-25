@@ -380,6 +380,16 @@ private final class IdentityFrames {
 
 @MainActor
 struct WorktreeBlockAgentLogoTests {
+    @Test("@spec LAYOUT-2.264: While a worktree in the Mac sidebar has a drawing colour, the application shall fill the agent logos beneath its icon with that drawing's primary colour and draw the logos in white, and shall keep the neutral fill for a worktree with no drawing colour.")
+    func logosTakeTheWorktreesPrimaryColour() {
+        #expect(WorktreeAgentLogoTint.color(hue: nil) == nil)
+        let primary = WorktreeDrawingRenderer.primary(hue: 250)
+        let hex = String(format: "#%02x%02x%02x", Int((primary.red * 255).rounded()), Int((primary.green * 255).rounded()),
+                         Int((primary.blue * 255).rounded()))
+        #expect(hex == WorktreeDrawingRenderer.palette(hue: 250)["primary"])
+        #expect(WorktreeAgentLogoTint.color(hue: 250) == Color(.sRGB, red: primary.red, green: primary.green, blue: primary.blue))
+    }
+
     @Test("@spec LAYOUT-2.256: When the user clicks an agent's logo beneath a Mac worktree row's icon, the application shall deliver the click to that logo, so the agent goes on stage, rather than to the row, which only selects the worktree.")
     func logoClicksReachTheLogo() async throws {
         _ = NSApplication.shared

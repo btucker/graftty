@@ -43,6 +43,16 @@ extension SurfaceHandle: TerminalScrollback {
         return ScrollbackRows(rows: rows, firstRow: first, totalRows: total)
     }
 
+    /// The rows on screen, bottom of scrollback, read without the scrollbar's
+    /// row count: a terminal reports none until its screen first scrolls (LAYOUT-2.259).
+    func screenRows() -> [String] { Self.screenRows(surface) }
+
+    static func screenRows(_ surface: ghostty_surface_t) -> [String] {
+        let size = ghostty_surface_size(surface)
+        guard size.columns > 0 else { return [] }
+        return (0..<UInt32(size.rows)).map { row(surface, tag: GHOSTTY_POINT_ACTIVE, y: $0, columns: UInt32(size.columns)) }
+    }
+
     static func scroll(_ surface: ghostty_surface_t, toRow row: Int) {
         let action = "scroll_to_row:\(max(0, row))"
         _ = action.withCString { ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count)) }

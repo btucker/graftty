@@ -76,11 +76,13 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         clampedDrawerHeight(clampedDrawerHeight(requested, available: available) + delta, available: available)
     }
 
+    /// Where a drop on a stage pane lands: its side thirds split left or right,
+    /// the top or bottom of the middle splits above or below, and the center replaces (LAYOUT-2.261).
     public static func dropEdge(x: Double, y: Double, width: Double, height: Double) -> Edge? {
-        if x < width * 0.2 { return .left }
-        if x > width * 0.8 { return .right }
-        if y < height * 0.2 { return .top }
-        if y > height * 0.8 { return .bottom }
+        if x < width * 0.3 { return .left }
+        if x > width * 0.7 { return .right }
+        if y < height * 0.3 { return .top }
+        if y > height * 0.7 { return .bottom }
         return nil
     }
 

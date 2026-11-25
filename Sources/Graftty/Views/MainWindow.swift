@@ -36,7 +36,9 @@ struct MainWindow: View {
     @Environment(\.agentWorkspaceRequest) private var agentWorkspaceRequest
     @Environment(\.localAttentionAnswer) private var localAttentionAnswer
 
-    @State private var showsWorktreeContext = false
+    /// One right-hand column, agents above Context, for every worktree (LAYOUT-2.266).
+    @AppStorage("workspaceSidebar.visible") private var showsWorktreeContext = true
+    @AppStorage(WorkspaceGalleryColumn.contextMinimizedKey) private var contextMinimized = false
     @State private var requestedRemoteAgent: String?
     @State private var sidebarNavigation: SidebarNavigationState
 
@@ -138,7 +140,7 @@ struct MainWindow: View {
                 }, onPaneCommandTargetChange: { pane in
                     workspaceWindow.remotePaneID = pane
                 }, agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext,
-                contextPanel: hasContextInspector ? AnyView(contextInspector) : nil, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
+                contextPanel: hasContextInspector ? AnyView(contextInspector(inColumn: true)) : nil, showsSidebar: showsWorktreeContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
                     let response = try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .addAgent(worktreeID: snapshot.path, provider: provider, operationID: operationID))
                     switch response {
@@ -310,7 +312,7 @@ struct MainWindow: View {
                             if isActiveWorkspaceWindow { terminalManager.clearFocus() }
                         },
                         agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext,
-                        contextPanel: hasContextInspector ? AnyView(contextInspector) : nil
+                        contextPanel: hasContextInspector ? AnyView(contextInspector(inColumn: true)) : nil, showsSidebar: showsWorktreeContext
                     )
                 } else {
                     ContentUnavailableView(
@@ -321,7 +323,7 @@ struct MainWindow: View {
                 }
             } inspector: {
                 // A local workspace shows Context beneath its gallery instead (LAYOUT-2.253).
-                if !showsWorkspaceColumn { contextInspector }
+                if !showsWorkspaceColumn { contextInspector(inColumn: false).frame(width: 360) }
             }
             .ignoresSafeArea(.container, edges: .top)
         }
@@ -694,16 +696,18 @@ struct MainWindow: View {
         return !(selectedWorktree.map { $0.showsCreationProgress && $0.creationProgress != nil } ?? false)
     }
 
-    @ViewBuilder private var contextInspector: some View {
+    /// In the workspace column Context takes the column's width and its close
+    /// button minimizes it; alone it is a fixed inspector that closes (LAYOUT-2.267).
+    @ViewBuilder private func contextInspector(inColumn: Bool) -> some View {
         if showsWorktreeContext, let context = selectedContext {
             WorktreeContextPanel(context: context, theme: terminalManager.theme.core, hostLabel: selectedHostLabel,
-                readTranscript: transcriptReader, showAgent: agentTabOpener, onClose: { showsWorktreeContext = false })
+                minimizes: inColumn, readTranscript: transcriptReader, showAgent: agentTabOpener,
+                onClose: { if inColumn { contextMinimized = true } else { showsWorktreeContext = false } })
                 .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
                     openContextWorktree(path, remoteIdentity: identity)
                 }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
                     await revealInTerminal(request, remoteIdentity: identity)
                 }, answerQuestion: contextAnswer, dismissNotice: contextNoticeDismissal))
-                .frame(width: 360)
         }
     }
 

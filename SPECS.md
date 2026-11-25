@@ -460,15 +460,37 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.251** While an agent is shown as a gallery tile, the application shall show an orange dot before its name only while it asks for user input, a pulsing blue dot while it works, dim it once it has finished or while its host sleeps, and caption it with its question, else its result, else its status.
 
-**LAYOUT-2.252** While a worktree has one agent, the application shall keep the gallery collapsed so the terminal keeps its full width, and when a second agent starts, the application shall open the gallery without changing what is on stage.
+**LAYOUT-2.252** While a worktree on iPad has one agent, the application shall keep the gallery collapsed so the terminal keeps its full width, and when a second agent starts, the application shall open the gallery without changing what is on stage.
 
 **LAYOUT-2.253** While the gallery and Context are both open on desktop, the application shall show them in one right-hand column, the gallery above Context, so the terminal gives up one column's width.
 
-**LAYOUT-2.254** While a worktree has two or more agents, the application shall show one provider logo per agent beneath its sidebar icon, at most five followed by a count, ring a logo in orange while its agent asks for user input and in pulsing blue while it works, dim finished agents, and draw a ringed logo above its neighbours with the asking one on top.
+**LAYOUT-2.254** While a worktree has two or more agents that have not finished, the application shall show one provider logo per such agent beneath its sidebar icon, at most five followed by a count, leave finished agents out, ring a logo in orange while its agent asks for user input and in pulsing blue while it works, and draw a ringed logo above its neighbours with the asking one on top.
 
 **LAYOUT-2.255** When a stage change would hide a shell, such as removing its pane from a split stage or putting an agent on stage in its place, the application shall return the shell to the terminal drawer, because a shell has no gallery tile.
 
 **LAYOUT-2.256** When the user clicks an agent's logo beneath a Mac worktree row's icon, the application shall deliver the click to that logo, so the agent goes on stage, rather than to the row, which only selects the worktree.
+
+**LAYOUT-2.257** While the stage shows one pane, the application shall show no pane header, and shall float that pane's Chat / Terminal switch at the pane's top trailing corner, after any input request, so the terminal keeps the row.
+
+**LAYOUT-2.258** When a gallery tile is shown before its agent's terminal surface exists, such as while the application restores terminals at launch, the application shall show the terminal's miniature and scroll rail once the surface exists.
+
+**LAYOUT-2.259** While a terminal has reported no scrollbar, as a reattached terminal whose screen has not scrolled since launch has not, the application shall still draw its gallery miniature from the rows on its screen.
+
+**LAYOUT-2.260** When the user drags the leading edge of the right-hand column on Mac, the application shall resize the column between 180 and 600 points, size gallery tiles in proportion to its width, and keep the width for later sessions, separately for the gallery alone and for the column with Context.
+
+**LAYOUT-2.261** While the user drags an agent tile over a stage pane on Mac or iPad, the application shall highlight the half of the pane the agent would take, left or right over the pane's side thirds and upper or lower over the top or bottom of its middle, and the whole pane over its center, where the drop replaces what the pane shows.
+
+**LAYOUT-2.262** While a worktree's gallery holds agents that have finished, the application shall list them in their tile order after the tile for adding an agent, under a Finished heading that gives their count and stays collapsed until the user opens it, and shall show each as its name and result with no terminal miniature.
+
+**LAYOUT-2.263** While an agent is shown as a gallery tile or as a row under Finished, the application shall show its provider's logo before its name.
+
+**LAYOUT-2.264** While a worktree in the Mac sidebar has a drawing colour, the application shall fill the agent logos beneath its icon with that drawing's primary colour and draw the logos in white, and shall keep the neutral fill for a worktree with no drawing colour.
+
+**LAYOUT-2.265** While the selected worktree has a header wash and its right-hand column is open on Mac, the application shall continue the header's wash down the top of that column from the colours at the header's bottom edge, fading into the column's background, with no watermark.
+
+**LAYOUT-2.266** When the user clicks the sidebar button in the Mac worktree header, the application shall show or hide one right-hand column that holds the worktree's agents above its Context, however many agents the worktree has, and shall offer no separate control that opens or hides either part.
+
+**LAYOUT-2.267** While Context shares the right-hand column with the agents on Mac, the application shall give Context the column's width, and when the user minimizes Context, the application shall reduce it to a bar at the foot of the column that opens it again and give the agents the rest of the column.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -5845,6 +5867,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CONTEXT-57.14** When the previewed scrollback message changes, the application shall slide preview cards to their new positions and fade cards that no longer fit out where they stand, keeping unmeasured cards hidden, instead of moving or replacing them instantly. While Reduce Motion is on, the application shall change them without motion.
 
 **CONTEXT-57.15** While an agent is shown as a gallery tile, the application shall show its scrollback map on the tile's right edge, let its preview cards extend beyond the tile, and when a mark or card is activated, put that agent on stage scrolled to that message.
+
+**CONTEXT-57.16** While the scrollback map is shown on a gallery tile, the application shall place its marks on a logarithmic scale from the newest row, so recent messages spread apart and older history packs together, and shall keep a terminal's own map linear.
+
+**CONTEXT-57.17** While a preview card lists several messages on Mac, when the pointer moves over one of them, the application shall focus that message as the rail does, enlarging it and marking it on the rail, without changing which messages the card lists, and activating the card shall go to that message.
+
+**CONTEXT-57.18** While the pointer is over a scrollback rail or its preview cards on Mac, when the user turns the scroll wheel, the application shall move the focused message to the next or previous message, one per wheel notch or per 16 points of trackpad travel, stopping at the first and last message, and shall leave the terminal where it is.
 
 ### CONTEXT-58.x
 

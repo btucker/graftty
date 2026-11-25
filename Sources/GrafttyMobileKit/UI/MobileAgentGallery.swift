@@ -9,6 +9,7 @@ struct MobileGalleryAgent: Identifiable, Equatable {
     /// The agent's terminal session.
     let id: String
     let title: String
+    let provider: String?
     let status: AgentTileStatus
 
     /// Agents with a terminal or a retained result, in the given order.
@@ -16,7 +17,7 @@ struct MobileGalleryAgent: Identifiable, Equatable {
         let all: [MobileGalleryAgent] = (worktree.agents ?? []).compactMap { agent in
             guard let session = agent.presentationSessionName else { return nil }
             let needsInput = context.needsInput(session: session)
-            return MobileGalleryAgent(id: session, title: worktree.workspaceSessionTitle(session),
+            return MobileGalleryAgent(id: session, title: worktree.workspaceSessionTitle(session), provider: agent.provider,
                 status: AgentTileStatus(needsInput: needsInput,
                     isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy == true,
                     isCompleted: agent.isCompleted, isCached: false, question: context.question(session: session),
@@ -103,6 +104,8 @@ struct MobileGalleryTile: View {
     /// A paired Codex agent's marks come from its recovered conversation, as on the stage.
     var recovery: ScrollbackMapRecovery? = nil
     let theme: GhosttyThemeColors
+    /// A finished agent's tile is its caption alone (LAYOUT-2.262).
+    var compact = false
     let onSelect: () -> Void
     /// The message a rail mark or card points at; the preview's rows mean
     /// nothing on the staged terminal.
@@ -113,8 +116,8 @@ struct MobileGalleryTile: View {
 
     var body: some View {
         // Only the body selects: the rail's marks and cards take their own taps.
-        AgentGalleryTile(title: agent.title, status: agent.status, isOnStage: isOnStage,
-                         foreground: theme.foreground, background: theme.background,
+        AgentGalleryTile(title: agent.title, provider: agent.provider, status: agent.status, isOnStage: isOnStage,
+                         foreground: theme.foreground, background: theme.background, compact: compact,
                          decorateBody: { body in AnyView(Button(action: onSelect) { body }.buttonStyle(.plain)) }) {
             if let client {
                 MobileTerminalPreview(client: client, baseConfig: previews.baseConfig,
@@ -163,6 +166,7 @@ struct MobileAgentGalleryGrid: View {
     @State private var previews = MobileGalleryPreviews()
     @State private var visible: Set<String> = []
     @State private var activeRail: String?
+    @AppStorage(AgentGalleryFinished.expandedKey) private var showsFinished = false
 
     private var isReady: Bool { LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) }
     private var liveSessions: [String] {
@@ -172,31 +176,24 @@ struct MobileAgentGalleryGrid: View {
 
     var body: some View {
         let grid = Array(repeating: GridItem(.fixed(tileSize.width), spacing: 10), count: columns)
+        let split = AgentGalleryFinished.split(agents) { $0.status }
         LazyVGrid(columns: grid, spacing: 10) {
-            ForEach(agents) { agent in
-                let recovery = ScrollbackMapRecovery.pairedCodex(worktree.agents?.first { $0.presentationSessionName == agent.id })
-                MobileGalleryTile(agent: agent, isOnStage: onStage.contains(agent.id),
-                    client: liveSessions.contains(agent.id) ? previews.client(for: agent.id) : nil,
-                    previews: previews,
-                    timeline: context.scrollbackPaneIDs.contains(agent.id) || recovery != nil ? WorktreeTimeline(context) : nil,
-                    recovery: recovery, theme: theme, onSelect: { onSelect(agent.id) }, onJump: { onJump(agent.id, $0) })
-                .frame(width: tileSize.width, height: tileSize.height)
-                .accessibilityAction { onSelect(agent.id) }
-                // A tile whose rail is in use draws above the next, which its cards overlap.
-                .onPreferenceChange(ScrollbackMapActive.self) { active in
-                    if active { activeRail = agent.id } else if activeRail == agent.id { activeRail = nil }
-                }
-                .zIndex(activeRail == agent.id ? 1 : 0)
-                .accessibilityIdentifier("workspace.gallery.tile.\(agent.id)")
-                .modifier(MobileGalleryReorder(session: agent.id, onMove: onMove))
-                .onAppear { visible.insert(agent.id) }
-                .onDisappear { visible.remove(agent.id) }
-            }
+            ForEach(split.active) { tile($0, finished: false) }
             MobileNewAgentMenu(host: host, worktree: worktree.path, onSelect: onNewAgent,
-                               label: AnyView(AgentGalleryEmptyTile(foreground: theme.foreground)
+                               label: AnyView(AgentGalleryEmptyTile(worktreePath: worktree.path, foreground: theme.foreground)
                                    .frame(width: tileSize.width, height: tileSize.height)))
                 .frame(width: tileSize.width, height: tileSize.height)
                 .accessibilityIdentifier("workspace.gallery.newAgent")
+            if !split.finished.isEmpty {
+                Section {
+                    if showsFinished { ForEach(split.finished) { tile($0, finished: true) } }
+                } header: {
+                    AgentGalleryFinishedHeader(count: split.finished.count, isExpanded: $showsFinished,
+                                               foreground: theme.foreground)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("workspace.gallery.finished")
+                }
+            }
         }
         .task(id: host.id) { await previews.loadConfig(host: host, coordinator: coordinator) }
         .task(id: LiveKey(sessions: liveSessions, isReady: isReady, suspended: LiveSessionReadiness.shouldSuspendTransport(scene: scenePhase))) {
@@ -205,6 +202,26 @@ struct MobileAgentGalleryGrid: View {
             previews.keepLive(liveSessions, host: host, coordinator: coordinator)
         }
         .onDisappear { previews.stop() }
+    }
+
+    @ViewBuilder private func tile(_ agent: MobileGalleryAgent, finished: Bool) -> some View {
+        let recovery = ScrollbackMapRecovery.pairedCodex(worktree.agents?.first { $0.presentationSessionName == agent.id })
+        MobileGalleryTile(agent: agent, isOnStage: onStage.contains(agent.id),
+            client: liveSessions.contains(agent.id) ? previews.client(for: agent.id) : nil,
+            previews: previews,
+            timeline: context.scrollbackPaneIDs.contains(agent.id) || recovery != nil ? WorktreeTimeline(context) : nil,
+            recovery: recovery, theme: theme, compact: finished, onSelect: { onSelect(agent.id) }, onJump: { onJump(agent.id, $0) })
+        .frame(width: tileSize.width, height: finished ? AgentGalleryFinished.rowHeight : tileSize.height)
+        .accessibilityAction { onSelect(agent.id) }
+        // A tile whose rail is in use draws above the next, which its cards overlap.
+        .onPreferenceChange(ScrollbackMapActive.self) { active in
+            if active { activeRail = agent.id } else if activeRail == agent.id { activeRail = nil }
+        }
+        .zIndex(activeRail == agent.id ? 1 : 0)
+        .accessibilityIdentifier("workspace.gallery.tile.\(agent.id)")
+        .modifier(MobileGalleryReorder(session: agent.id, onMove: onMove))
+        .onAppear { visible.insert(agent.id) }
+        .onDisappear { visible.remove(agent.id) }
     }
 
     private struct LiveKey: Hashable { let sessions: [String]; let isReady: Bool; let suspended: Bool }

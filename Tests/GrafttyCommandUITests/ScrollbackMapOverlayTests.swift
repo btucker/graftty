@@ -207,7 +207,7 @@ struct ScrollbackMapScrubTests {
         #expect(terminal.clicks == 0, "Map clicks must not reach the terminal")
 
         pointer.scrollWheel(with: MapWheelEvent(point: point))
-        #expect(terminal.wheels == 1, "Wheel scrolling over the map must reach the adjacent terminal")
+        #expect(terminal.wheels == 0, "The wheel over the map steps messages; the terminal stays put (CONTEXT-57.18)")
 
         let moved = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
@@ -297,7 +297,7 @@ struct ScrollbackMapScrubTests {
         let wheel = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1,
                                          wheel1: 1, wheel2: 0, wheel3: 0).flatMap(NSEvent.init(cgEvent:)))
         cardHit.scrollWheel(with: wheel)
-        #expect(terminal.wheels == 1, "Scrolling over a preview still scrolls the terminal")
+        #expect(terminal.wheels == 0, "The wheel over a preview steps messages; the terminal stays put (CONTEXT-57.18)")
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             window.sendEvent(try event(type, at: cardPoint))
         }
@@ -396,6 +396,8 @@ private final class MapWheelEvent: NSEvent {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var locationInWindow: NSPoint { point }
     override var type: NSEvent.EventType { .scrollWheel }
+    override var scrollingDeltaY: CGFloat { -1 }
+    override var hasPreciseScrollingDeltas: Bool { false }
 }
 
 private final class MapTerminalFixture: NSView {
@@ -437,6 +439,54 @@ struct ScrollbackMapPreviewTests {
         let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: 28, maximumSpan: 64)
         #expect(groups.map { $0.messages.map(\.id) } == [["1"], ["0", "2", "3"], ["4"], ["5"]])
         #expect(groups[1].startY == 30 && groups[1].endY == 76 && groups[1].y == 53)
+    }
+
+    @Test("@spec CONTEXT-57.16: While the scrollback map is shown on a gallery tile, the application shall place its marks on a logarithmic scale from the newest row, so recent messages spread apart and older history packs together, and shall keep a terminal's own map linear.")
+    func aTileRailSpreadsRecentHistory() {
+        let linear = ScrollbackMapLayout(height: 100, totalRows: 1000)
+        let recent = ScrollbackMapLayout(height: 100, totalRows: 1000, scale: .recent)
+        #expect(linear.y(forRow: 900) == 90)
+        #expect(recent.y(forRow: 0) == 0 && recent.y(forRow: 1000) == 100)
+        // The newest tenth of the rows takes over a third of the strip.
+        #expect(recent.y(forRow: 900) < 65)
+        #expect((0..<1000).allSatisfy { recent.y(forRow: $0) < recent.y(forRow: $0 + 1) })
+        #expect(recent.row(forY: recent.y(forRow: 950)) == 950)
+        #expect(recent.y(forRow: 990) - recent.y(forRow: 980) > 3 * (recent.y(forRow: 110) - recent.y(forRow: 100)))
+    }
+
+    @Test("@spec CONTEXT-57.17: While a preview card lists several messages on Mac, when the pointer moves over one of them, the application shall focus that message as the rail does, enlarging it and marking it on the rail, without changing which messages the card lists, and activating the card shall go to that message.")
+    func hoveringARowFocusesItWithoutMovingTheWindow() throws {
+        let messages = (0..<10).map { index in
+            ScrollbackMapPreview(id: String(index),
+                entry: ScrollbackMapEntry(kind: .input, text: "Message", timestamp: nil, sender: nil),
+                y: Double(index) * 4)
+        }
+        let group = try #require(ScrollbackMapPreviewGroup.group(messages, maximumGap: 28, maximumSpan: 96).first)
+        let hovered = group.fisheye(focusedID: "0", windowID: "5")
+        #expect(hovered.rows.map(\.preview.id) == ["2", "3", "4", "5", "6", "7", "8"])
+        let inWindow = group.fisheye(focusedID: "8", windowID: "5")
+        #expect(inWindow.rows.map(\.preview.id) == ["2", "3", "4", "5", "6", "7", "8"])
+        #expect(inWindow.rows.map(\.distance) == [6, 5, 4, 3, 2, 1, 0])
+        #if os(macOS)
+        let rows = ["a": CGRect(x: -200, y: 10, width: 180, height: 14), "b": CGRect(x: -200, y: 28, width: 180, height: 14)]
+        #expect(ScrollbackPreviewRows.row(at: CGPoint(x: -100, y: 34), in: rows) == "b")
+        #expect(ScrollbackPreviewRows.row(at: CGPoint(x: -100, y: 80), in: rows) == nil)
+        #endif
+    }
+
+    @Test("@spec CONTEXT-57.18: While the pointer is over a scrollback rail or its preview cards on Mac, when the user turns the scroll wheel, the application shall move the focused message to the next or previous message, one per wheel notch or per 16 points of trackpad travel, stopping at the first and last message, and shall leave the terminal where it is.")
+    func theWheelStepsTheFocusedMessage() {
+        var wheel = ScrollbackWheelSteps()
+        #expect(wheel.steps(delta: -1, precise: false) == 1)
+        #expect(wheel.steps(delta: 3, precise: false) == -1)
+        #expect(wheel.steps(delta: -10, precise: true) == 0)
+        #expect(wheel.steps(delta: -10, precise: true) == 1)
+        #expect(wheel.steps(delta: 40, precise: true) == -2)
+        let ids = ["a", "b", "c"]
+        #expect(ScrollbackWheelSteps.focus(after: "a", steps: 1, in: ids) == "b")
+        #expect(ScrollbackWheelSteps.focus(after: "b", steps: 5, in: ids) == "c")
+        #expect(ScrollbackWheelSteps.focus(after: "b", steps: -5, in: ids) == "a")
+        #expect(ScrollbackWheelSteps.focus(after: nil, steps: 1, in: ids) == nil)
     }
 
     @Test("@spec CONTEXT-57.12: While the user hovers over, touches, or scrubs the scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.")

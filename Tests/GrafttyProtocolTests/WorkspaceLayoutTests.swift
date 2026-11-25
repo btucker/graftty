@@ -106,7 +106,8 @@ struct WorkspaceLayoutTests {
         #expect(!layout.showsGallery(agentCount: 3), "Only the second agent reopens it")
     }
 
-    @Test func galleryShowsByItselfFromTheSecondAgent() {
+    @Test("@spec LAYOUT-2.252: While a worktree on iPad has one agent, the application shall keep the gallery collapsed so the terminal keeps its full width, and when a second agent starts, the application shall open the gallery without changing what is on stage.")
+    func galleryShowsByItselfFromTheSecondAgent() {
         var layout = WorkspaceLayout<String>()
         #expect(!layout.showsGallery(agentCount: 1))
         #expect(layout.showsGallery(agentCount: 2))

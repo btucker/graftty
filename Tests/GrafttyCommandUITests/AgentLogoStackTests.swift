@@ -10,7 +10,7 @@ struct AgentLogoStackTests {
                                           isCached: false, question: nil, result: nil, statusLabel: "Running"))
     }
 
-    @Test("@spec LAYOUT-2.254: While a worktree has two or more agents, the application shall show one provider logo per agent beneath its sidebar icon, at most five followed by a count, ring a logo in orange while its agent asks for user input and in pulsing blue while it works, dim finished agents, and draw a ringed logo above its neighbours with the asking one on top.")
+    @Test("@spec LAYOUT-2.254: While a worktree has two or more agents that have not finished, the application shall show one provider logo per such agent beneath its sidebar icon, at most five followed by a count, leave finished agents out, ring a logo in orange while its agent asks for user input and in pulsing blue while it works, and draw a ringed logo above its neighbours with the asking one on top.")
     func stackContents() {
         #expect(AgentLogoStackModel.visible([logo("a")]).shown.isEmpty)
         let two = AgentLogoStackModel.visible([logo("a"), logo("b")])
@@ -19,7 +19,8 @@ struct AgentLogoStackTests {
         #expect(seven.shown.count == 5 && seven.overflow == 2)
         #expect(AgentLogoStackModel.zOrder(logo("ask", dot: .asking)) > AgentLogoStackModel.zOrder(logo("work", dot: .working)))
         #expect(AgentLogoStackModel.zOrder(logo("work", dot: .working)) > AgentLogoStackModel.zOrder(logo("idle")))
-        #expect(logo("done", finished: true).status.isDimmed)
+        #expect(AgentLogoStackModel.visible([logo("a"), logo("b"), logo("done", finished: true)]).shown.map(\.id) == ["a", "b"])
+        #expect(AgentLogoStackModel.visible([logo("a"), logo("done", finished: true)]).shown.isEmpty)
     }
 
     @Test func logosComeFromTheWorktreesAgents() {

@@ -2,6 +2,26 @@ import GrafttyProtocol
 import OSLog
 import SwiftUI
 
+/// Turns scroll-wheel travel over a rail into steps between messages (CONTEXT-57.18).
+struct ScrollbackWheelSteps {
+    static let pointsPerStep: CGFloat = 16
+    private var travel: CGFloat = 0
+
+    /// Positive steps move to later messages; wheel-down deltas are negative.
+    mutating func steps(delta: CGFloat, precise: Bool) -> Int {
+        guard precise else { return delta == 0 ? 0 : (delta < 0 ? 1 : -1) }
+        travel -= delta
+        let steps = Int(travel / Self.pointsPerStep)
+        travel -= CGFloat(steps) * Self.pointsPerStep
+        return steps
+    }
+
+    static func focus(after id: String?, steps: Int, in ids: [String]) -> String? {
+        guard let index = id.flatMap(ids.firstIndex(of:)) else { return nil }
+        return ids[min(max(index + steps, 0), ids.count - 1)]
+    }
+}
+
 private let scrollbackLog = Logger(subsystem: "com.graftty.app", category: "scrollback-map")
 
 /// The terminal rows on screen, as the terminal's scrollbar reports them.
@@ -115,22 +135,43 @@ public struct ScrollbackMapLayout: Equatable {
         var cornerRadius: CGFloat { kind == .input ? frame.height / 2 : 0 }
     }
 
+    /// How rows map onto the strip.
+    public enum Scale: Sendable, Equatable {
+        /// Every row takes the same room: the strip is a scrollbar.
+        case linear
+        /// Logarithmic from the newest row: recent history spreads out and old
+        /// history packs together, for a short strip such as a gallery tile's (CONTEXT-57.16).
+        case recent
+
+        static let recentSpread: Double = 30
+
+        func fraction(_ rows: Double) -> Double {
+            switch self {
+            case .linear: rows
+            case .recent: 1 - log(1 + Self.recentSpread * (1 - rows)) / log(1 + Self.recentSpread)
+            }
+        }
+    }
+
     public let height: CGFloat
     public let totalRows: Int
+    public let scale: Scale
     var cardHeight: CGFloat { height + Self.stripInset.top + Self.stripInset.bottom }
 
-    public init(height: CGFloat = ScrollbackMapLayout.stripHeight, totalRows: Int) {
+    public init(height: CGFloat = ScrollbackMapLayout.stripHeight, totalRows: Int, scale: Scale = .linear) {
         self.height = height
         self.totalRows = max(1, totalRows)
+        self.scale = scale
     }
 
     /// Rows can grow past the last scan, so the live viewport total wins when larger.
-    public init(height: CGFloat = ScrollbackMapLayout.stripHeight, map: ScrollbackMap, viewport: ScrollbackViewport) {
-        self.init(height: height, totalRows: max(map.totalRows, viewport.total))
+    public init(height: CGFloat = ScrollbackMapLayout.stripHeight, map: ScrollbackMap, viewport: ScrollbackViewport,
+                scale: Scale = .linear) {
+        self.init(height: height, totalRows: max(map.totalRows, viewport.total), scale: scale)
     }
 
     public func y(forRow row: Int) -> CGFloat {
-        CGFloat(min(max(row, 0), totalRows)) / CGFloat(totalRows) * height
+        CGFloat(scale.fraction(Double(min(max(row, 0), totalRows)) / Double(totalRows))) * height
     }
 
     public func row(forY y: CGFloat) -> Int {
@@ -322,14 +363,21 @@ public struct ScrollbackMapOverlay: View {
     /// A gallery tile's rail: activating a message reports it instead of
     /// scrolling, and a scrub only previews until it is released.
     let jump: ((String) -> Void)?
+    private let scale: ScrollbackMapLayout.Scale
     private let availableHeight: CGFloat
     private let availableWidth: CGFloat
     /// Room above and below the rail that preview cards may use, so a short
     /// tile rail can show cards beyond its tile.
     private let previewOverhang: CGFloat
     @State private var hover: CGFloat?
+    /// The message whose row the pointer is over inside a preview card (CONTEXT-57.17).
+    @State private var cardFocus: String?
+    /// The message the scroll wheel stepped to, until the pointer moves (CONTEXT-57.18).
+    @State private var wheelFocus: String?
+    @State private var wheelSteps = ScrollbackWheelSteps()
     #if os(macOS)
     @State private var previewArea: CGRect?
+    @State private var previewRows: [String: CGRect] = [:]
     #else
     @State private var previewReleasedAt: Date?
     #endif
@@ -345,9 +393,10 @@ public struct ScrollbackMapOverlay: View {
     public init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
                 gists: PeerMessageGistProvider = .shared, availableHeight: CGFloat = ScrollbackMapLayout.cardSize.height,
                 availableWidth: CGFloat = 360, previewOverhang: CGFloat = 0,
+                scale: ScrollbackMapLayout.Scale = .linear,
                 jump: ((String) -> Void)? = nil, scroll: @escaping (Int) -> Void) {
         self.init(map: map, viewport: viewport, entries: entries, gists: gists, availableHeight: availableHeight,
-                  availableWidth: availableWidth, previewOverhang: previewOverhang, focusY: nil, jump: jump, scroll: scroll)
+                  availableWidth: availableWidth, previewOverhang: previewOverhang, scale: scale, focusY: nil, jump: jump, scroll: scroll)
     }
 
     struct PreviewFrame: Equatable { var top: CGFloat; var height: CGFloat }
@@ -360,10 +409,11 @@ public struct ScrollbackMapOverlay: View {
     /// `focusY` starts the overlay mid-scrub, for rendering tests.
     init(map: ScrollbackMap, viewport: ScrollbackViewport, entries: [String: ScrollbackMapEntry],
          gists: PeerMessageGistProvider, availableHeight: CGFloat = ScrollbackMapLayout.cardSize.height,
-         availableWidth: CGFloat = 360, previewOverhang: CGFloat = 0, focusY: CGFloat?,
-         jump: ((String) -> Void)? = nil, scroll: @escaping (Int) -> Void) {
+         availableWidth: CGFloat = 360, previewOverhang: CGFloat = 0, scale: ScrollbackMapLayout.Scale = .linear,
+         focusY: CGFloat?, jump: ((String) -> Void)? = nil, scroll: @escaping (Int) -> Void) {
         self.map = map; self.viewport = viewport; self.entries = entries; self.gists = gists; self.scroll = scroll
         self.jump = jump
+        self.scale = scale
         self.availableHeight = availableHeight
         self.availableWidth = availableWidth
         self.previewOverhang = previewOverhang
@@ -373,15 +423,29 @@ public struct ScrollbackMapOverlay: View {
     private var interactionY: CGFloat? { touch ?? scrub ?? hover }
     private var isActive: Bool { interactionY != nil }
 
-    private func focusedMark(in layout: ScrollbackMapLayout) -> ScrollbackMap.Mark? {
+    /// The mark the rail position points at.
+    private func railMark(in layout: ScrollbackMapLayout) -> ScrollbackMap.Mark? {
         guard let interactionY else { return nil }
         let y = ScrollbackMapLayout.stripY(forCardY: interactionY, height: layout.height)
         return layout.previewTarget(in: map, atY: y) { entries[$0]?.isIncomingPeer == true }
     }
 
+    /// A row the pointer is over inside a card wins over the rail position.
+    private func focusedMark(in layout: ScrollbackMapLayout) -> ScrollbackMap.Mark? {
+        guard interactionY != nil else { return nil }
+        return (wheelFocus ?? cardFocus).flatMap { id in map.marks.first { $0.eventID == id } } ?? railMark(in: layout)
+    }
+
+    private func wheel(delta: CGFloat, precise: Bool, layout: ScrollbackMapLayout) {
+        let steps = wheelSteps.steps(delta: delta, precise: precise)
+        guard steps != 0 else { return }
+        let ids = map.marks.map(\.eventID).filter { entries[$0] != nil }
+        if let next = ScrollbackWheelSteps.focus(after: focusedMark(in: layout)?.eventID, steps: steps, in: ids) { wheelFocus = next }
+    }
+
     private func layout(cardHeight: CGFloat) -> ScrollbackMapLayout {
         let inset = ScrollbackMapLayout.stripInset
-        return ScrollbackMapLayout(height: max(0, cardHeight - inset.top - inset.bottom), map: map, viewport: viewport)
+        return ScrollbackMapLayout(height: max(0, cardHeight - inset.top - inset.bottom), map: map, viewport: viewport, scale: scale)
     }
 
     private var mobileLayout: ScrollbackMapLayout {
@@ -418,6 +482,7 @@ public struct ScrollbackMapOverlay: View {
                 }
                 #if os(macOS)
                 .onPreferenceChange(ScrollbackPreviewArea.self) { previewArea = $0 }
+                .onPreferenceChange(ScrollbackPreviewRows.self) { previewRows = $0 }
                 #endif
                 .task(id: response) {
                     responseGist = nil
@@ -457,7 +522,9 @@ public struct ScrollbackMapOverlay: View {
             let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: maximumGap, maximumSpan: maximumSpan)
             ScrollbackMapPreviews(groups: groups, height: frame.height, cardWidth: cardWidth,
                                   gap: gap, railCenter: railCenter, focusY: focusY - frame.top, maximumShift: maximumShift,
-                                  focusedID: focused?.eventID, responseGist: responseGist) { firstID in
+                                  focusedID: focused?.eventID, windowID: wheelFocus ?? railMark(in: layout)?.eventID,
+                                  hoveredID: wheelFocus ?? cardFocus, onWheel: { wheel(delta: $0, precise: $1, layout: layout) },
+                                  responseGist: responseGist) { firstID in
                 if let jump { jump(firstID) } else if let row = map.row(for: firstID) { scroll(row) }
                 #if !os(macOS)
                 scrub = nil
@@ -469,6 +536,7 @@ public struct ScrollbackMapOverlay: View {
             // The offset moves the cards but not the area they report, which the
             // pointer uses to keep them open on its way from the rail.
             .transformPreference(ScrollbackPreviewArea.self) { $0 = $0?.offsetBy(dx: 0, dy: frame.top) }
+            .transformPreference(ScrollbackPreviewRows.self) { $0 = $0.mapValues { $0.offsetBy(dx: 0, dy: frame.top) } }
             #endif
         }
     }
@@ -478,9 +546,11 @@ public struct ScrollbackMapOverlay: View {
         let content = strip(layout: layout, width: 9, maximumMarkWidth: ScrollbackMapLayout.macLensWidth,
                             muted: !isActive, growsInward: true, previewedMark: previewedMark)
             .frame(width: ScrollbackMapLayout.macGutterWidth)
-        return ScrollbackMapPointerInput(content: AnyView(content), terminalOnLeft: layoutDirection == .leftToRight,
-            previewArea: previewArea,
-            onHover: { hover = $0 },
+        return ScrollbackMapPointerInput(content: AnyView(content),
+            previewArea: previewArea, previewRows: previewRows,
+            onHover: { hover = $0; cardFocus = nil; wheelFocus = nil },
+            onHoverRow: { if cardFocus != $0 { cardFocus = $0; wheelFocus = nil } },
+            onWheel: { wheel(delta: $0, precise: $1, layout: layout) },
             onScrub: { scrub = $0 },
             onDrag: { drag(at: $0, layout: layout) },
             onDragEnd: { finishDrag(at: $0, layout: layout) },
@@ -917,7 +987,10 @@ public struct ScrollbackMapOverlayHost: View {
                 if let map = model.map, !map.marks.isEmpty {
                     ScrollbackMapOverlay(map: map, viewport: model.viewport, entries: model.entries, gists: gists,
                                          availableHeight: max(0, geometry.size.height - (showSavedMessages == nil ? 0 : 44)), availableWidth: previewWidth ?? geometry.size.width,
-                                         previewOverhang: previewOverhang, jump: onJump, scroll: { model.scroll(toRow: $0) })
+                                         previewOverhang: previewOverhang,
+                                         // A tile's rail is short: spread out its recent history.
+                                         scale: onJump == nil ? .linear : .recent,
+                                         jump: onJump, scroll: { model.scroll(toRow: $0) })
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .onAppear {
                             let userCount = map.marks.count { $0.kind == .input }

@@ -22,4 +22,14 @@ struct AgentTileStatusTests {
         #expect(asleep.dot == nil && asleep.isDimmed)
         #expect(!status(isBusy: true).isDimmed)
     }
+
+    @Test("@spec LAYOUT-2.262: While a worktree's gallery holds agents that have finished, the application shall list them in their tile order after the tile for adding an agent, under a Finished heading that gives their count and stays collapsed until the user opens it, and shall show each as its name and result with no terminal miniature.")
+    func finishedAgentsLeaveTheLiveTiles() {
+        let tiles = [("a", status(isBusy: true)), ("b", status(isCompleted: true, result: "Done")),
+                     ("c", status(isCached: true)), ("d", status(isCompleted: true))]
+        let split = AgentGalleryFinished.split(tiles) { $0.1 }
+        #expect(split.active.map(\.0) == ["a", "c"])
+        #expect(split.finished.map(\.0) == ["b", "d"])
+        #expect(AgentGalleryFinished.title(count: 2) == "Finished · 2")
+    }
 }

@@ -48,9 +48,10 @@ public struct AgentLogo: Identifiable, Equatable, Sendable {
 }
 
 /// @spec LAYOUT-2.254
-/// While a worktree has two or more agents, the application shall show one provider logo per agent beneath its sidebar icon, at most five followed by a count, ring a logo in orange while its agent asks for user input and in pulsing blue while it works, dim finished agents, and draw a ringed logo above its neighbours with the asking one on top.
+/// While a worktree has two or more agents that have not finished, the application shall show one provider logo per such agent beneath its sidebar icon, at most five followed by a count, leave finished agents out, ring a logo in orange while its agent asks for user input and in pulsing blue while it works, and draw a ringed logo above its neighbours with the asking one on top.
 public enum AgentLogoStackModel {
     public static func visible(_ logos: [AgentLogo], limit: Int = 5) -> (shown: [AgentLogo], overflow: Int) {
+        let logos = logos.filter { !$0.status.isFinished }
         guard logos.count >= 2 else { return ([], 0) }
         return (Array(logos.prefix(limit)), max(0, logos.count - limit))
     }
@@ -71,13 +72,15 @@ public struct AgentLogoStack: View {
     static let size: CGFloat = 18
     let logos: [AgentLogo]
     let background: Color
+    /// The worktree icon's primary colour, which then fills each logo (LAYOUT-2.264).
+    let tint: Color?
     let onSelect: (String) -> Void
     @State private var expanded = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(logos: [AgentLogo], background: Color, onSelect: @escaping (String) -> Void) {
-        self.logos = logos; self.background = background; self.onSelect = onSelect
+    public init(logos: [AgentLogo], background: Color, tint: Color? = nil, onSelect: @escaping (String) -> Void) {
+        self.logos = logos; self.background = background; self.tint = tint; self.onSelect = onSelect
     }
 
     public var body: some View {
@@ -115,15 +118,15 @@ public struct AgentLogoStack: View {
         case .working?: AgentStatusDot.working(isDark: isDark)
         case nil: nil
         }
-        return AgentProviderIcon(provider: logo.provider, size: 11)
-            .foregroundStyle(Color.primary.opacity(0.75))
+        return AgentProviderIcon(provider: logo.provider, size: 12)
+            .foregroundStyle(tint == nil ? Color.primary.opacity(0.9) : Color.white)
             .frame(width: Self.size, height: Self.size)
-            .background(Circle().fill(Color.primary.opacity(isDark ? 0.18 : 0.1)).background(Circle().fill(background)))
+            .background(Circle().fill(tint ?? Color.primary.opacity(isDark ? 0.18 : 0.1)).background(Circle().fill(background)))
             .overlay {
                 if let haloColor {
                     AgentStatusPulse(reduceMotion: reduceMotion || logo.status.dot == .asking) { opacity in
-                        Circle().strokeBorder(haloColor, lineWidth: 2)
-                            .shadow(color: haloColor.opacity(0.6), radius: 3)
+                        // A plain ring: a glow blurs a mark this small.
+                        Circle().strokeBorder(haloColor, lineWidth: 1.5)
                             .opacity(opacity)
                     }
                 } else {

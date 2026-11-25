@@ -192,16 +192,13 @@ struct MultiPaneDetailView: View {
                         .id(sessionName)
                         }
                     }
-                    .dropDestination(for: WorkspaceTabDrag.self) { sessions, location in
-                        guard let session = sessions.first?.session, currentWorkspace.sessions.contains(session),
-                              let group = currentWorkspace.group(containing: sessionName) else { return false }
-                        if let edge = WorkspaceLayout<String>.dropEdge(x: location.x, y: location.y,
-                            width: geometry.size.width, height: geometry.size.height) {
-                            mutate { $0.split(session, beside: group.id, edge: edge) }
-                        } else { mutate { $0.move(session, to: group.id); returnHiddenShells(&$0) } }
+                    .modifier(WorkspaceStageDropTarget { session, edge in
+                        guard currentWorkspace.sessions.contains(session),
+                              let group = currentWorkspace.group(containing: sessionName) else { return }
+                        if let edge { mutate { $0.split(session, beside: group.id, edge: edge) } }
+                        else { mutate { $0.move(session, to: group.id); returnHiddenShells(&$0) } }
                         onSelectPane(session)
-                        return true
-                    }
+                    })
                 }
             )
 

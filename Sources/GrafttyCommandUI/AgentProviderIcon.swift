@@ -47,7 +47,8 @@ public struct AgentProviderIcon: View {
     public var body: some View {
         Group {
             if let image = Self.providerImage(provider) {
-                image.resizable().renderingMode(.template).scaledToFit()
+                // The bitmaps are far larger than they draw: without this they alias when small.
+                image.resizable().interpolation(.high).renderingMode(.template).scaledToFit()
             } else {
                 Image(systemName: provider == "antigravity" ? "sparkle" : "terminal").resizable().scaledToFit().padding(2)
             }
