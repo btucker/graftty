@@ -1054,9 +1054,14 @@ final class RemoteMacsModel: ObservableObject {
     /// have to stay visible, or there would be nothing to open to wake it.
     /// Deliberately separate from `worktreePanesByRemote`, so they're never relayed.
     func sleepingSnapshot() -> SleepingSnapshot {
+        let liveRelayedHostIDs = Set(healthyWorktreeSnapshots.flatMap { identity, rows -> [RemoteDeviceID] in
+            guard connectionState(for: identity) == .connected else { return [] }
+            return rows.compactMap { $0.origin?.deviceID }
+        })
         var result = SleepingSnapshot()
         for mac in savedRemoteMacs where wakeableHostIDs.contains(mac.id) {
             guard connectionState(for: RemoteMacIdentity(mac)) != .connected,
+                  !liveRelayedHostIDs.contains(mac.id),
                   let snapshot = hostSnapshots[mac.id] else { continue }
             let origin = WorktreeOrigin(deviceID: mac.id, deviceLabel: mac.label, relayDepth: 0)
             result.hostIDs.insert(mac.id)
@@ -1405,9 +1410,13 @@ final class RemoteMacsModel: ObservableObject {
         return savedRemoteMacs.first { $0.id == project.owner?.deviceID }
     }
 
+    private func isLiveRouteHost(_ identity: RemoteMacIdentity) -> Bool {
+        connectionState(for: identity) == .connected && paneFeedFailures[identity] == nil
+    }
+
     private var hostRouteCandidates: [HostRouteResolver<RemoteMacIdentity>.Host] {
-        let live = savedRemoteMacs.filter { connectionState(for: RemoteMacIdentity($0)) == .connected }
-        let offline = savedRemoteMacs.filter { connectionState(for: RemoteMacIdentity($0)) != .connected }
+        let live = savedRemoteMacs.filter { isLiveRouteHost(RemoteMacIdentity($0)) }
+        let offline = savedRemoteMacs.filter { !isLiveRouteHost(RemoteMacIdentity($0)) }
         return (live + offline).map { .init(id: RemoteMacIdentity($0), peer: .init(deviceID: $0.id, fingerprint: $0.fingerprint)) }
     }
 
@@ -1476,7 +1485,7 @@ final class RemoteMacsModel: ObservableObject {
         let originalPins = Set(candidates.filter { $0.peer.deviceID == owner }.map(\.peer))
         let source = candidates.first { $0.id == RemoteMacIdentity(remoteMac) }
         let operations = routeOperations(owner: owner, pins: originalPins)
-        let liveHosts = Set(candidates.map(\.id).filter { connectionState(for: $0) == .connected && paneFeedFailures[$0] == nil })
+        let liveHosts = Set(candidates.map(\.id).filter { isLiveRouteHost($0) })
         let resolved = try await hostRouteResolver.resolveWorktree(worktree, source: source, hosts: candidates, excluding: excluding,
             liveHosts: liveHosts, connect: operations.connect, send: operations.send, fetch: operations.fetch)
         let currentPins = Set(hostRouteCandidates.filter { $0.peer.deviceID == owner }.map(\.peer))

@@ -150,7 +150,7 @@ struct HostRouteResolverTests {
         let listed = row(path: "relay-listed", owner: destination.deviceID, depth: 1)
         let current = listed.with(path: "relay-current")
         var dials: [String] = []
-        let result = try await Resolver().resolveWorktree(listed, source: gateway, hosts: [direct, gateway],
+        let result = try await Resolver(sleep: {}).resolveWorktree(listed, source: gateway, hosts: [direct, gateway],
             liveHosts: directIsLive ? [direct.id, gateway.id] : [gateway.id], connect: { host in
                 dials.append(host.id)
                 if !directIsLive && host == direct { throw URLError(.timedOut) }
@@ -172,7 +172,7 @@ struct HostRouteResolverTests {
         let original = row(path: "/repo/feature", owner: destination.deviceID, depth: 0)
         let listed = row(path: "relay-listed", owner: destination.deviceID, depth: 1)
         var probes = 0
-        let result = try await Resolver().resolveWorktree(listed, source: gateway, hosts: [direct, gateway],
+        let result = try await Resolver(sleep: {}).resolveWorktree(listed, source: gateway, hosts: [direct, gateway],
             liveHosts: [gateway.id], connect: { host in
                 #expect(host == direct)
             }, send: { host, request in
@@ -186,6 +186,55 @@ struct HostRouteResolverTests {
         #expect(probes == 1)
         #expect(result.route.host == direct)
         #expect(result.worktree.path == original.path)
+    }
+
+    @Test("Unpinned live relay prefers a connected destination summary over an earlier stale pairing")
+    func unpinnedLiveRelayPrefersConnectedSummary() async throws {
+        let stale = try peer("lan-mac", key: 1)
+        let active = try peer("lan-mac", key: 2)
+        let gateway = Resolver.Host(id: "gateway", peer: try peer("gateway"))
+        let listed = row(path: "relay-listed", owner: active.deviceID, depth: 1)
+        let result = try await Resolver(sleep: {}).resolveWorktree(listed, source: gateway, hosts: [gateway],
+            liveHosts: [gateway.id], connect: { _ in
+                Issue.record("Live relay fast path should not reconnect")
+            }, send: { _, _ in
+                .remoteMacConnections([summary(stale, state: .needsPairing), summary(active, state: .connected)])
+            }, fetch: { _ in [listed] })
+        #expect(result.route.host == gateway)
+        #expect(result.route.destination == active)
+    }
+
+    @Test("Multi-pairing owner prefers a live direct pairing over an earlier offline direct pairing")
+    func multiPairingOwnerPrefersLiveDirectHost() async throws {
+        let stale = try peer("lan-mac", key: 1)
+        let active = try peer("lan-mac", key: 2)
+        let staleDirect = Resolver.Host(id: "stale-direct", peer: stale)
+        let liveDirect = Resolver.Host(id: "live-direct", peer: active)
+        let gateway = Resolver.Host(id: "gateway", peer: try peer("gateway"))
+        let original = row(path: "/repo/feature", owner: active.deviceID, depth: 0)
+        let listed = row(path: "relay-listed", owner: active.deviceID, depth: 1)
+        let result = try await Resolver(sleep: {}).resolveWorktree(listed, source: gateway, hosts: [staleDirect, liveDirect, gateway],
+            liveHosts: [liveDirect.id, gateway.id], connect: { host in
+                #expect(host == liveDirect)
+            }, send: { _, _ in
+                Issue.record("Live direct pairing should be preferred over the relay")
+                return .remoteMacConnections([])
+            }, fetch: { _ in [original] })
+        #expect(result.route.host == liveDirect)
+        #expect(result.route.destination == active)
+    }
+
+    @Test("Pane identity maps completed agent retainedSessionName across relay and direct routes")
+    func paneSessionMapsCompletedAgentAcrossRoutes() throws {
+        let owner = try peer("lan-mac").deviceID
+        let relayedAgent = AgentSessionInfo(id: "agent-1", name: "Review", provider: "codex", status: "closed",
+            sessionName: nil, completionID: "c1", retainedSessionName: "relay-pane-abc")
+        let directAgent = AgentSessionInfo(id: "agent-1", name: "Review", provider: "codex", status: "closed",
+            sessionName: nil, completionID: "c1", retainedSessionName: "graftty-pane-raw")
+        let relayed = row(path: "relay-wt", owner: owner, depth: 1).with(agents: [relayedAgent])
+        let direct = row(path: "/repo/feature", owner: owner, depth: 0).with(agents: [directAgent])
+        #expect(WorktreeRouteIdentity.paneSession("relay-pane-abc", from: relayed, to: direct) == "graftty-pane-raw")
+        #expect(WorktreeRouteIdentity.paneSession("graftty-pane-raw", from: direct, to: relayed) == "relay-pane-abc")
     }
 
     @Test("A path that fails while fetching resources falls back before dispatch")

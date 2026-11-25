@@ -347,7 +347,7 @@ struct WorktreeListContentTests {
         return window
     }
 
-    @Test("@spec IOS-13.31: When a mobile pinned tile is tapped while its relayed worktree is available, the application shall indicate that the open is pending and navigate to the worktree through the paired intermediary.")
+    @Test("@spec IOS-13.31: When a mobile pinned tile is tapped while its relayed worktree is available, the application shall indicate that the open is pending and navigate to the worktree through the paired intermediary.", .timeLimit(.minutes(1)))
     func opensPinnedTileThroughLiveRelay() async throws {
         let directory = try RemoteConnectionTestSupport.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -360,9 +360,11 @@ struct WorktreeListContentTests {
             origin: .init(deviceID: peer.deviceID, deviceLabel: "Worker", relayDepth: 1))
         let reply = AsyncStream<Void>.makeStream()
         defer { reply.continuation.finish() }
+        var sendCount = 0
         let operations = HostRouteResolver<UUID>.Operations(connect: { _ in
             Issue.record("The live relay should not wait for a new connection")
         }, send: { host, request in
+            sendCount += 1
             #expect(host.id == gateway.id && request == .listRemoteMacConnections)
             for await _ in reply.stream {}
             return .remoteMacConnections([.init(deviceID: peer.deviceID, fingerprint: peer.fingerprint,
@@ -383,10 +385,20 @@ struct WorktreeListContentTests {
         }
         #expect(renderedObjects(in: window)[name]?.accessibilityValue == "Opening")
         #expect(selection == nil)
+        // A duplicate tap while opening must not start a second resolution or clear the indicator.
+        _ = renderedObjects(in: window)[name]?.accessibilityActivate()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(sendCount == 1)
+        #expect(renderedObjects(in: window)[name]?.accessibilityValue == "Opening")
         reply.continuation.finish()
         for _ in 0..<100 where selection == nil { try await Task.sleep(for: .milliseconds(20)) }
         #expect(selection?.0.id == gateway.id)
+        #expect(selection?.1.path == row.path)
         #expect(selection?.1.layout?.leaves.first?.sessionName == "relay-pane-pin")
+        for _ in 0..<100 where renderedObjects(in: window)[name]?.accessibilityValue == "Opening" {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(renderedObjects(in: window)[name]?.accessibilityValue != "Opening")
     }
 
     private func activityWorktree(_ name: String, project: String = "repo", pinned: Bool = false,

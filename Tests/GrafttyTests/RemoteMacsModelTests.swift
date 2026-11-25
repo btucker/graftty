@@ -301,6 +301,37 @@ struct RemoteMacsModelTests {
         #expect(model.promotedWorktreesForRelay().isEmpty)
     }
 
+    @Test func liveRelaySuppressesStaleSleepingSnapshotForSameHost() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let worker = try remoteMac(id: RemoteDeviceID(value: "worker-mac"), label: "Worker", fingerprintByte: 1)
+        let gateway = try remoteMac(id: RemoteDeviceID(value: "gateway-mac"), label: "Gateway", fingerprintByte: 2)
+        try store.add(worker)
+        try store.add(gateway)
+        let cache = HostSnapshotCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let cachedRow = WorktreePanes(path: "/repo/w", displayName: "w", repoDisplayName: "Repo", displayBranch: "w", state: .running,
+                                      isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                                      sidebar: .init(id: "worker:w", projectID: "worker:repo"))
+        try cache.save(hostID: worker.id, projects: [SidebarProject(id: "worker:repo", repositoryID: "/repo", name: "Repo")], rows: [cachedRow])
+        let relayedRow = cachedRow.with(path: "relay-worktree-w",
+                                        origin: .init(deviceID: worker.id, deviceLabel: worker.label, relayDepth: 1))
+        let paneStore = WorktreePanesStore(driver: RemoteMacsModelTestPanesStateDriver())
+        let registry = RemoteMacConnectionRegistry(factory: { remoteMac, identity in
+            guard remoteMac.id == gateway.id else { throw URLError(.cannotConnectToHost) }
+            return RemoteMacConnectionRegistry.Entry(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(), paneEnvironment: .init(worktreePanesStore: paneStore, paneControlClient: nil))
+        })
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry, hostSnapshotCache: cache,
+                                    wakeableHostIDs: { [worker.id] })
+        await model.loadSavedRemotes()
+        #expect(model.sleepingSnapshot().rows.map(\.path) == ["/repo/w"])
+
+        _ = try await model.connect(to: gateway)
+        await paneStore.applySnapshot([relayedRow])
+        registry.onPaneSnapshot(RemoteMacIdentity(gateway), [relayedRow])
+        #expect(model.sleepingSnapshot().rows.isEmpty)
+        #expect(!model.sleepingSnapshot().hostIDs.contains(worker.id))
+    }
+
     @Test func wakeReportsFailure() async throws {
         let (model, remote, _) = try await sleepingModel(wakeAddresses: true)
         await #expect(throws: (any Error).self) { try await model.wake(remote) }

@@ -102,11 +102,6 @@ final class RemoteWorktreeRelayRouter {
                     identity: identity,
                     value: worktree.path
                 )
-                let repositoryAlias = Self.alias(
-                    kind: "repository",
-                    identity: identity,
-                    value: worktree.repositoryID ?? worktree.repoDisplayName
-                )
                 nextWorktrees[worktreeAlias] = RelayedWorktreeTarget(
                     identity: identity,
                     path: worktree.path
@@ -121,6 +116,12 @@ final class RemoteWorktreeRelayRouter {
                         nextPanes: &nextPanes
                     )
                 }
+                guard depth == 0 || includeRelayed else { continue }
+                let repositoryAlias = Self.alias(
+                    kind: "repository",
+                    identity: identity,
+                    value: worktree.repositoryID ?? worktree.repoDisplayName
+                )
                 var sidebar = worktree.sidebar
                 sidebar?.paneIDs = worktree.sidebar?.paneIDs.map { Dictionary($0.map { (Self.paneAlias(identity: identity, worktreePath: worktree.path, sessionName: $0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
                 let agents = worktree.agents?.map { original in
@@ -152,7 +153,7 @@ final class RemoteWorktreeRelayRouter {
                     sidebar: sidebar,
                     agents: agents
                 )
-                if depth == 0 || includeRelayed { promoted.append(row) }
+                promoted.append(row)
             }
         }
 

@@ -85,10 +85,12 @@ public final class HostRouteResolver<HostID: Hashable & Sendable> {
                                 liveHosts: Set<HostID> = [],
                                 connect: @escaping Connect, send: @escaping Send, fetch: @escaping Fetch) async throws -> WorktreeRoute {
         guard let owner = worktree.origin?.deviceID ?? source?.peer.deviceID else { throw Failure.worktreeUnavailable }
+        let alternatives = hosts.filter { !excluding.contains($0.id) }
         let expected = (source?.peer.deviceID == owner ? source : nil)?.peer.fingerprint
+            ?? alternatives.first { $0.peer.deviceID == owner && liveHosts.contains($0.id) }?.peer.fingerprint
+            ?? alternatives.first { $0.peer.deviceID == owner }?.peer.fingerprint
             ?? hosts.first { $0.peer.deviceID == owner }?.peer.fingerprint
         let target = Target(deviceID: owner, fingerprint: expected)
-        let alternatives = hosts.filter { !excluding.contains($0.id) }
 
         // A live relay is already delivering this worktree. Check it before
         // dialing an offline direct path, which can take several timeouts.
@@ -247,9 +249,13 @@ public final class HostRouteResolver<HostID: Hashable & Sendable> {
     }
 
     private func destinationSummary(_ target: Target, on host: Host, send: Send) async throws -> RemoteMacConnectionSummary? {
-        try await summaries(on: host, send: send).first {
+        let matching = try await summaries(on: host, send: send).filter {
             $0.deviceID == target.deviceID && (target.fingerprint == nil || $0.fingerprint == target.fingerprint)
         }
+        return matching.first { $0.state == .connected }
+            ?? matching.first { $0.state == .connecting }
+            ?? matching.first { $0.state != .needsPairing }
+            ?? matching.first
     }
 
     private func summaries(on host: Host, send: Send) async throws -> [RemoteMacConnectionSummary] {
@@ -265,6 +271,10 @@ public enum WorktreeRouteIdentity {
     public static func paneSession(_ session: String, from source: WorktreePanes, to destination: WorktreePanes) -> String? {
         if let stableID = source.sidebar?.paneIDs?[session] {
             return destination.sidebar?.paneIDs?.first { $0.value == stableID }?.key
+        }
+        if let agentID = source.agents?.first(where: { $0.presentationSessionName == session })?.id,
+           let mapped = destination.agents?.first(where: { $0.id == agentID })?.presentationSessionName {
+            return mapped
         }
         return source.path == destination.path && destination.layout?.leaves.contains(where: { $0.sessionName == session }) == true ? session : nil
     }
