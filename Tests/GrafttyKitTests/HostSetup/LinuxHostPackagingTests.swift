@@ -41,7 +41,7 @@ struct LinuxHostPackagingTests {
         return path
     }
 
-    @Test("@spec DIST-4.1: When a Linux host archive is built, the release scripts shall include the host, CLI, pinned zmx, resources, shared runtime libraries, and a root installer for its architecture.",
+    @Test("@spec DIST-4.1: When a Linux runner archive is built, the release scripts shall include the runner, a graftty-host compatibility launcher, the CLI, pinned zmx, resources, shared runtime libraries, and a root installer for its architecture.",
           .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_LINUX_ARCHIVE"] != nil, "Requires a built Linux archive"))
     func archiveContainsPortableRuntime() throws {
         let archive = try #require(ProcessInfo.processInfo.environment["GRAFTTY_LINUX_ARCHIVE"])
@@ -56,9 +56,26 @@ struct LinuxHostPackagingTests {
         #expect(process.terminationStatus == 0)
         let entries = String(decoding: bytes, as: UTF8.self).split(separator: "\n").map(String.init)
         #expect(entries.contains("./install.sh"))
-        for suffix in ["/install.sh", "/bin/graftty", "/bin/graftty-host", "/bin/zmx", "/libexec/graftty-host", "/libexec/graftty-cli", "/libexec/graftty", "/lib/libswiftCore.so", "/share/terminfo/78/xterm-ghostty"] {
+        for suffix in ["/install.sh", "/bin/graftty", "/bin/graftty-runner", "/bin/graftty-host", "/bin/zmx", "/libexec/graftty-runner", "/libexec/graftty-cli", "/libexec/graftty", "/lib/libswiftCore.so", "/share/terminfo/78/xterm-ghostty"] {
             #expect(entries.contains { $0.hasSuffix(suffix) }, "Archive missing \(suffix)")
         }
+    }
+
+    @Test("@spec DIST-4.15: When a Linux archive is installed over a graftty-host.service unit from before the runner rename, the installer shall move its options, drop-ins and autostart setting to graftty-runner.service and remove the legacy unit so only one service runs; if installation fails, the installer shall restore the legacy unit with its autostart and running state.")
+    func legacyHostUnitIsMigrated() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path] + [
+            "test_maintenance_migrates_legacy_unit", "test_maintenance_migration_keeps_disabled_autostart",
+            "test_no_start_migration_keeps_autostart", "test_no_start_migration_reports_a_running_legacy_service",
+            "test_failed_migration_restores_legacy_unit", "test_maintenance_refuses_inactive_legacy_unit",
+            "test_reinstall_over_legacy_unit_migrates_it", "test_migration_moves_legacy_dropins",
+            "test_failed_migration_restores_legacy_dropins", "test_install_removes_a_legacy_unit_beside_the_runner",
+            "test_failed_install_restores_both_units", "test_failed_install_restores_disabled_runner_autostart",
+        ].map { "InstallerTests." + $0 }
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
     }
 
     @Test("@spec DIST-4.2: When a Linux archive is installed, the installer shall use the invoking user's directories and systemd service with explicit ports and KillMode=process so zmx sessions survive host restarts.")

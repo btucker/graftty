@@ -2,12 +2,12 @@ import Foundation
 import Testing
 import GrafttyKit
 import GrafttyProtocol
-@testable import GrafttyHost
+@testable import GrafttyRunner
 
 struct ProviderEnrollmentTests {
     @Test func hostCommandIsRegisteredAndRequiresStdin() throws {
-        _ = try GrafttyHostCommand.parseAsRoot(["enroll-parent", "--stdin", "--state-directory", "/tmp/host-state"])
-        #expect(throws: (any Error).self) { _ = try GrafttyHostCommand.parseAsRoot(["enroll-parent"]) }
+        _ = try GrafttyRunnerCommand.parseAsRoot(["enroll-parent", "--stdin", "--state-directory", "/tmp/host-state"])
+        #expect(throws: (any Error).self) { _ = try GrafttyRunnerCommand.parseAsRoot(["enroll-parent"]) }
     }
 
     @Test func existingHostIdentityAndParentTrustSurviveRetriesWithoutExportingPrivateKey() async throws {

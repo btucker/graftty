@@ -8,7 +8,7 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
-@testable import GrafttyHost
+@testable import GrafttyRunner
 
 @Suite(.serialized) @MainActor
 struct HostServiceTests {

@@ -30,7 +30,7 @@ class WSLInstallTests(unittest.TestCase):
     def bundle(self, extra=None):
         with tarfile.open(self.archive, 'w:gz') as output:
             entries = {'VERSION': b'1.2.3\n', 'install.sh': b'#!/bin/bash\nexit 0\n',
-                       'bin/graftty-host': b'host', 'bin/graftty': b'cli', 'bin/zmx': b'zmx',
+                       'bin/graftty-runner': b'runner', 'bin/graftty': b'cli', 'bin/zmx': b'zmx',
                        'share/ZMX_UPSTREAM_COMMIT': b'a' * 40}
             for name, data in entries.items():
                 entry = tarfile.TarInfo(name)
@@ -82,7 +82,7 @@ class WSLInstallTests(unittest.TestCase):
             link = tarfile.TarInfo('redirect')
             link.type, link.linkname = tarfile.SYMTYPE, 'bin'
             output.addfile(link)
-            child = tarfile.TarInfo('redirect/graftty-host')
+            child = tarfile.TarInfo('redirect/graftty-runner')
             child.size = 4
             output.addfile(child, io.BytesIO(b'evil'))
             for member, data in entries:

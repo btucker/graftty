@@ -27,7 +27,7 @@ _SPEC.loader.exec_module(lint)
 # pending-files constant (GrafttyKitTests since #477), a `sources:` allowlist
 # (GrafttyKitTests before #477, #526), and a Linux-only target with a fixed
 # `sources:` list under a `path:` override (GrafttyDirectSSHTests). Test
-# targets with default membership (GrafttyHostTests) still build on Linux;
+# targets with default membership (GrafttyRunnerTests) still build on Linux;
 # `appleTargets` are filtered out of the Linux build.
 FIXTURE_PACKAGE = """
 let linuxPendingKitTests = [
@@ -43,8 +43,8 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .testTarget(
-            name: "GrafttyHostTests",
-            dependencies: ["GrafttyHost"],
+            name: "GrafttyRunnerTests",
+            dependencies: ["GrafttyRunner"],
             swiftSettings: strictWarnings
         ),
         .testTarget(
@@ -244,7 +244,7 @@ class CheckTreeTests(unittest.TestCase):
         write(self.root, "Tests/GrafttyTests/Remote/SSH/DirectSSHLoopbackTests.swift")
         write(self.root, "Tests/GrafttyTests/Remote/SSH/MacOnlySSHTests.swift")
         # A target without Linux membership has no allowlist to check.
-        write(self.root, "Tests/GrafttyHostTests/AnythingTests.swift")
+        write(self.root, "Tests/GrafttyRunnerTests/AnythingTests.swift")
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -315,7 +315,7 @@ class CheckTreeTests(unittest.TestCase):
 
     def test_main_actor_xctest_in_every_linux_test_target_fails(self) -> None:
         body = "import XCTest\n@MainActor final class FooTests: XCTestCase { func testFoo() {} }\n"
-        for rel in ("Tests/GrafttyHostTests/AnythingTests.swift",
+        for rel in ("Tests/GrafttyRunnerTests/AnythingTests.swift",
                     "Tests/GrafttyTests/Remote/SSH/DirectSSHLoopbackTests.swift"):
             with self.subTest(rel=rel):
                 original = (self.root / rel).read_text()
@@ -331,8 +331,8 @@ class CheckTreeTests(unittest.TestCase):
         self.assert_one_problem("Remote/SSH/Portable/FooTests.swift", "@MainActor XCTestCase")
 
     def test_main_actor_xctest_in_always_excluded_directory_passes(self) -> None:
-        self.edit_package('dependencies: ["GrafttyHost"],', 'dependencies: ["GrafttyHost"],\n            exclude: ["Fixtures"],')
-        write(self.root, "Tests/GrafttyHostTests/Fixtures/Sample.swift",
+        self.edit_package('dependencies: ["GrafttyRunner"],', 'dependencies: ["GrafttyRunner"],\n            exclude: ["Fixtures"],')
+        write(self.root, "Tests/GrafttyRunnerTests/Fixtures/Sample.swift",
               "import XCTest\n@MainActor final class Sample: XCTestCase { func testFoo() {} }\n")
         self.assertEqual(self.problems(), [])
 

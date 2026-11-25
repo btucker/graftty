@@ -8,6 +8,6 @@ export TERMINFO_DIRS="$bundle/share/terminfo${TERMINFO_DIRS:+:$TERMINFO_DIRS}"
 export GHOSTTY_RESOURCES_DIR="${GHOSTTY_RESOURCES_DIR:-$bundle/share/ghostty}"
 case "$(basename "$executable")" in
     graftty) exec "$bundle/libexec/graftty-cli" "$@" ;;
-    graftty-host) exec "$bundle/libexec/graftty-host" "$@" ;;
+    graftty-runner|graftty-host) exec "$bundle/libexec/graftty-runner" "$@" ;;
     *) echo 'Unknown Graftty launcher' >&2; exit 1 ;;
 esac

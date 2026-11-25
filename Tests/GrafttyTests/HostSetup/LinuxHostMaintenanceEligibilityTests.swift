@@ -7,7 +7,7 @@ import GrafttyRemoteClient
 
 @MainActor
 struct LinuxHostMaintenanceEligibilityTests {
-    @Test("@spec REMOTE-22.26: While a trusted Linux host is connected, the application shall offer Update Host; direct SSH transport alone shall not identify a host as Linux.")
+    @Test("@spec REMOTE-22.26: While a trusted Linux runner is connected, the application shall offer Update Runner; direct SSH transport alone shall not identify a host as a Linux runner.")
     func connectedTrustedLinuxOnly() throws {
         let key = try RemoteIdentityPublicKey(rawRepresentation: Data(repeating: 2, count: 32))
         let remote = RemoteMac(id: .init(value: "host"), label: "Host", fingerprint: .init(of: key), transport: .directSSH, directEndpoint: try .init(host: "host"))

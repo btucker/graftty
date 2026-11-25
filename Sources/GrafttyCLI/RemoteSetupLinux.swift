@@ -10,7 +10,7 @@ import Glibc
 struct RemoteSetupLinux: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "setup-linux",
-        abstract: "Install and pair a Linux host from this Mac",
+        abstract: "Install and pair a remote runner on Linux from this Mac",
         discussion: """
         Requires Graftty running on this Mac and an SSH destination already trusted
         and accessible with keys or ssh-agent. Installs missing Claude Code and
@@ -21,7 +21,8 @@ struct RemoteSetupLinux: AsyncParsableCommand {
         Examples:
           graftty remote setup-linux user@host --version 1.2.3 --project ~/projects/app
           graftty remote setup-linux host-alias --archive ./graftty-linux.tar.gz
-        """)
+        """,
+        aliases: ["add-runner"])
     @Argument(help: "SSH alias or user@host") var destination: String
     @Option(help: "Published Linux archive version") var version: String?
     @Option(help: "Local Linux development archive") var archive: String?
@@ -85,7 +86,7 @@ struct RemoteSetupLinux: AsyncParsableCommand {
         } catch is CancellationError { throw ExitCode(130) }
         catch let error as LinuxHostSetupError { throw ValidationError(error.localizedDescription) }
         #else
-        throw ValidationError("Run setup-linux on the Mac that will connect to the Linux host, with Graftty running.")
+        throw ValidationError("Run setup-linux on the Mac that will connect to the runner, with Graftty running.")
         #endif
     }
 

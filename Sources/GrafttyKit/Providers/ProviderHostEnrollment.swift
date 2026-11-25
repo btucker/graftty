@@ -30,7 +30,7 @@ public enum ProviderHostEnrollment {
         // Setup creates the identity as the development user. Do not regenerate
         // a missing or corrupt private key during an enrollment retry.
         guard try HostIdentityStore(directory: configuration.identityDirectory).load() != nil else {
-            throw ProviderError("Run graftty-host setup as the development user before provider enrollment.")
+            throw ProviderError("Run graftty-runner setup as the development user before provider enrollment.")
         }
         let identity = try HostSetup.identity(configuration: configuration)
         try identity.validate()

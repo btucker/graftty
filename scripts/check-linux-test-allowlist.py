@@ -4,7 +4,7 @@
 # ///
 """Fail when a test file silently skips Linux because Package.swift drifted.
 
-`graftty-host` ships only on Linux, so a portable test that never compiles
+`graftty-runner` ships only on Linux, so a portable test that never compiles
 there leaves CI green while the host goes untested (#529, #477). Package.swift
 expresses Linux test membership in three ways; each gets its own check:
 

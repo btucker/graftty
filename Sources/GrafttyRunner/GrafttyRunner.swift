@@ -3,8 +3,8 @@ import Foundation
 import GrafttyKit
 
 @main
-struct GrafttyHostCommand: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "graftty-host",
+struct GrafttyRunnerCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "graftty-runner",
         abstract: "Persistent Graftty terminal and worktree host.",
         subcommands: [Serve.self, TrustClient.self, EnrollParent.self, Status.self, Project.self, Setup.self, Pair.self])
 }

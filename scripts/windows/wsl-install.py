@@ -174,14 +174,14 @@ def install_archive(archive, expected_sha256):
                     raise ValueError('Linux archive exceeds the entry or expanded-size limit')
             validate_members(members)
             bundle.extractall(unpacked, members=members, filter='data')
-        for name in ('VERSION', 'install.sh', 'bin/graftty-host', 'bin/graftty', 'bin/zmx', 'share/ZMX_UPSTREAM_COMMIT'):
+        for name in ('VERSION', 'install.sh', 'bin/graftty-runner', 'bin/graftty', 'bin/zmx', 'share/ZMX_UPSTREAM_COMMIT'):
             path = unpacked / name
             if not path.is_file() or path.is_symlink():
                 raise ValueError(f'Linux archive is missing a regular file: {name}')
         version = (unpacked / 'VERSION').read_text().strip()
         if not re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9._+-]*', version):
             raise ValueError('Linux archive has an invalid version')
-        for binary in ('graftty-host', 'graftty', 'zmx'):
+        for binary in ('graftty-runner', 'graftty', 'zmx'):
             run([str(unpacked / 'bin' / binary), '--help' if binary != 'zmx' else 'version'], timeout=15)
         # Reuse the transactional Linux installer and its readiness check.
         # Loopback is intentional until endpoint-authenticated outbound access

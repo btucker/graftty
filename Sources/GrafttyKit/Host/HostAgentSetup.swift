@@ -68,7 +68,7 @@ public actor HostAgentSetup {
             let failures = report.results.filter { !$0.succeeded }.map {
                 "\($0.step.provider.displayName): \($0.errorDescription ?? "plugin install failed")"
             }.joined(separator: "; ")
-            throw HostRuntimeError.invalid("Install and authenticate the requested provider CLI, then run graftty-host setup --install-agent-plugins. \(failures)")
+            throw HostRuntimeError.invalid("Install and authenticate the requested provider CLI, then run graftty-runner setup --install-agent-plugins. \(failures)")
         }
         if provider == nil {
             do { _ = try await installer.autoInstallAntigravity(executor: resolvedExecutor) }
