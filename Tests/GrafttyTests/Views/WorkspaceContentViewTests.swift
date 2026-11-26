@@ -160,7 +160,7 @@ struct WorkspaceContentViewTests {
         #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: true) == WorkspaceGalleryColumn.contextWidth)
     }
 
-    @Test("@spec LAYOUT-2.257: While the stage shows one pane, the application shall show no pane header, and shall float that pane's Chat / Terminal switch at the pane's top trailing corner, after any input request, so the terminal keeps the row.")
+    @Test("@spec LAYOUT-2.257: While the stage shows one pane on Mac, the application shall show no pane header, and shall float that pane's Chat / Terminal switch at the pane's top trailing corner, after any input request, so the terminal keeps the row.")
     func aLoneStagePaneHasNoHeader() {
         #expect(!StagePaneChrome.showsHeader(paneCount: 1))
         #expect(StagePaneChrome.showsHeader(paneCount: 2))
@@ -181,7 +181,7 @@ struct WorkspaceContentViewTests {
         #expect(WorktreeColumnWash.stretch(bandHeight: 0) == 0)
     }
 
-    @Test("@spec LAYOUT-2.263: While an agent is shown as a gallery tile or as a row under Finished, the application shall show its provider's logo before its name.")
+    @Test("@spec LAYOUT-2.263: While an agent is shown as a gallery tile or as a row under Finished, the application shall show its provider's logo, over the corner of a tile's miniature and before the name of a Finished row.")
     func aTileCarriesItsAgentsProvider() {
         var (entry, first, _) = twoAgentEntry()
         let binding = Binding(get: { entry }, set: { entry = $0 })
@@ -208,7 +208,7 @@ struct WorkspaceContentViewTests {
         #expect(tile.handle() === handle)
     }
 
-    @Test("@spec LAYOUT-2.260: When the user drags the leading edge of the right-hand column on Mac, the application shall resize the column between 180 and 600 points, size gallery tiles in proportion to its width, and keep the width for later sessions, separately for the gallery alone and for the column with Context.")
+    @Test("@spec LAYOUT-2.260: When the user drags the leading edge of the right-hand column on Mac, the application shall resize the column between 180 and 600 points, size gallery tiles in proportion to its width, and keep the width for later sessions, separately for the gallery alone or above minimized Context and for the column with Context open.")
     func theRightColumnResizesAndScalesItsTiles() {
         #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: false, galleryWidth: 300, contextWidth: 400) == 300)
         #expect(WorkspaceGalleryColumn.width(showsGallery: true, showsContext: true, galleryWidth: 300, contextWidth: 400) == 400)
@@ -221,6 +221,11 @@ struct WorkspaceContentViewTests {
         #expect(WorkspaceGalleryColumn.tileHeight(columnWidth: 220, showsContext: false) == 128)
         #expect(WorkspaceGalleryColumn.tileHeight(columnWidth: 440, showsContext: false) == 256)
         #expect(WorkspaceGalleryColumn.tileHeight(columnWidth: 360, showsContext: true) == 128)
+        // Minimized under the gallery, Context is a bar and the column is the gallery's.
+        #expect(WorkspaceGalleryColumn.showsContext(hasPanel: true, showsGallery: true, contextMinimized: false))
+        #expect(!WorkspaceGalleryColumn.showsContext(hasPanel: true, showsGallery: true, contextMinimized: true))
+        #expect(WorkspaceGalleryColumn.showsContext(hasPanel: true, showsGallery: false, contextMinimized: true))
+        #expect(!WorkspaceGalleryColumn.showsContext(hasPanel: false, showsGallery: true, contextMinimized: false))
     }
 
     @Test("@spec LAYOUT-2.261: While the user drags an agent tile over a stage pane on Mac or iPad, the application shall highlight the half of the pane the agent would take, left or right over the pane's side thirds and upper or lower over the top or bottom of its middle, and the whole pane over its center, where the drop replaces what the pane shows.")

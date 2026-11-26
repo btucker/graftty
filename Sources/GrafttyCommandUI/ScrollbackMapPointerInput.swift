@@ -136,8 +136,11 @@ final class ScrollbackMapPointerView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
-        if bounds.contains(location) { setHover(location.y) }
+        // Only a wheel that arrives before any pointer motion sets the hover: a later one would drop the wheel's focus.
+        if hoverY == nil, bounds.contains(location) { setHover(location.y) }
         // The wheel steps the focused message; the terminal stays put (CONTEXT-57.18).
+        // A flick's coasting is swallowed, or it would run the focus to the end.
+        guard event.momentumPhase.isEmpty else { return }
         onWheel?(event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
     }
 
@@ -187,6 +190,7 @@ struct ScrollbackPreviewButtonInput: NSViewRepresentable {
             if bounds.contains(convert(event.locationInWindow, from: nil)) { select?() }
         }
         override func scrollWheel(with event: NSEvent) {
+            guard event.momentumPhase.isEmpty else { return }
             wheel?(event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
         }
     }

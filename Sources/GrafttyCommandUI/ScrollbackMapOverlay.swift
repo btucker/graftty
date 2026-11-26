@@ -682,6 +682,11 @@ public struct ScrollbackMapOverlay: View {
     }
 
     func click(at cardY: CGFloat, layout: ScrollbackMapLayout) {
+        // The wheel moved the focus off the pointer's own message: go where the focus is (CONTEXT-57.18).
+        if let mark = wheelFocus.flatMap({ id in map.marks.first { $0.eventID == id } }) {
+            if let jump { jump(mark.eventID) } else { scroll(mark.row) }
+            return
+        }
         let y = ScrollbackMapLayout.stripY(forCardY: cardY, height: layout.height)
         let target = layout.tapTarget(in: map, atY: y) { entries[$0]?.isIncomingPeer == true }
         if let jump {

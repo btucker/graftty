@@ -388,6 +388,13 @@ struct WorktreeBlockAgentLogoTests {
                          Int((primary.blue * 255).rounded()))
         #expect(hex == WorktreeDrawingRenderer.palette(hue: 250)["primary"])
         #expect(WorktreeAgentLogoTint.color(hue: 250) == Color(.sRGB, red: primary.red, green: primary.green, blue: primary.blue))
+        var worktree = WorktreeEntry(path: "/repo/feature", branch: "feature")
+        worktree.drawingHue = 250
+        #expect(WorktreeAgentLogoTint.hue(for: worktree) == nil, "A hue with no drawing is not on screen")
+        worktree.drawing = WorktreeDrawing(svg: "<svg viewBox='0 0 96 64'/>", hue: 250)
+        #expect(WorktreeAgentLogoTint.hue(for: worktree) == 250)
+        worktree.emojiChosenByUser = true
+        #expect(WorktreeAgentLogoTint.hue(for: worktree) == nil, "The user's emoji replaces the drawing")
     }
 
     @Test("@spec LAYOUT-2.256: When the user clicks an agent's logo beneath a Mac worktree row's icon, the application shall deliver the click to that logo, so the agent goes on stage, rather than to the row, which only selects the worktree.")

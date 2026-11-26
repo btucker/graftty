@@ -33,6 +33,11 @@ struct SidebarWorktreeStatusTarget: View {
 
 /// The primary colour of a worktree's drawing, which fills its agents' logos (LAYOUT-2.264).
 enum WorktreeAgentLogoTint {
+    /// A worktree showing an emoji the user chose, or no drawing, has no drawing colour on screen.
+    static func hue(for worktree: WorktreeEntry) -> Double? {
+        worktree.emojiChosenByUser || worktree.drawing == nil ? nil : worktree.drawingHue
+    }
+
     static func color(hue: Double?) -> Color? {
         hue.map(WorktreeDrawingRenderer.primary(hue:)).map { Color(.sRGB, red: $0.red, green: $0.green, blue: $0.blue) }
     }
@@ -70,7 +75,7 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
                 .rightClickMenu(anchored: menu)
         } belowIdentity: {
             // Each logo owns its click; the block's selection target would only select the worktree (LAYOUT-2.256).
-            AgentLogoStack(logos: logos, background: theme.background, tint: WorktreeAgentLogoTint.color(hue: worktree.drawingHue),
+            AgentLogoStack(logos: logos, background: theme.background, tint: WorktreeAgentLogoTint.color(hue: WorktreeAgentLogoTint.hue(for: worktree)),
                            onSelect: onSelectAgent)
                 .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.agentLogos: $0] }
         } content: {

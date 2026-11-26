@@ -470,19 +470,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.256** When the user clicks an agent's logo beneath a Mac worktree row's icon, the application shall deliver the click to that logo, so the agent goes on stage, rather than to the row, which only selects the worktree.
 
-**LAYOUT-2.257** While the stage shows one pane, the application shall show no pane header, and shall float that pane's Chat / Terminal switch at the pane's top trailing corner, after any input request, so the terminal keeps the row.
+**LAYOUT-2.257** While the stage shows one pane on Mac, the application shall show no pane header, and shall float that pane's Chat / Terminal switch at the pane's top trailing corner, after any input request, so the terminal keeps the row.
 
 **LAYOUT-2.258** When a gallery tile is shown before its agent's terminal surface exists, such as while the application restores terminals at launch, the application shall show the terminal's miniature and scroll rail once the surface exists.
 
 **LAYOUT-2.259** While a terminal has reported no scrollbar, as a reattached terminal whose screen has not scrolled since launch has not, the application shall still draw its gallery miniature from the rows on its screen.
 
-**LAYOUT-2.260** When the user drags the leading edge of the right-hand column on Mac, the application shall resize the column between 180 and 600 points, size gallery tiles in proportion to its width, and keep the width for later sessions, separately for the gallery alone and for the column with Context.
+**LAYOUT-2.260** When the user drags the leading edge of the right-hand column on Mac, the application shall resize the column between 180 and 600 points, size gallery tiles in proportion to its width, and keep the width for later sessions, separately for the gallery alone or above minimized Context and for the column with Context open.
 
 **LAYOUT-2.261** While the user drags an agent tile over a stage pane on Mac or iPad, the application shall highlight the half of the pane the agent would take, left or right over the pane's side thirds and upper or lower over the top or bottom of its middle, and the whole pane over its center, where the drop replaces what the pane shows.
 
 **LAYOUT-2.262** While a worktree's gallery holds agents that have finished, the application shall list them in their tile order after the tile for adding an agent, under a Finished heading that gives their count and stays collapsed until the user opens it, and shall show each as its name and result with no terminal miniature.
 
-**LAYOUT-2.263** While an agent is shown as a gallery tile or as a row under Finished, the application shall show its provider's logo before its name.
+**LAYOUT-2.263** While an agent is shown as a gallery tile or as a row under Finished, the application shall show its provider's logo, over the corner of a tile's miniature and before the name of a Finished row.
 
 **LAYOUT-2.264** While a worktree in the Mac sidebar has a drawing colour, the application shall fill the agent logos beneath its icon with that drawing's primary colour and draw the logos in white, and shall keep the neutral fill for a worktree with no drawing colour.
 
@@ -5858,7 +5858,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-57.6** While several agent panes are open in a worktree, the application shall offer a scrollback map in each live agent pane, independent of which agent submitted the latest report.
 
-**CONTEXT-57.7** When the user clicks or taps a scrollback message box, the application shall scroll to the first message associated with the box, including when its excerpt is hidden.
+**CONTEXT-57.7** When the user clicks or taps a scrollback message box, the application shall scroll to the message focused inside the box, else the first message associated with the box, including when its excerpt is hidden.
 
 **CONTEXT-57.8** When a paired Codex pane shows a submitted user prompt missing from the host timeline, the application shall mark its loaded terminal row and show its text, excluding the editable composer and generated notices.
 

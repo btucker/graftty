@@ -140,6 +140,7 @@ struct ScrollbackMapPreviews: View {
                     .accessibilityHidden(!slot.visible)
                     .anchorPreference(key: PreviewBounds.self, value: .bounds) { slot.visible ? [group.id: $0] : [:] }
                     .transformPreference(FocusedRowBounds.self) { if !slot.visible { $0 = nil } }
+                    .transformPreference(PreviewRowBounds.self) { if !slot.visible { $0 = [:] } }
                     // Padding, unlike an offset, moves the anchors that place connectors and the Mac hover area.
                     .padding(.top, slot.top)
                 }
@@ -162,7 +163,7 @@ struct ScrollbackMapPreviews: View {
         }
     }
 
-    /// Activating a card goes to the message under the pointer, else its first (CONTEXT-57.7).
+    /// Activating a card goes to the message focused inside it, else its first (CONTEXT-57.7).
     private func target(in group: ScrollbackMapPreviewGroup) -> String {
         group.messages.first { $0.id == hoveredID }?.id ?? group.id
     }

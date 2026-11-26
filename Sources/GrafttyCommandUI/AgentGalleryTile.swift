@@ -102,7 +102,7 @@ public struct AgentGalleryTile<Thumbnail: View, Rail: View>: View {
     }
 }
 
-/// Which chrome a stage pane carries, on Mac and GrafttyMobile.
+/// Which chrome a Mac stage pane carries.
 public enum StagePaneChrome {
     /// A split stage names each pane in a slim header. A lone pane has none:
     /// its controls float over its top trailing corner (LAYOUT-2.257).

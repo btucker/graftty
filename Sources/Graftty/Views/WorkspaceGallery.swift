@@ -24,6 +24,11 @@ enum WorkspaceGalleryColumn {
         return showsGallery ? galleryWidth : nil
     }
 
+    /// Context takes its width only while open: minimized under the gallery, it is a bar.
+    static func showsContext(hasPanel: Bool, showsGallery: Bool, contextMinimized: Bool) -> Bool {
+        hasPanel && !(contextMinimized && showsGallery)
+    }
+
     /// `translation` is the drag of the column's leading edge: leftward widens.
     static func resized(_ width: CGFloat, by translation: CGFloat) -> CGFloat {
         min(max(width - translation, widthRange.lowerBound), widthRange.upperBound)
@@ -58,6 +63,14 @@ struct WorkspaceRightColumn<Gallery: View>: View {
     @AppStorage(WorkspaceGalleryColumn.contextWidthKey) private var contextWidth = Double(WorkspaceGalleryColumn.contextWidth)
     @AppStorage(WorkspaceGalleryColumn.contextMinimizedKey) private var contextMinimized = false
     @State private var resizeStart: CGFloat?
+    @State private var pushedResizeCursor = false
+
+    /// Balanced, so a column removed under the pointer leaves no cursor behind.
+    private func setResizeCursor(_ shown: Bool) {
+        guard shown != pushedResizeCursor else { return }
+        pushedResizeCursor = shown
+        if shown { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+    }
 
     /// Minimized Context: a bar at the foot of the column that opens it again.
     private var contextBar: some View {
@@ -76,7 +89,9 @@ struct WorkspaceRightColumn<Gallery: View>: View {
     }
 
     var body: some View {
-        let showsContext = contextPanel != nil
+        // Minimized Context is a bar: the column is then the gallery's own width (LAYOUT-2.260).
+        let showsContext = WorkspaceGalleryColumn.showsContext(hasPanel: contextPanel != nil, showsGallery: showsGallery,
+                                                               contextMinimized: contextMinimized)
         if let stored = WorkspaceGalleryColumn.width(showsGallery: showsGallery, showsContext: showsContext,
                                                      galleryWidth: galleryWidth, contextWidth: contextWidth) {
             let width = WorkspaceGalleryColumn.resized(stored, by: 0)
@@ -97,9 +112,8 @@ struct WorkspaceRightColumn<Gallery: View>: View {
             .background(alignment: .top) { WorktreeColumnWash() }
             .overlay(alignment: .leading) {
                 Color.clear.frame(width: 7).contentShape(Rectangle())
-                    .onHover { inside in
-                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-                    }
+                    .onHover { setResizeCursor($0) }
+                    .onDisappear { setResizeCursor(false) }
                     .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                         .onChanged { value in
                             let start = resizeStart ?? width
@@ -149,7 +163,7 @@ struct WorkspaceGalleryTileModel: Identifiable {
     /// later, as at launch, changes nothing the gallery observes (LAYOUT-2.258).
     let handle: @MainActor () -> SurfaceHandle?
     let title: String
-    /// Whose logo the tile shows before its name (LAYOUT-2.263).
+    /// Whose logo the tile shows (LAYOUT-2.263).
     let provider: String?
     let status: AgentTileStatus
     let isOnStage: Bool

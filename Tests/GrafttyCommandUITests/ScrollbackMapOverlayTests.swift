@@ -208,6 +208,9 @@ struct ScrollbackMapScrubTests {
 
         pointer.scrollWheel(with: MapWheelEvent(point: point))
         #expect(terminal.wheels == 0, "The wheel over the map steps messages; the terminal stays put (CONTEXT-57.18)")
+        let steppedFrom = try #require(map.marks.firstIndex { $0.row == 40 })
+        pointer.onClick?(ScrollbackMapLayout.stripInset.top + markY)
+        #expect(scrollback.scrolled.last == map.marks[steppedFrom + 1].row, "A click after the wheel goes to the message the wheel focused")
 
         let moved = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
@@ -256,7 +259,7 @@ struct ScrollbackMapScrubTests {
         #expect(terminal.clicks == 0)
     }
 
-    @Test("@spec CONTEXT-57.7: When the user clicks or taps a scrollback message box, the application shall scroll to the first message associated with the box, including when its excerpt is hidden.")
+    @Test("@spec CONTEXT-57.7: When the user clicks or taps a scrollback message box, the application shall scroll to the message focused inside the box, else the first message associated with the box, including when its excerpt is hidden.")
     func clickingGroupedBoxJumpsToItsEarliestMessage() async throws {
         _ = NSApplication.shared
         let terminal = MapTerminalFixture()
@@ -398,6 +401,7 @@ private final class MapWheelEvent: NSEvent {
     override var type: NSEvent.EventType { .scrollWheel }
     override var scrollingDeltaY: CGFloat { -1 }
     override var hasPreciseScrollingDeltas: Bool { false }
+    override var momentumPhase: NSEvent.Phase { [] }
 }
 
 private final class MapTerminalFixture: NSView {
