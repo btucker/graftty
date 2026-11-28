@@ -206,6 +206,17 @@ extension SocketRequestRouter {
                 Task { _ = try? await remoteMacsModel.connect(to: saved) }
                 return .ok
             } catch { return .error(LinuxHostSetupError.message(for: error)) }
+        case let .addInvitedRunner(identity, endpoint):
+            do {
+                await remoteMacsModel.loadSavedRemotes()
+                try Task.checkCancellation()
+                let saved = try RunnerInviteRedemption(
+                    pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
+                ).save(identity: identity, endpoint: endpoint, model: remoteMacsModel)
+                // Connection progress is reflected by the model after acknowledging the save.
+                Task { _ = try? await remoteMacsModel.connect(to: saved) }
+                return .ok
+            } catch { return .error(LinuxHostSetupError.message(for: error)) }
         case let .previewFiles(path, targets, paneSessionName):
             return await FilePreviewRequest.handle(path: path, targets: targets, paneSessionName: paneSessionName,
                                                    state: { appState.wrappedValue }, terminalManager: terminalManager)

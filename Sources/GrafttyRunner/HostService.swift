@@ -7,6 +7,7 @@ import Foundation
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyTailcat
 #if canImport(Darwin)
 import Darwin
 #else
@@ -32,6 +33,13 @@ final class HostService {
     private var interruptionTask: Task<Void, Never>?
     private var interruptionObservedAt: Date?
     private var interruptionError: String?
+    private var tailcatTask: Task<Void, Never>?
+    /// The Tailcat endpoint while the listener is up. A secret: never log it.
+    private(set) var tailcatEndpoint: TailcatEndpoint?
+    private let inviteBook: RunnerInviteBook
+    private let environment: [String: String]
+    private let printInvite: @Sendable (String) -> Void
+    private var printedFirstStartInvite = false
 
     nonisolated static var cliPath: String { HostSetup.cliPath }
 
@@ -39,7 +47,10 @@ final class HostService {
         try HostSetup.identity(configuration: configuration)
     }
 
-    nonisolated static func trust(_ request: LinuxHostTrustRequest, publicKeyData: Data, configuration: HostConfiguration) throws {
+    /// `replacingIdentity` is false for an invite, which may only add a device:
+    /// it never replaces the key of a device already trusted under that ID.
+    nonisolated static func trust(_ request: LinuxHostTrustRequest, publicKeyData: Data, configuration: HostConfiguration,
+                                  replacingIdentity: Bool = true) throws {
         try request.validate()
         let key = try RemoteIdentityPublicKey(rawRepresentation: publicKeyData)
         let store = TrustedPeerStore(directory: configuration.identityDirectory)
@@ -52,12 +63,18 @@ final class HostService {
         let peer = TrustedPeer(id: id, kind: .mac, publicKey: key,
             displayName: request.displayName, capabilities: capabilities,
             pairedAt: existing?.pairedAt ?? Date(), lastSeenAt: existing?.lastSeenAt)
-        try store.upsertAfterPairing(peer)
+        if replacingIdentity { try store.upsertAfterPairing(peer) } else { try store.enrollWithoutReplacingIdentity(peer) }
     }
 
     init(configuration: HostConfiguration, enablePairing: Bool,
-         interruptionSource: (any HostInterruptionSource)? = nil, interruptionPollInterval: Duration = .seconds(5)) throws {
+         interruptionSource: (any HostInterruptionSource)? = nil, interruptionPollInterval: Duration = .seconds(5),
+         inviteBook: RunnerInviteBook = RunnerInviteBook(),
+         environment: [String: String] = ProcessInfo.processInfo.environment,
+         printInvite: @escaping @Sendable (String) -> Void = { line in print(line); fflush(stdout) }) throws {
         self.configuration = configuration
+        self.inviteBook = inviteBook
+        self.environment = environment
+        self.printInvite = printInvite
         guard interruptionPollInterval > .zero else { throw HostRuntimeError.invalid("Interruption interval must be positive") }
         self.interruptionPollInterval = interruptionPollInterval
         if let interruptionSource { self.interruptionSource = interruptionSource }
@@ -149,7 +166,17 @@ final class HostService {
                 let service = self
                 return await MainActor.run { .status(HostStatus(running: true, configuration: configuration,
                     repositoryCount: runtime.state.repos.count, paneCount: runtime.sessions().count, drain: runtime.drain,
-                    interruptionObservedAt: service?.interruptionObservedAt, interruptionError: service?.interruptionError)) }
+                    interruptionObservedAt: service?.interruptionObservedAt, interruptionError: service?.interruptionError,
+                    tailcat: service?.tailcatEndpoint != nil)) }
+            case .tailcatEndpoint:
+                let service = self
+                return await MainActor.run { .tailcatEndpoint(service?.tailcatEndpoint) }
+            case .createInvite:
+                let service = self
+                return await MainActor.run {
+                    service?.makeInvite().map(HostAdminResponse.invite)
+                        ?? .error("The runner is not listening on Tailcat yet. Try again in a moment.")
+                }
             case .pairingStatus:
                 if case .pendingConfirmation(_, _, _, let name, _, let code, _) = await pairing.currentState() {
                     return .pairing(displayName: name, code: code.display)
@@ -247,7 +274,9 @@ final class HostService {
                 return (try? JSONEncoder().encode(response)) ?? Data()
             }, onConnect: { [weak self] device, session in await self?.connected(device, session: session) },
                 onDisconnect: { [weak self] device, id in await self?.disconnected(device, id: id) })
+            await ssh.setInviteEnrollment(Self.inviteEnrollment(book: inviteBook, configuration: configuration))
             let port = try await ssh.start(host: configuration.bindAddress, port: configuration.sshPort)
+            startTailcat()
             try http?.start()
             // Publishing this socket makes status.running a readiness signal.
             try admin?.start()
@@ -256,6 +285,68 @@ final class HostService {
             }
             return port
         } catch { await stop(); throw error }
+    }
+
+    /// Tailcat is the runner's network path. A failure is retried with backoff
+    /// and never stops the service; logs carry no address or upstream detail.
+    private func startTailcat() {
+        let store = TailcatListenerStateFile(url: configuration.identityDirectory.appendingPathComponent("tailcat-listener.json"))
+        let ssh = ssh
+        let listener = TailcatSSHListener(store: store, port: UInt16(DirectSSHHostServer.defaultPort)) { file in
+            let closed = try await ssh.accept(input: file, output: file)
+            return { _ = try? await closed.get() }
+        }
+        runtime.tailcatEndpointProvider = { [weak self] in self?.tailcatEndpoint }
+        tailcatTask = Task { [weak self] in
+            var delay = Duration.seconds(2)
+            while !Task.isCancelled {
+                do {
+                    try await listener.run { endpoint in
+                        await MainActor.run {
+                            self?.tailcatEndpoint = endpoint
+                            self?.printFirstStartInvite()
+                        }
+                    }
+                } catch {}
+                // A listener that came up and later failed starts over at the shortest delay.
+                if await MainActor.run(body: { self?.tailcatEndpoint != nil }) { delay = .seconds(2) }
+                await MainActor.run { self?.tailcatEndpoint = nil }
+                guard !Task.isCancelled else { return }
+                FileHandle.standardError.write(Data("Graftty could not listen on Tailcat; retrying. Check outbound network access and that CA certificates are installed.\n".utf8))
+                do { try await Task.sleep(for: delay) } catch { return }
+                delay = min(delay * 2, .seconds(60))
+            }
+        }
+    }
+
+    /// A one-time invite for this runner, or nil until Tailcat is listening.
+    func makeInvite() -> RunnerInvite? {
+        guard let tailcatEndpoint, let identity = try? Self.identity(configuration: configuration) else { return nil }
+        let issued = inviteBook.issue()
+        return RunnerInvite(identity: identity, endpoint: tailcatEndpoint, secret: issued.secret, expiresAt: issued.expiresAt)
+    }
+
+    /// For platforms that show logs but offer no exec: one invite at the first
+    /// start with nobody paired, and only when asked for.
+    private func printFirstStartInvite() {
+        guard !printedFirstStartInvite, environment["GRAFTTY_PRINT_INVITE"] == "1",
+              (try? TrustedPeerStore(directory: configuration.identityDirectory).list().isEmpty) == true,
+              let invite = makeInvite() else { return }
+        printedFirstStartInvite = true
+        printInvite(invite.encoded())
+    }
+
+    /// Trusts a key that redeems an unexpired invite secret, once. An invite
+    /// adds a Mac; it never takes over a device ID already trusted with another key.
+    nonisolated static func inviteEnrollment(book: RunnerInviteBook, configuration: HostConfiguration) -> InviteEnrollment {
+        { token, key in
+            let request = LinuxHostTrustRequest(deviceID: token.deviceID, displayName: token.displayName,
+                                                publicKey: key.rawRepresentation.base64EncodedString())
+            guard (try? request.validate()) != nil, book.redeem(token.secret),
+                  (try? trust(request, publicKeyData: key.rawRepresentation, configuration: configuration,
+                              replacingIdentity: false)) != nil else { return nil }
+            return try? TrustedPeerStore(directory: configuration.identityDirectory).get(id: RemoteDeviceID(value: token.deviceID))
+        }
     }
 
     private func connected(_ device: RemoteDeviceID, session: TeamRPCSession) { peers[device] = session }
@@ -288,6 +379,9 @@ final class HostService {
         await interruptionTask?.value
         interruptionTask = nil
         await pairing.cancel()
+        tailcatTask?.cancel()
+        await tailcatTask?.value
+        tailcatTask = nil
         await ssh.close()
         http?.stop(); admin?.stop(); socket.stop()
         try? await runtime.shutdown()

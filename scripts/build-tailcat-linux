@@ -1,0 +1,21 @@
+#!/bin/bash
+# Called by scripts/deps under the cache lock: build Tailcat's C archive for
+# this Linux host into a fresh staging directory.
+# Usage: build-tailcat-linux BUILD PIN GO
+set -euo pipefail
+BUILD="$1"
+PIN="$2"
+GO="$3"
+SOURCE="$BUILD/upstream"
+git init -q "$SOURCE"
+git -C "$SOURCE" remote add origin https://github.com/tailscale/tailcat.git
+git -C "$SOURCE" fetch -q --depth 1 origin "$PIN"
+git -C "$SOURCE" checkout -q --detach FETCH_HEAD
+[[ "$(git -C "$SOURCE" rev-parse HEAD)" == "$PIN" ]] || { echo 'Tailcat checkout does not match UPSTREAM_COMMIT' >&2; exit 1; }
+# GOTOOLCHAIN=local fails instead of downloading another toolchain when the
+# module's go line moves past deps/go/VERSION.
+(cd "$SOURCE" && env CGO_ENABLED=1 GOTOOLCHAIN=local GOFLAGS="-buildvcs=false -modcacherw" \
+  GOPATH="$BUILD/gopath" GOCACHE="$BUILD/gocache" CC="${CC:-clang}" \
+  "$GO" build -trimpath -tags "$(cat build-tags.txt)" -buildmode=c-archive -o "$BUILD/out/libtailcat.a" ./cmd/libtailcat)
+cp "$SOURCE/cmd/libtailcat/tailcat.h" "$SOURCE/LICENSE" "$BUILD/out/"
+rm -f "$BUILD/out/libtailcat.h"

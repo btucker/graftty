@@ -1,6 +1,8 @@
 import ArgumentParser
 import Foundation
 import GrafttyKit
+import GrafttyProtocol
+import GrafttyRemoteClient
 #if canImport(Darwin)
 import Darwin
 #else
@@ -18,12 +20,16 @@ struct RemoteSetupLinux: AsyncParsableCommand {
         Projects transfer committed history only, including unpushed commits.
         The default branch is each repository's current branch.
 
+        To add a runner that is already running, such as a container, pass the
+        line printed by graftty-runner invite instead of an SSH destination.
+
         Examples:
           graftty remote setup-linux user@host --version 1.2.3 --project ~/projects/app
           graftty remote setup-linux host-alias --archive ./graftty-linux.tar.gz
+          graftty remote add-runner 'graftty-invite-1:…'
         """,
         aliases: ["add-runner"])
-    @Argument(help: "SSH alias or user@host") var destination: String
+    @Argument(help: "SSH alias, user@host, or a runner invite") var destination: String
     @Option(help: "Published Linux archive version") var version: String?
     @Option(help: "Local Linux development archive") var archive: String?
     @Option(name: .customLong("project"), help: "Local repository to import; repeat for multiple repositories") var projects: [String] = []
@@ -31,7 +37,18 @@ struct RemoteSetupLinux: AsyncParsableCommand {
     @Option(help: "Linux project directory") var projectRoot = "~/projects"
     @Flag(help: "Print the installed host result as JSON; progress goes to stderr") var json = false
 
+    /// The runner invite given in place of an SSH destination, if any.
+    var invite: RunnerInvite? { try? RunnerInvite(parsing: destination) }
+
     func validate() throws {
+        if RunnerInvite.looksLikeInvite(destination) {
+            do { _ = try RunnerInvite(parsing: destination) }
+            catch { throw ValidationError(error.localizedDescription) }
+            guard version == nil, archive == nil, projects.isEmpty, branch == nil else {
+                throw ValidationError("An invite adds a running runner; --version, --archive, --project, and --branch apply only to SSH setup.")
+            }
+            return
+        }
         _ = try LinuxHostDestination(destination)
         guard (version == nil) != (archive == nil) else {
             throw ValidationError("Specify exactly one of --version or --archive.")
@@ -74,6 +91,16 @@ struct RemoteSetupLinux: AsyncParsableCommand {
 
     func run() async throws {
         #if os(macOS)
+        if let invite {
+            do { try await withCLIInterruptCancellation { try await redeem(invite) } }
+            catch is CancellationError { throw ExitCode(130) }
+            if json {
+                print(#"{"connectionRequested":true}"#)
+            } else {
+                print("Added \(invite.identity.displayName). Connection requested in Graftty; check the Remote Hosts sidebar for status.")
+            }
+            return
+        }
         do {
             let result = try await withCLIInterruptCancellation { try await provision() }
             if json {
@@ -109,8 +136,50 @@ struct RemoteSetupLinux: AsyncParsableCommand {
         return result
     }
 
-    private struct SetupOutput: Encodable {
+    #if os(macOS)
+    /// Enrolls this Mac's key over Tailcat, then asks the app to save the
+    /// runner. The invite's secret never leaves this process.
+    private func redeem(_ invite: RunnerInvite) async throws {
+        guard invite.expiresAt > Date() else {
+            throw ValidationError("This invite has expired. Run graftty-runner invite on the runner and use the new line.")
+        }
+        let client: LinuxHostTrustRequest
+        switch try CLIEnv.sendRequest(.linuxSetupIdentity) {
+        case .linuxSetupIdentity(let identity): client = identity
+        case .error(let message): throw ValidationError(message)
+        default: throw ValidationError("The running Graftty app does not support runner invites. Update and relaunch it, then retry.")
+        }
+        guard let key = try ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory).load(),
+              key.publicKey.rawRepresentation.base64EncodedString() == client.publicKey,
+              let hostKeyData = Data(base64Encoded: invite.identity.publicKey) else {
+            throw ValidationError("This Mac's Graftty identity is missing or changed. Relaunch Graftty, then retry.")
+        }
+        let token = RunnerEnrollmentToken(secret: invite.secret, deviceID: client.deviceID, displayName: client.displayName)
+        FileHandle.standardError.write(Data("Connecting to \(invite.identity.displayName) over Tailcat…\n".utf8))
+        do {
+            try await RunnerInviteEnrollment.enroll(hostPublicKey: RemoteIdentityPublicKey(rawRepresentation: hostKeyData),
+                                                    enrollmentUsername: token.username, clientKey: key, endpoint: invite.endpoint)
+        } catch is CancellationError { throw CancellationError() }
+        catch PinnedHostKeyError.hostKeyMismatch {
+            throw ValidationError("The runner's identity does not match this invite. Nothing was saved.")
+        } catch DirectSSHHostConnection.ConnectionError.authenticationRejected {
+            throw ValidationError("The runner refused this invite. It may have been used already, expired, or the runner restarted. Run graftty-runner invite again.")
+        } catch {
+            throw ValidationError("Could not reach the runner over Tailcat. Check that it is running and has outbound internet access, then retry.")
+        }
+        try CLIEnv.expectOk(CLIEnv.sendRequest(.addInvitedRunner(identity: invite.identity, endpoint: invite.endpoint)),
+                            for: "remote add-runner")
+    }
+    #endif
+
+    /// What --json prints. The runner's Tailcat endpoint is a secret and is left out.
+    struct SetupOutput: Encodable {
         let host: LinuxHostSetupResult
         let connectionRequested: Bool
+
+        init(host: LinuxHostSetupResult, connectionRequested: Bool) {
+            self.host = host.withoutTailcatEndpoint
+            self.connectionRequested = connectionRequested
+        }
     }
 }

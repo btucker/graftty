@@ -114,6 +114,10 @@ fi
 if [[ "$(uname -s)" == Darwin && -x "$REPO_ROOT/scripts/deps" ]]; then
   "$REPO_ROOT/scripts/deps" prepare --platforms macos
 fi
+# On Linux, Package.swift links the runner against Tailcat's C archive.
+if [[ "$(uname -s)" == Linux && -x "$REPO_ROOT/scripts/deps" ]]; then
+  "$REPO_ROOT/scripts/deps" prepare tailcat
+fi
 
 # Read the manifest once without its evaluation cache, then pass the renderer
 # context globally: dependency targets such as GhosttyTerminal need it too.

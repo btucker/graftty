@@ -838,6 +838,149 @@ struct RemoteMacConnectionRegistryTests {
         await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
     }
 
+    private final class TailcatCalls: @unchecked Sendable {
+        private let lock = NSLock()
+        private var dialedStorage: [TailcatEndpoint] = []
+        private var savedStorage: [TailcatEndpoint] = []
+        var dialed: [TailcatEndpoint] { lock.withLock { dialedStorage } }
+        var saved: [TailcatEndpoint] { lock.withLock { savedStorage } }
+        func dial(_ endpoint: TailcatEndpoint) { lock.withLock { dialedStorage.append(endpoint) } }
+        func save(_ endpoint: TailcatEndpoint) { lock.withLock { savedStorage.append(endpoint) } }
+    }
+
+    private func tailcatAccess(saved: TailcatEndpoint?, reported: TailcatEndpoint? = nil, dialFails: Bool = false,
+                               dialError: (any Error & Sendable)? = nil, saveFails: Bool = false,
+                               calls: TailcatCalls) -> RemoteMacConnectionRegistry.TailcatRunnerAccess {
+        RemoteMacConnectionRegistry.TailcatRunnerAccess(
+            endpoint: { _ in saved },
+            saveEndpoint: { endpoint, _ in
+                if saveFails { throw URLError(.cannotCreateFile) }
+                calls.save(endpoint)
+            },
+            dial: { _, endpoint in
+                calls.dial(endpoint)
+                if let dialError { throw dialError }
+                if dialFails { throw URLError(.cannotConnectToHost) }
+            },
+            query: { _ in reported })
+    }
+
+    private func linuxPin(_ remote: RemoteMac) -> RemoteMacConnectionRegistry.PinnedHostProvider {
+        let key = try! Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x62, count: 32))
+        let publicKey = try! RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
+        return { id in
+            PinnedHost(id: id, kind: .linux, publicKey: publicKey, displayName: "Runner",
+                       pinnedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                       pairingURL: URL(string: "http://127.0.0.1:8800/v2/pairing")!, routes: [])
+        }
+    }
+
+    private func runnerRemote(transport: RemoteHostTransport) throws -> RemoteMac {
+        var remote = try makeRemoteMac(baseURL: nil)
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x62, count: 32))
+        remote.fingerprint = RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation))
+        remote.transport = transport
+        if transport == .directSSH { remote.directEndpoint = try DirectSSHEndpoint(host: "runner.example", port: 8801) }
+        return remote
+    }
+
+    @Test("@spec REMOTE-33.13: When a saved runner uses Tailcat, the application shall dial its saved Tailcat endpoint and pin the runner key over that stream.", .timeLimit(.minutes(1)))
+    func tailcatRunnerDialsSavedEndpoint() async throws {
+        let remote = try runnerRemote(transport: .tailcat)
+        let endpoint = TailcatEndpoint(address: "fixture", port: 8801)
+        let calls = TailcatCalls()
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in Issue.record("Tailcat used signaling"); throw URLError(.unsupportedURL) },
+            pinnedHostProvider: linuxPin(remote),
+            connectionFactory: { _, _ in Issue.record("Tailcat allocated WebRTC"); return connection },
+            directConnectionFactory: { _, _ in connection },
+            tailcat: tailcatAccess(saved: endpoint, calls: calls))
+        _ = try await registry.connect(to: remote)
+        #expect(calls.dialed == [endpoint])
+        #expect(await connection.directEndpoints.isEmpty)
+        #expect(registry.activeConnectionCount == 1)
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test("@spec REMOTE-33.14: If a Tailcat runner cannot be dialed, then the application shall report it unreachable without trying another transport.", .timeLimit(.minutes(1)))
+    func tailcatRunnerDoesNotFallBack() async throws {
+        let remote = try runnerRemote(transport: .tailcat)
+        let calls = TailcatCalls()
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let failing = makeRegistry(
+            signalingTransport: { _, _ in Issue.record("Tailcat used signaling"); throw URLError(.unsupportedURL) },
+            pinnedHostProvider: linuxPin(remote),
+            directConnectionFactory: { _, _ in connection },
+            tailcat: tailcatAccess(saved: TailcatEndpoint(address: "fixture", port: 8801), dialFails: true, calls: calls))
+        await #expect(throws: (any Error).self) { _ = try await failing.connect(to: remote) }
+        #expect(await connection.directEndpoints.isEmpty)
+        #expect(await connection.createOfferCallCount == 0)
+        let unsaved = makeRegistry(
+            signalingTransport: { _, _ in throw URLError(.unsupportedURL) },
+            pinnedHostProvider: linuxPin(remote),
+            directConnectionFactory: { _, _ in connection },
+            tailcat: tailcatAccess(saved: nil, calls: calls))
+        await #expect(throws: RemoteMacConnectionRegistry.ConnectionError.runnerUnreachable(RemoteMacIdentity(remote))) {
+            _ = try await unsaved.connect(to: remote)
+        }
+        #expect(calls.dialed.count == 1)
+    }
+
+    @Test("@spec REMOTE-33.15: When a direct-SSH runner reports a Tailcat endpoint, the application shall save it and use Tailcat for later connections.", .timeLimit(.minutes(1)))
+    func directRunnerMovesToTailcat() async throws {
+        let remote = try runnerRemote(transport: .directSSH)
+        let endpoint = TailcatEndpoint(address: "fixture", port: 8801)
+        let calls = TailcatCalls()
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in throw URLError(.unsupportedURL) },
+            pinnedHostProvider: linuxPin(remote),
+            directConnectionFactory: { _, _ in connection },
+            tailcat: tailcatAccess(saved: nil, reported: endpoint, calls: calls))
+        var learned: [RemoteMacIdentity] = []
+        registry.onTailcatEndpointLearned = { learned.append($0) }
+        _ = try await registry.connect(to: remote)
+        #expect(calls.saved == [endpoint])
+        #expect(learned == [RemoteMacIdentity(remote)])
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test("@spec REMOTE-33.22: If a Tailcat runner presents a key other than its pinned key, then the application shall report the key mismatch rather than an unreachable runner.", .timeLimit(.minutes(1)))
+    func tailcatRunnerReportsKeyMismatch() async throws {
+        let remote = try runnerRemote(transport: .tailcat)
+        let mismatch = PinnedHostKeyError.hostKeyMismatch(expected: remote.fingerprint, offered: remote.fingerprint)
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in throw URLError(.unsupportedURL) },
+            pinnedHostProvider: linuxPin(remote),
+            directConnectionFactory: { _, _ in connection },
+            tailcat: tailcatAccess(saved: TailcatEndpoint(address: "fixture", port: 8801), dialError: mismatch, calls: TailcatCalls()))
+        await #expect(throws: mismatch) { _ = try await registry.connect(to: remote) }
+    }
+
+    @Test("@spec REMOTE-33.23: If the application cannot save the Tailcat endpoint a direct-SSH runner reports, then it shall keep using direct SSH for that runner.", .timeLimit(.minutes(1)))
+    func directRunnerStaysDirectWhenEndpointSaveFails() async throws {
+        let remote = try runnerRemote(transport: .directSSH)
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in throw URLError(.unsupportedURL) },
+            pinnedHostProvider: linuxPin(remote),
+            directConnectionFactory: { _, _ in connection },
+            tailcat: tailcatAccess(saved: nil, reported: TailcatEndpoint(address: "fixture", port: 8801), saveFails: true,
+                                   calls: TailcatCalls()))
+        var learned: [RemoteMacIdentity] = []
+        registry.onTailcatEndpointLearned = { learned.append($0) }
+        _ = try await registry.connect(to: remote)
+        #expect(learned.isEmpty)
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test func tailcatTransportRoundTripsThroughJSON() throws {
+        let remote = try runnerRemote(transport: .tailcat)
+        #expect(try JSONDecoder().decode(RemoteMac.self, from: JSONEncoder().encode(remote)).transport == .tailcat)
+    }
+
     private func makeRegistry(
         clientDeviceIDProvider: @escaping RemoteMacConnectionRegistry.ClientDeviceIDProvider = {
             RemoteDeviceID(value: "client-mac")
@@ -858,7 +1001,8 @@ struct RemoteMacConnectionRegistryTests {
                 onClosed: onClosed
             )
         },
-        onPaneSnapshot: @escaping RemoteMacConnectionRegistry.PaneSnapshotHandler = { _, _ in }
+        onPaneSnapshot: @escaping RemoteMacConnectionRegistry.PaneSnapshotHandler = { _, _ in },
+        tailcat: RemoteMacConnectionRegistry.TailcatRunnerAccess? = nil
     ) -> RemoteMacConnectionRegistry {
         let defaultHostKey = try! Curve25519.Signing.PrivateKey(
             rawRepresentation: Data(repeating: 0x62, count: 32)
@@ -944,7 +1088,9 @@ struct RemoteMacConnectionRegistryTests {
             connectionFactory: connectionFactory,
             directConnectionFactory: directConnectionFactory,
             paneEnvironmentBuilder: paneEnvironmentBuilder,
-            onPaneSnapshot: onPaneSnapshot
+            onPaneSnapshot: onPaneSnapshot,
+            tailcat: tailcat ?? .init(endpoint: { _ in nil }, saveEndpoint: { _, _ in },
+                                      dial: { _, _ in throw URLError(.unsupportedURL) }, query: { _ in nil })
         )
     }
 }

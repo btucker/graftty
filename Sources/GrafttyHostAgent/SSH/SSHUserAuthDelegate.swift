@@ -4,14 +4,19 @@ import GrafttyProtocol
 import NIO
 import NIOSSH
 
+/// Trusts a key that redeems a one-time runner invite, returning the new peer,
+/// or nil to refuse. Called only for a signed public-key request.
+public typealias InviteEnrollment = @Sendable (RunnerEnrollmentToken, RemoteIdentityPublicKey) -> TrustedPeer?
+
 /// @spec REMOTE-8.2
 /// @spec REMOTE-8.3
 /// @spec REMOTE-6.1
 /// @spec REMOTE-7.1
 /// Server-side userauth delegate that backs SSH authentication against
-/// graftty's `TrustedPeerStore`. Identity is key-only — the SSH
-/// userauth `username` field is deliberately ignored; the peer is
-/// resolved entirely by the offered Ed25519 public key.
+/// graftty's `TrustedPeerStore`. Identity is key-only: the peer is resolved
+/// entirely by the offered Ed25519 public key. The username matters only for
+/// an unknown key, where a runner may carry a one-time invite enrollment in
+/// it (REMOTE-33.8); it never selects or changes a trusted peer.
 ///
 /// Ordinary SSH access requires terminal permission. A configured replication
 /// receiver may admit a desktop/host peer with only replication permission;
@@ -34,6 +39,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     /// Full trusted metadata for transport properties such as display kind.
     /// This is derived from the authenticated public key, not a client frame.
     private let onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)?
+    private let enroll: InviteEnrollment?
 
     public init(
         store: TrustedPeerStore,
@@ -43,7 +49,8 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
         closeActiveTransport: (@Sendable () async -> Void)? = nil,
         onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
         onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil,
-        onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)? = nil
+        onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)? = nil,
+        enroll: InviteEnrollment? = nil
     ) {
         self.store = store
         self.expectedDeviceID = expectedDeviceID
@@ -53,6 +60,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
         self.onActivePeerRegistered = onActivePeerRegistered
         self.onAuthenticated = onAuthenticated
         self.onAuthenticatedPeer = onAuthenticatedPeer
+        self.enroll = enroll
     }
 
     /// Compare the permissions captured by userauth after async registration.
@@ -73,12 +81,18 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
         request: NIOSSHUserAuthenticationRequest,
         responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>
     ) {
-        // request.username is deliberately ignored — REMOTE-8.3.
+        // The username never selects a trusted peer — REMOTE-8.3.
         switch request.request {
         case .publicKey(let publicKeyRequest):
             do {
-                let fingerprint = try Self.fingerprint(of: publicKeyRequest.publicKey)
-                if let peer = try store.get(fingerprint: fingerprint),
+                let publicKey = try Self.publicKey(of: publicKeyRequest.publicKey)
+                let fingerprint = RemoteIdentityFingerprint(of: publicKey)
+                // NIOSSH calls this only after verifying the signature, which
+                // covers the username, so the enrolling key proved possession.
+                let known = try store.get(fingerprint: fingerprint)
+                let enrolled = known == nil
+                    ? RunnerEnrollmentToken(username: request.username).flatMap { enroll?($0, publicKey) } : nil
+                if let peer = known ?? enrolled,
                    Self.permitsAuthentication(peer, allowReplicationOnly: allowReplicationOnly),
                    expectedDeviceID == nil || peer.id == expectedDeviceID {
                     if let activePeerRegistry, let closeActiveTransport {
@@ -136,6 +150,10 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     /// inlined test mirror in `SSHAuthLoopbackTests.swift` is a third
     /// sync point.
     static func fingerprint(of key: NIOSSHPublicKey) throws -> RemoteIdentityFingerprint {
+        RemoteIdentityFingerprint(of: try publicKey(of: key))
+    }
+
+    static func publicKey(of key: NIOSSHPublicKey) throws -> RemoteIdentityPublicKey {
         // String form: "<algorithm-id> <base64-of-wire-format>"
         // — exactly two components for our purposes (no comment).
         let openSSH = String(openSSHPublicKey: key)
@@ -163,8 +181,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
             throw SSHUserAuthError.unsupportedKeyFormat
         }
 
-        let pubkey = try RemoteIdentityPublicKey(rawRepresentation: Data(keyBytes))
-        return RemoteIdentityFingerprint(of: pubkey)
+        return try RemoteIdentityPublicKey(rawRepresentation: Data(keyBytes))
     }
 }
 

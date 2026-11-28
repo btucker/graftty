@@ -3744,7 +3744,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-8.2** When the host receives a userauth request, the host shall accept only the `publickey` method and reject `password` and `keyboard-interactive` immediately.
 
-**REMOTE-8.3** When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore` and shall ignore the username field.
+**REMOTE-8.3** When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore`, and the username field shall never select or change a trusted peer.
 
 **REMOTE-8.4** When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch.
 
@@ -4171,6 +4171,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-21.28** The CLI shall accept graftty remote add-runner as another name for graftty remote setup-linux.
 
 **REMOTE-21.29** If a staged Linux archive has no graftty-runner executable, then the application shall report that the archive predates the runner rename, rather than a CPU or library incompatibility, without changing the installed service.
+
+**REMOTE-21.30** When setting up a new runner whose archive listens on Tailcat, the application shall bind its SSH and HTTP listeners to loopback; if the archive predates Tailcat, then the application shall bind them to all interfaces so the Mac can reach them directly.
+
+**REMOTE-21.31** When graftty remote add-runner receives an invite, the CLI shall redeem it through the running app instead of installing over SSH.
+
+**REMOTE-21.32** When graftty remote setup-linux prints its JSON result, the CLI shall omit the runner's Tailcat endpoint.
 
 ### REMOTE-22.x
 
@@ -4655,6 +4661,56 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-32.17** When enabling Windows sign-in startup for a WSL2 host, the installer shall scope the startup task to the current interactive user without elevation and retain a foreground Linux process without requiring an open terminal window.
 
 **REMOTE-32.18** When a native Windows host negotiates SSH, the application shall obtain cryptographic randomness from a verified Windows system provider and fail closed if entropy generation fails.
+
+### REMOTE-33.x
+
+**REMOTE-33.1** When the runner is built for Linux, the application shall carry a Tailcat byte stream between a server and a client peer in the runner process.
+
+**REMOTE-33.2** When the runner saves its Tailcat listener state, the application shall write it to a file readable only by its owner.
+
+**REMOTE-33.3** When the Tailcat listener restarts with saved state, the application shall keep the same Tailcat address.
+
+**REMOTE-33.4** While the runner is serving, the application shall accept paired SSH sessions over Tailcat.
+
+**REMOTE-33.5** When a worktree-management client asks a runner for its Tailcat endpoint, the application shall return the endpoint it is listening on.
+
+**REMOTE-33.6** The runner status output shall report whether Tailcat is listening without including its address.
+
+**REMOTE-33.7** When a runner invite is encoded and parsed, the application shall recover the runner identity, Tailcat endpoint, secret, and expiry.
+
+**REMOTE-33.8** When a Mac presents an unexpired invite secret while signing with its key, the runner shall trust that key and accept the session.
+
+**REMOTE-33.9** If an invite secret was already redeemed or has expired, then the runner shall refuse enrollment and leave its trusted peers unchanged.
+
+**REMOTE-33.10** If an enrollment request is not a signed public-key request, then the runner shall not enroll its key.
+
+**REMOTE-33.11** When asked for an invite, the runner shall print one invite line and nothing else.
+
+**REMOTE-33.12** When GRAFTTY_PRINT_INVITE is 1 and no peer is trusted, the runner shall print one invite at start.
+
+**REMOTE-33.13** When a saved runner uses Tailcat, the application shall dial its saved Tailcat endpoint and pin the runner key over that stream.
+
+**REMOTE-33.14** If a Tailcat runner cannot be dialed, then the application shall report it unreachable without trying another transport.
+
+**REMOTE-33.15** When a direct-SSH runner reports a Tailcat endpoint, the application shall save it and use Tailcat for later connections.
+
+**REMOTE-33.16** When SSH setup finishes on a runner that reports a Tailcat endpoint, the application shall save the runner with the Tailcat transport and keep its OpenSSH destination for updates.
+
+**REMOTE-33.17** When SSH setup finishes on a runner that reports no Tailcat endpoint, the application shall save it with direct SSH.
+
+**REMOTE-33.18** When the user adds a runner with an invite, the application shall pin the invite key and save the runner with the Tailcat transport and no OpenSSH destination.
+
+**REMOTE-33.19** When an invite names a runner already saved with the same key, the application shall replace the saved entry; if the key differs, then the application shall refuse it.
+
+**REMOTE-33.20** If the runner presents a key other than the invite key, then the application shall abort enrollment without trusting anything.
+
+**REMOTE-33.21** If an invite redeemer names a device already trusted with a different key, then the runner shall refuse enrollment and leave that peer unchanged.
+
+**REMOTE-33.22** If a Tailcat runner presents a key other than its pinned key, then the application shall report the key mismatch rather than an unreachable runner.
+
+**REMOTE-33.23** If the application cannot save the Tailcat endpoint a direct-SSH runner reports, then it shall keep using direct SSH for that runner.
+
+**REMOTE-33.24** If a runner that supports Tailcat reports no Tailcat endpoint at setup, then the application shall fail setup without saving the runner.
 
 ## CHROME — Dedicated Chrome tabs
 

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 import NIO
 
 public enum HostAdminRequest: Codable, Sendable, Equatable {
@@ -7,6 +8,8 @@ public enum HostAdminRequest: Codable, Sendable, Equatable {
     case pairingStatus
     case confirmPairing(code: String)
     case cancelPairing
+    case tailcatEndpoint
+    case createInvite
 }
 
 public struct HostStatus: Codable, Sendable, Equatable {
@@ -20,14 +23,18 @@ public struct HostStatus: Codable, Sendable, Equatable {
     public let drain: HostDrainRecord?
     public let interruptionObservedAt: Date?
     public let interruptionError: String?
+    /// Whether the Tailcat listener is up; nil from a runner that predates it.
+    /// The address is a secret and never appears here.
+    public let tailcat: Bool?
     public init(running: Bool, configuration: HostConfiguration, repositoryCount: Int, paneCount: Int, drain: HostDrainRecord? = nil,
-                interruptionObservedAt: Date? = nil, interruptionError: String? = nil) {
+                interruptionObservedAt: Date? = nil, interruptionError: String? = nil, tailcat: Bool? = nil) {
         self.running = running; socketPath = configuration.socketPath
         stateDirectory = configuration.stateDirectory.path
         self.repositoryCount = repositoryCount; self.paneCount = paneCount
         sshPort = configuration.sshPort; httpPort = configuration.httpPort
         self.drain = drain
         self.interruptionObservedAt = interruptionObservedAt; self.interruptionError = interruptionError
+        self.tailcat = tailcat
     }
 }
 
@@ -36,6 +43,8 @@ public enum HostAdminResponse: Codable, Sendable, Equatable {
     case repository(RepoEntry)
     case error(String)
     case pairing(displayName: String, code: String)
+    case tailcatEndpoint(TailcatEndpoint?)
+    case invite(RunnerInvite)
     case ok
 }
 

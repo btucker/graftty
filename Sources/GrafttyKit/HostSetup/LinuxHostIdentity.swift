@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 /// The public identity sent over an already authenticated OpenSSH connection.
 /// This wire format deliberately has no private key or credential fields.
@@ -33,12 +34,20 @@ public struct LinuxHostIdentity: Codable, Sendable, Equatable {
     public let publicKey: String
     /// Graftty's direct SSH listener, distinct from the OpenSSH bootstrap port.
     public let port: Int
+    /// The runner's Tailcat endpoint, a secret; nil from a runner that predates Tailcat.
+    public let tailcatEndpoint: TailcatEndpoint?
+    /// True from a runner built with Tailcat, which binds its own listeners to
+    /// loopback; nil from an older runner reached directly.
+    public let supportsTailcat: Bool?
 
-    public init(deviceID: String, displayName: String, publicKey: String, port: Int) {
+    public init(deviceID: String, displayName: String, publicKey: String, port: Int, tailcatEndpoint: TailcatEndpoint? = nil,
+                supportsTailcat: Bool? = nil) {
         self.deviceID = deviceID
         self.displayName = displayName
         self.publicKey = publicKey
         self.port = port
+        self.tailcatEndpoint = tailcatEndpoint
+        self.supportsTailcat = supportsTailcat
     }
 
     public func validate() throws {

@@ -15,7 +15,7 @@ start() {
     docker run --detach --name "$name" --hostname graftty-runner \
         --health-interval 1s --health-start-period 1s \
         --mount "type=volume,source=$volume,target=/home/runner" \
-        --publish 127.0.0.1::8800 --publish 127.0.0.1::8801 "$image" >/dev/null
+        --publish 127.0.0.1::8801 "$image" >/dev/null
     for _ in $(seq 1 100); do
         if [[ $(docker inspect --format '{{.State.Health.Status}}' "$name") == healthy ]]; then return; fi
         [[ $(docker inspect --format '{{.State.Running}}' "$name") == true ]] || return 1
@@ -30,9 +30,7 @@ docker exec "$name" graftty-runner status --json | grep -q '"running":true'
 [[ $(docker exec "$name" cat /proc/1/comm) == tini ]]
 docker exec "$name" graftty --help >/dev/null
 docker exec "$name" zmx version
-# Exercise both published listeners, rather than relying only on the local socket.
-http_port=$(docker port "$name" 8800/tcp)
-curl --silent --show-error --max-time 5 "http://$http_port/" >/dev/null
+# Macs paired before Tailcat still reach a published direct listener.
 ssh_port=$(docker port "$name" 8801/tcp)
 python3 - "$ssh_port" <<'PY'
 import socket, sys
@@ -40,6 +38,15 @@ host, port = sys.argv[1].rsplit(':', 1)
 with socket.create_connection((host, int(port)), timeout=5) as connection:
     assert connection.recv(255).startswith(b'SSH-2.0-')
 PY
+# Tailcat is the runner's network path; an invite is one line. Never print it.
+for _ in $(seq 1 150); do
+    if docker exec "$name" graftty-runner status --json | grep -q '"tailcat":true'; then break; fi
+    sleep 0.2
+done
+docker exec "$name" graftty-runner status --json | grep -q '"tailcat":true'
+invite=$(docker exec "$name" graftty-runner invite)
+[[ $invite == graftty-invite-1:* && $invite != *$'\n'* ]] || { echo 'runner printed no single invite line' >&2; exit 1; }
+unset invite
 project=/home/runner/projects/fixture
 docker exec "$name" bash -c 'git init -q -b main fixture && git -C fixture -c user.name=Smoke -c user.email=smoke@example.invalid commit -q --allow-empty -m fixture'
 docker exec "$name" graftty-runner project add "$project" --json >/dev/null
@@ -65,4 +72,4 @@ identity_after=$(docker exec "$name" sha256sum /home/runner/.local/share/graftty
 [[ $identity_before == "$identity_after" ]]
 docker exec "$name" git -C "$project" rev-parse --verify HEAD >/dev/null
 docker exec "$name" graftty-runner status --json | grep -q '"repositoryCount":1'
-echo 'Runner passed non-root startup, listeners, terminal I/O, graceful stop, and persistent-volume replacement.'
+echo 'Runner passed non-root startup, Tailcat, invites, the direct listener, terminal I/O, graceful stop, and persistent-volume replacement.'

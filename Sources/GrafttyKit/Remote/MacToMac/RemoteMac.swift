@@ -118,6 +118,9 @@ public enum RemoteMacConnectionState: String, Codable, Sendable, Equatable {
 public enum RemoteHostTransport: String, Codable, Sendable, Hashable {
     case webRTC
     case directSSH
+    /// A runner reached over its Tailcat endpoint, saved in Keychain against
+    /// its key fingerprint. No other transport is tried (REMOTE-33.14).
+    case tailcat
 }
 
 /// @spec REMOTE-20.2

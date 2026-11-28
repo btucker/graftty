@@ -3,6 +3,7 @@ import Foundation
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
+import GrafttyTailcat
 
 struct RemoteMacIdentity: Hashable, Sendable {
     var id: RemoteDeviceID
@@ -120,8 +121,32 @@ final class RemoteMacConnectionRegistry {
         RemoteHostConnection.State
     ) -> Void
 
+    /// How runners are reached over Tailcat; injectable for tests. Endpoints
+    /// are secrets and stay in Keychain, never in the saved host list.
+    struct TailcatRunnerAccess: Sendable {
+        var endpoint: @Sendable (RemoteIdentityFingerprint) -> TailcatEndpoint?
+        var saveEndpoint: @Sendable (TailcatEndpoint, RemoteIdentityFingerprint) throws -> Void
+        var dial: @MainActor @Sendable (any DirectHostLink, TailcatEndpoint) async throws -> Void
+        /// Asks a connected runner for its Tailcat endpoint; nil when it has none.
+        var query: @MainActor @Sendable (any RemoteHostLink) async -> TailcatEndpoint?
+
+        static let live = TailcatRunnerAccess(
+            endpoint: { try? TailcatCredentials.endpoint(for: $0) },
+            saveEndpoint: { endpoint, fingerprint in try TailcatCredentials.saveEndpoint(endpoint, for: fingerprint) },
+            dial: { link, endpoint in
+                guard let direct = link as? DirectSSHHostConnection else { throw URLError(.unsupportedURL) }
+                try await direct.connect(tailcat: endpoint)
+            },
+            query: { link in
+                if case .tailcatEndpoint(let endpoint?) = try? await link.sendWorktreeManagement(.tailcatEndpoint) { return endpoint }
+                return nil
+            })
+    }
+
     enum ConnectionError: Error, Equatable, Sendable {
         case missingBaseURL(RemoteMacIdentity)
+        /// A Tailcat runner with no saved endpoint, or one that could not be dialed.
+        case runnerUnreachable(RemoteMacIdentity)
         case missingDirectEndpoint(RemoteMacIdentity)
         case notConnected(RemoteMacIdentity)
         case paneEnvironmentUnavailable(RemoteMacIdentity)
@@ -160,6 +185,10 @@ final class RemoteMacConnectionRegistry {
     var onPaneSnapshot: PaneSnapshotHandler
     var onPaneFeedFailure: @MainActor (RemoteMacIdentity, String) -> Void = { _, _ in }
     var onConnectionStateChange: ConnectionStateHandler
+    /// A direct-SSH runner reported a Tailcat endpoint, now saved; the owner
+    /// switches the saved runner to Tailcat for later connections.
+    var onTailcatEndpointLearned: @MainActor (RemoteMacIdentity) -> Void = { _ in }
+    private let tailcat: TailcatRunnerAccess
     private let now: @Sendable () -> Date
 
     var activeConnectionCount: Int {
@@ -200,6 +229,7 @@ final class RemoteMacConnectionRegistry {
         }
         self.onPaneSnapshot = { _, _ in }
         self.onConnectionStateChange = { _, _ in }
+        self.tailcat = .live
         self.now = { Date() }
     }
 
@@ -229,6 +259,7 @@ final class RemoteMacConnectionRegistry {
         },
         paneEnvironmentBuilder: @escaping PaneEnvironmentBuilder,
         onPaneSnapshot: @escaping PaneSnapshotHandler = { _, _ in },
+        tailcat: TailcatRunnerAccess = .live,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.legacyFactory = nil
@@ -242,6 +273,7 @@ final class RemoteMacConnectionRegistry {
         self.paneEnvironmentBuilder = paneEnvironmentBuilder
         self.onPaneSnapshot = onPaneSnapshot
         self.onConnectionStateChange = { _, _ in }
+        self.tailcat = tailcat
         self.now = now
     }
 
@@ -481,6 +513,9 @@ final class RemoteMacConnectionRegistry {
         let dialLink: DialLink
         switch remoteMac.transport {
         case .directSSH: dialLink = .direct(directConnectionFactory(clientKey, identity.fingerprint))
+        case .tailcat:
+            guard let endpoint = tailcat.endpoint(identity.fingerprint) else { throw ConnectionError.runnerUnreachable(identity) }
+            dialLink = .tailcat(directConnectionFactory(clientKey, identity.fingerprint), endpoint)
         case .webRTC:
             // Read before allocating the transport so a failed read leaves nothing to close.
             let clientDeviceID = try clientDeviceIDProvider()
@@ -507,6 +542,28 @@ final class RemoteMacConnectionRegistry {
             case .direct(let direct):
                 guard let endpoint = remoteMac.directEndpoint else { throw ConnectionError.missingDirectEndpoint(identity) }
                 try await direct.connect(host: endpoint.host, port: endpoint.port)
+                try ensureCurrentAttempt(attemptID, identity: identity)
+                // An updated runner also listens on Tailcat; move to it from now on.
+                if pinnedHost.kind == .linux, let learned = await tailcat.query(direct) {
+                    try ensureCurrentAttempt(attemptID, identity: identity)
+                    // Switch only once the endpoint is saved: a Tailcat runner
+                    // without one has no route at all.
+                    do {
+                        try tailcat.saveEndpoint(learned, identity.fingerprint)
+                        onTailcatEndpointLearned(identity)
+                    } catch {
+                        NSLog("[Graftty] could not save a runner's Tailcat endpoint; it stays on direct SSH")
+                    }
+                }
+                var refreshed = pinnedHost
+                refreshed.lastConnectedAt = now()
+                refreshedPinnedHost = refreshed
+            case .tailcat(let direct, let endpoint):
+                do { try await tailcat.dial(direct, endpoint) }
+                catch is CancellationError { throw CancellationError() }
+                // A changed runner key needs pairing again, not a network check.
+                catch let error as PinnedHostKeyError { throw error }
+                catch { throw ConnectionError.runnerUnreachable(identity) }
                 try ensureCurrentAttempt(attemptID, identity: identity)
                 var refreshed = pinnedHost
                 refreshed.lastConnectedAt = now()
@@ -837,11 +894,12 @@ final class RemoteMacConnectionRegistry {
 private enum DialLink {
     case webRTC(any WebRTCHostLink, clientDeviceID: RemoteDeviceID)
     case direct(any DirectHostLink)
+    case tailcat(any DirectHostLink, TailcatEndpoint)
 
     var connection: any RemoteHostLink {
         switch self {
         case .webRTC(let link, _): return link
-        case .direct(let link): return link
+        case .direct(let link), .tailcat(let link, _): return link
         }
     }
 }

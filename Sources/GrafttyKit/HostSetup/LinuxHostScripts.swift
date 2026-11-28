@@ -73,11 +73,20 @@ enum LinuxHostScripts {
           fi
         done
         \(maintenanceInstaller == nil ? ensureLinger : "")
+        \(maintenanceInstaller == nil ? selectBindAddress : "")
         \(maintenanceInstaller.map { "printf '%s' " + quote($0) + " > unpacked/install.sh" } ?? "")
         \(maintenancePreflight.map { "printf '%s' " + quote($0) + " > preflight.sh" } ?? "")
-        \(maintenancePreflight == nil ? "" : "GRAFTTY_MAINTENANCE_PREFLIGHT_FILE=\"$PWD/preflight.sh\" ")/bin/bash unpacked/install.sh \(maintenanceInstaller == nil ? "--bind-address 0.0.0.0 --ssh-port 8801 --http-port 8800" : "--maintenance")
+        \(maintenancePreflight == nil ? "" : "GRAFTTY_MAINTENANCE_PREFLIGHT_FILE=\"$PWD/preflight.sh\" ")/bin/bash unpacked/install.sh \(maintenanceInstaller == nil ? "--bind-address \"$bind_address\" --ssh-port 8801 --http-port 8800" : "--maintenance")
         """
     }
+
+    /// Sets `bind_address` for a fresh install of the unpacked archive. A
+    /// runner that listens on Tailcat needs no inbound port, so it binds
+    /// loopback. An archive that predates Tailcat has no invite subcommand and
+    /// is reached directly, so it keeps listening on all interfaces.
+    static let selectBindAddress = """
+    if unpacked/bin/graftty-runner invite --help >/dev/null 2>&1; then bind_address=127.0.0.1; else bind_address=0.0.0.0; fi
+    """
 
     /// The user manager must survive the provisioning SSH connection closing.
     /// Never request interactive authorization or change another user's setting.

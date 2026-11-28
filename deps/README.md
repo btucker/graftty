@@ -9,6 +9,8 @@ separately published binary is consumed.
 | libghostty (Ghostty) | `deps/ghostty/UPSTREAM_COMMIT` | `deps/ghostty/patches/` | `deps/ghostty/build.sh` |
 | zmx | `scripts/zmx/UPSTREAM_COMMIT` | `scripts/zmx/*.patch` | `scripts/zmx/build.sh` |
 | Zig (both) | `deps/zig/VERSION` + `deps/zig/checksums` | `deps/zig/patches/` (iOS std) | downloaded by `scripts/deps zig` |
+| Tailcat | `Prototypes/Tailcat/UPSTREAM_COMMIT` | none | `scripts/build-tailcat-framework` (Apple), `scripts/build-tailcat-linux` (Linux) |
+| Go (Linux) | `deps/go/VERSION` + `deps/go/checksums` | none | downloaded by `scripts/deps prepare tailcat` |
 
 ## Patch series
 
@@ -85,3 +87,9 @@ XCFramework for paired connections. Install Go with automatic toolchain
 download enabled. Use `scripts/deps prepare tailcat --platforms macos,ios`
 to prepare just this dependency for Xcode. CI distributes it with the native
 dependency artifact. The source revision lives in `Prototypes/Tailcat/UPSTREAM_COMMIT`.
+
+On Linux, `scripts/deps prepare tailcat` builds Tailcat's C archive into
+`.deps/tailcat-linux/` with the pinned Go from `deps/go/`, which must match
+the `go` line of the pinned Tailcat module. The runner links it, so
+`scripts/swiftpm` and `scripts/linux/package.sh` prepare it first; a bare
+`swift build` on Linux stops with a message until it is prepared.

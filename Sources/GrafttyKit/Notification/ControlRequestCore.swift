@@ -150,7 +150,7 @@ public enum ControlRequestCore {
              .previewFiles, .previewImage, .offerResource, .setWorktreePinned,
              .remoteWorktree, .reconnectRemoteMac, .reconnectRemoteClient,
              .mcpConnection, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts,
-             .linuxSetupIdentity, .completeLinuxSetup:
+             .linuxSetupIdentity, .completeLinuxSetup, .addInvitedRunner:
             return await platform.handlePlatformRequest(message)
         }
     }

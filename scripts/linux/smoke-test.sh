@@ -42,7 +42,9 @@ apt_bounded() {
     fi
 }
 apt_bounded apt-get -o APT::Update::Error-Mode=any update
-apt_bounded apt-get install -y --no-install-recommends git
+# Tailcat verifies its control and relay servers against the system CA
+# bundle, which real runners have (setup downloads the archive over HTTPS).
+apt_bounded apt-get install -y --no-install-recommends git ca-certificates
 mkdir /tmp/fixture
 git -C /tmp/fixture init -q -b main
 git -C /tmp/fixture -c user.name=Smoke -c user.email=smoke@example.invalid commit -q --allow-empty -m fixture
@@ -62,7 +64,20 @@ start_host() {
     cat /tmp/graftty-serve.log
     return 1
 }
+# Tailcat is the runner's network path. Its address is a secret: compare it,
+# never print it.
+tailcat_endpoint() {
+    for attempt in $(seq 1 300); do
+        if graftty-runner status --json --runtime-directory /tmp/graftty-socket | grep -q '"tailcat":true'; then break; fi
+        sleep 0.1
+    done
+    key=$(head -c 32 /dev/urandom | base64 -w0)
+    printf '{"deviceID":"smoke-mac","displayName":"Smoke Mac","publicKey":"%s"}' "$key" \
+        | graftty-runner trust-client --stdin --json --runtime-directory /tmp/graftty-socket \
+        | grep -o '"tailcatEndpoint":{[^}]*}' || { echo 'runner reported no Tailcat endpoint' >&2; return 1; }
+}
 start_host
+first_endpoint=$(tailcat_endpoint)
 graftty pane add /tmp/fixture --command 'echo GRAFTTY_READY; exec bash'
 graftty pane list /tmp/fixture
 graftty pane send /tmp/fixture:1 'export GRAFTTY_PERSIST_PROBE=survives'
@@ -74,6 +89,7 @@ wait "$host_pid" || true
 host_pid=""
 [[ $(ZMX_DIR=/tmp/graftty-state/zmx zmx list --short | sort) == "$before" ]]
 start_host
+[[ $(tailcat_endpoint) == "$first_endpoint" ]] || { echo 'Tailcat address changed across a restart' >&2; exit 1; }
 [[ $(ZMX_DIR=/tmp/graftty-state/zmx zmx list --short | sort) == "$before" ]]
 graftty pane send /tmp/fixture:1 'printf "GRAFTTY_PERSIST=%s\n" "$GRAFTTY_PERSIST_PROBE"'
 found_marker=0

@@ -166,6 +166,41 @@ struct LinuxHostSetupTests {
         #expect(throws: LinuxHostSetupError.self) { try LinuxHostSetup.validateOrigin("https://alice:password@example.com/repo.git") }
         try LinuxHostSetup.validateOrigin("git@example.com:org/repo.git")
     }
+    @Test("@spec REMOTE-21.30: When setting up a new runner whose archive listens on Tailcat, the application shall bind its SSH and HTTP listeners to loopback; if the archive predates Tailcat, then the application shall bind them to all interfaces so the Mac can reach them directly.",
+          arguments: [(true, "127.0.0.1"), (false, "0.0.0.0")])
+    func newRunnerBindsLoopbackOnlyWithTailcat(listensOnTailcat: Bool, expected: String) async throws {
+        #expect(LinuxHostScripts.install(staging: "/tmp/stage", archiveURL: nil)
+            .contains(#"--bind-address "$bind_address" --ssh-port 8801 --http-port 8800"#))
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("bind-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let bin = staging.appendingPathComponent("unpacked/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let runner = bin.appendingPathComponent("graftty-runner")
+        // An archive that predates Tailcat has no invite subcommand.
+        try "#!/bin/sh\nif [ \"$1\" = invite ]; then exit \(listensOnTailcat ? 0 : 64); fi\nexit 0\n"
+            .write(to: runner, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: runner.path)
+        let output = try await CLIRunner().capture(command: "/bin/sh",
+            args: ["-c", LinuxHostScripts.selectBindAddress + "\nprintf '%s' \"$bind_address\""], at: staging.path)
+        #expect(output.exitCode == 0)
+        #expect(output.stdout == expected)
+    }
+
+    @Test("@spec REMOTE-33.6: The runner status output shall report whether Tailcat is listening without including its address.")
+    func statusOmitsTailcatAddress() throws {
+        let configuration = HostConfiguration(stateDirectory: URL(fileURLWithPath: "/tmp/state"),
+                                              runtimeDirectory: URL(fileURLWithPath: "/tmp/run"))
+        let status = HostStatus(running: true, configuration: configuration, repositoryCount: 0, paneCount: 0, tailcat: true)
+        let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(status)) as? [String: Any])
+        #expect(json["tailcat"] as? Bool == true)
+        #expect(!json.keys.contains { $0.lowercased().contains("address") })
+    }
+
+    @Test func identityFromARunnerWithoutTailcatDecodes() throws {
+        let json = #"{"deviceID":"d","displayName":"n","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","port":8801}"#
+        #expect(try JSONDecoder().decode(LinuxHostIdentity.self, from: Data(json.utf8)).tailcatEndpoint == nil)
+    }
+
 }
 
 private struct RepositoryFixture {
@@ -189,4 +224,5 @@ private struct RepositoryFixture {
         return Self(root: root, repository: repository)
     }
     func remove() { try? FileManager.default.removeItem(at: root) }
+
 }

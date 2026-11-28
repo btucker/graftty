@@ -33,6 +33,7 @@ public enum SSHServerSetup {
         allocator: ByteBufferAllocator,
         onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil,
         onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)? = nil,
+        enroll: InviteEnrollment? = nil,
         inboundChildChannelInitializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
     ) -> NIOSSHHandler {
         var config = SSHServerConfiguration(
@@ -45,7 +46,8 @@ public enum SSHServerSetup {
                 closeActiveTransport: closeActiveTransport,
                 onActivePeerRegistered: onActivePeerRegistered,
                 onAuthenticated: onAuthenticated,
-                onAuthenticatedPeer: onAuthenticatedPeer
+                onAuthenticatedPeer: onAuthenticatedPeer,
+                enroll: enroll
             )
         )
         config.maximumPacketSize = SSHChannelWindow.maximumPacketSize  // REMOTE-9.26

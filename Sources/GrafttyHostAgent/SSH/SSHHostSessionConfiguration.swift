@@ -25,6 +25,7 @@ struct SSHHostSessionConfiguration: Sendable {
     var chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil
     var chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { _ in }
     var agentChatOpener: AgentChatChannelHandler.Opener? = nil
+    var inviteEnrollment: InviteEnrollment? = nil
     let ownershipStore: SessionDisplayOwnershipStore
     let ownershipBroadcaster: DisplayOwnershipBroadcaster
     let teamHandler: TeamChannelHandler.Handler?
@@ -60,6 +61,7 @@ struct SSHHostSessionConfiguration: Sendable {
                 peerBox.peer = peer
                 onAuthenticatedPeer(peer)
             },
+            enroll: inviteEnrollment,
             inboundChildChannelInitializer: { child, type in
                 if case .directTCPIP(let destination) = type {
                     guard peerBox.terminalControlAllowed, peerBox.browserTunnelAllowed(host: destination.targetHost, port: destination.targetPort) else {

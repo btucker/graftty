@@ -1,12 +1,13 @@
 import ArgumentParser
 import Foundation
 import GrafttyKit
+import GrafttyProtocol
 
 @main
 struct GrafttyRunnerCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "graftty-runner",
         abstract: "Persistent Graftty terminal and worktree host.",
-        subcommands: [Serve.self, TrustClient.self, EnrollParent.self, Status.self, Project.self, Setup.self, Pair.self])
+        subcommands: [Serve.self, Invite.self, TrustClient.self, EnrollParent.self, Status.self, Project.self, Setup.self, Pair.self])
 }
 
 struct HostOptions: ParsableArguments {
@@ -39,6 +40,8 @@ struct Serve: AsyncParsableCommand {
         if let zmx { config.zmxExecutable = URL(fileURLWithPath: zmx) }
         if let shell { config.shell = shell }
         if let computeProvider { config.computeProvider = computeProvider }
+        // A peer closing a Tailcat or SSH stream mid-write must not kill the runner.
+        signal(SIGPIPE, SIG_IGN)
         let service = try await HostService(configuration: config, enablePairing: enablePairing)
         try await service.run()
     }
@@ -56,6 +59,28 @@ struct Setup: AsyncParsableCommand {
         } else {
             try printJSON(["installed": true])
         }
+    }
+}
+
+struct Invite: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Print a one-time invite that adds this runner to Graftty. On the Mac, pass it to graftty remote add-runner.")
+    @OptionGroup var paths: HostOptions
+
+    static func render(_ response: HostAdminResponse) throws -> String {
+        switch response {
+        case .invite(let invite): return invite.encoded()
+        case .error(let error): throw ValidationError(error)
+        default: throw ValidationError("unexpected runner response")
+        }
+    }
+
+    mutating func run() async throws {
+        let config = try paths.resolved()
+        guard FileManager.default.fileExists(atPath: HostAdministrationServer.socketPath(configuration: config)) else {
+            throw ValidationError("The runner is not running. Start it, then run graftty-runner invite again.")
+        }
+        print(try Self.render(try await HostAdministrationServer.request(.createInvite, configuration: config)))
     }
 }
 
@@ -77,7 +102,24 @@ struct TrustClient: AsyncParsableCommand {
         guard !request.deviceID.isEmpty, !request.displayName.isEmpty,
               let data = Data(base64Encoded: request.publicKey) else { throw ValidationError("invalid trust request") }
         try HostService.trust(request, publicKeyData: data, configuration: config)
-        try printJSON(HostService.identity(configuration: config))
+        let identity = try HostService.identity(configuration: config)
+        try printJSON(LinuxHostIdentity(deviceID: identity.deviceID, displayName: identity.displayName,
+            publicKey: identity.publicKey, port: identity.port,
+            tailcatEndpoint: await Self.runningTailcatEndpoint(configuration: config), supportsTailcat: true))
+    }
+
+    /// The running service's Tailcat endpoint, waiting briefly for a service
+    /// that has just started. Nil when no service runs or it predates Tailcat.
+    static func runningTailcatEndpoint(configuration: HostConfiguration) async -> TailcatEndpoint? {
+        guard FileManager.default.fileExists(atPath: HostAdministrationServer.socketPath(configuration: configuration)) else { return nil }
+        for _ in 0..<300 {
+            switch try? await HostAdministrationServer.request(.tailcatEndpoint, configuration: configuration) {
+            case .tailcatEndpoint(let endpoint?): return endpoint
+            case .tailcatEndpoint(nil): try? await Task.sleep(for: .milliseconds(100))
+            default: return nil
+            }
+        }
+        return nil
     }
 }
 

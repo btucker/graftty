@@ -52,8 +52,22 @@ let rendererSettings: [SwiftSetting] = [
 ]
 #else
 let rendererSettings: [SwiftSetting] = []
-let tailcatDependencies: [Target.Dependency] = []
-let tailcatTargets: [Target] = []
+// The runner links Tailcat's C archive, built from the same pin as the Apple
+// xcframework by `scripts/deps prepare tailcat`.
+let tailcatLibrary = repositoryRoot.appendingPathComponent(".deps/tailcat-linux")
+let tailcatTargets: [Target] = {
+    guard FileManager.default.fileExists(atPath: tailcatLibrary.appendingPathComponent("libtailcat.a").path) else {
+        fatalError("Tailcat is not prepared. Run scripts/deps prepare tailcat.")
+    }
+    return [
+        .systemLibrary(name: "CTailcat", path: "Sources/CTailcatLinux"),
+        .target(name: "GrafttyTailcat", dependencies: ["CTailcat", "GrafttyProtocol"],
+                path: "Sources/GrafttyTailcat", linkerSettings: [
+                    .unsafeFlags(["-L" + tailcatLibrary.path]),
+                ]),
+    ]
+}()
+let tailcatDependencies: [Target.Dependency] = ["GrafttyTailcat"]
 #endif
 // GhosttyKit and GhosttyTerminal came from Lakr233/libghostty-spm (MIT; see
 // deps/ghostty/LICENSE-libghostty-spm). They keep its Swift 6 settings.
@@ -281,7 +295,7 @@ let package = Package(
         .executableTarget(
             name: "GrafttyRunner",
             dependencies: ["GrafttyKit", "GrafttyProtocol", "GrafttyHostAgent",
-                           .product(name: "ArgumentParser", package: "swift-argument-parser")] + cryptoDependencies,
+                           .product(name: "ArgumentParser", package: "swift-argument-parser")] + cryptoDependencies + tailcatDependencies,
             swiftSettings: strictWarnings
         ),
         .executableTarget(
@@ -330,7 +344,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyRunnerTests",
-            dependencies: ["GrafttyRunner", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
+            dependencies: ["GrafttyRunner", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies + tailcatDependencies,
             swiftSettings: strictWarnings
         ),
         .testTarget(

@@ -25,13 +25,22 @@ public actor DirectSSHHostConnection {
     public private(set) var state: State = .idle
     private let clientKey: Curve25519.Signing.PrivateKey
     private let expectedHostFingerprint: RemoteIdentityFingerprint
+    private let username: String
+    /// Resources such as a Tailcat peer that must outlive the SSH transport.
+    private var closeHandlers: [@Sendable () async -> Void] = []
     private var channel: Channel?
     private var handlerBox: DirectSSHHandlerBox?
     private var onStateChange: (@Sendable (State) -> Void)?
 
-    public init(clientKey: Curve25519.Signing.PrivateKey, expectedHostFingerprint: RemoteIdentityFingerprint) {
+    public static let defaultUsername = "graftty"
+
+    /// `username` is ignored by hosts for trusted keys; a runner reads an
+    /// invite enrollment from it for an unknown key (REMOTE-33.8).
+    public init(clientKey: Curve25519.Signing.PrivateKey, expectedHostFingerprint: RemoteIdentityFingerprint,
+                username: String = defaultUsername) {
         self.clientKey = clientKey
         self.expectedHostFingerprint = expectedHostFingerprint
+        self.username = username
     }
     public func setOnStateChange(_ handler: (@Sendable (State) -> Void)?) { onStateChange = handler }
 
@@ -54,13 +63,14 @@ public actor DirectSSHHostConnection {
         setState(.connecting)
         let key = clientKey
         let fingerprint = expectedHostFingerprint
+        let username = username
         do {
             let initialize: @Sendable (Channel) -> EventLoopFuture<Void> = { channel in
                 // TCP Happy Eyeballs may initialize several channels. Each
                 // transport owns its authentication state until it wins.
                 let waiter = SSHReplyWaiter<Void>()
                 let handler = SSHClientSetup.makeHandler(clientKey: key, expectedHostFingerprint: fingerprint,
-                    allocator: channel.allocator,
+                    allocator: channel.allocator, username: username,
                     onAuthenticationRejected: { waiter.finish(.failure(ConnectionError.authenticationRejected)) })
                 channel.closeFuture.whenComplete { _ in waiter.finish(.failure(ChannelError.ioOnClosedChannel)) }
                 return channel.eventLoop.makeCompletedFuture {
@@ -219,7 +229,12 @@ public actor DirectSSHHostConnection {
     private func disposeTransport() async {
         let channel = channel; self.channel = nil; handlerBox = nil
         try? await channel?.close().get()
+        let handlers = closeHandlers; closeHandlers = []
+        for handler in handlers { await handler() }
     }
+
+    /// Runs when this connection closes, after its SSH transport.
+    public func onClose(_ handler: @escaping @Sendable () async -> Void) { closeHandlers.append(handler) }
     /// The event loop serving the SSH transport, once TCP is connected.
     var transportEventLoopForTesting: (any EventLoop)? { channel?.eventLoop }
     func connectedTransport() throws -> (Channel, DirectSSHHandlerBox) {

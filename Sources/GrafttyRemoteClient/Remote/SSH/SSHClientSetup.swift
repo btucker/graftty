@@ -21,10 +21,11 @@ public enum SSHClientSetup {
         clientKey: Curve25519.Signing.PrivateKey,
         expectedHostFingerprint: RemoteIdentityFingerprint,
         allocator: ByteBufferAllocator,
+        username: String = "graftty",
         onAuthenticationRejected: (@Sendable () -> Void)? = nil
     ) -> NIOSSHHandler {
         var config = SSHClientConfiguration(
-            userAuthDelegate: SingleKeyUserAuthDelegate(key: clientKey, onRejected: onAuthenticationRejected),
+            userAuthDelegate: SingleKeyUserAuthDelegate(key: clientKey, username: username, onRejected: onAuthenticationRejected),
             serverAuthDelegate: PinnedHostKeyAuthDelegate(expectedFingerprint: expectedHostFingerprint)
         )
         config.maximumPacketSize = SSHChannelWindow.maximumPacketSize  // REMOTE-9.26
@@ -41,12 +42,14 @@ public enum SSHClientSetup {
 /// at a time, so single-attempt is sufficient.
 private final class SingleKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
     private let key: Curve25519.Signing.PrivateKey
+    private let username: String
     private let lock = NSLock()
     private var offered = false
     private let onRejected: (@Sendable () -> Void)?
 
-    init(key: Curve25519.Signing.PrivateKey, onRejected: (@Sendable () -> Void)?) {
+    init(key: Curve25519.Signing.PrivateKey, username: String, onRejected: (@Sendable () -> Void)?) {
         self.key = key
+        self.username = username
         self.onRejected = onRejected
     }
 
@@ -63,7 +66,7 @@ private final class SingleKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDel
         }
         offered = true
         let offer = NIOSSHUserAuthenticationOffer(
-            username: "graftty",
+            username: username,
             serviceName: "ssh-connection",
             offer: .privateKey(.init(privateKey: NIOSSHPrivateKey(ed25519Key: key)))
         )
