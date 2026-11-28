@@ -76,12 +76,12 @@ struct WorkspaceChatSwitchTests {
             onFocusTerminal: { focused.append($0) }, onNewTerminal: {}, onCloseTerminal: { _ in },
             onClearFocus: { clears += 1 }
         )
-        view.selectTab(slot)
+        view.stageAgent(slot)
         #expect(clears == 1)
         #expect(focused.isEmpty)
 
         WorkspaceChatSwitch.setView(chat: false, slot: slot, in: &entry)
-        view.selectTab(slot)
+        view.stageAgent(slot)
         #expect(clears == 1)
         #expect(focused == [slot])
     }

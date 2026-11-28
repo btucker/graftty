@@ -53,18 +53,105 @@ struct WorkspaceContentView: View {
     static let leadingContentInset: CGFloat = 6
     var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
+    /// Context, shown beneath the gallery in one right-hand column (LAYOUT-2.253).
+    var contextPanel: AnyView? = nil
+    /// The header's sidebar button shows or hides the whole column (LAYOUT-2.266).
+    var showsSidebar = true
     @Environment(\.agentWorkspaceRequest) private var request
     @Environment(\.agentChatService) private var chatService
     @State private var chatModels = AgentChatModelStore<PaneSlotID>()
     @State private var failure: String?
     @State private var launching = false
     @State private var resizeStart: Double?
-    @State private var dropTarget: UUID?
 
     private var layout: WorkspaceLayout<PaneSlotID> { worktree.workspaceLayout ?? .preserving(worktree.splitTree) }
     private var theme: GhosttyTheme { terminalManager.theme }
 
     var body: some View {
+        HStack(spacing: 0) {
+            stage
+            WorkspaceRightColumn(showsGallery: showsGallery, contextPanel: contextPanel,
+                                 separator: theme.foreground.opacity(0.08)) { gallery }
+        }
+        .background(theme.background)
+        .onAppear { synchronize(initial: true) }
+        .onChange(of: worktree.path) { _, _ in synchronize(initial: true) }
+        .onChange(of: worktree.splitTree.allLeaves) { _, _ in synchronize() }
+        .onChange(of: worktree.agents) { _, _ in synchronize() }
+        .onChange(of: worktree.focusedPaneSlotID) { old, slot in
+            // Teardown's fallback focus must not replace a selected completed agent.
+            guard old == nil || old.map(worktree.splitTree.containsLeaf) == true, let slot else { return }
+            if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
+            worktree.ensureWorkspaceLayout()
+            mutate { $0.select(slot) }
+        }
+        .alert("Agent operation failed", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("OK") { failure = nil }
+        } message: { Text(failure ?? "") }
+    }
+
+    /// Agents with a tile: every agent in the layout, on stage or off.
+    private var galleryAgents: [PaneSlotID] { layout.gallerySessions.filter { agent($0) != nil } }
+
+    var showsGallery: Bool { showsSidebar }
+
+    private var gallery: some View {
+        WorkspaceGallery(tiles: galleryAgents.map(tileModel), theme: theme,
+            onStage: { id in slot(id).map(stageAgent) },
+            onJump: { id, eventID in
+                guard let slot = slot(id) else { return }
+                stageAgent(slot)
+                MacGalleryJump.reveal(eventID, timeline: agentScrollbackMaps[slot]?.timeline) { [terminalManager] in
+                    terminalManager.handle(for: slot)
+                }
+            },
+            onMove: { source, target, after in
+                guard let source = slot(source), let target = slot(target) else { return }
+                mutate { _ = $0.moveTile(source, relativeTo: target, after: after) }
+            },
+            newAgent: {
+                newAgentMenu(label: AnyView(AgentGalleryEmptyTile(worktreePath: worktree.path, foreground: theme.foreground)))
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            },
+            tileMenu: { id in if let slot = slot(id) { tileMenu(slot) } })
+    }
+
+    private func slot(_ id: String) -> PaneSlotID? {
+        UUID(uuidString: id).map(PaneSlotID.init(id:)).flatMap { layout.sessions.contains($0) ? $0 : nil }
+    }
+
+    func tileModel(_ slot: PaneSlotID) -> WorkspaceGalleryTileModel {
+        let agent = agent(slot)
+        let asking = needsInput(slot)
+        let question = asking ? (worktree.paneSessions[slot].flatMap { attentionContext?.question(session: ZmxLauncher.sessionName(for: $0)) }
+            ?? worktree.paneAttention[slot]?.text) : nil
+        return WorkspaceGalleryTileModel(id: slot.id.uuidString,
+            handle: { [terminalManager, done = hasCompletedContentOrClosed(agent)] in done ? nil : terminalManager.handle(for: slot) },
+            title: title(slot), provider: agent?.provider.rawValue,
+            status: AgentTileStatus(needsInput: asking, isBusy: isBusy(slot) ?? (agent?.status == .running),
+                isCompleted: hasCompletedContentOrClosed(agent), isCached: false, question: question,
+                result: agent?.completion?.result, statusLabel: agent.map(Self.statusLabel) ?? "Terminal"),
+            isOnStage: layout.isOnStage(slot), scrollback: agentScrollbackMaps[slot])
+    }
+
+    private func hasCompletedContentOrClosed(_ agent: ManagedAgent?) -> Bool {
+        agent?.completion != nil || agent?.status == .closed
+    }
+
+    static func statusLabel(_ agent: ManagedAgent) -> String {
+        switch agent.status {
+        case .starting: "Starting"
+        case .running: "Running"
+        case .waiting: "Waiting"
+        case .awaitingCleanup: "Finished"
+        case .closing: "Closing"
+        case .closed: "Closed"
+        case .failed: "Failed"
+        case .interrupted: "Interrupted"
+        }
+    }
+
+    private var stage: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 if layout.root != nil {
@@ -74,10 +161,12 @@ struct WorkspaceContentView: View {
                         }, set: { tree in mutate { $0.updateGeometry(from: tree) } }),
                         focusedPaneSlotID: worktree.presentationPane, theme: theme, onFocusTerminal: focus,
                         previewWorktreePath: worktree.path, agentScrollbackMaps: agentScrollbackMaps,
-                        paneHeader: { slot in AnyView(groupHeader(for: slot)) },
+                        paneHeader: { slot in AnyView(stagePaneHeader(for: slot)) },
                         paneBanner: { slot in
-                            guard let group = layout.group(containing: slot), group.id == inputRequestGroupID else { return nil }
-                            return AnyView(inputRequestBanner)
+                            let asks = attentionContext?.question != nil && layout.group(containing: slot)?.id == stageBannerGroupID
+                            let top = StagePaneTopControls(banner: asks ? AnyView(inputRequestBanner) : nil,
+                                chatSwitch: StagePaneChrome.showsHeader(paneCount: layout.groups.count) ? nil : chatSwitch(slot))
+                            return top.isEmpty ? nil : AnyView(top)
                         },
                         paneContent: { slot in
                             if let chat = chatContent(slot) { return chat }
@@ -87,11 +176,10 @@ struct WorkspaceContentView: View {
                         },
                         paneDropTarget: { slot, content in AnyView(dropDestination(slot, content: content)) },
                         leadingContentInset: Self.leadingContentInset)
-                    .preference(key: WorkspaceTabRowHeightKey.self, value: WorktreeHeaderWash.tabRowHeight)
                 } else {
                     VStack(spacing: 12) {
                         Text("No active agents").font(.headline)
-                        newAgentMenu.controlSize(.large)
+                        newAgentMenu().controlSize(.large)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if layout.drawerVisible {
@@ -119,155 +207,72 @@ struct WorkspaceContentView: View {
             .background(theme.background)
             .foregroundStyle(theme.foreground)
         }
-        .onAppear { synchronize(initial: true) }
-        .onChange(of: worktree.path) { _, _ in synchronize(initial: true) }
-        .onChange(of: worktree.splitTree.allLeaves) { _, _ in synchronize() }
-        .onChange(of: worktree.agents) { _, _ in synchronize() }
-        .onChange(of: worktree.focusedPaneSlotID) { old, slot in
-            // Teardown's fallback focus must not replace a selected completed tab.
-            guard old == nil || old.map(worktree.splitTree.containsLeaf) == true, let slot else { return }
-            if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
-            worktree.ensureWorkspaceLayout()
-            mutate { $0.select(slot) }
-        }
-        .alert("Agent operation failed", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
-            Button("OK") { failure = nil }
-        } message: { Text(failure ?? "") }
     }
 
-    private func groupHeader(for slot: PaneSlotID) -> some View {
-        let group = layout.group(containing: slot)
-        return VStack(spacing: 0) {
-            HStack(spacing: 2) {
-                AgentTabStrip(spacing: 2) {
-                        ForEach(group?.sessions ?? [], id: \.self) { tab in
-                            Button { selectTab(tab) } label: {
-                                HStack(spacing: 6) {
-                                    if let agent = agent(tab) {
-                                        AgentStatusBadge(status: agent.status.rawValue,
-                                            needsInput: needsInput(tab),
-                                            failure: agent.failure, disconnected: terminalManager.attachmentFailures[tab] != nil,
-                                            processObservation: agent.processObservation, isBusy: isBusy(tab))
-                                    } else {
-                                        Image(systemName: "terminal")
-                                    }
-                                    WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: tab, agentName: agent(tab)?.name, provider: agent(tab)?.provider.rawValue).lineLimit(1).truncationMode(.middle)
-                                        .fontWeight(group?.selected == tab ? .medium : .regular)
-                                    if agent(tab) == nil, worktree.paneAttention[tab] != nil {
-                                        Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
-                                    }
-                                }.worktreeHeaderWashText().padding(.horizontal, 12).padding(.vertical, 9)
-                                    .foregroundStyle(theme.foreground.opacity(agent(tab)?.completion != nil || agent(tab)?.status == .closed ? 0.4 : group?.selected == tab ? 1 : 0.65))
-                                    .overlay(alignment: .bottom) {
-                                        Rectangle().fill(group?.selected == tab ? theme.foreground.opacity(0.55) : .clear)
-                                            .frame(height: 2)
-                                    }
-                            }.buttonStyle(.plain)
-                                .accessibilityAddTraits(group?.selected == tab ? .isSelected : [])
-                                .workspaceTabDragSource(tab.id.uuidString, onSelect: { selectTab(tab) })
-                                .modifier(WorkspaceTabDropTarget { value, after in
-                                    guard let id = UUID(uuidString: value) else { return }
-                                    let source = PaneSlotID(id: id)
-                                    let sameGroup = layout.group(containing: source)?.id == group?.id
-                                    var moved = false
-                                    mutate { moved = $0.moveTab(source, relativeTo: tab, after: after) }
-                                    if moved && !sameGroup { focus(source) }
-                                })
-                                .contextMenu { tabMenu(tab, group: group?.id) }
-                        }
-                        newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText().agentTabStripFixed()
-                }
-                if let selected = group?.selected, chatService != nil, agent(selected).map(AgentChatHost.offers) == true {
-                    AgentChatSwitch(showsChat: Binding(get: { showsChat(selected) },
-                                                       set: { setView(selected, chat: $0) }))
-                        .controlSize(.small)
-                }
-            }.font(.system(size: 13))
-                .background { theme.background.worktreeHeaderWash() }
-                .overlay(alignment: .bottom) { theme.foreground.opacity(0.08).frame(height: 1) }
-                .onDrop(of: [WorkspaceTabDrag.contentType], isTargeted: nil) { providers in
-                    receive(providers) { session in if let id = group?.id { mutate { $0.move(session, to: id) }; focus(session) } }
-                }
+    private func chatSwitch(_ slot: PaneSlotID) -> AnyView? {
+        guard chatService != nil, agent(slot).map(AgentChatHost.offers) == true else { return nil }
+        return AnyView(AgentChatSwitch(showsChat: Binding(get: { showsChat(slot) }, set: { setView(slot, chat: $0) }))
+            .controlSize(.small))
+    }
+
+    /// A split stage's slim pane header: it names the pane, holds its Chat /
+    /// Terminal switch, and lets it leave the stage without closing its agent.
+    /// A lone pane has none (LAYOUT-2.257).
+    @ViewBuilder private func stagePaneHeader(for slot: PaneSlotID) -> some View {
+        if let group = layout.group(containing: slot), StagePaneChrome.showsHeader(paneCount: layout.groups.count) {
+            HStack(spacing: 6) {
+                if agent(slot) != nil { AgentStatusDot(dot: tileModel(slot).status.dot) }
+                WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations,
+                    slot: slot, agentName: agent(slot)?.name, provider: agent(slot)?.provider.rawValue)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                chatSwitch(slot)
+                Button { removeStagePane(group.id) } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).help("Remove from stage")
+                    .accessibilityLabel("Remove from stage")
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(theme.foreground.opacity(layout.focusedGroupID == group.id ? 0.85 : 0.55))
+            .padding(.horizontal, 10).frame(minHeight: 24)
+            .background { theme.background.worktreeHeaderWash() }
+            .overlay(alignment: .bottom) { theme.foreground.opacity(0.08).frame(height: 1) }
         }
     }
 
-    /// The tab group under which a live input request shows: the asking
-    /// agent's group, else the focused one.
-    private var inputRequestGroupID: UUID? {
-        guard attentionContext?.question != nil else { return nil }
-        let asking = attentionContext?.questionPaneID.flatMap { session in
-            worktree.paneSessions.first { ZmxLauncher.sessionName(for: $0.value) == session }?.key
-        }
-        return (asking ?? worktree.presentationPane).flatMap { layout.group(containing: $0)?.id } ?? layout.groups.first?.id
-    }
+    /// A live question shows at the top of the focused stage pane, whichever
+    /// agent asks, with a way to put the asking agent on stage (LAYOUT-2.196).
+    var stageBannerGroupID: UUID? { layout.focusedGroupID }
 
     private var inputRequestBanner: some View {
         WorkspaceInputRequest(context: attentionContext, selectedSession: worktree.presentationPane.flatMap { worktree.paneSessions[$0] }.map(ZmxLauncher.sessionName(for:))) { session in
-            if let slot = worktree.paneSessions.first(where: { ZmxLauncher.sessionName(for: $0.value) == session })?.key { selectTab(slot) }
+            if let slot = worktree.paneSessions.first(where: { ZmxLauncher.sessionName(for: $0.value) == session })?.key { stageAgent(slot) }
         }
     }
 
     private func dropDestination(_ slot: PaneSlotID, content: AnyView) -> some View {
-        GeometryReader { geometry in
-            content
-                .overlay {
-                    if let group = layout.group(containing: slot), dropTarget == group.id {
-                        ZStack {
-                            Rectangle().strokeBorder(theme.foreground.opacity(0.5), lineWidth: 2)
-                            Text("Drop at an edge to split · Drop in the center for a tab")
-                                .font(.caption).padding(8).background(.regularMaterial)
-                        }.allowsHitTesting(false)
-                    }
-                }
-                .dropDestination(for: WorkspaceTabDrag.self) { items, location in
-                    defer { dropTarget = nil }
-                    guard let item = items.first?.session, let uuid = UUID(uuidString: item),
-                          let group = layout.group(containing: slot) else { return false }
-                    let session = PaneSlotID(id: uuid)
-                    guard layout.sessions.contains(session) else { return false }
-                    let edge: WorkspaceLayout<PaneSlotID>.Edge?
-                    if location.x < geometry.size.width * 0.2 { edge = .left }
-                    else if location.x > geometry.size.width * 0.8 { edge = .right }
-                    else if location.y < geometry.size.height * 0.2 { edge = .top }
-                    else if location.y > geometry.size.height * 0.8 { edge = .bottom }
-                    else { edge = nil }
-                    mutate { next in
-                        if let edge { next.split(session, beside: group.id, edge: edge) }
-                        else { next.move(session, to: group.id) }
-                    }
-                    focus(session)
-                    return true
-                } isTargeted: { targeted in
-                    if targeted { dropTarget = layout.group(containing: slot)?.id }
-                    else if dropTarget == layout.group(containing: slot)?.id { dropTarget = nil }
-                }
-        }
+        content.modifier(WorkspaceStageDropTarget { item, edge in
+            guard let uuid = UUID(uuidString: item), let group = layout.group(containing: slot) else { return }
+            let session = PaneSlotID(id: uuid)
+            guard layout.sessions.contains(session) else { return }
+            mutate { next in
+                if let edge = edge.flatMap({ WorkspaceLayout<PaneSlotID>.Edge(rawValue: $0.rawValue) }) {
+                    next.split(session, beside: group.id, edge: edge)
+                } else { next.move(session, to: group.id); returnHiddenShells(&next) }
+            }
+            focus(session)
+        })
     }
 
-    @ViewBuilder private func tabMenu(_ slot: PaneSlotID, group: UUID?) -> some View {
-        if let group {
-            Menu("Split into pane") {
-                ForEach(WorkspaceLayout<PaneSlotID>.Edge.allCases, id: \.rawValue) { edge in
-                    Button(edge.rawValue.capitalized) { mutate { $0.split(slot, beside: group, edge: edge) }; focus(slot) }
-                        .disabled(layout.group(containing: slot)?.sessions.count == 1)
-                }
-            }
-            Menu("Move to tab group") {
-                ForEach(layout.groups.filter { $0.id != group }) { destination in
-                    Button(title(destination.selected)) { mutate { $0.move(slot, to: destination.id) }; focus(slot) }
-                }
-            }.disabled(layout.groups.count < 2)
-            Menu("Merge group into") {
-                ForEach(layout.groups.filter { $0.id != group }) { destination in
-                    Button(title(destination.selected)) { mutate { $0.merge(group, into: destination.id) }; focus(slot) }
-                }
-            }.disabled(layout.groups.count < 2)
+    @ViewBuilder private func tileMenu(_ slot: PaneSlotID) -> some View {
+        if !layout.isOnStage(slot), let target = layout.focusedGroupID {
+            Button("Put on stage") { stageAgent(slot) }
+            Button("Show beside the stage") { mutate { $0.split(slot, beside: target, edge: .right) }; focus(slot, activate: true) }
+        } else if let group = layout.group(containing: slot), layout.groups.count > 1 {
+            Button("Remove from stage") { removeStagePane(group.id) }
         }
-        if agent(slot) == nil {
-            Button("Move to terminal drawer") { mutate { $0.moveToDrawer(slot) }; focus(slot) }
-            Button("Close terminal", role: .destructive) { onCloseTerminal(slot) }
-        } else if let agent = agent(slot), agent.status == .closed {
-            Button("Close tab") {
+        // Tiles are agents only; shells stay in the drawer (LAYOUT-2.255).
+        if let agent = agent(slot), agent.status == .closed {
+            Button("Dismiss") {
                 mutate { $0.remove(slot) }
                 if let next = layout.focusedSession { focus(next) }
                 else { clearFocus() }
@@ -294,7 +299,6 @@ struct WorkspaceContentView: View {
                         .draggable(WorkspaceTabDrag(slot.id.uuidString))
                         .contextMenu {
                             ForEach(layout.groups) { group in
-                                Button("Move to \(title(group.selected)) tabs") { mutate { $0.move(slot, to: group.id) }; focus(slot) }
                                 Button("Split beside \(title(group.selected))") { mutate { $0.split(slot, beside: group.id, edge: .right) }; focus(slot) }
                             }
                             Button("Close terminal", role: .destructive) { onCloseTerminal(slot) }
@@ -330,8 +334,8 @@ struct WorkspaceContentView: View {
         }
     }
 
-    private var newAgentMenu: some View {
-        NewAgentMenu { provider, operationID in
+    private func newAgentMenu(label: AnyView? = nil) -> some View {
+        NewAgentMenu(label: label) { provider, operationID in
             guard let request else { throw AgentLaunchError("Agent controls are not ready.") }
             let response = await request(.init(action: .add, callerWorktree: worktree.path,
                 name: "Agent \(worktree.agents.count + 1)", worktree: worktree.path,
@@ -396,10 +400,22 @@ struct WorkspaceContentView: View {
             worktree.splitTree = worktree.splitTree.withZoom(nil)
         }
     }
-    /// The tab strip's action. Tabs are drag sources, so tests call this
+    /// A gallery tile's action. Tiles are drag sources, so tests call this
     /// directly; a synthetic press would enter AppKit's drag tracking loop.
-    func selectTab(_ slot: PaneSlotID) { focus(slot, activate: true) }
-    func selectTerminalTab(_ slot: PaneSlotID) { selectTab(slot) }
+    func stageAgent(_ slot: PaneSlotID) {
+        if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
+        mutate { $0.stage(slot); returnHiddenShells(&$0) }
+        focus(slot, activate: true)
+    }
+    private func removeStagePane(_ id: UUID) {
+        mutate { _ = $0.removePane(id); returnHiddenShells(&$0) }
+        if let next = layout.focusedSession { focus(next) }
+    }
+    /// A shell has no tile, so one a stage change hides goes back to the drawer (LAYOUT-2.255).
+    private func returnHiddenShells(_ layout: inout WorkspaceLayout<PaneSlotID>) {
+        layout.returnHiddenShellsToDrawer { agent($0) != nil }
+    }
+    func selectTerminalTab(_ slot: PaneSlotID) { focus(slot, activate: true) }
     private func focus(_ slot: PaneSlotID) { focus(slot, activate: false) }
     private func focus(_ slot: PaneSlotID, activate: Bool) {
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
@@ -421,18 +437,6 @@ struct WorkspaceContentView: View {
         if initial && !hadLayout, let focused = worktree.focusedPaneSlotID { mutate { $0.select(focused) } }
         if let slot = worktree.presentationPane, worktree.showsNonTerminalContent(in: slot) { clearFocus() }
         chatModels.prune(keeping: Set(worktree.agents.compactMap(\.presentationSlotID)))
-    }
-    private func receive(_ providers: [NSItemProvider], action: @escaping @MainActor (PaneSlotID) -> Void) -> Bool {
-        guard let provider = providers.first else { return false }
-        _ = provider.loadTransferable(type: WorkspaceTabDrag.self) { result in
-            guard case .success(let payload) = result, let id = UUID(uuidString: payload.session) else { return }
-            Task { @MainActor in
-                let slot = PaneSlotID(id: id)
-                guard layout.sessions.contains(slot) else { return }
-                action(slot)
-            }
-        }
-        return true
     }
 }
 

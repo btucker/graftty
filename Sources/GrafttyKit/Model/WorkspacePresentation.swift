@@ -2,14 +2,6 @@ import Foundation
 import GrafttyProtocol
 
 public extension WorktreeEntry {
-    var sidebarAgentSlots: [PaneSlotID] {
-        guard state == .running || state == .closed else { return [] }
-        let agentSlots = Set(agents.filter { state == .running || $0.completion != nil || $0.status == .closed }
-            .compactMap(\.presentationSlotID))
-        let layout = workspaceLayout ?? .preserving(splitTree)
-        return layout.canvasSessions.filter(agentSlots.contains)
-    }
-
     /// Canvas zoom must never mount a drawer or a hidden tab a second time.
     var canvasTree: SplitTree {
         guard let layout = workspaceLayout else { return splitTree }
@@ -61,8 +53,10 @@ public extension WorktreeEntry {
     mutating func showAgentTab(_ id: String) -> PaneSlotID? {
         guard let slot = agents.first(where: { $0.id == id })?.presentationSlotID else { return nil }
         ensureWorkspaceLayout()
-        if workspaceLayout?.sessions.contains(slot) != true { workspaceLayout?.addAgent(slot) }
-        workspaceLayout?.select(slot)
+        let agentSlots = Set(agents.compactMap(\.presentationSlotID))
+        if workspaceLayout?.sessions.contains(slot) != true { workspaceLayout?.addAgent(slot, isAgent: agentSlots.contains) }
+        workspaceLayout?.stage(slot)
+        workspaceLayout?.returnHiddenShellsToDrawer(isAgent: agentSlots.contains)
         return slot
     }
 
@@ -98,7 +92,7 @@ public extension WorktreeEntry {
         if workspaceLayout == nil { workspaceLayout = .preserving(splitTree) }
         for slot in agents.filter({ $0.launchOperationID != nil && $0.status != .closed }).compactMap(\.paneSlotID) where workspaceLayout?.terminals.contains(slot) == true {
             workspaceLayout?.remove(slot)
-            workspaceLayout?.addAgent(slot)
+            workspaceLayout?.addAgent(slot, isAgent: Set(agents.compactMap(\.presentationSlotID)).contains)
         }
         workspaceLayout?.reconcile(live: splitTree.allLeaves, agents: Set(agents.compactMap(\.paneSlotID)),
             retained: Set(agents.compactMap(\.presentationSlotID)),

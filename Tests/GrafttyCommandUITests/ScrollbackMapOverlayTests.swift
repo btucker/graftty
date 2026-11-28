@@ -207,7 +207,10 @@ struct ScrollbackMapScrubTests {
         #expect(terminal.clicks == 0, "Map clicks must not reach the terminal")
 
         pointer.scrollWheel(with: MapWheelEvent(point: point))
-        #expect(terminal.wheels == 1, "Wheel scrolling over the map must reach the adjacent terminal")
+        #expect(terminal.wheels == 0, "The wheel over the map steps messages; the terminal stays put (CONTEXT-57.18)")
+        let steppedFrom = try #require(map.marks.firstIndex { $0.row == 40 })
+        pointer.onClick?(ScrollbackMapLayout.stripInset.top + markY)
+        #expect(scrollback.scrolled.last == map.marks[steppedFrom + 1].row, "A click after the wheel goes to the message the wheel focused")
 
         let moved = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
@@ -256,7 +259,7 @@ struct ScrollbackMapScrubTests {
         #expect(terminal.clicks == 0)
     }
 
-    @Test("@spec CONTEXT-57.7: When the user clicks or taps a scrollback message box, the application shall scroll to the first message associated with the box, including when its excerpt is hidden.")
+    @Test("@spec CONTEXT-57.7: When the user clicks or taps a scrollback message box, the application shall scroll to the message focused inside the box, else the first message associated with the box, including when its excerpt is hidden.")
     func clickingGroupedBoxJumpsToItsEarliestMessage() async throws {
         _ = NSApplication.shared
         let terminal = MapTerminalFixture()
@@ -297,7 +300,7 @@ struct ScrollbackMapScrubTests {
         let wheel = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1,
                                          wheel1: 1, wheel2: 0, wheel3: 0).flatMap(NSEvent.init(cgEvent:)))
         cardHit.scrollWheel(with: wheel)
-        #expect(terminal.wheels == 1, "Scrolling over a preview still scrolls the terminal")
+        #expect(terminal.wheels == 0, "The wheel over a preview steps messages; the terminal stays put (CONTEXT-57.18)")
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             window.sendEvent(try event(type, at: cardPoint))
         }
@@ -396,6 +399,9 @@ private final class MapWheelEvent: NSEvent {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var locationInWindow: NSPoint { point }
     override var type: NSEvent.EventType { .scrollWheel }
+    override var scrollingDeltaY: CGFloat { -1 }
+    override var hasPreciseScrollingDeltas: Bool { false }
+    override var momentumPhase: NSEvent.Phase { [] }
 }
 
 private final class MapTerminalFixture: NSView {
@@ -437,6 +443,54 @@ struct ScrollbackMapPreviewTests {
         let groups = ScrollbackMapPreviewGroup.group(previews, maximumGap: 28, maximumSpan: 64)
         #expect(groups.map { $0.messages.map(\.id) } == [["1"], ["0", "2", "3"], ["4"], ["5"]])
         #expect(groups[1].startY == 30 && groups[1].endY == 76 && groups[1].y == 53)
+    }
+
+    @Test("@spec CONTEXT-57.16: While the scrollback map is shown on a gallery tile, the application shall place its marks on a logarithmic scale from the newest row, so recent messages spread apart and older history packs together, and shall keep a terminal's own map linear.")
+    func aTileRailSpreadsRecentHistory() {
+        let linear = ScrollbackMapLayout(height: 100, totalRows: 1000)
+        let recent = ScrollbackMapLayout(height: 100, totalRows: 1000, scale: .recent)
+        #expect(linear.y(forRow: 900) == 90)
+        #expect(recent.y(forRow: 0) == 0 && recent.y(forRow: 1000) == 100)
+        // The newest tenth of the rows takes over a third of the strip.
+        #expect(recent.y(forRow: 900) < 65)
+        #expect((0..<1000).allSatisfy { recent.y(forRow: $0) < recent.y(forRow: $0 + 1) })
+        #expect(recent.row(forY: recent.y(forRow: 950)) == 950)
+        #expect(recent.y(forRow: 990) - recent.y(forRow: 980) > 3 * (recent.y(forRow: 110) - recent.y(forRow: 100)))
+    }
+
+    @Test("@spec CONTEXT-57.17: While a preview card lists several messages on Mac, when the pointer moves over one of them, the application shall focus that message as the rail does, enlarging it and marking it on the rail, without changing which messages the card lists, and activating the card shall go to that message.")
+    func hoveringARowFocusesItWithoutMovingTheWindow() throws {
+        let messages = (0..<10).map { index in
+            ScrollbackMapPreview(id: String(index),
+                entry: ScrollbackMapEntry(kind: .input, text: "Message", timestamp: nil, sender: nil),
+                y: Double(index) * 4)
+        }
+        let group = try #require(ScrollbackMapPreviewGroup.group(messages, maximumGap: 28, maximumSpan: 96).first)
+        let hovered = group.fisheye(focusedID: "0", windowID: "5")
+        #expect(hovered.rows.map(\.preview.id) == ["2", "3", "4", "5", "6", "7", "8"])
+        let inWindow = group.fisheye(focusedID: "8", windowID: "5")
+        #expect(inWindow.rows.map(\.preview.id) == ["2", "3", "4", "5", "6", "7", "8"])
+        #expect(inWindow.rows.map(\.distance) == [6, 5, 4, 3, 2, 1, 0])
+        #if os(macOS)
+        let rows = ["a": CGRect(x: -200, y: 10, width: 180, height: 14), "b": CGRect(x: -200, y: 28, width: 180, height: 14)]
+        #expect(ScrollbackPreviewRows.row(at: CGPoint(x: -100, y: 34), in: rows) == "b")
+        #expect(ScrollbackPreviewRows.row(at: CGPoint(x: -100, y: 80), in: rows) == nil)
+        #endif
+    }
+
+    @Test("@spec CONTEXT-57.18: While the pointer is over a scrollback rail or its preview cards on Mac, when the user turns the scroll wheel, the application shall move the focused message to the next or previous message, one per wheel notch or per 16 points of trackpad travel, stopping at the first and last message, and shall leave the terminal where it is.")
+    func theWheelStepsTheFocusedMessage() {
+        var wheel = ScrollbackWheelSteps()
+        #expect(wheel.steps(delta: -1, precise: false) == 1)
+        #expect(wheel.steps(delta: 3, precise: false) == -1)
+        #expect(wheel.steps(delta: -10, precise: true) == 0)
+        #expect(wheel.steps(delta: -10, precise: true) == 1)
+        #expect(wheel.steps(delta: 40, precise: true) == -2)
+        let ids = ["a", "b", "c"]
+        #expect(ScrollbackWheelSteps.focus(after: "a", steps: 1, in: ids) == "b")
+        #expect(ScrollbackWheelSteps.focus(after: "b", steps: 5, in: ids) == "c")
+        #expect(ScrollbackWheelSteps.focus(after: "b", steps: -5, in: ids) == "a")
+        #expect(ScrollbackWheelSteps.focus(after: nil, steps: 1, in: ids) == nil)
     }
 
     @Test("@spec CONTEXT-57.12: While the user hovers over, touches, or scrubs the scrollback map over a group of close messages, the application shall list up to seven of the group's messages in rail order around the focused one, enlarge the focused message, shrink the others with their distance from it, and connect the focused message to its own mark.")
@@ -746,6 +800,135 @@ struct ScrollbackMapMobileCollapseTests {
         #expect(active == CGRect(x: 4, y: 0, width: 34, height: 150))
         #expect(idle.minY == active.minY)
         #expect(ScrollbackMapLayout.stripY(forCardY: 70) == 64)
+    }
+}
+
+@MainActor
+struct ScrollbackMapTileRailTests {
+    @Test("@spec CONTEXT-57.15: While an agent is shown as a gallery tile, the application shall show its scrollback map on the tile's right edge, let its preview cards extend beyond the tile, and when a mark or card is activated, put that agent on stage scrolled to that message.")
+    func tileRailJumpsThroughTheGallery() {
+        let map = ScrollbackMap(totalRows: 1000, marks: [.init(row: 100, kind: .input, eventID: "early"),
+                                                         .init(row: 900, kind: .input, eventID: "late")])
+        let viewport = ScrollbackViewport(offset: 950, length: 50, total: 1000)
+        let layout = ScrollbackMapLayout(height: 200, map: map, viewport: viewport)
+        var jumped: [String] = []
+        var scrolled: [Int] = []
+        let tile = ScrollbackMapOverlay(map: map, viewport: viewport, entries: [:], availableHeight: 212,
+                                        previewOverhang: 200, jump: { jumped.append($0) }, scroll: { scrolled.append($0) })
+        let late = ScrollbackMapLayout.stripInset.top + layout.y(forRow: 900)
+        tile.click(at: late, layout: layout)
+        // A scrub only previews until it ends, then jumps to the previewed
+        // message rather than to a row half a viewport above the finger.
+        tile.finishDrag(at: late, layout: layout)
+        #expect(jumped == ["late", "late"])
+        #expect(scrolled.isEmpty)
+
+        let stage = ScrollbackMapOverlay(map: map, viewport: viewport, entries: [:], availableHeight: 212,
+                                         scroll: { scrolled.append($0) })
+        stage.click(at: late, layout: layout)
+        #expect(scrolled == [900])
+        #expect(ScrollbackMapOverlay.previewFrame(railHeight: 80, overhang: 200) == .init(top: -200, height: 480))
+        #expect(ScrollbackMapOverlay.previewFrame(railHeight: 80, overhang: 0) == .init(top: 0, height: 80))
+    }
+
+    /// A phone or iPad tile renders its own preview surface, so its rows
+    /// mean nothing on the staged terminal; the jump carries the message
+    /// and retries until the staged terminal has mounted and loaded it.
+    @Test func aStagedJumpRetriesUntilTheMessageIsRevealed() async {
+        var calls = 0
+        let revealed = await StagedMessageReveal.reveal(attempts: 5, sleep: { _ in }) {
+            calls += 1
+            return calls == 3
+        }
+        #expect(revealed)
+        #expect(calls == 3)
+
+        calls = 0
+        let gaveUp = await StagedMessageReveal.reveal(attempts: 4, sleep: { _ in }) { calls += 1; return false }
+        #expect(!gaveUp)
+        #expect(calls == 4)
+    }
+
+    @Test func aStagedJumpStopsWhenCancelled() async {
+        var calls = 0
+        let task = Task { @MainActor in
+            await StagedMessageReveal.reveal(attempts: 50, sleep: { _ in withUnsafeCurrentTask { $0?.cancel() } }) {
+                calls += 1
+                return false
+            }
+        }
+        #expect(await task.value == false)
+        #expect(calls == 1)
+    }
+
+    @Test func aModelShownTwiceKeepsScanningUntilBothHide() async {
+        let terminal = FakeScrollback(rows: sampleRows())
+        let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
+        model.update(timeline: sampleTimeline())
+        model.setVisible(true, for: "stage")
+        model.setVisible(true, for: "tile")
+        model.setVisible(false, for: "stage")
+        await waitUntil { model.map != nil }
+        #expect(model.map?.marks.count == 3)
+        model.setVisible(false, for: "tile")
+        let reads = terminal.reads
+        model.terminalHistoryDidChange()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(terminal.reads == reads)
+    }
+
+    /// A tile rail is shorter than its cards, which extend past it; the pointer
+    /// must still reach those cards and activate them.
+    @Test func tileRailCardsBeyondTheRailStayReachable() async throws {
+        _ = NSApplication.shared
+        let terminal = MapTerminalFixture()
+        var history = WorktreeHistory()
+        var rows = Array(repeating: "", count: 400)
+        for index in 0..<5 {
+            let prompt = "This is distinct message number \(index) in the group"
+            rows[100 + index * 4] = "> " + prompt
+            history.record(.init(text: prompt, at: start.addingTimeInterval(Double(index))))
+        }
+        let transcript = FakeScrollback(rows: rows)
+        let model = ScrollbackMapModel(terminal: transcript, debounce: .zero)
+        let rail = ScrollbackMapOverlayHost(model: model, timeline: .init(history: history, brief: nil),
+                                            previewOverhang: 200, previewWidth: 420)
+        let host = NSHostingView(rootView: MapTerminalRepresentable(view: terminal)
+            .padding(.trailing, ScrollbackMapLayout.macGutterWidth)
+            .overlay(alignment: .topTrailing) {
+                rail.frame(width: ScrollbackMapLayout.macGutterWidth, height: 120).padding(.top, 240)
+            })
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 440, height: 600),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        await waitUntil { model.map?.marks.count == 5 }
+        host.layoutSubtreeIfNeeded()
+        func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+        let pointer = try #require(descendants(host).compactMap { $0 as? ScrollbackMapPointerView }.first)
+        func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: pointer.convert(point, to: nil), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+        }
+        pointer.mouseMoved(with: try event(.mouseMoved, at: CGPoint(x: 7, y: pointer.bounds.midY)))
+        await waitUntil { pointer.previewArea != nil }
+        try await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        let area = try #require(pointer.previewArea)
+        let cardPoint = CGPoint(x: area.minX + 24, y: area.midY)
+        pointer.mouseMoved(with: try event(.mouseMoved, at: cardPoint))
+        let cardHit = host.hitTest(pointer.convert(cardPoint, to: host.superview))
+        #expect(cardHit is ScrollbackPreviewButtonInput.InputView,
+                "The pointer's preview area must be where the cards are drawn; it found \(cardHit.map { "\(type(of: $0))" } ?? "nil")")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try event(type, at: cardPoint))
+        }
+        await waitUntil { !transcript.scrolled.isEmpty }
+        #expect(!transcript.scrolled.isEmpty, "Clicking a card beyond the rail jumps to its message")
+        #expect(terminal.clicks == 0)
     }
 }
 

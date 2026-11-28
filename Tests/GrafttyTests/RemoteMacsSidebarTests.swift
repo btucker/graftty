@@ -75,13 +75,11 @@ struct RemoteMacsSidebarTests {
         try store.add(remote)
         let model = RemoteMacsModel(store: store)
         await model.loadSavedRemotes()
-        // Match the local heading below: shells have no sidebar child rows,
-        // and neither worktree has an inline input request.
+        // Match the local heading below: neither worktree has an inline input request.
         let row = makeWorktreePanes(path: "/repo/feature", displayName: "feature",
             layout: .split(direction: .horizontal, ratio: 0.5,
                 left: .leaf(sessionName: "shell-a", title: "Terminal A", attentionText: nil, isBusy: false, attentionSource: nil),
                 right: .leaf(sessionName: "shell-b", title: "Terminal B", attentionText: nil, isBusy: false, attentionSource: nil)))
-        #expect(row.sidebarAgentLeaves.isEmpty)
         let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
             owner: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
         let content = HStack(spacing: 0) {

@@ -13,15 +13,34 @@ public struct SidebarWorktreeRowLayout<Identity: View, Content: View>: View {
 
     private let identity: Identity
     private let content: Content
+    /// Drawn centred beneath the identity slot, such as the agent logo stack
+    /// (LAYOUT-2.254). It may spill sideways over the text when it expands.
+    private let belowIdentity: AnyView?
 
     public init(@ViewBuilder identity: () -> Identity, @ViewBuilder content: () -> Content) {
         self.identity = identity()
         self.content = content()
+        self.belowIdentity = nil
+    }
+
+    public init<Below: View>(@ViewBuilder identity: () -> Identity, @ViewBuilder belowIdentity: () -> Below,
+                             @ViewBuilder content: () -> Content) {
+        self.identity = identity()
+        self.content = content()
+        self.belowIdentity = AnyView(belowIdentity())
     }
 
     public var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            identity.frame(width: Self.identityWidth, height: Self.identityHeight)
+            VStack(spacing: 4) {
+                identity.frame(width: Self.identityWidth, height: Self.identityHeight)
+                if let belowIdentity {
+                    belowIdentity
+                        .fixedSize()
+                        .frame(width: Self.identityWidth)
+                }
+            }
+            .zIndex(1)
             VStack(alignment: .leading, spacing: 1) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

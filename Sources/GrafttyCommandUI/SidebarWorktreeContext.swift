@@ -125,6 +125,13 @@ public struct SidebarWorktreeContext: Equatable {
         }
     }
 
+    /// What one agent is asking, when several may ask at once: the worktree's
+    /// question when it is this agent's, else this agent's own pending request.
+    public func question(session: String) -> String? {
+        if question != nil, questionPaneID == session { return question }
+        return pending.first { $0.paneID == session && $0.agentStop == nil && $0.occurrence?.source == .agentStop }?.occurrence?.text
+    }
+
     public func matches(query: String) -> Bool {
         let briefFields = brief.map { brief in
             [brief.title, brief.context, brief.completed, brief.next].compactMap { $0 } + brief.decisions

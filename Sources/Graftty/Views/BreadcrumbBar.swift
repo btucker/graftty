@@ -95,17 +95,14 @@ struct BreadcrumbBar: View {
                     }
                     if let onToggleContext {
                         Button(action: onToggleContext) {
-                            ViewThatFits(in: .horizontal) {
-                                Label("Context", systemImage: "sidebar.right")
-                                Image(systemName: "sidebar.right")
-                            }
+                            Image(systemName: "sidebar.right")
                             .padding(.horizontal, 9).frame(height: 28)
                             .background(showsContext ? theme.foreground.opacity(0.12) : .clear, in: Capsule())
                             .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
-                        .help("Worktree context")
-                        .accessibilityLabel("Context")
+                        .help(showsContext ? "Hide agents and context" : "Show agents and context")
+                        .accessibilityLabel("Agents and context")
                         .accessibilityValue(showsContext ? "Open" : "Closed")
                         .accessibilityIdentifier("worktree.context.open")
                     }

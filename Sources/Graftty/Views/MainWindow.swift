@@ -36,7 +36,9 @@ struct MainWindow: View {
     @Environment(\.agentWorkspaceRequest) private var agentWorkspaceRequest
     @Environment(\.localAttentionAnswer) private var localAttentionAnswer
 
-    @State private var showsWorktreeContext = false
+    /// One right-hand column, agents above Context, for every worktree (LAYOUT-2.266).
+    @AppStorage("workspaceSidebar.visible") private var showsWorktreeContext = true
+    @AppStorage(WorkspaceGalleryColumn.contextMinimizedKey) private var contextMinimized = false
     @State private var requestedRemoteAgent: String?
     @State private var sidebarNavigation: SidebarNavigationState
 
@@ -137,7 +139,8 @@ struct MainWindow: View {
                     }
                 }, onPaneCommandTargetChange: { pane in
                     workspaceWindow.remotePaneID = pane
-                }, agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
+                }, agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext,
+                contextPanel: hasContextInspector ? AnyView(contextInspector(inColumn: true)) : nil, showsSidebar: showsWorktreeContext, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, launchAgent: { provider, operationID in
                     let response = try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
                         request: .addAgent(worktreeID: snapshot.path, provider: provider, operationID: operationID))
                     switch response {
@@ -179,6 +182,7 @@ struct MainWindow: View {
                 selectedRemotePaneSessionName: selectedRemotePaneSessionName,
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
+                onSelectAgent: selectAgent,
                 onNavigationIntent: { attentionOpenGeneration &+= 1; routeSelector.cancel(); remoteViewer.cancelRouteRecovery() },
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -307,7 +311,8 @@ struct MainWindow: View {
                         onClearFocus: {
                             if isActiveWorkspaceWindow { terminalManager.clearFocus() }
                         },
-                        agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext
+                        agentScrollbackMaps: agentScrollbackMaps, attentionContext: selectedContext,
+                        contextPanel: hasContextInspector ? AnyView(contextInspector(inColumn: true)) : nil, showsSidebar: showsWorktreeContext
                     )
                 } else {
                     ContentUnavailableView(
@@ -317,7 +322,8 @@ struct MainWindow: View {
                     )
                 }
             } inspector: {
-                contextInspector
+                // A local workspace shows Context beneath its gallery instead (LAYOUT-2.253).
+                if !showsWorkspaceColumn { contextInspector(inColumn: false).frame(width: 360) }
             }
             .ignoresSafeArea(.container, edges: .top)
         }
@@ -677,16 +683,31 @@ struct MainWindow: View {
         }
     }
 
-    @ViewBuilder private var contextInspector: some View {
+    private var hasContextInspector: Bool { showsWorktreeContext && selectedContext != nil }
+
+    /// Whether the detail shows a workspace, which hosts Context in its gallery column.
+    private var showsWorkspaceColumn: Bool {
+        guard routeSelector.wakeFlow == nil else { return false }
+        if selectedRemoteMac != nil {
+            guard let row = selectedRemoteWorktreeSnapshot, selectedRemoteWorktreePath != nil else { return false }
+            return !(row.showsCreationProgress && row.creationProgress != nil)
+        }
+        guard selectedWorktreeBinding != nil else { return false }
+        return !(selectedWorktree.map { $0.showsCreationProgress && $0.creationProgress != nil } ?? false)
+    }
+
+    /// In the workspace column Context takes the column's width and its close
+    /// button minimizes it; alone it is a fixed inspector that closes (LAYOUT-2.267).
+    @ViewBuilder private func contextInspector(inColumn: Bool) -> some View {
         if showsWorktreeContext, let context = selectedContext {
             WorktreeContextPanel(context: context, theme: terminalManager.theme.core, hostLabel: selectedHostLabel,
-                readTranscript: transcriptReader, showAgent: agentTabOpener, onClose: { showsWorktreeContext = false })
+                minimizes: inColumn, readTranscript: transcriptReader, showAgent: agentTabOpener,
+                onClose: { if inColumn { contextMinimized = true } else { showsWorktreeContext = false } })
                 .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
                     openContextWorktree(path, remoteIdentity: identity)
                 }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
                     await revealInTerminal(request, remoteIdentity: identity)
                 }, answerQuestion: contextAnswer, dismissNotice: contextNoticeDismissal))
-                .frame(width: 360)
         }
     }
 
@@ -1150,6 +1171,25 @@ struct MainWindow: View {
             }
         )
         return true
+    }
+
+    /// The sidebar's logo stack opens a worktree with that agent on stage.
+    private func selectAgent(_ selection: SidebarAgentSelection) {
+        let agentID = selection.agentID, path = selection.worktreePath
+        if let remoteMac = selection.remoteMac {
+            selectRemoteWorktree(remoteMac, worktreePath: path)
+            requestedRemoteAgent = agentID
+            return
+        }
+        selectWorktree(path)
+        // This window's selection: the app's only follows the active window.
+        guard selectedLocalWorktreePath == path else { return }
+        var slot: PaneSlotID?
+        appState.mutateWorktrees(atPath: path) { slot = $0.showAgentTab(agentID) }
+        guard let slot else { return }
+        // Chat, like completed content, replaces the terminal, which must not take the keyboard.
+        if appState.worktree(forPath: path)?.showsNonTerminalContent(in: slot) == true { terminalManager.clearFocus() }
+        else { selectPane(path, slot) }
     }
 
     private func selectWorktree(_ path: String) {

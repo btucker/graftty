@@ -112,6 +112,38 @@ public struct WorktreeHeaderWashView: View {
 
 }
 
+/// @spec LAYOUT-2.265
+/// While the selected worktree has a header wash and its right-hand column is open on Mac, the application shall continue the header's wash down the top of that column from the colours at the header's bottom edge, fading into the column's background, with no watermark.
+public struct WorktreeColumnWash: View {
+    /// The wash has faded out by this depth, whatever the column's height.
+    public static let depth: CGFloat = 420
+    @Environment(\.worktreeHeaderWashBand) private var band
+
+    public init() {}
+
+    /// How far the header band is stretched to reach `depth`. Negative: the band
+    /// is mirrored about its bottom edge, so the two meet in the same colours.
+    public static func stretch(bandHeight: CGFloat) -> CGFloat { bandHeight > 0 ? -depth / bandHeight : 0 }
+
+    public var body: some View {
+        if let band, band.size.height > 0 {
+            GeometryReader { proxy in
+                let x = proxy.frame(in: .named(WorktreeHeaderWash.coordinateSpace)).minX
+                WorktreeHeaderWashView(wash: band.wash, drawsWatermark: false)
+                    .frame(width: band.size.width, height: band.size.height)
+                    .scaleEffect(x: 1, y: Self.stretch(bandHeight: band.size.height), anchor: .bottom)
+                    .offset(x: -x, y: -band.size.height)
+                    .frame(width: proxy.size.width, height: Self.depth, alignment: .topLeading)
+                    .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
+            }
+            .frame(height: Self.depth)
+            .clipped()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
 /// @spec LAYOUT-2.229
 /// While the application draws a header watermark, it shall size the tilted icon to nearly twice the height of the header band, cropping it at the band's top and bottom edges, and show it at uniform opacity.
 public struct WorktreeHeaderWatermark: View {

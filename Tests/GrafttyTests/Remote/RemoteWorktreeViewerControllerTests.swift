@@ -215,8 +215,7 @@ struct RemoteWorktreeViewerControllerTests {
         defer { subscription.cancel() }
         controller.saveWorkspaceLayout(workspace, identity: viewer.identity, worktreePath: row.path)
         #expect(changes == 1)
-        #expect(row.sidebarAgentLeaves(in: controller.workspaceLayout(identity: viewer.identity, worktree: row))
-            .map(\.sessionName) == ["b", "a"])
+        #expect(controller.workspaceLayout(identity: viewer.identity, worktree: row).groups.first?.sessions == ["b", "a"])
         controller.saveWorkspaceLayout(workspace, identity: viewer.identity, worktreePath: row.path)
         #expect(changes == 1)
         let restored = RemoteWorktreeViewerController(model: viewer.model, surfaces: viewer.surfaces,

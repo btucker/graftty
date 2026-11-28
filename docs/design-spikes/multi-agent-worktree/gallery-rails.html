@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gallery with tile rails</title>
+<style>
+  :root {
+    --bg: #1f2228; --panel: #282c34; --panel2: #30353f; --line: #3d434f; --rail: #23272e;
+    --fg: #eaeaea; --dim: #9aa0aa; --faint: #666c78;
+    --human: #f0a35e; --peer: #c397d8; --reply: #70c0b1; --ask: #f0c674;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 56px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 40px 0 4px; }
+  p { margin: 6px 0 12px; color: #d0d3d8; }
+  li { color: #d0d3d8; margin-bottom: 6px; }
+  .sub { color: var(--dim); }
+  .key { font-size: 12.5px; color: var(--dim); margin: 10px 0 14px; }
+  .key i { display: inline-block; width: 10px; height: 10px; vertical-align: -1px; margin: 0 4px 0 12px; }
+  .scroll { overflow-x: auto; }
+  .win { min-width: 700px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .bar { padding: 7px 12px; background: var(--panel2); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  .bar b { color: var(--fg); }
+  .row { display: flex; position: relative; }
+  .term { flex: 1; min-width: 0; padding: 12px 14px; font: 12px/1.7 ui-monospace, Menlo, monospace;
+    color: #c5c8c6; white-space: nowrap; overflow: hidden; }
+  .term .u { color: var(--ask); } .term .l { color: var(--reply); } .term .d { color: var(--faint); }
+  .faded { opacity: .55; }
+  .h { background: var(--human); border-radius: 2px; } .p { background: var(--peer); } .r { background: var(--reply); }
+
+  .vrail { width: 26px; border-left: 1px solid var(--line); background: var(--rail); position: relative; }
+  .vrail i { position: absolute; left: 7px; width: 12px; height: 5px; }
+  .vrail .view { position: absolute; left: 3px; right: 3px; border: 1.5px solid var(--fg); border-radius: 4px; opacity: .7; }
+
+  .gallery { width: 200px; border-left: 1px solid var(--line); background: #1c1f24; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .tile { background: #1b1e23; border: 1px solid var(--line); border-radius: 6px; position: relative; display: flex; }
+  .tile.on { outline: 2px solid var(--fg); outline-offset: -1px; }
+  .body { flex: 1; min-width: 0; }
+  .mini { padding: 6px 8px 2px; height: 38px; }
+  .mini i { display: block; height: 3px; border-radius: 2px; background: #4a505c; margin-bottom: 4px; }
+  .cap { padding: 3px 8px 4px; font-size: 11.5px; background: var(--panel2); white-space: nowrap; overflow: hidden; border-radius: 0 0 0 6px; }
+  .cap small { color: var(--dim); display: block; font-size: 10.5px; }
+
+  .mrail { width: 16px; background: var(--rail); border-left: 1px solid var(--line); border-radius: 0 6px 6px 0; position: relative; }
+  .mrail i { position: absolute; left: 4px; width: 8px; height: 4px; }
+  .mrail .view { position: absolute; left: 1px; right: 1px; border: 1.5px solid var(--fg); border-radius: 3px; opacity: .7; }
+  .mrail i.m1 { left: 1px; width: 13px; height: 6px; }
+  .mrail i.m2 { left: -7px; width: 22px; height: 9px; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+
+  .vcol { position: absolute; z-index: 5; right: 100%; margin-right: 10px; top: -30px; width: 300px; display: flex; flex-direction: column; gap: 5px; }
+  .pc { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid; border-radius: 8px; padding: 6px 9px;
+    font-size: 11.5px; line-height: 1.4; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+  .pc small { color: var(--dim); float: right; margin-left: 8px; }
+  .pc.s { font-size: 10px; padding: 3px 8px; opacity: .8; margin-left: 28px; }
+  .pc.m { font-size: 11px; opacity: .92; margin-left: 14px; }
+  .tile.empty { border: 1.5px dashed #5a616e; background: none; height: 44px; align-items: center; justify-content: center; color: var(--dim); font-size: 12px; }
+  .sd { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  .sd.ask { background: #f0a35e; } .sd.work { background: #7aa6da; box-shadow: 0 0 0 3px rgba(122,166,218,.25); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gallery with tile rails</h1>
+  <p class="sub">Every terminal has its scroll rail on its right edge, whether it is the big one on stage or a tile in the
+  gallery. A tile is the stage in miniature.</p>
+  <div class="key">
+    <i class="h" style="margin-left:0"></i>you typed <i class="p"></i>message from another agent <i class="r"></i>this agent's reply
+    <i style="border:1.5px solid var(--fg); border-radius:3px; background:none"></i>what is on screen
+  </div>
+
+  <div class="scroll"><div class="win">
+    <div class="bar"><b>multiagent-ui</b></div>
+    <div class="row">
+      <div class="term">
+        <div class="u">› rework the agent tabs. get a design review and a code review going</div>
+        <div class="l">⏺ Starting two reviewers and a test run in this worktree.</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add design-review --provider codex</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add code-review --provider claude</div>
+        <div class="d">&nbsp;&nbsp;⎿ graftty agent add tests --provider codex</div>
+        <div class="l">⏺ While they work, I'm drafting the lane layout.</div>
+        <div>&nbsp;&nbsp;Reading ScrollbackMapOverlay.swift…</div>
+        <div class="l">⏺ tests reported back: 212 pass, 1 known flake.</div>
+        <div class="l">⏺ code-review has a question for you.</div>
+        <div class="u">› ▍</div>
+        <div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div><div>&nbsp;</div>
+      </div>
+      <div class="vrail">
+        <div class="view" style="top:70px; bottom:6px"></div>
+        <i class="h" style="top:16px"></i><i class="r" style="top:40px"></i><i class="h" style="top:66px"></i>
+        <i class="r" style="top:92px"></i><i class="r" style="top:160px"></i>
+        <i class="p" style="top:226px"></i><i class="r" style="top:240px"></i><i class="p" style="top:286px"></i><i class="r" style="top:300px"></i>
+      </div>
+      <div class="gallery">
+        <div class="tile on">
+          <div class="body"><div class="mini"><i style="width:75%"></i><i style="width:50%"></i><i style="width:85%"></i></div><div class="cap">Claude<small>on stage</small></div></div>
+          <div class="mrail"><div class="view" style="top:48px; bottom:1px"></div><i class="h" style="top:5px"></i><i class="r" style="top:12px"></i><i class="h" style="top:19px"></i><i class="r" style="top:26px"></i><i class="r" style="top:40px"></i><i class="p" style="top:54px"></i><i class="r" style="top:60px"></i><i class="p" style="top:68px"></i></div>
+        </div>
+        <div class="tile">
+          <div class="body"><div class="mini"><i style="width:80%"></i><i style="width:55%"></i><i style="width:70%; background:var(--ask)"></i></div><div class="cap"><span class="sd ask"></span>code-review<small>asking you · hovered</small></div></div>
+          <div class="mrail"><div class="view" style="top:56px; bottom:1px"></div>
+            <i class="p" style="top:4px"></i><i class="r" style="top:12px"></i>
+            <i class="r m1" style="top:23px"></i><i class="p m1" style="top:32px"></i><i class="r m2" style="top:42px"></i><i class="r m1" style="top:55px"></i>
+            <div class="vcol">
+              <div class="pc s" style="border-left-color:var(--reply)">Read the rail overlay and pointer input<small>7m</small></div>
+              <div class="pc m" style="border-left-color:var(--peer)">✦ Claude asks for a review of the rail changes<small>6m</small></div>
+              <div class="pc" style="border-left-color:var(--reply)">Found the hover target ignores the horizontal axis; two fixes suggested<small>3m</small></div>
+              <div class="pc m" style="border-left-color:var(--reply)">Unsure whether iPad keeps the tab strip<small>1m</small></div>
+            </div>
+          </div>
+        </div>
+        <div class="tile">
+          <div class="body"><div class="mini"><i style="width:60%"></i><i style="width:90%"></i><i style="width:40%"></i></div><div class="cap"><span class="sd work"></span>design-review<small>working</small></div></div>
+          <div class="mrail"><div class="view" style="top:50px; bottom:1px"></div><i class="p" style="top:4px"></i><i class="r" style="top:20px"></i><i class="r" style="top:40px"></i><i class="r" style="top:58px"></i></div>
+        </div>
+        <div class="tile faded">
+          <div class="body"><div class="mini"><i style="width:70%"></i><i style="width:35%"></i></div><div class="cap">tests<small>reported back</small></div></div>
+          <div class="mrail"><i class="p" style="top:4px"></i><i class="r" style="top:30px"></i><i class="r" style="top:64px"></i></div>
+        </div>
+        <div class="tile empty">＋ New agent</div>
+      </div>
+    </div>
+  </div></div>
+
+  <h2>How it behaves</h2>
+  <ul>
+    <li><b>One rule everywhere:</b> a terminal, then its rail on the right, with time running downward. The stage and each tile follow it.</li>
+    <li><b>Hovering a tile's rail</b> magnifies the nearby marks and stacks the preview cards to its left, just as the main rail does. The cards cover the tile and spill over the terminal as far as they need.</li>
+    <li><b>Clicking a mark</b> brings that agent on stage, scrolled to that message.</li>
+    <li><b>Clicking the tile body</b> swaps that agent onto the stage; dragging it onto the stage puts it side by side.</li>
+    <li><b>The last tile is an empty one.</b> Clicking it starts a new agent in this worktree, which then takes that place.</li>
+    <li><b>Swapping is a change of size,</b> not of kind: the tile and its rail grow into the stage and its rail.</li>
+  </ul>
+  <p class="sub">Known limit: a tile rail is about 70 points tall, so a long history crowds. Magnification on hover is what
+  keeps it usable; taller tiles when there are only one or two helpers would help too.</p>
+</main>
+</body>
+</html>

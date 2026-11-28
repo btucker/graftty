@@ -28,7 +28,7 @@ struct RemoteWorktreeRelayRouterTests {
         #expect(agent.id == live.id && agent.assignmentID == live.assignmentID)
         #expect(agent.launched == true)
         #expect(agent.chatAvailable == nil)
-        #expect(row.sidebarAgentLeaves.map(\.sessionName) == [session])
+        #expect(row.agents?.first?.presentationSessionName == session)
         #expect(row.chatAgent(session: session) == nil)
         let retained = try #require(row.agents?.last)
         #expect(retained.sessionName == nil)

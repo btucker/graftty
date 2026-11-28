@@ -14,6 +14,10 @@ struct RemoteWorkspaceContentView: View {
     let onPaneCommandTargetChange: (PaneSlotID?) -> Void
     var agentScrollbackMaps: [PaneSlotID: AgentScrollbackMap] = [:]
     var attentionContext: SidebarWorktreeContext?
+    /// Context, shown beneath the gallery in one right-hand column (LAYOUT-2.253).
+    var contextPanel: AnyView? = nil
+    /// The header's sidebar button shows or hides the whole column (LAYOUT-2.266).
+    var showsSidebar = true
     var requestedAgent: String? = nil
     var consumeAgentRequest: () -> Void = {}
     var launchAgent: @MainActor (String?, UUID) async throws -> String = { _, _ in
@@ -71,55 +75,10 @@ struct RemoteWorkspaceContentView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                if let visible = layout.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
-                    surface(visible, headers: true)
-                        .preference(key: WorkspaceTabRowHeightKey.self, value: WorktreeHeaderWash.tabRowHeight)
-                } else {
-                    VStack(spacing: 12) {
-                        Text("No active agents").font(.headline)
-                        newAgentMenu.controlSize(.large)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                if layout.drawerVisible {
-                    HorizontalResizeDivider(label: "Terminal drawer height", onResize: { translation in
-                        if drawerResizeStart == nil { drawerResizeStart = drawerHeight(layout.drawerHeight, available: geometry.size.height) }
-                        workspace?.drawerHeight = drawerHeight((drawerResizeStart ?? 240) - translation, available: geometry.size.height)
-                    }, onResizeEnd: { drawerResizeStart = nil })
-                }
-                HStack {
-                    Button(action: toggleDrawer) { Label("Terminal", systemImage: "terminal").labelStyle(.iconOnly) }
-                        .help(layout.drawerVisible ? "Hide terminal" : "Show terminal")
-                    if layout.drawerVisible {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                ForEach(layout.terminals, id: \.self) { session in
-                                    Button { select(session) } label: {
-                                        Text(title(session)).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
-                                            .workspaceTabUnderline(selected: layout.selectedTerminal == session, color: terminalManager.theme.foreground)
-                                    }.draggable(WorkspaceTabDrag(session))
-                                        .contextMenu {
-                                            ForEach(layout.groups) { group in
-                                                Button("Move to \(title(group.selected)) tabs") { workspace?.move(session, to: group.id); select(session) }
-                                                Button("Split beside \(title(group.selected))") { workspace?.split(session, beside: group.id, edge: .right); select(session) }
-                                            }
-                                        }
-                                }
-                            }
-                        }.fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                    Button(action: newTerminal) { Image(systemName: "plus") }.help("New terminal")
-                }.buttonStyle(.plain).font(.caption).padding(.horizontal, 12).frame(height: 30)
-                    .terminalDrawerHitArea(onToggle: toggleDrawer)
-                if layout.drawerVisible, let session = layout.selectedTerminal,
-                   let leaf = worktree.layout?.leaves.first(where: { $0.sessionName == session }) {
-                    surface(.leaf(sessionName: session, title: leaf.title, attentionText: leaf.attentionText,
-                        isBusy: leaf.isBusy, attentionSource: leaf.attentionSource, attentionTimestamp: leaf.attentionTimestamp), headers: false)
-                        .frame(height: drawerHeight(layout.drawerHeight, available: geometry.size.height))
-                }
-            }
+        HStack(spacing: 0) {
+            stage
+            WorkspaceRightColumn(showsGallery: showsGallery, contextPanel: contextPanel,
+                                 separator: terminalManager.theme.foreground.opacity(0.08)) { gallery }
         }
         .onAppear {
             workspace = viewer.workspaceLayout(identity: identity, worktree: worktree)
@@ -149,8 +108,137 @@ struct RemoteWorkspaceContentView: View {
         .onChange(of: zoomed) { _, _ in publishVisibility() }
     }
 
-    private var newAgentMenu: some View {
-        NewAgentMenu { provider, operationID in
+    private var context: SidebarWorktreeContext { attentionContext ?? SidebarWorktreeContext(worktree: worktree) }
+    private func isAgentSession(_ session: String) -> Bool { agent(session) != nil }
+    private func chatSwitch(_ session: String) -> AnyView? {
+        guard chatAgent(session) != nil else { return nil }
+        return AnyView(AgentChatSwitch(showsChat: Binding(get: { showsChat(session) }, set: { setView(session, chat: $0) }))
+            .controlSize(.small))
+    }
+    private func agent(_ session: String) -> AgentSessionInfo? {
+        worktree.agents?.first { $0.presentationSessionName == session }
+    }
+    private var galleryAgents: [String] { layout.gallerySessions.filter { agent($0) != nil } }
+    private var showsGallery: Bool { showsSidebar }
+
+    private var gallery: some View {
+        WorkspaceGallery(tiles: galleryAgents.map(tileModel), theme: terminalManager.theme,
+            onStage: stage,
+            onJump: { session, eventID in
+                stage(session)
+                let slot = slot(session)
+                MacGalleryJump.reveal(eventID, timeline: slot.flatMap { agentScrollbackMaps[$0] }?.timeline) { [terminalManager] in
+                    slot.flatMap(terminalManager.handle(for:))
+                }
+            },
+            onMove: { source, target, after in _ = workspace?.moveTile(source, relativeTo: target, after: after) },
+            newAgent: {
+                newAgentMenu(label: AnyView(AgentGalleryEmptyTile(worktreePath: worktree.path, foreground: terminalManager.theme.foreground)))
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            },
+            tileMenu: { session in tileMenu(session) })
+    }
+
+    private func tileModel(_ session: String) -> WorkspaceGalleryTileModel {
+        let info = agent(session)
+        let asking = context.needsInput(session: session)
+        let completed = info?.isCompleted == true
+        let status = info.map { AgentAssignmentStatus(agent: $0, needsInput: asking).label } ?? "Terminal"
+        return WorkspaceGalleryTileModel(id: session,
+            handle: { [terminalManager, slot = slot(session)] in completed ? nil : slot.flatMap(terminalManager.handle(for:)) },
+            title: title(session), provider: info?.provider,
+            status: AgentTileStatus(needsInput: asking,
+                isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy == true,
+                isCompleted: completed, isCached: false, question: context.question(session: session),
+                result: info?.result, statusLabel: status),
+            isOnStage: layout.isOnStage(session), scrollback: slot(session).flatMap { agentScrollbackMaps[$0] })
+    }
+
+    private func stage(_ session: String) {
+        workspace?.stage(session)
+        returnHiddenShells()
+        select(session)
+    }
+
+    /// A shell has no tile, so one a stage change hides goes back to the drawer (LAYOUT-2.255).
+    private func returnHiddenShells() {
+        workspace?.returnHiddenShellsToDrawer { agent($0) != nil }
+    }
+
+    @ViewBuilder private func tileMenu(_ session: String) -> some View {
+        if !layout.isOnStage(session), let target = layout.focusedGroupID {
+            Button("Put on stage") { stage(session) }
+            Button("Show beside the stage") { workspace?.split(session, beside: target, edge: .right); select(session) }
+        } else if let group = layout.group(containing: session), layout.groups.count > 1 {
+            Button("Remove from stage") { removePane(group.id) }
+        }
+        if agent(session)?.isCompleted == true {
+            Button("Dismiss") {
+                workspace?.remove(session)
+                if let next = layout.focusedSession { select(next) } else { terminalManager.clearFocus() }
+            }
+        }
+    }
+
+    private func removePane(_ id: UUID) {
+        _ = workspace?.removePane(id)
+        returnHiddenShells()
+        if let next = layout.focusedSession { select(next) }
+    }
+
+    private var stage: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                if let visible = layout.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
+                    surface(visible, headers: true)
+                } else {
+                    VStack(spacing: 12) {
+                        Text("No active agents").font(.headline)
+                        newAgentMenu().controlSize(.large)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                if layout.drawerVisible {
+                    HorizontalResizeDivider(label: "Terminal drawer height", onResize: { translation in
+                        if drawerResizeStart == nil { drawerResizeStart = drawerHeight(layout.drawerHeight, available: geometry.size.height) }
+                        workspace?.drawerHeight = drawerHeight((drawerResizeStart ?? 240) - translation, available: geometry.size.height)
+                    }, onResizeEnd: { drawerResizeStart = nil })
+                }
+                HStack {
+                    Button(action: toggleDrawer) { Label("Terminal", systemImage: "terminal").labelStyle(.iconOnly) }
+                        .help(layout.drawerVisible ? "Hide terminal" : "Show terminal")
+                    if layout.drawerVisible {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 4) {
+                                ForEach(layout.terminals, id: \.self) { session in
+                                    Button { select(session) } label: {
+                                        Text(title(session)).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
+                                            .workspaceTabUnderline(selected: layout.selectedTerminal == session, color: terminalManager.theme.foreground)
+                                    }.draggable(WorkspaceTabDrag(session))
+                                        .contextMenu {
+                                            ForEach(layout.groups) { group in
+                                                Button("Split beside \(title(group.selected))") { workspace?.split(session, beside: group.id, edge: .right); select(session) }
+                                            }
+                                        }
+                                }
+                            }
+                        }.fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button(action: newTerminal) { Image(systemName: "plus") }.help("New terminal")
+                }.buttonStyle(.plain).font(.caption).padding(.horizontal, 12).frame(height: 30)
+                    .terminalDrawerHitArea(onToggle: toggleDrawer)
+                if layout.drawerVisible, let session = layout.selectedTerminal,
+                   let leaf = worktree.layout?.leaves.first(where: { $0.sessionName == session }) {
+                    surface(.leaf(sessionName: session, title: leaf.title, attentionText: leaf.attentionText,
+                        isBusy: leaf.isBusy, attentionSource: leaf.attentionSource, attentionTimestamp: leaf.attentionTimestamp), headers: false)
+                        .frame(height: drawerHeight(layout.drawerHeight, available: geometry.size.height))
+                }
+            }
+        }
+    }
+
+    private func newAgentMenu(label: AnyView? = nil) -> some View {
+        NewAgentMenu(label: label) { provider, operationID in
             let session = try await launchAgent(provider, operationID)
             try Task.checkCancellation()
             pendingAgentSession = session
@@ -165,7 +253,7 @@ struct RemoteWorkspaceContentView: View {
         }
         guard let session = pendingAgentSession,
               worktree.layout?.leaves.contains(where: { $0.sessionName == session }) == true else { return }
-        workspace?.addAgent(session)
+        workspace?.addAgent(session, isAgent: isAgentSession)
         select(session)
         pendingAgentSession = nil
     }
@@ -173,8 +261,8 @@ struct RemoteWorkspaceContentView: View {
     private func showRequestedAgent() {
         guard let requestedAgent, let agent = worktree.agents?.first(where: { $0.id == requestedAgent }),
               let session = agent.presentationSessionName else { return }
-        if !layout.sessions.contains(session) { workspace?.addAgent(session) }
-        select(session)
+        if !layout.sessions.contains(session) { workspace?.addAgent(session, isAgent: isAgentSession) }
+        stage(session)
         consumeAgentRequest()
     }
 
@@ -235,8 +323,13 @@ struct RemoteWorkspaceContentView: View {
             }, agentScrollbackMaps: agentScrollbackMaps,
             paneHeader: headers ? { id in AnyView(header(id)) } : nil,
             paneBanner: headers ? { id in
-                guard let group = layout.groups.first(where: { slot($0.selected) == id }), group.id == inputRequestGroupID else { return nil }
-                return AnyView(WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: select))
+                guard let group = layout.groups.first(where: { slot($0.selected) == id }) else { return nil }
+                let asks = attentionContext?.question != nil && group.id == layout.focusedGroupID
+                let split = StagePaneChrome.showsHeader(paneCount: layout.groups.count)
+                let top = StagePaneTopControls(
+                    banner: asks ? AnyView(WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: stage)) : nil,
+                    chatSwitch: split ? nil : chatSwitch(group.selected))
+                return top.isEmpty ? nil : AnyView(top)
             } : nil,
             paneContent: { id in
                 if let session = layout.sessions.first(where: { slot($0) == id }), let chat = chatContent(session) {
@@ -287,90 +380,33 @@ struct RemoteWorkspaceContentView: View {
     }
 
     private func dropTarget(_ id: PaneSlotID, content: AnyView) -> some View {
-        GeometryReader { geometry in
-            content.dropDestination(for: WorkspaceTabDrag.self) { sessions, location in
-                guard let session = sessions.first?.session, layout.sessions.contains(session),
-                      let group = layout.groups.first(where: { slot($0.selected) == id }) else { return false }
-                if let edge = WorkspaceLayout<String>.dropEdge(x: location.x, y: location.y,
-                    width: geometry.size.width, height: geometry.size.height) {
-                    workspace?.split(session, beside: group.id, edge: edge)
-                } else { workspace?.move(session, to: group.id) }
-                select(session)
-                return true
-            }
-        }
+        content.modifier(WorkspaceStageDropTarget { session, edge in
+            guard layout.sessions.contains(session),
+                  let group = layout.groups.first(where: { slot($0.selected) == id }) else { return }
+            if let edge { workspace?.split(session, beside: group.id, edge: edge) }
+            else { workspace?.move(session, to: group.id); returnHiddenShells() }
+            select(session)
+        })
     }
 
+    /// A split stage's slim pane header: names the pane, holds its Chat /
+    /// Terminal switch, and removes it from the stage. A lone pane has none (LAYOUT-2.257).
     @ViewBuilder private func header(_ id: PaneSlotID) -> some View {
-        if let group = layout.groups.first(where: { slot($0.selected) == id }) {
-          HStack(spacing: 0) {
-            AgentTabStrip(spacing: 8) {
-                    ForEach(group.sessions, id: \.self) { session in
-                        Button { select(session) } label: {
-                            HStack(spacing: 6) {
-                                if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
-                                    AgentStatusBadge(status: agent.status,
-                                        needsInput: (attentionContext ?? SidebarWorktreeContext(worktree: worktree)).needsInput(session: session),
-                                        failure: agent.failure,
-                                        disconnected: slot(session).map { terminalManager.attachmentFailures[$0] != nil } ?? false,
-                                        processObservation: agent.processObservation,
-                                        isBusy: worktree.layout?.leaves.first { $0.sessionName == session }?.isBusy)
-                                } else {
-                                    Image(systemName: "terminal")
-                                }
-                                Text(title(session)).lineLimit(1).truncationMode(.middle).help(title(session))
-                                    .fontWeight(group.selected == session ? .medium : .regular)
-                            }.worktreeHeaderWashText().padding(.horizontal, 12).padding(.vertical, 9)
-                                .foregroundStyle(terminalManager.theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
-                                .overlay(alignment: .bottom) {
-                                    Rectangle().fill(group.selected == session ? terminalManager.theme.foreground.opacity(0.55) : .clear)
-                                        .frame(height: 2)
-                                }
-                        }.buttonStyle(.plain).workspaceTabDragSource(session, onSelect: { select(session) })
-                            .modifier(WorkspaceTabDropTarget { source, after in
-                                let sameGroup = layout.group(containing: source)?.id == group.id
-                                if workspace?.moveTab(source, relativeTo: session, after: after) == true && !sameGroup { select(source) }
-                            })
-                            .contextMenu {
-                                ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
-                                    Button("Split \(edge.rawValue)") { workspace?.split(session, beside: group.id, edge: edge); select(session) }
-                                        .disabled(group.sessions.count < 2)
-                                }
-                                ForEach(layout.groups.filter { $0.id != group.id }) { destination in
-                                    Button("Move to \(title(destination.selected)) tabs") { workspace?.move(session, to: destination.id); select(session) }
-                                    Button("Merge into \(title(destination.selected)) tabs") { workspace?.merge(group.id, into: destination.id); select(session) }
-                                }
-                                if worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
-                                    Button("Close tab") {
-                                        workspace?.remove(session)
-                                        if let next = layout.focusedSession { select(next) }
-                                        else { onFocus(nil) }
-                                    }
-                                }
-                                if worktree.agents?.contains(where: { $0.presentationSessionName == session }) != true {
-                                    Button("Move to terminal drawer") { workspace?.moveToDrawer(session); select(session) }
-                                }
-                            }
-                    }
-                    newAgentMenu.menuStyle(.borderlessButton).worktreeHeaderWashText().agentTabStripFixed()
+        if let group = layout.groups.first(where: { slot($0.selected) == id }), StagePaneChrome.showsHeader(paneCount: layout.groups.count) {
+            HStack(spacing: 6) {
+                AgentStatusDot(dot: tileModel(group.selected).status.dot)
+                Text(title(group.selected)).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                chatSwitch(group.selected)
+                Button { removePane(group.id) } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).help("Remove from stage").accessibilityLabel("Remove from stage")
             }
-            if chatAgent(group.selected) != nil {
-                AgentChatSwitch(showsChat: Binding(get: { showsChat(group.selected) },
-                                                   set: { setView(group.selected, chat: $0) }))
-                    .controlSize(.small)
-            }
-          }.font(.system(size: 13))
-                .background { terminalManager.theme.background.worktreeHeaderWash() }
-                .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
-                    guard let session = sessions.first?.session, layout.sessions.contains(session) else { return false }
-                    workspace?.move(session, to: group.id); select(session); return true
-                }
+            .font(.system(size: 11.5))
+            .foregroundStyle(terminalManager.theme.foreground.opacity(layout.focusedGroupID == group.id ? 0.85 : 0.55))
+            .padding(.horizontal, 10).frame(minHeight: 24)
+            .background { terminalManager.theme.background.worktreeHeaderWash() }
+            .overlay(alignment: .bottom) { terminalManager.theme.foreground.opacity(0.08).frame(height: 1) }
         }
-    }
-    private var inputRequestGroupID: UUID? {
-        guard attentionContext?.question != nil else { return nil }
-        let session = attentionContext?.questionPaneID ?? layout.focusedSession
-        return session.flatMap { layout.group(containing: $0)?.id } ?? layout.groups.first?.id
     }
     private func toggleDrawer() {
         var next = layout

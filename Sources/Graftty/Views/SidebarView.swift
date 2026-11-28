@@ -47,6 +47,8 @@ struct SidebarView: View {
     let selectedRemotePaneSessionName: String?
     let onSelect: (String) -> Void
     var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
+    /// Selects a worktree with one of its agents on stage, from the agent logo stack.
+    var onSelectAgent: (SidebarAgentSelection) -> Void = { _ in }
     var onNavigationIntent: () -> Void = {}
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
@@ -376,6 +378,7 @@ struct SidebarView: View {
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
+                          onSelectRemoteAgent: { onSelectAgent(.init(remoteMac: $0, worktreePath: $1, agentID: $2)) },
                           onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
                           onSetupLinuxHost: onSetupLinuxHost,
@@ -1149,7 +1152,9 @@ struct SidebarView: View {
             onDrop: { drop, placement in
                 handleRowDrop(drop, target: worktree.path, targetHost: owner.deviceID, after: placement == .after)
             },
-            scrollID: scrollID
+            scrollID: scrollID,
+            logos: AgentLogo.logos(in: context, isCached: false),
+            onSelectAgent: { onSelectAgent(.init(remoteMac: nil, worktreePath: worktree.path, agentID: $0)) }
         ) {
             WorktreeRowIdentitySlot(entry: worktree, displayName: displayName, isMainCheckout: worktree.path == repo.path, theme: theme,
                 prBadge: prBadge, status: status, project: project, projectIconData: iconStore.iconData(for: repo),
@@ -1371,4 +1376,12 @@ struct MergedRowInsets: ViewModifier {
             content.listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)).listRowSeparator(.hidden)
         }
     }
+}
+
+/// An agent chosen from a sidebar row's logo stack (LAYOUT-2.254).
+struct SidebarAgentSelection {
+    /// Nil for a worktree on this Mac.
+    let remoteMac: RemoteMac?
+    let worktreePath: String
+    let agentID: String
 }

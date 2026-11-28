@@ -45,11 +45,38 @@ struct HostBrowserProxyTests {
         }
     }
 
+    @Test func aBrowserWaitDoesNotChargeAMainThreadStallToItsDeadline() {
+        var now = ContinuousClock.now
+        var wait = MainThreadStallDeadline(.seconds(5), now: { now })
+        now += .seconds(1)
+        let afterOneSecond = wait.hasTimeLeft()
+        // WebKit blocks the main thread while a process launch stalls.
+        now += .seconds(348)
+        let afterStall = wait.hasTimeLeft()
+        // Four seconds of the five remain; ordinary polls spend them.
+        now += .seconds(1.9)
+        _ = wait.hasTimeLeft()
+        now += .seconds(1.9)
+        let justBeforeBudget = wait.hasTimeLeft()
+        now += .seconds(1.9)
+        let pastBudget = wait.hasTimeLeft()
+        #expect(afterOneSecond && afterStall && justBeforeBudget)
+        #expect(wait.stalled == .seconds(348))
+        #expect(!pastBudget)
+
+        // Blocking beyond the cap is a hang, and fails the wait.
+        var hung = MainThreadStallDeadline(.seconds(60), now: { now })
+        now += .seconds(9 * 60)
+        let afterHang = hung.hasTimeLeft()
+        #expect(!afterHang)
+    }
+
     private final class ControlledAppearanceContainer: UIViewController {
         override var shouldAutomaticallyForwardAppearanceMethods: Bool { false }
     }
 
-    @Test("@spec PORTS-5.13: When the host browser loads a worktree URL, the application shall send WebKit's HTTP request through the paired host's authenticated tunnel and render the host's response.", .timeLimit(.minutes(2)), arguments: ["127.0.0.1", "localhost", "[::1]", "example.invalid"])
+    // Ten minutes leaves room for a WebKit launch stall; see MainThreadStallDeadline.
+    @Test("@spec PORTS-5.13: When the host browser loads a worktree URL, the application shall send WebKit's HTTP request through the paired host's authenticated tunnel and render the host's response.", .timeLimit(.minutes(10)), arguments: ["127.0.0.1", "localhost", "[::1]", "example.invalid"])
     func webKitLoadsLoopbackPageThroughProxy(targetHost: String) async throws {
         let url = URL(string: "http://\(targetHost):32123/")!
         let network = HostBrowserNetwork()
@@ -92,7 +119,8 @@ struct HostBrowserProxyTests {
         }
     }
 
-    @Test("@spec PORTS-5.14: When a host browser sign-in page redirects to its loopback OAuth callback, the application shall forward the unchanged callback path and query through the same paired Mac.", .timeLimit(.minutes(2)))
+    // Ten minutes leaves room for a WebKit launch stall; see MainThreadStallDeadline.
+    @Test("@spec PORTS-5.14: When a host browser sign-in page redirects to its loopback OAuth callback, the application shall forward the unchanged callback path and query through the same paired Mac.", .timeLimit(.minutes(10)))
     func authRedirectReachesTheHostCallback() async throws {
         let callback = URL(string: "http://127.0.0.1:32135/callback/mcp?code=test-code&state=test-state")!
         var authorization = URLComponents(string: "http://example.invalid:32134/authorize")!
@@ -193,7 +221,8 @@ struct HostBrowserProxyTests {
         try await expectPage("scoped-auth-complete", url: authorization.url!, configuration: configuration)
     }
 
-    @Test("@spec CHROME-4.3: When a Local Safari sign-in redirects to the unchanged localhost callback, the application shall keep its foreground callback leases alive and forward the original request to the authorized host.", .timeLimit(.minutes(2)))
+    // Ten minutes leaves room for a WebKit launch stall; see MainThreadStallDeadline.
+    @Test("@spec CHROME-4.3: When a Local Safari sign-in redirects to the unchanged localhost callback, the application shall keep its foreground callback leases alive and forward the original request to the authorized host.", .timeLimit(.minutes(10)))
     func safariRedirectUsesOriginalLoopbackCallback() async throws {
         let provider = try NWListener(using: .tcp, on: 32181)
         let queue = DispatchQueue(label: "graftty.safari.fixture")
@@ -276,8 +305,8 @@ struct HostBrowserProxyTests {
         let safari = try #require(browserSheet.presentedViewController as? SFSafariViewController)
         // Safari starts its own browser processes. Match expectPage's bounded
         // wait for cold CI simulators, where startup alone can exceed 30s.
-        let deadline = ContinuousClock.now + .seconds(60)
-        while await probe.request == nil, ContinuousClock.now < deadline {
+        var wait = MainThreadStallDeadline(.seconds(60))
+        while await probe.request == nil, wait.hasTimeLeft() {
             try await Task.sleep(for: .milliseconds(20))
         }
         let stage = await probe.stage
@@ -394,8 +423,8 @@ struct HostBrowserProxyTests {
     }
 
     private func waitForBrowserState(_ message: String, until condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while !condition(), ContinuousClock.now < deadline {
+        var wait = MainThreadStallDeadline(.seconds(5))
+        while !condition(), wait.hasTimeLeft() {
             try await Task.sleep(for: .milliseconds(20))
         }
         try #require(condition(), "\(message)")
@@ -647,8 +676,8 @@ struct HostBrowserProxyTests {
         view.load(URLRequest(url: url))
         // A fresh CI simulator can take over 30 seconds to start WebContent
         // and GPU processes. Finish immediately on navigation or its failure.
-        let deadline = ContinuousClock.now + .seconds(60)
-        while !navigation.finished, navigation.failure == nil, ContinuousClock.now < deadline {
+        var wait = MainThreadStallDeadline(.seconds(60))
+        while !navigation.finished, navigation.failure == nil, wait.hasTimeLeft() {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(navigation.failure == nil, "\(String(describing: navigation.failure))")
@@ -941,6 +970,42 @@ struct HostBrowserProxyTests {
 }
 
 @MainActor
+/// A browser wait's deadline that does not count time the main thread was
+/// blocked. On CI's simulator, launching a WebKit process occasionally blocks
+/// the main thread for about six minutes (one log reports a WebContent process
+/// that "took 348.79 seconds to launch"), after which the page loads normally.
+/// No wait on the main actor can run during that time, so charging it to the
+/// deadline fails a test whose browser behaves correctly.
+struct MainThreadStallDeadline {
+    /// A poll that returns this late means the main thread was blocked.
+    static let stallThreshold: Duration = .seconds(2)
+    /// Stalls beyond this count against the deadline, so a real hang still fails.
+    static let maximumStall: Duration = .seconds(8 * 60)
+    private var remaining: Duration
+    private var last: ContinuousClock.Instant
+    private let now: () -> ContinuousClock.Instant
+    private(set) var stalled: Duration = .zero
+
+    init(_ budget: Duration, now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }) {
+        remaining = budget
+        self.now = now
+        last = now()
+    }
+
+    mutating func hasTimeLeft() -> Bool {
+        let current = now()
+        let elapsed = last.duration(to: current)
+        last = current
+        if elapsed >= Self.stallThreshold, stalled + elapsed <= Self.maximumStall {
+            stalled += elapsed
+            print("WebKit blocked the main thread for \(elapsed) during a browser wait")
+        } else {
+            remaining -= elapsed
+        }
+        return remaining > .zero
+    }
+}
+
 private final class NavigationProbe: NSObject, WKNavigationDelegate {
     var finished = false
     var failure: Error?

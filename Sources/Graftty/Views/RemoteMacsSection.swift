@@ -287,6 +287,8 @@ struct RemoteMacsSection: View {
     let theme: GhosttyTheme
     let onSelectRemoteMac: (RemoteMac) -> Void
     var onSelectRemoteWorktree: (RemoteMac, String) -> Void = { _, _ in }
+    /// Opens a remote worktree with one of its agents on stage, from its logo stack (LAYOUT-2.254).
+    var onSelectRemoteAgent: (RemoteMac, String, String) -> Void = { _, _, _ in }
     var onAddRemoteWorktree: (RemoteMac, RemoteRepositoryInfo) -> Void = {
         _, _ in
     }
@@ -582,6 +584,10 @@ struct RemoteMacsSection: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .rightClickMenu {
                 remoteWorktreeMenu(worktree, context: context, remoteMac: remoteMac)
+            }
+        } belowIdentity: {
+            AgentLogoStack(logos: AgentLogo.logos(in: context, isCached: isCached), background: theme.background) { agentID in
+                onSelectRemoteAgent(remoteMac, worktree.path, agentID)
             }
         } content: {
             Button {

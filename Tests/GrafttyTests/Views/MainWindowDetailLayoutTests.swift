@@ -73,9 +73,9 @@ struct MainWindowDetailLayoutTests {
         #expect(band.redComponent > 0.8 && band.greenComponent < 0.4, "The band carries the tab row's background, not a blank: \(band)")
     }
 
-    /// The workspace reports its own tab row, so one without agents leaves no gap above Context.
+    /// A workspace draws no tab row, with or without agents, so nothing sits between the breadcrumb and Context.
     @Test(arguments: [true, false])
-    func contextClearsOnlyARenderedTabRow(hasAgents: Bool) async throws {
+    func contextStartsBelowTheBreadcrumb(hasAgents: Bool) async throws {
         _ = NSApplication.shared
         let inspectorProbe = NSView()
         let manager = TerminalManager(socketPath: "/tmp/detail-layout-tab-row-test-unused.sock")
@@ -101,7 +101,7 @@ struct MainWindowDetailLayoutTests {
         try await Task.sleep(for: .milliseconds(100))
         host.layoutSubtreeIfNeeded()
         let inspector = inspectorProbe.convert(inspectorProbe.bounds, to: host)
-        #expect(abs(inspector.minY - (30 + (hasAgents ? WorktreeHeaderWash.tabRowHeight : 0))) < 1)
+        #expect(abs(inspector.minY - 30) < 1)
     }
 
     enum ContentState: CaseIterable, Sendable {

@@ -18,9 +18,11 @@ public struct WorktreeContextPanel: View {
     private static let latestID = "worktree.context.timeline.latest"
     private static let detailsID = "worktree.context.details.top"
     private let hostLabel: String?
+    /// The close button minimizes the panel where it shares a column (LAYOUT-2.267).
+    private let minimizes: Bool
 
     public init(context: SidebarWorktreeContext, theme: GhosttyThemeColors = .fallback, hostLabel: String? = nil, foreground: Color? = nil,
-                secondary: Color? = nil,
+                secondary: Color? = nil, minimizes: Bool = false,
                 readTranscript: (@MainActor (String) async -> String?)? = nil, showAgent: ((String) -> Void)? = nil, onClose: @escaping () -> Void) {
         self.context = context
         self.theme = theme
@@ -28,6 +30,7 @@ public struct WorktreeContextPanel: View {
         self.foreground = foreground ?? theme.foreground
         self.secondary = secondary ?? theme.foreground.opacity(0.68)
         self.onClose = onClose
+        self.minimizes = minimizes
         self.readTranscript = readTranscript
         self.showAgent = showAgent
     }
@@ -79,10 +82,10 @@ public struct WorktreeContextPanel: View {
                 Text(hostLabel).font(.callout).foregroundStyle(secondary).lineLimit(1)
             }
             Button(action: onClose) {
-                Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                Image(systemName: minimizes ? "chevron.down.2" : "xmark").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Close context")
+            .accessibilityLabel(minimizes ? "Minimize context" : "Close context")
             .accessibilityIdentifier("worktree.context.close")
         }
         .padding(.leading, 20).padding(.trailing, 8).padding(.vertical, 3)
@@ -194,7 +197,7 @@ public struct WorktreeContextPanel: View {
                         if agent.resultsAreSummaries == true {
                             Text("Result previews · \(agent.resultCount ?? 0) retained assignments").foregroundStyle(secondary)
                         }
-                        if let showAgent { Button("Open agent tab") { showAgent(agent.id) } }
+                        if let showAgent { Button("Put on stage") { showAgent(agent.id) } }
                         if let result = agent.result { Text(result).textSelection(.enabled) }
                         if let readTranscript, agent.recordedStatus == .closed {
                             Button("Read transcript") {

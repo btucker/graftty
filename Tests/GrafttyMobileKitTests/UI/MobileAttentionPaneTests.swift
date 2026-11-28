@@ -80,7 +80,7 @@ struct MobileAttentionPaneTests {
             layout: .leaf(sessionName: "agent", title: "Worktree emoji selection", attentionText: nil, isBusy: true, attentionSource: nil),
             agents: [.init(id: "a", name: "Claude", provider: "claude", status: "running", sessionName: "agent")])
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 120))
-        let host = UIHostingController(rootView: CompactAgentBar(worktree: row, session: "agent", onSelect: { _ in }).frame(width: 390))
+        let host = UIHostingController(rootView: CompactAgentBar(worktree: row, session: "agent", onOpenGallery: {}).frame(width: 390))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -89,6 +89,26 @@ struct MobileAttentionPaneTests {
         // The pill drew its name; a spinner, when present, mounts with it.
         #expect(host.sizeThatFits(in: CGSize(width: 390, height: 120)).width > 100)
         #expect(!accessibilityObjects(in: host.view).contains { $0 is UIActivityIndicatorView })
+    }
+
+    @Test("@spec IOS-13.34: While the phone shows one agent on stage and another agent in the worktree asks for user input that the stage's question bar does not already show, the application shall show a chip naming the asking agent, and tapping it shall put that agent on stage.")
+    func askingChipNamesAnotherAgent() {
+        func leaf(_ session: String, asks: Bool) -> PaneLayoutNode {
+            .leaf(sessionName: session, title: session, attentionText: asks ? "Keep the strip?" : nil, isBusy: !asks,
+                  attentionSource: asks ? .agentStop : nil)
+        }
+        let layout: PaneLayoutNode = .split(direction: .horizontal, ratio: 0.5, left: leaf("lead", asks: false),
+            right: .split(direction: .vertical, ratio: 0.5, left: leaf("review", asks: true), right: leaf("tests", asks: true)))
+        let row = WorktreePanes(path: "/repo/chip", displayName: "chip", repoDisplayName: "graftty",
+            displayBranch: "chip", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: layout,
+            agents: ["lead", "review", "tests"].map { .init(id: $0, name: $0, provider: "codex", status: "running", sessionName: $0) })
+        let context = SidebarWorktreeContext(worktree: row)
+        let asking = ["review", "tests"].filter { context.needsInput(session: $0) }
+        let uncovered = asking.filter { !(context.question != nil && context.questionPaneID == $0) }
+        #expect(!asking.isEmpty)
+        #expect(CompactAgentBar.askingChip(worktree: row, context: context, session: "lead")?.session == uncovered.first)
+        #expect(CompactAgentBar.askingChip(worktree: row, context: SidebarWorktreeContext(worktree: row), session: "lead")?.session != "lead")
     }
 
     @Test("@spec IOS-13.18: While a mobile worktree row offers to remove a merged worktree, the application shall keep the row as tall as it is without that button.")

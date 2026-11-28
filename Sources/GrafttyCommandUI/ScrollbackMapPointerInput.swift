@@ -5,23 +5,29 @@ import SwiftUI
 /// A native input plane handles AppKit events inside the map gutter.
 struct ScrollbackMapPointerInput: NSViewRepresentable {
     var content: AnyView
-    var terminalOnLeft: Bool
     var previewArea: CGRect?
+    var previewRows: [String: CGRect] = [:]
     var onHover: (CGFloat?) -> Void
+    var onHoverRow: (String) -> Void = { _ in }
+    var onWheel: (CGFloat, Bool) -> Void = { _, _ in }
     var onScrub: (CGFloat?) -> Void
     var onDrag: (CGFloat) -> Void
+    var onDragEnd: (CGFloat) -> Void
     var onClick: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ScrollbackMapPointerView { ScrollbackMapPointerView(content: content) }
 
     func updateNSView(_ view: ScrollbackMapPointerView, context: Context) {
         view.content.rootView = content
-        view.terminalOnLeft = terminalOnLeft
         view.onHover = onHover
         view.onScrub = onScrub
         view.onDrag = onDrag
+        view.onDragEnd = onDragEnd
         view.onClick = onClick
         view.previewArea = previewArea
+        view.previewRows = previewRows
+        view.onHoverRow = onHoverRow
+        view.onWheel = onWheel
     }
 
     static func dismantleNSView(_ view: ScrollbackMapPointerView, coordinator: ()) {
@@ -31,11 +37,14 @@ struct ScrollbackMapPointerInput: NSViewRepresentable {
 
 final class ScrollbackMapPointerView: NSView {
     let content: NSHostingView<AnyView>
-    var terminalOnLeft = true
     var previewArea: CGRect?
+    var previewRows: [String: CGRect] = [:]
+    var onHoverRow: ((String) -> Void)?
+    var onWheel: ((CGFloat, Bool) -> Void)?
     var onHover: ((CGFloat?) -> Void)?
     var onScrub: ((CGFloat?) -> Void)?
     var onDrag: ((CGFloat) -> Void)?
+    var onDragEnd: ((CGFloat) -> Void)?
     var onClick: ((CGFloat) -> Void)?
     private var press: NSPoint?
     private var dragged = false
@@ -117,6 +126,9 @@ final class ScrollbackMapPointerView: NSView {
             setHover(point.y)
         } else if previewArea?.contains(point) != true {
             setHover(nil)
+        } else if let row = ScrollbackPreviewRows.row(at: point, in: previewRows) {
+            // Over a message inside a card: magnify that one.
+            onHoverRow?(row)
         }
     }
 
@@ -124,8 +136,12 @@ final class ScrollbackMapPointerView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
-        if bounds.contains(location) { setHover(location.y) }
-        forwardWheel(event, acrossLeftEdge: terminalOnLeft)
+        // Only a wheel that arrives before any pointer motion sets the hover: a later one would drop the wheel's focus.
+        if hoverY == nil, bounds.contains(location) { setHover(location.y) }
+        // The wheel steps the focused message; the terminal stays put (CONTEXT-57.18).
+        // A flick's coasting is swallowed, or it would run the focus to the end.
+        guard event.momentumPhase.isEmpty else { return }
+        onWheel?(event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -146,26 +162,26 @@ final class ScrollbackMapPointerView: NSView {
     override func mouseUp(with event: NSEvent) {
         guard press != nil else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if dragged { onDrag?(point.y) } else { onClick?(point.y) }
+        if dragged { onDragEnd?(point.y) } else { onClick?(point.y) }
         press = nil
         setHover(bounds.contains(point) || previewArea?.contains(point) == true ? point.y : nil)
         onScrub?(nil)
     }
 }
 
-/// The button's native input view forwards wheel events into the terminal next to the card.
+/// The button's native input view passes wheel travel to the rail (CONTEXT-57.18).
 struct ScrollbackPreviewButtonInput: NSViewRepresentable {
-    let railOnRight: Bool
+    let wheel: (CGFloat, Bool) -> Void
     let select: () -> Void
 
     func makeNSView(context: Context) -> InputView { InputView() }
     func updateNSView(_ view: InputView, context: Context) {
-        view.railOnRight = railOnRight
+        view.wheel = wheel
         view.select = select
     }
 
     final class InputView: NSView {
-        var railOnRight = true
+        var wheel: ((CGFloat, Bool) -> Void)?
         var select: (() -> Void)?
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
@@ -174,19 +190,9 @@ struct ScrollbackPreviewButtonInput: NSViewRepresentable {
             if bounds.contains(convert(event.locationInWindow, from: nil)) { select?() }
         }
         override func scrollWheel(with event: NSEvent) {
-            forwardWheel(event, acrossLeftEdge: !railOnRight)
+            guard event.momentumPhase.isEmpty else { return }
+            wheel?(event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
         }
-    }
-}
-
-private extension NSView {
-    /// Both the gutter and the cards border a gap over the same terminal.
-    func forwardWheel(_ event: NSEvent, acrossLeftEdge: Bool) {
-        guard let root = window?.contentView else { return }
-        let y = min(bounds.maxY - 1, max(bounds.minY + 1, convert(event.locationInWindow, from: nil).y))
-        let point = convert(NSPoint(x: acrossLeftEdge ? bounds.minX - 1 : bounds.maxX + 1, y: y), to: root.superview)
-        let target = root.hitTest(point)
-        if target !== self { target?.scrollWheel(with: event) }
     }
 }
 #endif

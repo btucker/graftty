@@ -1455,7 +1455,8 @@ struct IPadDetailColumn: View {
                 guard let host, let worktree = selectedWorktree,
                       let session = worktree.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
                 appState.workspaceStore.update(hostID: host.id, worktree: worktree) { layout in
-                    if !layout.sessions.contains(session) { layout.addAgent(session) }
+                    let agents = Set(worktree.agents?.compactMap(\.presentationSessionName) ?? [])
+                    if !layout.sessions.contains(session) { layout.addAgent(session, isAgent: agents.contains) }
                     layout.select(session)
                 }
                 appState.focusedPaneId = session

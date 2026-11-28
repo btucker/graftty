@@ -155,6 +155,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
     var setOcclusion: (ghostty_surface_t, Bool) -> Void
     var refresh: (ghostty_surface_t) -> Void
     var requestClose: (ghostty_surface_t) -> Void
+    /// The rows on screen. A factory that makes no real surface reads none.
+    var screenRows: @MainActor (ghostty_surface_t) -> [String] = { _ in [] }
 
     static let live = SurfaceHandleGhosttySurfaceFactory(
         create: { app, config in ghostty_surface_new(app, config) },
@@ -168,7 +170,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
         setSize: { surface, w, h in ghostty_surface_set_size(surface, w, h) },
         setOcclusion: { surface, visible in ghostty_surface_set_occlusion(surface, visible) },
         refresh: { surface in ghostty_surface_refresh(surface) },
-        requestClose: { surface in ghostty_surface_request_close(surface) }
+        requestClose: { surface in ghostty_surface_request_close(surface) },
+        screenRows: { surface in SurfaceHandle.screenRows(surface) }
     )
 }
 
@@ -709,6 +712,9 @@ final class SurfaceHandle {
     func queryGridSize() -> ghostty_surface_size_s {
         surfaceFactory.size(surface)
     }
+
+    /// The rows on screen, for a gallery miniature (LAYOUT-2.259).
+    @MainActor func screenRows() -> [String] { surfaceFactory.screenRows(surface) }
 
     /// Tell libghostty whether this surface is currently visible. Despite
     /// the C symbol's name, the boolean is `visible`, not `occluded`.

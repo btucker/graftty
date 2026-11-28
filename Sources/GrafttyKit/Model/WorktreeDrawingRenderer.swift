@@ -28,6 +28,12 @@ public enum WorktreeDrawingRenderer {
         ]
     }
 
+    /// The palette's primary as sRGB components, for chrome that matches a drawing (LAYOUT-2.264).
+    public static func primary(hue: Double) -> (red: Double, green: Double, blue: Double) {
+        let value = UInt32(palette(hue: hue)["primary"]?.dropFirst() ?? "", radix: 16) ?? 0
+        return (Double(value >> 16 & 0xff) / 255, Double(value >> 8 & 0xff) / 255, Double(value & 0xff) / 255)
+    }
+
     public static func png(svg: String, hue: Double, pixels: Int = pixels) -> Data? {
         let colors = palette(hue: hue)
         let range = NSRange(svg.startIndex..., in: svg)

@@ -31,6 +31,18 @@ struct SidebarWorktreeStatusTarget: View {
     }
 }
 
+/// The primary colour of a worktree's drawing, which fills its agents' logos (LAYOUT-2.264).
+enum WorktreeAgentLogoTint {
+    /// A worktree showing an emoji the user chose, or no drawing, has no drawing colour on screen.
+    static func hue(for worktree: WorktreeEntry) -> Double? {
+        worktree.emojiChosenByUser || worktree.drawing == nil ? nil : worktree.drawingHue
+    }
+
+    static func color(hue: Double?) -> Color? {
+        hue.map(WorktreeDrawingRenderer.primary(hue:)).map { Color(.sRGB, red: $0.red, green: $0.green, blue: $0.blue) }
+    }
+}
+
 /// One sidebar worktree block: the heading button, its status line, the active
 /// highlight, and the block-level drag source and drop target. The click-target
 /// tests compose the same block, so hit testing covers the production structure.
@@ -47,6 +59,9 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
     /// The row's view identity. LAYOUT-2.233: in the merged list it names the
     /// host too, because two hosts can have worktrees at the same path.
     var scrollID: String? = nil
+    /// The worktree's agents, drawn as a logo stack under the identity (LAYOUT-2.254).
+    var logos: [AgentLogo] = []
+    var onSelectAgent: (String) -> Void = { _ in }
     @ViewBuilder var identity: () -> Identity
     @ViewBuilder let heading: () -> Heading
     @ViewBuilder let status: () -> Status
@@ -58,6 +73,11 @@ struct WorktreeBlock<Identity: View, Heading: View, Status: View>: View {
                 // Fills the identity column, so an emoji's own, smaller menu stays innermost.
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .rightClickMenu(anchored: menu)
+        } belowIdentity: {
+            // Each logo owns its click; the block's selection target would only select the worktree (LAYOUT-2.256).
+            AgentLogoStack(logos: logos, background: theme.background, tint: WorktreeAgentLogoTint.color(hue: WorktreeAgentLogoTint.hue(for: worktree)),
+                           onSelect: onSelectAgent)
+                .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.agentLogos: $0] }
         } content: {
             Button(action: onSelect) { heading() }
                 .buttonStyle(.plain)

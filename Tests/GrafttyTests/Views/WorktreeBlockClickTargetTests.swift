@@ -379,6 +379,69 @@ private final class IdentityFrames {
 }
 
 @MainActor
+struct WorktreeBlockAgentLogoTests {
+    @Test("@spec LAYOUT-2.264: While a worktree in the Mac sidebar has a drawing colour, the application shall fill the agent logos beneath its icon with that drawing's primary colour and draw the logos in white, and shall keep the neutral fill for a worktree with no drawing colour.")
+    func logosTakeTheWorktreesPrimaryColour() {
+        #expect(WorktreeAgentLogoTint.color(hue: nil) == nil)
+        let primary = WorktreeDrawingRenderer.primary(hue: 250)
+        let hex = String(format: "#%02x%02x%02x", Int((primary.red * 255).rounded()), Int((primary.green * 255).rounded()),
+                         Int((primary.blue * 255).rounded()))
+        #expect(hex == WorktreeDrawingRenderer.palette(hue: 250)["primary"])
+        #expect(WorktreeAgentLogoTint.color(hue: 250) == Color(.sRGB, red: primary.red, green: primary.green, blue: primary.blue))
+        var worktree = WorktreeEntry(path: "/repo/feature", branch: "feature")
+        worktree.drawingHue = 250
+        #expect(WorktreeAgentLogoTint.hue(for: worktree) == nil, "A hue with no drawing is not on screen")
+        worktree.drawing = WorktreeDrawing(svg: "<svg viewBox='0 0 96 64'/>", hue: 250)
+        #expect(WorktreeAgentLogoTint.hue(for: worktree) == 250)
+        worktree.emojiChosenByUser = true
+        #expect(WorktreeAgentLogoTint.hue(for: worktree) == nil, "The user's emoji replaces the drawing")
+    }
+
+    @Test("@spec LAYOUT-2.256: When the user clicks an agent's logo beneath a Mac worktree row's icon, the application shall deliver the click to that logo, so the agent goes on stage, rather than to the row, which only selects the worktree.")
+    func logoClicksReachTheLogo() async throws {
+        _ = NSApplication.shared
+        let frames = IdentityFrames()
+        let status = AgentTileStatus(needsInput: false, isBusy: false, isCompleted: false, isCached: false,
+                                     question: nil, result: nil, statusLabel: "Running")
+        let logos = ["lead", "review"].map { AgentLogo(id: $0, session: $0, provider: "claude", title: $0, status: status) }
+        let worktree = WorktreeEntry(path: "/repo/feature", branch: "feature")
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [WorktreeEntry(path: "/repo", branch: "main"), worktree])
+        let block = WorktreeBlock(worktree: worktree, repoID: repo.id, isActive: false, theme: .fallback,
+            appState: .constant(AppState(repos: [repo])), reorderingEnabled: true, onSelect: {},
+            menu: { _ in NSMenu() }, logos: logos) {
+            Color.gray.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames.byPath[worktree.path] = $0 }
+        } heading: {
+            Text("feature").frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+        } status: {
+            EmptyView()
+        }
+        let host = NSHostingView(rootView: block.padding(10).frame(width: 300))
+        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        let identity = try #require(frames.byPath[worktree.path])
+        // The stack sits centred under the 60 by 40 identity slot, 4 points below it, 18 points tall.
+        let windowPoint = host.convert(CGPoint(x: identity.midX, y: identity.maxY + 4 + 9), to: nil)
+        let down = try NSEvent.syntheticClick(.leftMouseDown, at: windowPoint, in: window)
+        func find(_ view: NSView) -> [WorktreeDragSourceView] {
+            ((view as? WorktreeDragSourceView).map { [$0] } ?? []) + view.subviews.flatMap(find)
+        }
+        let sources = find(host)
+        #expect(!sources.isEmpty)
+        for source in sources { source.currentEvent = { down } }
+        defer { for source in sources { source.currentEvent = { NSApp.currentEvent } } }
+        let root = try #require(window.contentView)
+        let hit = root.hitTest(root.superview?.convert(windowPoint, from: nil) ?? windowPoint)
+        #expect(!(hit is WorktreeDragSourceView), "The row's drag source takes clicks meant for its agent logos")
+    }
+}
+
+@MainActor
 struct WorktreeBlockIdentityMenuTests {
     private static func menu(_ title: String) -> NSMenu {
         let menu = NSMenu()

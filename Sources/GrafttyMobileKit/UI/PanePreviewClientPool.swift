@@ -22,7 +22,11 @@ public final class PanePreviewClientPool<Client: PanePreviewClienting> {
     }
 
     public func update(layout: PaneLayoutNode, maxLivePreviews: Int = .max) {
-        let wantedSessionNames = layout.leaves.prefix(max(0, maxLivePreviews)).map(\.sessionName)
+        update(sessions: Array(layout.leaves.prefix(max(0, maxLivePreviews)).map(\.sessionName)))
+    }
+
+    /// Keeps exactly these sessions live, stopping the rest.
+    public func update(sessions wantedSessionNames: [String]) {
         let wanted = Set(wantedSessionNames)
 
         let removed = clients.keys.filter { !wanted.contains($0) }

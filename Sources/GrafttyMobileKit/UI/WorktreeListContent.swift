@@ -1218,7 +1218,11 @@ public struct WorktreeListContent: View {
                 : nil,
             onReport: { showReport(wt) },
             onRemove: { pendingDelete = PendingDelete(worktree: wt, action: .delete) },
-            onDismissRequest: { dismissRequest(wt) }
+            onDismissRequest: { dismissRequest(wt) },
+            onSelectAgent: { logo in
+                // Opening an agent from the logo stack follows the same route as opening its report.
+                Task { _ = await openReportTarget(logo.activityItem(in: wt), worktrees: feed.state.rows) }
+            }
         )
         .modifier(reportPopover(wt))
         .modifier(deleteConfirmation(wt))
